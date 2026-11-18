@@ -1,4 +1,5 @@
-import { Box, Button, Card, LinearProgress } from "@mui/material";
+import { Box, Button } from "@mui/material";
+import Section from "src/components/section";
 import React, { useState } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
@@ -6,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import MemberListTable from "./MemberListTable";
 import NoMember from "./NoMember";
 import InviteUserDrawer from "./InviteUserDrawer";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const ManageTeam = () => {
   const { data, isPending } = useQuery({
@@ -18,7 +20,7 @@ const ManageTeam = () => {
 
   return (
     <Box sx={{ paddingX: "20px" }}>
-      <Card sx={{ height: "calc(100vh - 90px)" }}>
+      <Section variant="panel" sx={{ height: "calc(100vh - 90px)" }}>
         <InviteUserDrawer
           open={isDrawerOpen}
           onClose={() => setIsDrawerOpen(false)}
@@ -41,10 +43,10 @@ const ManageTeam = () => {
             Invite User
           </Button>
         </Box>
-        {isPending ? <LinearProgress /> : null}
+        {isPending ? <LoadingScreen compact /> : null}
         {!isPending && !data?.length && <NoMember />}
         {!isPending && Boolean(data?.length) && <MemberListTable data={data} />}
-      </Card>
+      </Section>
     </Box>
   );
 };

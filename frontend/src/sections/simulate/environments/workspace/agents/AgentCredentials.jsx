@@ -163,13 +163,13 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         p: 2,
       }}
     >
       <Stack direction="row" alignItems="flex-start" spacing={1}>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500 }}>
             {COPY.title}
           </Typography>
           {defaultVersion && (
@@ -195,7 +195,6 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
                   setFormError(null);
                   setRows(rowsFor(defaultVersion));
                 }}
-                sx={{ textTransform: "none" }}
               >
                 {COPY.change}
               </Button>
@@ -229,7 +228,7 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
             <Stack key={name} direction="row" spacing={0.5} alignItems="center">
               <Typography
                 data-testid="credential-name"
-                sx={{ typography: "s3", fontFamily: MONO, color: "error.main" }}
+                sx={{ typography: "s3", fontFamily: MONO, color: "status.danger.fg" }}
               >
                 {name}
               </Typography>
@@ -252,7 +251,7 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
           )}
           {activationText(saved) && (
             <Typography
-              sx={{ typography: "s3", color: "warning.main", mt: 0.5 }}
+              sx={{ typography: "s3", color: "status.warning.fg", mt: 0.5 }}
             >
               {activationText(saved)}
             </Typography>
@@ -270,7 +269,7 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
           {addsName && (
             <Typography
               data-testid="credentials-new-name-hint"
-              sx={{ typography: "s3", color: "warning.main", mb: 1.5 }}
+              sx={{ typography: "s3", color: "status.warning.fg", mb: 1.5 }}
             >
               {COPY.newNameHint}
             </Typography>
@@ -320,7 +319,7 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
                   size="small"
                   sx={{ mt: 0.5 }}
                 >
-                  <Iconify icon="mingcute:close-line" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
               </Stack>
             ))}
@@ -329,8 +328,8 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
             size="small"
             color="inherit"
             onClick={() => setRows((current) => [...current, newRow()])}
-            startIcon={<Iconify icon="mingcute:add-line" width={16} />}
-            sx={{ textTransform: "none", mt: 1 }}
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
+            sx={{ mt: 1 }}
           >
             {COPY.addVariable}
           </Button>
@@ -353,7 +352,6 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
                   size="small"
                   color="inherit"
                   onClick={() => setFile(null)}
-                  sx={{ textTransform: "none" }}
                 >
                   {COPY.removeFile}
                 </Button>
@@ -365,7 +363,6 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
                 color="inherit"
                 disabled={upload.isPending}
                 onClick={() => fileInput.current?.click()}
-                sx={{ textTransform: "none" }}
               >
                 {upload.isPending ? COPY.uploading : COPY.chooseFile}
               </Button>
@@ -382,7 +379,7 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
           {upload.isError && (
             <Typography
               role="alert"
-              sx={{ typography: "s3", color: "error.main", mt: 0.5 }}
+              sx={{ typography: "s3", color: "status.danger.fg", mt: 0.5 }}
             >
               {refusalText(upload.error, COPY.uploadError)}
             </Typography>
@@ -391,7 +388,7 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
           {formError && (
             <Typography
               role="alert"
-              sx={{ typography: "s2", color: "error.main", mt: 1.5 }}
+              sx={{ typography: "s2", color: "status.danger.fg", mt: 1.5 }}
             >
               {formError}
             </Typography>

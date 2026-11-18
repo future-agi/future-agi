@@ -8,7 +8,7 @@ const OptimizeResultHeader = ({ displayName }) => {
     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
       <SvgColor
         src="/assets/icons/action_buttons/ic_evaluate.svg"
-        sx={{ width: 20, height: 20, color: "green.500" }}
+        sx={{ width: 20, height: 20, color: "status.success.fg" }}
       />
       <Typography typography="s1" fontWeight="fontWeightMedium">
         {displayName}

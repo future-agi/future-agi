@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,6 +17,15 @@ import {
   resetFixRunFixtures,
   updateFixtureFixRun,
 } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+
+// The trials table reads theme.palette.data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+// eslint-disable-next-line react/prop-types
+const AppTheme = ({ children }) => (
+  <ThemeProvider theme={appTheme}>{children}</ThemeProvider>
+);
+const render = (ui, options) =>
+  rtlRender(ui, { wrapper: AppTheme, ...options });
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const { withFakeFixRunsApi } = await import(
@@ -113,7 +129,9 @@ describe("FixRunPage", () => {
     expect(
       within(dialog).queryByText(/None of them has been checked/),
     ).toBeNull();
-    expect(within(dialog).getByText(/Today's version stays/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Today's version stays/),
+    ).toBeInTheDocument();
   });
 
   it("shows the server's message when it refuses the Stop", async () => {

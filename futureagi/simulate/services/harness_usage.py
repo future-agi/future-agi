@@ -14,15 +14,15 @@ from django.utils.dateparse import parse_datetime
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.harness_environment import _VOICE_CONNECTORS
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
+    HostedHarnessError,
+)
 from tfc.ee_gating import is_oss
 
 _ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
-_NON_BILLABLE_FAILURE_DOMAINS = frozenset(
-    {"infrastructure", "connectivity", "platform_sync"}
-)
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +192,16 @@ def record_harness_usage(
     return {"accepted": True}
 
 
+def is_billable_receipt(status: str, call: object, failure_domain: str | None) -> bool:
+    """Whether a result receipt's call is charged: it was not skipped, it ran, and the
+    platform's own infrastructure, connectivity or sync failure did not end it."""
+    return (
+        status != "skipped"
+        and bool(call)
+        and failure_domain not in PLATFORM_FAILURE_DOMAINS
+    )
+
+
 def _billable_records(
     attempt: HostedHarnessAttempt,
     report: dict,
@@ -225,14 +235,13 @@ def _billable_records(
                 continue
             receipt_status = historical["status"]
             receipt_body = historical["body"]
-        if receipt_status == "skipped" or not receipt_body.get("call"):
-            continue
-        record_failure_domain = item.get("failure_domain")
-        receipt_failure_domain = (receipt_body.get("failure") or {}).get("domain")
-        if (
-            record_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
-            or receipt_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
+        if not is_billable_receipt(
+            receipt_status,
+            receipt_body.get("call"),
+            (receipt_body.get("failure") or {}).get("domain"),
         ):
+            continue
+        if item.get("failure_domain") in PLATFORM_FAILURE_DOMAINS:
             continue
         # Hosted simulator usage is always platform-funded.  Keep the guest field in properties
         # for audit, but never let an untrusted value suppress a billable simulator call.

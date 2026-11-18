@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import Chip from "@mui/material/Chip";
 import PropTypes from "prop-types";
+import { enqueueSnackbar } from "notistack";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
@@ -25,6 +26,17 @@ import { uploadFile } from "../hooks/useFalconAPI";
 import ContextSelector from "./ContextSelector";
 import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
+import { paths } from "src/routes/paths";
+
+function notifyUploadError(error) {
+  enqueueSnackbar(
+    typeof error?.detail === "string" && error.detail
+      ? error.detail
+      : "File upload failed. Please try again.",
+    { variant: "error" },
+  );
+}
+
 export default function ChatInput({ onSend, onStop }) {
   const [text, setText] = useState("");
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -95,7 +107,7 @@ export default function ChatInput({ onSend, onStop }) {
 
   const placeholder = currentConversationId
     ? "Ask a follow-up..."
-    : "Message Falcon AI...";
+    : "Ask anything...";
 
   const MAX_LENGTH = 10000;
 
@@ -124,9 +136,11 @@ export default function ChatInput({ onSend, onStop }) {
         const resp = await uploadFile(file);
         if (resp.status && resp.result) {
           addAttachedFile(resp.result);
+        } else {
+          notifyUploadError(resp);
         }
-      } catch {
-        // silent — upload error handled by UI state
+      } catch (error) {
+        notifyUploadError(error);
       } finally {
         setIsUploading(false);
       }
@@ -169,7 +183,6 @@ export default function ChatInput({ onSend, onStop }) {
     [onSend, triggerSkillsMenu, resetChat, setCurrentConversation],
   );
 
-  const isDark = theme.palette.mode === "dark";
   const router = useRouter();
   const connectors = useFalconStore((s) => s.connectors);
   const [plusMenuAnchor, setPlusMenuAnchor] = useState(null);
@@ -211,10 +224,14 @@ export default function ChatInput({ onSend, onStop }) {
             result.value.result
           ) {
             addAttachedFile(result.value.result);
+          } else {
+            notifyUploadError(
+              result.status === "rejected" ? result.reason : result.value,
+            );
           }
         }
-      } catch {
-        // silent — upload error handled by UI state
+      } catch (error) {
+        notifyUploadError(error);
       } finally {
         setIsUploading(false);
       }
@@ -248,30 +265,16 @@ export default function ChatInput({ onSend, onStop }) {
         sx={{
           position: "relative",
           border: isDragging ? 2 : 1,
-          borderColor: isDragging
-            ? "primary.main"
-            : isDark
-              ? alpha(theme.palette.common.white, 0.12)
-              : alpha(theme.palette.common.black, 0.12),
+          borderColor: isDragging ? "primary.main" : "border.default",
           borderStyle: isDragging ? "dashed" : "solid",
-          borderRadius: "20px",
+          borderRadius: "12px",
           overflow: "visible",
           bgcolor: isDragging
             ? alpha(theme.palette.primary.main, 0.04)
-            : isDark
-              ? alpha(theme.palette.common.white, 0.04)
-              : theme.palette.background.paper,
-          boxShadow: isDark
-            ? `0 0 0 1px ${alpha(theme.palette.common.white, 0.06)}`
-            : `0 2px 12px ${alpha(theme.palette.common.black, 0.06)}`,
-          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+            : "background.paper",
+          transition: "border-color 0.2s ease",
           "&:focus-within": {
-            borderColor: isDark
-              ? alpha(theme.palette.common.white, 0.24)
-              : alpha(theme.palette.primary.main, 0.4),
-            boxShadow: isDark
-              ? `0 0 0 1px ${alpha(theme.palette.common.white, 0.12)}`
-              : `0 2px 16px ${alpha(theme.palette.primary.main, 0.08)}`,
+            borderColor: "border.hover",
           },
         }}
       >
@@ -345,7 +348,7 @@ export default function ChatInput({ onSend, onStop }) {
               <Chip
                 key={s.slug}
                 icon={
-                  <Iconify icon={s.icon || "mdi:lightning-bolt"} width={13} />
+                  <Iconify icon={s.icon || "solar:bolt-linear"} width={14} />
                 }
                 label={s.name}
                 size="small"
@@ -356,15 +359,11 @@ export default function ChatInput({ onSend, onStop }) {
                   );
                 }}
                 sx={{
-                  height: 24,
-                  fontSize: 11,
-                  fontWeight: 600,
                   bgcolor: alpha(theme.palette.primary.main, 0.12),
                   color: "primary.main",
                   "& .MuiChip-icon": { color: "primary.main" },
                   "& .MuiChip-deleteIcon": {
                     color: alpha(theme.palette.primary.main, 0.4),
-                    fontSize: 14,
                     "&:hover": { color: "primary.main" },
                   },
                 }}
@@ -393,7 +392,7 @@ export default function ChatInput({ onSend, onStop }) {
             pt: 1.5,
             pb: 0.5,
             "& .MuiInputBase-input": {
-              fontSize: 14,
+              fontSize: 12,
               lineHeight: 1.6,
               color: "text.primary",
               "&::placeholder": {
@@ -430,8 +429,8 @@ export default function ChatInput({ onSend, onStop }) {
               }}
             >
               <Iconify
-                icon={isUploading ? "mdi:loading" : "mdi:paperclip"}
-                width={18}
+                icon={isUploading ? "mdi:loading" : "solar:paperclip-linear"}
+                width={20}
                 sx={
                   isUploading
                     ? {
@@ -453,7 +452,7 @@ export default function ChatInput({ onSend, onStop }) {
                 "&:hover": { color: "text.secondary" },
               }}
             >
-              <Iconify icon="mdi:plus" width={18} />
+              <Iconify icon="solar:add-linear" width={20} />
             </IconButton>
 
             {/* Plus menu */}
@@ -467,10 +466,7 @@ export default function ChatInput({ onSend, onStop }) {
                 paper: {
                   sx: {
                     borderRadius: "12px",
-                    minWidth: 220,
-                    boxShadow: isDark
-                      ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                      : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
+                    minWidth: 240,
                   },
                 },
               }}
@@ -485,13 +481,13 @@ export default function ChatInput({ onSend, onStop }) {
                 sx={{ gap: 1.5, py: 1 }}
               >
                 <Iconify
-                  icon="mdi:paperclip"
-                  width={18}
+                  icon="solar:paperclip-linear"
+                  width={20}
                   sx={{ color: "text.secondary" }}
                 />
                 <ListItemText
                   primary={isUploading ? "Uploading..." : "Attach files"}
-                  primaryTypographyProps={{ fontSize: 14 }}
+                  primaryTypographyProps={{ fontSize: 12 }}
                 />
               </MenuItem>
 
@@ -501,14 +497,14 @@ export default function ChatInput({ onSend, onStop }) {
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                   <Iconify
-                    icon="mdi:puzzle-outline"
-                    width={18}
+                    icon="solar:widget-linear"
+                    width={16}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography sx={{ fontSize: 14 }}>Connectors</Typography>
+                  <Typography sx={{ fontSize: 12 }}>Connectors</Typography>
                 </Box>
                 <Iconify
-                  icon="mdi:chevron-right"
+                  icon="solar:alt-arrow-right-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -528,9 +524,6 @@ export default function ChatInput({ onSend, onStop }) {
                     borderRadius: "12px",
                     minWidth: 240,
                     ml: 0.5,
-                    boxShadow: isDark
-                      ? `0 8px 24px ${alpha(theme.palette.common.black, 0.4)}`
-                      : `0 8px 24px ${alpha(theme.palette.common.black, 0.12)}`,
                   },
                 },
               }}
@@ -552,7 +545,7 @@ export default function ChatInput({ onSend, onStop }) {
                             : "text.disabled",
                         }}
                       />
-                      <Typography sx={{ fontSize: 13 }}>{c.name}</Typography>
+                      <Typography sx={{ fontSize: 12 }}>{c.name}</Typography>
                     </Box>
                     <Switch size="small" checked={c.is_active !== false} />
                   </MenuItem>
@@ -561,7 +554,7 @@ export default function ChatInput({ onSend, onStop }) {
                 <MenuItem disabled sx={{ py: 1 }}>
                   <Typography
                     sx={{
-                      fontSize: 13,
+                      fontSize: 12,
                       fontStyle: "italic",
                       color: "text.disabled",
                     }}
@@ -574,16 +567,16 @@ export default function ChatInput({ onSend, onStop }) {
               <MenuItem
                 onClick={() => {
                   handlePlusClose();
-                  router.push("/dashboard/settings/falcon-ai-connectors");
+                  router.push(paths.dashboard.settings.falconAIConnectors);
                 }}
                 sx={{ gap: 1.5, py: 1 }}
               >
                 <Iconify
-                  icon="mdi:cog-outline"
+                  icon="solar:settings-linear"
                   width={16}
                   sx={{ color: "text.secondary" }}
                 />
-                <Typography sx={{ fontSize: 13 }}>Manage connectors</Typography>
+                <Typography sx={{ fontSize: 12 }}>Manage connectors</Typography>
               </MenuItem>
             </Menu>
           </Box>
@@ -596,14 +589,12 @@ export default function ChatInput({ onSend, onStop }) {
               sx={{
                 bgcolor: "error.main",
                 color: "error.contrastText",
-                width: 32,
-                height: 32,
                 "&:hover": {
                   bgcolor: "error.dark",
                 },
               }}
             >
-              <Iconify icon="mdi:stop" width={16} />
+              <Iconify icon="solar:stop-linear" width={16} />
             </IconButton>
           ) : (
             <IconButton
@@ -618,19 +609,13 @@ export default function ChatInput({ onSend, onStop }) {
                     : "transparent",
                 color:
                   text.trim() || attachedFiles.length > 0
-                    ? isDark
-                      ? "common.black"
-                      : "common.white"
+                    ? "background.paper"
                     : "text.disabled",
-                width: 32,
-                height: 32,
                 transition: "all 0.15s ease",
                 "&:hover": {
                   bgcolor:
                     text.trim() || attachedFiles.length > 0
-                      ? isDark
-                        ? "grey.300"
-                        : "grey.800"
+                      ? "text.secondary"
                       : "transparent",
                 },
                 "&.Mui-disabled": {
@@ -638,7 +623,7 @@ export default function ChatInput({ onSend, onStop }) {
                 },
               }}
             >
-              <Iconify icon="mdi:arrow-up" width={18} />
+              <Iconify icon="solar:arrow-up-linear" width={20} />
             </IconButton>
           )}
         </Box>
@@ -651,12 +636,12 @@ export default function ChatInput({ onSend, onStop }) {
           textAlign: "center",
           mt: 0.5,
           mb: 0.5,
-          fontSize: 11,
+          fontSize: 12,
           color: "text.disabled",
           userSelect: "none",
         }}
       >
-        Falcon AI can make mistakes. Check important info.
+        AI can make mistakes. Check important info.
       </Typography>
     </Box>
   );

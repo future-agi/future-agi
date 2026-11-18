@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from tfc.logging.sentry import (
     _REDACTED,
+    _event_scrubber,
     _get_before_send,
     _is_sensitive_key,
     _scrub,
@@ -138,6 +139,31 @@ def test_before_send_scrubs_request_and_extra():
     assert out["request"]["cookies"] == _REDACTED  # cookies redacted wholesale
     assert out["extra"]["api_key"] == _REDACTED
     assert out["extra"]["count"] == 5
+
+
+def test_scrubber_redacts_the_gateway_provider_key_in_frame_locals():
+    """The scrubber init_sentry installs matches whole key names, so the AgentCC
+    header that carries an org's own provider key must be listed in full."""
+    headers = {
+        "Authorization": "Bearer internal-secret",
+        "X-AgentCC-Provider-Key": "org-provider-secret",
+        "Content-Type": "application/json",
+    }
+    event = {
+        "exception": {
+            "values": [{"stacktrace": {"frames": [{"vars": {"headers": headers}}]}}]
+        },
+        "request": {"headers": dict(headers)},
+    }
+    _event_scrubber().scrub_event(event)
+    [value] = event["exception"]["values"]
+    scrubbed = value["stacktrace"]["frames"][0]["vars"]["headers"]
+    assert scrubbed["Content-Type"] == "application/json"
+    for sent in (scrubbed, event["request"]["headers"]):
+        assert "internal-secret" not in str(sent)
+        assert "org-provider-secret" not in str(sent)
+    # The substring scrubber used by before_send agrees.
+    assert _scrub(headers)["X-AgentCC-Provider-Key"] == _REDACTED
 
 
 def test_scrub_event_is_resilient_to_unexpected_shapes():

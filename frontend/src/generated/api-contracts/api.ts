@@ -464,6 +464,7 @@ import type {
   EvalTaskApi,
   EvalTaskCreateResponseApi,
   EvalTaskDeleteRequestApi,
+  EvalTaskDetailsResponseApi,
   EvalTaskMessageResponseApi,
   EvalTaskUpdateRequestApi,
   EvalTaskUpdateResponseApi,
@@ -555,6 +556,7 @@ import type {
   GatewayConfigPatchRequestApi,
   GatewayConfigResponseApi,
   GatewayDetailResponseApi,
+  GatewayHealthErrorResponseApi,
   GatewayHealthResponseApi,
   GatewayListResponseApi,
   GatewayMCPGuardrailsUpdateRequestApi,
@@ -660,10 +662,15 @@ import type {
   HarnessSuiteMemberApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
+  HarnessVerifyCreateApi,
+  HarnessVerifyCreateResponseApi,
+  HarnessVerifyResultApi,
   HarnessVersionDiffApi,
   HarnessVersionsApi,
   HealthCheckResponseApi,
   HeartbeatApi,
+  HostUpdateStatusErrorApi,
+  HostUpdateStatusResponseApi,
   HuggingFaceAddRowsRequestApi,
   HuggingFaceDatasetConfigRequestApi,
   HuggingFaceDatasetConfigResponseApi,
@@ -674,6 +681,35 @@ import type {
   HuggingFaceDatasetListResponseApi,
   ImagineAnalysisResponseApi,
   ImportAnnotationsApi,
+  InsightAskApi,
+  InsightAskResponseApi,
+  InsightConfigListResponseApi,
+  InsightConfigPatchApi,
+  InsightConfigResponseApi,
+  InsightDraftApi,
+  InsightDraftResponseApi,
+  InsightEstimateRequestApi,
+  InsightEstimateResponseApi,
+  InsightPreviewApi,
+  InsightPreviewResponseApi,
+  InsightRunCreateApi,
+  InsightRunCreatedResponseApi,
+  InsightRunResponseApi,
+  InsightRunStopResponseApi,
+  InsightUnitsResponseApi,
+  InstantEvalBadRequestApi,
+  InstantEvalControlRequestApi,
+  InstantEvalControlResponseApi,
+  InstantEvalEstimateRequestApi,
+  InstantEvalEstimateResponseApi,
+  InstantEvalExportQueryApi,
+  InstantEvalLimitErrorApi,
+  InstantEvalRowsQueryApi,
+  InstantEvalRowsResponseApi,
+  InstantEvalRunsResponseApi,
+  InstantEvalStartRequestApi,
+  InstantEvalStartResponseApi,
+  InstantEvalSummaryResponseApi,
   IntegrationConnectionCreateApi,
   IntegrationConnectionDetailApi,
   IntegrationConnectionDetailResponseApi,
@@ -793,6 +829,7 @@ import type {
   ModelHubAnnotationsList200,
   ModelHubAnnotationsListParams,
   ModelHubApiKeysListParams,
+  ModelHubApiModelsListListParams,
   ModelHubDatasetOptimizationList200,
   ModelHubDatasetOptimizationListParams,
   ModelHubDevelopsGetDatasetTableListParams,
@@ -824,7 +861,9 @@ import type {
   ModelHubFeedbackListParams,
   ModelHubGetEvalConfigListParams,
   ModelHubGetEvalLogsDetailsListParams,
+  ModelHubGetEvalLogsListParams,
   ModelHubGetEvalMetricsListParams,
+  ModelHubKbDownloadFileParams,
   ModelHubKbListParams,
   ModelHubKbSupportedEmbeddingModelsParams,
   ModelHubOptimisationList200,
@@ -881,6 +920,7 @@ import type {
   ModelHubToolsListParams,
   ModelHubTtsVoicesList200,
   ModelHubTtsVoicesListParams,
+  ModelListResponseApi,
   ModelParametersResponseApi,
   NodeExecutionDetailResponseApi,
   NodeReadApi,
@@ -976,6 +1016,7 @@ import type {
   ProjectGraphDataResponseApi,
   ProjectIdListResponseApi,
   ProjectListResponseApi,
+  ProjectNameUpdateApi,
   ProjectUserGraphDataRequestApi,
   ProjectUserGraphDataResponseApi,
   ProjectUserMetricsRequestApi,
@@ -1098,6 +1139,7 @@ import type {
   SDKConfigureEvaluationsResponseApi,
   SDKErrorResponseApi,
   SDKEvalTemplateResponseApi,
+  SDKEvaluationDenialResponseApi,
   SDKGetEvalsResponseApi,
   SDKSimulationAnalyticsResponseApi,
   SDKSimulationMetricsResponseApi,
@@ -1107,6 +1149,19 @@ import type {
   SDKStandaloneEvalV2RequestApi,
   SDKStandaloneEvalV2ResponseApi,
   SOSLoginApi,
+  SQLCatalogApi,
+  SQLEstimateApi,
+  SQLExecutionApi,
+  SQLHistoryApi,
+  SQLProjectApi,
+  SQLQueryInputApi,
+  SQLRunApi,
+  SQLRunSavedApi,
+  SQLSaveApi,
+  SQLSavedApi,
+  SQLSavedListApi,
+  SQLWidgetApi,
+  SQLWidgetResponseApi,
   Saml2AuthAcsCreateBodyOne,
   Saml2AuthAcsCreateBodyTwo,
   Saml2AuthAuthCallbackListParams,
@@ -1124,6 +1179,9 @@ import type {
   Saml2AuthMicrosoftCallbackListParams,
   Saml2AuthMicrosoftReadParams,
   Saml2AuthReadParams,
+  SamplingAuditResponseApi,
+  SamplingPreviewRequestApi,
+  SamplingPreviewResponseApi,
   SavedViewDetailResponseApi,
   SavedViewListApi,
   SavedViewListResponseApi,
@@ -1339,7 +1397,6 @@ import type {
   TracerDashboardWidgetsPreviewQueryParams,
   TracerDatasetList200,
   TracerDatasetListParams,
-  TracerEvalTaskGetEvalDetails200,
   TracerEvalTaskGetEvalDetailsParams,
   TracerEvalTaskGetEvalTaskLogs200,
   TracerEvalTaskGetEvalTaskLogsParams,
@@ -1349,6 +1406,7 @@ import type {
   TracerEvalTaskListEvalTasksWithProjectNameParams,
   TracerEvalTaskListParams,
   TracerEvalTaskPauseEvalTaskParams,
+  TracerEvalTaskSamplingAuditParams,
   TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
   TracerFeedIssuesOverviewListParams,
@@ -1361,6 +1419,13 @@ import type {
   TracerFeedIssuesTrendsListParams,
   TracerGetAnnotationLabelsListParams,
   TracerImagineAnalysisListParams,
+  TracerInsightsConfigsListParams,
+  TracerInsightsRunsMediaListParams,
+  TracerInsightsRunsUnitsListParams,
+  TracerInstantEvalExportListParams,
+  TracerInstantEvalRowsListParams,
+  TracerInstantEvalRunsListParams,
+  TracerInstantEvalSummaryListParams,
   TracerObservabilityProviderList200,
   TracerObservabilityProviderListParams,
   TracerObservationSpanGetEvalAttributesListParams,
@@ -1400,10 +1465,17 @@ import type {
   TracerProjectVersionListParams,
   TracerProjectVersionListRuns200,
   TracerProjectVersionListRunsParams,
+  TracerSavedSqlQueryDeleteParams,
+  TracerSavedSqlQueryListParams,
+  TracerSavedSqlQueryReadParams,
   TracerSavedViewsListParams,
   TracerSharedLinksList200,
   TracerSharedLinksListParams,
   TracerSharedSidebarListParams,
+  TracerSqlQueryCatalogParams,
+  TracerSqlQueryDownloadParams,
+  TracerSqlQueryListParams,
+  TracerSqlQueryReadParams,
   TracerTraceAgentGraphParams,
   TracerTraceAnnotationGetAnnotationValuesParams,
   TracerTraceGetEvalNames200,
@@ -1560,6 +1632,7 @@ import type {
 } from "./api.schemas";
 
 import { apiMutator } from "../../api/contracts/openapi-mutator";
+import type { ApiResponseHeaders } from "../../api/contracts/openapi-mutator";
 
 // https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
 type IfEquals<X, Y, A = X, B = never> =
@@ -1668,7 +1741,7 @@ export type accounts2faRecoveryCodesListResponseDefault = {
 
 export type accounts2faRecoveryCodesListResponseSuccess =
   accounts2faRecoveryCodesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faRecoveryCodesListResponseError = (
   | accounts2faRecoveryCodesListResponse400
@@ -1678,7 +1751,7 @@ export type accounts2faRecoveryCodesListResponseError = (
   | accounts2faRecoveryCodesListResponse500
   | accounts2faRecoveryCodesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faRecoveryCodesListResponse =
@@ -1741,7 +1814,7 @@ export type accounts2faRecoveryCodesRegenerateCreateResponseDefault = {
 
 export type accounts2faRecoveryCodesRegenerateCreateResponseSuccess =
   accounts2faRecoveryCodesRegenerateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faRecoveryCodesRegenerateCreateResponseError = (
   | accounts2faRecoveryCodesRegenerateCreateResponse400
@@ -1751,7 +1824,7 @@ export type accounts2faRecoveryCodesRegenerateCreateResponseError = (
   | accounts2faRecoveryCodesRegenerateCreateResponse500
   | accounts2faRecoveryCodesRegenerateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faRecoveryCodesRegenerateCreateResponse =
@@ -1817,7 +1890,7 @@ export type accounts2faStatusListResponseDefault = {
 
 export type accounts2faStatusListResponseSuccess =
   accounts2faStatusListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faStatusListResponseError = (
   | accounts2faStatusListResponse400
@@ -1827,7 +1900,7 @@ export type accounts2faStatusListResponseError = (
   | accounts2faStatusListResponse500
   | accounts2faStatusListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faStatusListResponse =
@@ -1890,7 +1963,7 @@ export type accounts2faTotpDeleteResponseDefault = {
 
 export type accounts2faTotpDeleteResponseSuccess =
   accounts2faTotpDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faTotpDeleteResponseError = (
   | accounts2faTotpDeleteResponse400
@@ -1900,7 +1973,7 @@ export type accounts2faTotpDeleteResponseError = (
   | accounts2faTotpDeleteResponse500
   | accounts2faTotpDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faTotpDeleteResponse =
@@ -1966,7 +2039,7 @@ export type accounts2faTotpConfirmCreateResponseDefault = {
 
 export type accounts2faTotpConfirmCreateResponseSuccess =
   accounts2faTotpConfirmCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faTotpConfirmCreateResponseError = (
   | accounts2faTotpConfirmCreateResponse400
@@ -1976,7 +2049,7 @@ export type accounts2faTotpConfirmCreateResponseError = (
   | accounts2faTotpConfirmCreateResponse500
   | accounts2faTotpConfirmCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faTotpConfirmCreateResponse =
@@ -2042,7 +2115,7 @@ export type accounts2faTotpSetupCreateResponseDefault = {
 
 export type accounts2faTotpSetupCreateResponseSuccess =
   accounts2faTotpSetupCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faTotpSetupCreateResponseError = (
   | accounts2faTotpSetupCreateResponse400
@@ -2052,7 +2125,7 @@ export type accounts2faTotpSetupCreateResponseError = (
   | accounts2faTotpSetupCreateResponse500
   | accounts2faTotpSetupCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faTotpSetupCreateResponse =
@@ -2118,7 +2191,7 @@ export type accounts2faVerifyPasskeyCreateResponseDefault = {
 
 export type accounts2faVerifyPasskeyCreateResponseSuccess =
   accounts2faVerifyPasskeyCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faVerifyPasskeyCreateResponseError = (
   | accounts2faVerifyPasskeyCreateResponse400
@@ -2128,7 +2201,7 @@ export type accounts2faVerifyPasskeyCreateResponseError = (
   | accounts2faVerifyPasskeyCreateResponse500
   | accounts2faVerifyPasskeyCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faVerifyPasskeyCreateResponse =
@@ -2194,7 +2267,7 @@ export type accounts2faVerifyPasskeyOptionsCreateResponseDefault = {
 
 export type accounts2faVerifyPasskeyOptionsCreateResponseSuccess =
   accounts2faVerifyPasskeyOptionsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faVerifyPasskeyOptionsCreateResponseError = (
   | accounts2faVerifyPasskeyOptionsCreateResponse400
@@ -2204,7 +2277,7 @@ export type accounts2faVerifyPasskeyOptionsCreateResponseError = (
   | accounts2faVerifyPasskeyOptionsCreateResponse500
   | accounts2faVerifyPasskeyOptionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faVerifyPasskeyOptionsCreateResponse =
@@ -2270,7 +2343,7 @@ export type accounts2faVerifyRecoveryCreateResponseDefault = {
 
 export type accounts2faVerifyRecoveryCreateResponseSuccess =
   accounts2faVerifyRecoveryCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faVerifyRecoveryCreateResponseError = (
   | accounts2faVerifyRecoveryCreateResponse400
@@ -2280,7 +2353,7 @@ export type accounts2faVerifyRecoveryCreateResponseError = (
   | accounts2faVerifyRecoveryCreateResponse500
   | accounts2faVerifyRecoveryCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faVerifyRecoveryCreateResponse =
@@ -2346,7 +2419,7 @@ export type accounts2faVerifyTotpCreateResponseDefault = {
 
 export type accounts2faVerifyTotpCreateResponseSuccess =
   accounts2faVerifyTotpCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accounts2faVerifyTotpCreateResponseError = (
   | accounts2faVerifyTotpCreateResponse400
@@ -2356,7 +2429,7 @@ export type accounts2faVerifyTotpCreateResponseError = (
   | accounts2faVerifyTotpCreateResponse500
   | accounts2faVerifyTotpCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accounts2faVerifyTotpCreateResponse =
@@ -2422,7 +2495,7 @@ export type accountsAcceptInvitationReadResponseDefault = {
 
 export type accountsAcceptInvitationReadResponseSuccess =
   accountsAcceptInvitationReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAcceptInvitationReadResponseError = (
   | accountsAcceptInvitationReadResponse400
@@ -2432,7 +2505,7 @@ export type accountsAcceptInvitationReadResponseError = (
   | accountsAcceptInvitationReadResponse500
   | accountsAcceptInvitationReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAcceptInvitationReadResponse =
@@ -2504,7 +2577,7 @@ export type accountsAcceptInvitationCreateResponseDefault = {
 
 export type accountsAcceptInvitationCreateResponseSuccess =
   accountsAcceptInvitationCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAcceptInvitationCreateResponseError = (
   | accountsAcceptInvitationCreateResponse400
@@ -2514,7 +2587,7 @@ export type accountsAcceptInvitationCreateResponseError = (
   | accountsAcceptInvitationCreateResponse500
   | accountsAcceptInvitationCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAcceptInvitationCreateResponse =
@@ -2564,11 +2637,11 @@ export type accountsActivateReadResponseDefault = {
 
 export type accountsActivateReadResponseSuccess =
   accountsActivateReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsActivateReadResponseError =
   accountsActivateReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type accountsActivateReadResponse =
@@ -2630,7 +2703,7 @@ export type accountsAppsmithUsersListResponseDefault = {
 
 export type accountsAppsmithUsersListResponseSuccess =
   accountsAppsmithUsersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAppsmithUsersListResponseError = (
   | accountsAppsmithUsersListResponse400
@@ -2640,7 +2713,7 @@ export type accountsAppsmithUsersListResponseError = (
   | accountsAppsmithUsersListResponse500
   | accountsAppsmithUsersListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAppsmithUsersListResponse =
@@ -2700,7 +2773,7 @@ export type accountsAppsmithUsersCreateResponseDefault = {
 
 export type accountsAppsmithUsersCreateResponseSuccess =
   accountsAppsmithUsersCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAppsmithUsersCreateResponseError = (
   | accountsAppsmithUsersCreateResponse400
@@ -2710,7 +2783,7 @@ export type accountsAppsmithUsersCreateResponseError = (
   | accountsAppsmithUsersCreateResponse500
   | accountsAppsmithUsersCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAppsmithUsersCreateResponse =
@@ -2774,7 +2847,7 @@ export type accountsAppsmithUsersPartialUpdateResponseDefault = {
 
 export type accountsAppsmithUsersPartialUpdateResponseSuccess =
   accountsAppsmithUsersPartialUpdateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAppsmithUsersPartialUpdateResponseError = (
   | accountsAppsmithUsersPartialUpdateResponse400
@@ -2784,7 +2857,7 @@ export type accountsAppsmithUsersPartialUpdateResponseError = (
   | accountsAppsmithUsersPartialUpdateResponse500
   | accountsAppsmithUsersPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAppsmithUsersPartialUpdateResponse =
@@ -2848,7 +2921,7 @@ export type accountsAppsmithUsersLoginCreateResponseDefault = {
 
 export type accountsAppsmithUsersLoginCreateResponseSuccess =
   accountsAppsmithUsersLoginCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAppsmithUsersLoginCreateResponseError = (
   | accountsAppsmithUsersLoginCreateResponse400
@@ -2858,7 +2931,7 @@ export type accountsAppsmithUsersLoginCreateResponseError = (
   | accountsAppsmithUsersLoginCreateResponse500
   | accountsAppsmithUsersLoginCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAppsmithUsersLoginCreateResponse =
@@ -2921,7 +2994,7 @@ export type accountsAppsmithUsersReadResponseDefault = {
 
 export type accountsAppsmithUsersReadResponseSuccess =
   accountsAppsmithUsersReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAppsmithUsersReadResponseError = (
   | accountsAppsmithUsersReadResponse400
@@ -2931,7 +3004,7 @@ export type accountsAppsmithUsersReadResponseError = (
   | accountsAppsmithUsersReadResponse500
   | accountsAppsmithUsersReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAppsmithUsersReadResponse =
@@ -2997,7 +3070,7 @@ export type accountsAwsMarketplaceLaunchSoftwareCreateResponseDefault = {
 
 export type accountsAwsMarketplaceLaunchSoftwareCreateResponseSuccess =
   accountsAwsMarketplaceLaunchSoftwareCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAwsMarketplaceLaunchSoftwareCreateResponseError = (
   | accountsAwsMarketplaceLaunchSoftwareCreateResponse302
@@ -3008,7 +3081,7 @@ export type accountsAwsMarketplaceLaunchSoftwareCreateResponseError = (
   | accountsAwsMarketplaceLaunchSoftwareCreateResponse500
   | accountsAwsMarketplaceLaunchSoftwareCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAwsMarketplaceLaunchSoftwareCreateResponse =
@@ -3117,7 +3190,7 @@ export type accountsAwsMarketplaceSignupCreateResponseDefault = {
 
 export type accountsAwsMarketplaceSignupCreateResponseSuccess =
   accountsAwsMarketplaceSignupCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAwsMarketplaceSignupCreateResponseError = (
   | accountsAwsMarketplaceSignupCreateResponse400
@@ -3127,7 +3200,7 @@ export type accountsAwsMarketplaceSignupCreateResponseError = (
   | accountsAwsMarketplaceSignupCreateResponse500
   | accountsAwsMarketplaceSignupCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAwsMarketplaceSignupCreateResponse =
@@ -3200,7 +3273,7 @@ export type accountsAwsMarketplaceVerifyTokenCreateResponseDefault = {
 
 export type accountsAwsMarketplaceVerifyTokenCreateResponseSuccess =
   accountsAwsMarketplaceVerifyTokenCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsAwsMarketplaceVerifyTokenCreateResponseError = (
   | accountsAwsMarketplaceVerifyTokenCreateResponse302
@@ -3211,7 +3284,7 @@ export type accountsAwsMarketplaceVerifyTokenCreateResponseError = (
   | accountsAwsMarketplaceVerifyTokenCreateResponse500
   | accountsAwsMarketplaceVerifyTokenCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsAwsMarketplaceVerifyTokenCreateResponse =
@@ -3317,7 +3390,7 @@ export type accountsConfigListResponseDefault = {
 
 export type accountsConfigListResponseSuccess =
   accountsConfigListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsConfigListResponseError = (
   | accountsConfigListResponse400
@@ -3327,7 +3400,7 @@ export type accountsConfigListResponseError = (
   | accountsConfigListResponse500
   | accountsConfigListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsConfigListResponse =
@@ -3390,7 +3463,7 @@ export type accountsDeleteUsersDeleteResponseDefault = {
 
 export type accountsDeleteUsersDeleteResponseSuccess =
   accountsDeleteUsersDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsDeleteUsersDeleteResponseError = (
   | accountsDeleteUsersDeleteResponse400
@@ -3400,7 +3473,7 @@ export type accountsDeleteUsersDeleteResponseError = (
   | accountsDeleteUsersDeleteResponse500
   | accountsDeleteUsersDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsDeleteUsersDeleteResponse =
@@ -3463,7 +3536,7 @@ export type accountsFirstChecksListResponseDefault = {
 
 export type accountsFirstChecksListResponseSuccess =
   accountsFirstChecksListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsFirstChecksListResponseError = (
   | accountsFirstChecksListResponse400
@@ -3473,7 +3546,7 @@ export type accountsFirstChecksListResponseError = (
   | accountsFirstChecksListResponse500
   | accountsFirstChecksListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsFirstChecksListResponse =
@@ -3533,7 +3606,7 @@ export type accountsGcpMarketplaceSignupCreateResponseDefault = {
 
 export type accountsGcpMarketplaceSignupCreateResponseSuccess =
   accountsGcpMarketplaceSignupCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsGcpMarketplaceSignupCreateResponseError = (
   | accountsGcpMarketplaceSignupCreateResponse400
@@ -3543,7 +3616,7 @@ export type accountsGcpMarketplaceSignupCreateResponseError = (
   | accountsGcpMarketplaceSignupCreateResponse500
   | accountsGcpMarketplaceSignupCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsGcpMarketplaceSignupCreateResponse =
@@ -3614,7 +3687,7 @@ export type accountsGcpMarketplaceVerifyTokenCreateResponseDefault = {
 
 export type accountsGcpMarketplaceVerifyTokenCreateResponseSuccess =
   accountsGcpMarketplaceVerifyTokenCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsGcpMarketplaceVerifyTokenCreateResponseError = (
   | accountsGcpMarketplaceVerifyTokenCreateResponse302
@@ -3625,7 +3698,7 @@ export type accountsGcpMarketplaceVerifyTokenCreateResponseError = (
   | accountsGcpMarketplaceVerifyTokenCreateResponse500
   | accountsGcpMarketplaceVerifyTokenCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsGcpMarketplaceVerifyTokenCreateResponse =
@@ -3707,7 +3780,7 @@ export type accountsGetUserProfileDetailsListResponseDefault = {
 
 export type accountsGetUserProfileDetailsListResponseSuccess =
   accountsGetUserProfileDetailsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsGetUserProfileDetailsListResponseError = (
   | accountsGetUserProfileDetailsListResponse400
@@ -3717,7 +3790,7 @@ export type accountsGetUserProfileDetailsListResponseError = (
   | accountsGetUserProfileDetailsListResponse500
   | accountsGetUserProfileDetailsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsGetUserProfileDetailsListResponse =
@@ -3777,7 +3850,7 @@ export type accountsKeyDeleteSecretKeyResponseDefault = {
 
 export type accountsKeyDeleteSecretKeyResponseSuccess =
   accountsKeyDeleteSecretKeyResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsKeyDeleteSecretKeyResponseError = (
   | accountsKeyDeleteSecretKeyResponse400
@@ -3787,7 +3860,7 @@ export type accountsKeyDeleteSecretKeyResponseError = (
   | accountsKeyDeleteSecretKeyResponse500
   | accountsKeyDeleteSecretKeyResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsKeyDeleteSecretKeyResponse =
@@ -3850,7 +3923,7 @@ export type accountsKeyDisableKeyResponseDefault = {
 
 export type accountsKeyDisableKeyResponseSuccess =
   accountsKeyDisableKeyResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsKeyDisableKeyResponseError = (
   | accountsKeyDisableKeyResponse400
@@ -3860,7 +3933,7 @@ export type accountsKeyDisableKeyResponseError = (
   | accountsKeyDisableKeyResponse500
   | accountsKeyDisableKeyResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsKeyDisableKeyResponse =
@@ -3923,7 +3996,7 @@ export type accountsKeyEnableKeyResponseDefault = {
 
 export type accountsKeyEnableKeyResponseSuccess =
   accountsKeyEnableKeyResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsKeyEnableKeyResponseError = (
   | accountsKeyEnableKeyResponse400
@@ -3933,7 +4006,7 @@ export type accountsKeyEnableKeyResponseError = (
   | accountsKeyEnableKeyResponse500
   | accountsKeyEnableKeyResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsKeyEnableKeyResponse =
@@ -3996,7 +4069,7 @@ export type accountsKeyGenerateSecretKeyResponseDefault = {
 
 export type accountsKeyGenerateSecretKeyResponseSuccess =
   accountsKeyGenerateSecretKeyResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsKeyGenerateSecretKeyResponseError = (
   | accountsKeyGenerateSecretKeyResponse400
@@ -4006,7 +4079,7 @@ export type accountsKeyGenerateSecretKeyResponseError = (
   | accountsKeyGenerateSecretKeyResponse500
   | accountsKeyGenerateSecretKeyResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsKeyGenerateSecretKeyResponse =
@@ -4069,7 +4142,7 @@ export type accountsKeyGetSecretKeysResponseDefault = {
 
 export type accountsKeyGetSecretKeysResponseSuccess =
   accountsKeyGetSecretKeysResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsKeyGetSecretKeysResponseError = (
   | accountsKeyGetSecretKeysResponse400
@@ -4079,7 +4152,7 @@ export type accountsKeyGetSecretKeysResponseError = (
   | accountsKeyGetSecretKeysResponse500
   | accountsKeyGetSecretKeysResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsKeyGetSecretKeysResponse =
@@ -4138,7 +4211,7 @@ export type accountsKeysListResponseDefault = {
 };
 
 export type accountsKeysListResponseSuccess = accountsKeysListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type accountsKeysListResponseError = (
   | accountsKeysListResponse400
@@ -4148,7 +4221,7 @@ export type accountsKeysListResponseError = (
   | accountsKeysListResponse500
   | accountsKeysListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsKeysListResponse =
@@ -4205,7 +4278,7 @@ export type accountsLogoutCreateResponseDefault = {
 
 export type accountsLogoutCreateResponseSuccess =
   accountsLogoutCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsLogoutCreateResponseError = (
   | accountsLogoutCreateResponse400
@@ -4215,7 +4288,7 @@ export type accountsLogoutCreateResponseError = (
   | accountsLogoutCreateResponse500
   | accountsLogoutCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsLogoutCreateResponse =
@@ -4278,7 +4351,7 @@ export type accountsMeTimezoneCreateResponseDefault = {
 
 export type accountsMeTimezoneCreateResponseSuccess =
   accountsMeTimezoneCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsMeTimezoneCreateResponseError = (
   | accountsMeTimezoneCreateResponse400
@@ -4288,7 +4361,7 @@ export type accountsMeTimezoneCreateResponseError = (
   | accountsMeTimezoneCreateResponse500
   | accountsMeTimezoneCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsMeTimezoneCreateResponse =
@@ -4354,7 +4427,7 @@ export type accountsNotificationsSnoozeListResponseDefault = {
 
 export type accountsNotificationsSnoozeListResponseSuccess =
   accountsNotificationsSnoozeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsNotificationsSnoozeListResponseError = (
   | accountsNotificationsSnoozeListResponse400
@@ -4364,7 +4437,7 @@ export type accountsNotificationsSnoozeListResponseError = (
   | accountsNotificationsSnoozeListResponse500
   | accountsNotificationsSnoozeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsNotificationsSnoozeListResponse =
@@ -4427,7 +4500,7 @@ export type accountsNotificationsUnsubscribeListResponseDefault = {
 
 export type accountsNotificationsUnsubscribeListResponseSuccess =
   accountsNotificationsUnsubscribeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsNotificationsUnsubscribeListResponseError = (
   | accountsNotificationsUnsubscribeListResponse400
@@ -4437,7 +4510,7 @@ export type accountsNotificationsUnsubscribeListResponseError = (
   | accountsNotificationsUnsubscribeListResponse500
   | accountsNotificationsUnsubscribeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsNotificationsUnsubscribeListResponse =
@@ -4500,7 +4573,7 @@ export type accountsOnboardingListResponseDefault = {
 
 export type accountsOnboardingListResponseSuccess =
   accountsOnboardingListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOnboardingListResponseError = (
   | accountsOnboardingListResponse400
@@ -4510,7 +4583,7 @@ export type accountsOnboardingListResponseError = (
   | accountsOnboardingListResponse500
   | accountsOnboardingListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOnboardingListResponse =
@@ -4573,7 +4646,7 @@ export type accountsOnboardingCreateResponseDefault = {
 
 export type accountsOnboardingCreateResponseSuccess =
   accountsOnboardingCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOnboardingCreateResponseError = (
   | accountsOnboardingCreateResponse400
@@ -4583,7 +4656,7 @@ export type accountsOnboardingCreateResponseError = (
   | accountsOnboardingCreateResponse500
   | accountsOnboardingCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOnboardingCreateResponse =
@@ -4649,7 +4722,7 @@ export type accountsOrganization2faPolicyListResponseDefault = {
 
 export type accountsOrganization2faPolicyListResponseSuccess =
   accountsOrganization2faPolicyListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganization2faPolicyListResponseError = (
   | accountsOrganization2faPolicyListResponse400
@@ -4659,7 +4732,7 @@ export type accountsOrganization2faPolicyListResponseError = (
   | accountsOrganization2faPolicyListResponse500
   | accountsOrganization2faPolicyListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganization2faPolicyListResponse =
@@ -4725,7 +4798,7 @@ export type accountsOrganization2faPolicyUpdateResponseDefault = {
 
 export type accountsOrganization2faPolicyUpdateResponseSuccess =
   accountsOrganization2faPolicyUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganization2faPolicyUpdateResponseError = (
   | accountsOrganization2faPolicyUpdateResponse400
@@ -4735,7 +4808,7 @@ export type accountsOrganization2faPolicyUpdateResponseError = (
   | accountsOrganization2faPolicyUpdateResponse500
   | accountsOrganization2faPolicyUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganization2faPolicyUpdateResponse =
@@ -4804,7 +4877,7 @@ export type accountsOrganizationInviteCreateResponseDefault = {
 
 export type accountsOrganizationInviteCreateResponseSuccess =
   accountsOrganizationInviteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationInviteCreateResponseError = (
   | accountsOrganizationInviteCreateResponse400
@@ -4814,7 +4887,7 @@ export type accountsOrganizationInviteCreateResponseError = (
   | accountsOrganizationInviteCreateResponse500
   | accountsOrganizationInviteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationInviteCreateResponse =
@@ -4882,7 +4955,7 @@ export type accountsOrganizationInviteCancelDeleteResponseDefault = {
 
 export type accountsOrganizationInviteCancelDeleteResponseSuccess =
   accountsOrganizationInviteCancelDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationInviteCancelDeleteResponseError = (
   | accountsOrganizationInviteCancelDeleteResponse400
@@ -4892,7 +4965,7 @@ export type accountsOrganizationInviteCancelDeleteResponseError = (
   | accountsOrganizationInviteCancelDeleteResponse500
   | accountsOrganizationInviteCancelDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationInviteCancelDeleteResponse =
@@ -4959,7 +5032,7 @@ export type accountsOrganizationInviteResendCreateResponseDefault = {
 
 export type accountsOrganizationInviteResendCreateResponseSuccess =
   accountsOrganizationInviteResendCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationInviteResendCreateResponseError = (
   | accountsOrganizationInviteResendCreateResponse400
@@ -4969,7 +5042,7 @@ export type accountsOrganizationInviteResendCreateResponseError = (
   | accountsOrganizationInviteResendCreateResponse500
   | accountsOrganizationInviteResendCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationInviteResendCreateResponse =
@@ -5036,7 +5109,7 @@ export type accountsOrganizationMembersListResponseDefault = {
 
 export type accountsOrganizationMembersListResponseSuccess =
   accountsOrganizationMembersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationMembersListResponseError = (
   | accountsOrganizationMembersListResponse400
@@ -5046,7 +5119,7 @@ export type accountsOrganizationMembersListResponseError = (
   | accountsOrganizationMembersListResponse500
   | accountsOrganizationMembersListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationMembersListResponse =
@@ -5130,7 +5203,7 @@ export type accountsOrganizationMembersReactivateCreateResponseDefault = {
 
 export type accountsOrganizationMembersReactivateCreateResponseSuccess =
   accountsOrganizationMembersReactivateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationMembersReactivateCreateResponseError = (
   | accountsOrganizationMembersReactivateCreateResponse400
@@ -5140,7 +5213,7 @@ export type accountsOrganizationMembersReactivateCreateResponseError = (
   | accountsOrganizationMembersReactivateCreateResponse500
   | accountsOrganizationMembersReactivateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationMembersReactivateCreateResponse =
@@ -5209,7 +5282,7 @@ export type accountsOrganizationMembersRemoveDeleteResponseDefault = {
 
 export type accountsOrganizationMembersRemoveDeleteResponseSuccess =
   accountsOrganizationMembersRemoveDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationMembersRemoveDeleteResponseError = (
   | accountsOrganizationMembersRemoveDeleteResponse400
@@ -5219,7 +5292,7 @@ export type accountsOrganizationMembersRemoveDeleteResponseError = (
   | accountsOrganizationMembersRemoveDeleteResponse500
   | accountsOrganizationMembersRemoveDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationMembersRemoveDeleteResponse =
@@ -5287,7 +5360,7 @@ export type accountsOrganizationMembersRoleCreateResponseDefault = {
 
 export type accountsOrganizationMembersRoleCreateResponseSuccess =
   accountsOrganizationMembersRoleCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationMembersRoleCreateResponseError = (
   | accountsOrganizationMembersRoleCreateResponse400
@@ -5297,7 +5370,7 @@ export type accountsOrganizationMembersRoleCreateResponseError = (
   | accountsOrganizationMembersRoleCreateResponse500
   | accountsOrganizationMembersRoleCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationMembersRoleCreateResponse =
@@ -5364,7 +5437,7 @@ export type accountsOrganizationsListResponseDefault = {
 
 export type accountsOrganizationsListResponseSuccess =
   accountsOrganizationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationsListResponseError = (
   | accountsOrganizationsListResponse400
@@ -5374,7 +5447,7 @@ export type accountsOrganizationsListResponseError = (
   | accountsOrganizationsListResponse500
   | accountsOrganizationsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationsListResponse =
@@ -5437,7 +5510,7 @@ export type accountsOrganizationsCreateResponseDefault = {
 
 export type accountsOrganizationsCreateResponseSuccess =
   accountsOrganizationsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationsCreateResponseError = (
   | accountsOrganizationsCreateResponse400
@@ -5447,7 +5520,7 @@ export type accountsOrganizationsCreateResponseError = (
   | accountsOrganizationsCreateResponse500
   | accountsOrganizationsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationsCreateResponse =
@@ -5513,7 +5586,7 @@ export type accountsOrganizationsCreateCreateResponseDefault = {
 
 export type accountsOrganizationsCreateCreateResponseSuccess =
   accountsOrganizationsCreateCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationsCreateCreateResponseError = (
   | accountsOrganizationsCreateCreateResponse400
@@ -5523,7 +5596,7 @@ export type accountsOrganizationsCreateCreateResponseError = (
   | accountsOrganizationsCreateCreateResponse500
   | accountsOrganizationsCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationsCreateCreateResponse =
@@ -5591,7 +5664,7 @@ export type accountsOrganizationsCurrentListResponseDefault = {
 
 export type accountsOrganizationsCurrentListResponseSuccess =
   accountsOrganizationsCurrentListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationsCurrentListResponseError = (
   | accountsOrganizationsCurrentListResponse400
@@ -5601,7 +5674,7 @@ export type accountsOrganizationsCurrentListResponseError = (
   | accountsOrganizationsCurrentListResponse500
   | accountsOrganizationsCurrentListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationsCurrentListResponse =
@@ -5664,7 +5737,7 @@ export type accountsOrganizationsNewCreateResponseDefault = {
 
 export type accountsOrganizationsNewCreateResponseSuccess =
   accountsOrganizationsNewCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationsNewCreateResponseError = (
   | accountsOrganizationsNewCreateResponse400
@@ -5674,7 +5747,7 @@ export type accountsOrganizationsNewCreateResponseError = (
   | accountsOrganizationsNewCreateResponse500
   | accountsOrganizationsNewCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationsNewCreateResponse =
@@ -5745,7 +5818,7 @@ export type accountsOrganizationsSwitchCreateResponseDefault = {
 
 export type accountsOrganizationsSwitchCreateResponseSuccess =
   accountsOrganizationsSwitchCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationsSwitchCreateResponseError = (
   | accountsOrganizationsSwitchCreateResponse400
@@ -5755,7 +5828,7 @@ export type accountsOrganizationsSwitchCreateResponseError = (
   | accountsOrganizationsSwitchCreateResponse500
   | accountsOrganizationsSwitchCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationsSwitchCreateResponse =
@@ -5823,7 +5896,7 @@ export type accountsOrganizationsUpdatePartialUpdateResponseDefault = {
 
 export type accountsOrganizationsUpdatePartialUpdateResponseSuccess =
   accountsOrganizationsUpdatePartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsOrganizationsUpdatePartialUpdateResponseError = (
   | accountsOrganizationsUpdatePartialUpdateResponse400
@@ -5833,7 +5906,7 @@ export type accountsOrganizationsUpdatePartialUpdateResponseError = (
   | accountsOrganizationsUpdatePartialUpdateResponse500
   | accountsOrganizationsUpdatePartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsOrganizationsUpdatePartialUpdateResponse =
@@ -5901,7 +5974,7 @@ export type accountsPasskeyAuthenticateOptionsCreateResponseDefault = {
 
 export type accountsPasskeyAuthenticateOptionsCreateResponseSuccess =
   accountsPasskeyAuthenticateOptionsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasskeyAuthenticateOptionsCreateResponseError = (
   | accountsPasskeyAuthenticateOptionsCreateResponse400
@@ -5911,7 +5984,7 @@ export type accountsPasskeyAuthenticateOptionsCreateResponseError = (
   | accountsPasskeyAuthenticateOptionsCreateResponse500
   | accountsPasskeyAuthenticateOptionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasskeyAuthenticateOptionsCreateResponse =
@@ -5977,7 +6050,7 @@ export type accountsPasskeyAuthenticateVerifyCreateResponseDefault = {
 
 export type accountsPasskeyAuthenticateVerifyCreateResponseSuccess =
   accountsPasskeyAuthenticateVerifyCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasskeyAuthenticateVerifyCreateResponseError = (
   | accountsPasskeyAuthenticateVerifyCreateResponse400
@@ -5987,7 +6060,7 @@ export type accountsPasskeyAuthenticateVerifyCreateResponseError = (
   | accountsPasskeyAuthenticateVerifyCreateResponse500
   | accountsPasskeyAuthenticateVerifyCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasskeyAuthenticateVerifyCreateResponse =
@@ -6053,7 +6126,7 @@ export type accountsPasskeyRegisterOptionsCreateResponseDefault = {
 
 export type accountsPasskeyRegisterOptionsCreateResponseSuccess =
   accountsPasskeyRegisterOptionsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasskeyRegisterOptionsCreateResponseError = (
   | accountsPasskeyRegisterOptionsCreateResponse400
@@ -6063,7 +6136,7 @@ export type accountsPasskeyRegisterOptionsCreateResponseError = (
   | accountsPasskeyRegisterOptionsCreateResponse500
   | accountsPasskeyRegisterOptionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasskeyRegisterOptionsCreateResponse =
@@ -6129,7 +6202,7 @@ export type accountsPasskeyRegisterVerifyCreateResponseDefault = {
 
 export type accountsPasskeyRegisterVerifyCreateResponseSuccess =
   accountsPasskeyRegisterVerifyCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasskeyRegisterVerifyCreateResponseError = (
   | accountsPasskeyRegisterVerifyCreateResponse400
@@ -6139,7 +6212,7 @@ export type accountsPasskeyRegisterVerifyCreateResponseError = (
   | accountsPasskeyRegisterVerifyCreateResponse500
   | accountsPasskeyRegisterVerifyCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasskeyRegisterVerifyCreateResponse =
@@ -6205,7 +6278,7 @@ export type accountsPasskeysListResponseDefault = {
 
 export type accountsPasskeysListResponseSuccess =
   accountsPasskeysListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasskeysListResponseError = (
   | accountsPasskeysListResponse400
@@ -6215,7 +6288,7 @@ export type accountsPasskeysListResponseError = (
   | accountsPasskeysListResponse500
   | accountsPasskeysListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasskeysListResponse =
@@ -6278,7 +6351,7 @@ export type accountsPasskeysPartialUpdateResponseDefault = {
 
 export type accountsPasskeysPartialUpdateResponseSuccess =
   accountsPasskeysPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasskeysPartialUpdateResponseError = (
   | accountsPasskeysPartialUpdateResponse400
@@ -6288,7 +6361,7 @@ export type accountsPasskeysPartialUpdateResponseError = (
   | accountsPasskeysPartialUpdateResponse500
   | accountsPasskeysPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasskeysPartialUpdateResponse =
@@ -6355,7 +6428,7 @@ export type accountsPasskeysDeleteResponseDefault = {
 
 export type accountsPasskeysDeleteResponseSuccess =
   accountsPasskeysDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasskeysDeleteResponseError = (
   | accountsPasskeysDeleteResponse400
@@ -6365,7 +6438,7 @@ export type accountsPasskeysDeleteResponseError = (
   | accountsPasskeysDeleteResponse500
   | accountsPasskeysDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasskeysDeleteResponse =
@@ -6429,7 +6502,7 @@ export type accountsPasswordResetConfirmCreateResponseDefault = {
 
 export type accountsPasswordResetConfirmCreateResponseSuccess =
   accountsPasswordResetConfirmCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasswordResetConfirmCreateResponseError = (
   | accountsPasswordResetConfirmCreateResponse400
@@ -6439,7 +6512,7 @@ export type accountsPasswordResetConfirmCreateResponseError = (
   | accountsPasswordResetConfirmCreateResponse500
   | accountsPasswordResetConfirmCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasswordResetConfirmCreateResponse =
@@ -6507,7 +6580,7 @@ export type accountsPasswordResetInitiateCreateResponseDefault = {
 
 export type accountsPasswordResetInitiateCreateResponseSuccess =
   accountsPasswordResetInitiateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsPasswordResetInitiateCreateResponseError = (
   | accountsPasswordResetInitiateCreateResponse400
@@ -6517,7 +6590,7 @@ export type accountsPasswordResetInitiateCreateResponseError = (
   | accountsPasswordResetInitiateCreateResponse500
   | accountsPasswordResetInitiateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsPasswordResetInitiateCreateResponse =
@@ -6580,7 +6653,7 @@ export type accountsRedisKeyCreateResponseDefault = {
 
 export type accountsRedisKeyCreateResponseSuccess =
   accountsRedisKeyCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsRedisKeyCreateResponseError = (
   | accountsRedisKeyCreateResponse400
@@ -6590,7 +6663,7 @@ export type accountsRedisKeyCreateResponseError = (
   | accountsRedisKeyCreateResponse500
   | accountsRedisKeyCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsRedisKeyCreateResponse =
@@ -6653,7 +6726,7 @@ export type accountsRedisKeyDeleteResponseDefault = {
 
 export type accountsRedisKeyDeleteResponseSuccess =
   accountsRedisKeyDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsRedisKeyDeleteResponseError = (
   | accountsRedisKeyDeleteResponse400
@@ -6663,7 +6736,7 @@ export type accountsRedisKeyDeleteResponseError = (
   | accountsRedisKeyDeleteResponse500
   | accountsRedisKeyDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsRedisKeyDeleteResponse =
@@ -6726,7 +6799,7 @@ export type accountsResendInvitationEmailsCreateResponseDefault = {
 
 export type accountsResendInvitationEmailsCreateResponseSuccess =
   accountsResendInvitationEmailsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsResendInvitationEmailsCreateResponseError = (
   | accountsResendInvitationEmailsCreateResponse400
@@ -6736,7 +6809,7 @@ export type accountsResendInvitationEmailsCreateResponseError = (
   | accountsResendInvitationEmailsCreateResponse500
   | accountsResendInvitationEmailsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsResendInvitationEmailsCreateResponse =
@@ -6799,7 +6872,7 @@ export type accountsSignupCreateResponseDefault = {
 
 export type accountsSignupCreateResponseSuccess =
   accountsSignupCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsSignupCreateResponseError = (
   | accountsSignupCreateResponse400
@@ -6809,7 +6882,7 @@ export type accountsSignupCreateResponseError = (
   | accountsSignupCreateResponse500
   | accountsSignupCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsSignupCreateResponse =
@@ -6872,7 +6945,7 @@ export type accountsTeamUsersListResponseDefault = {
 
 export type accountsTeamUsersListResponseSuccess =
   accountsTeamUsersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsTeamUsersListResponseError = (
   | accountsTeamUsersListResponse400
@@ -6882,7 +6955,7 @@ export type accountsTeamUsersListResponseError = (
   | accountsTeamUsersListResponse500
   | accountsTeamUsersListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsTeamUsersListResponse =
@@ -6942,7 +7015,7 @@ export type accountsTeamUsersCreateResponseDefault = {
 
 export type accountsTeamUsersCreateResponseSuccess =
   accountsTeamUsersCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsTeamUsersCreateResponseError = (
   | accountsTeamUsersCreateResponse400
@@ -6952,7 +7025,7 @@ export type accountsTeamUsersCreateResponseError = (
   | accountsTeamUsersCreateResponse500
   | accountsTeamUsersCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsTeamUsersCreateResponse =
@@ -7016,7 +7089,7 @@ export type accountsTeamUsersDeleteResponseDefault = {
 
 export type accountsTeamUsersDeleteResponseSuccess =
   accountsTeamUsersDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsTeamUsersDeleteResponseError = (
   | accountsTeamUsersDeleteResponse400
@@ -7026,7 +7099,7 @@ export type accountsTeamUsersDeleteResponseError = (
   | accountsTeamUsersDeleteResponse500
   | accountsTeamUsersDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsTeamUsersDeleteResponse =
@@ -7087,7 +7160,7 @@ export type accountsTeamUsersReadResponseDefault = {
 
 export type accountsTeamUsersReadResponseSuccess =
   accountsTeamUsersReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsTeamUsersReadResponseError = (
   | accountsTeamUsersReadResponse400
@@ -7097,7 +7170,7 @@ export type accountsTeamUsersReadResponseError = (
   | accountsTeamUsersReadResponse500
   | accountsTeamUsersReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsTeamUsersReadResponse =
@@ -7163,7 +7236,7 @@ export type accountsTokenCreateResponseDefault = {
 
 export type accountsTokenCreateResponseSuccess =
   accountsTokenCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsTokenCreateResponseError = (
   | accountsTokenCreateResponse400
@@ -7174,7 +7247,7 @@ export type accountsTokenCreateResponseError = (
   | accountsTokenCreateResponse503
   | accountsTokenCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsTokenCreateResponse =
@@ -7234,7 +7307,7 @@ export type accountsTokenRefreshCreateResponseDefault = {
 
 export type accountsTokenRefreshCreateResponseSuccess =
   accountsTokenRefreshCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsTokenRefreshCreateResponseError = (
   | accountsTokenRefreshCreateResponse400
@@ -7244,7 +7317,7 @@ export type accountsTokenRefreshCreateResponseError = (
   | accountsTokenRefreshCreateResponse500
   | accountsTokenRefreshCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsTokenRefreshCreateResponse =
@@ -7307,7 +7380,7 @@ export type accountsUpdateUserFullNameCreateResponseDefault = {
 
 export type accountsUpdateUserFullNameCreateResponseSuccess =
   accountsUpdateUserFullNameCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUpdateUserFullNameCreateResponseError = (
   | accountsUpdateUserFullNameCreateResponse400
@@ -7317,7 +7390,7 @@ export type accountsUpdateUserFullNameCreateResponseError = (
   | accountsUpdateUserFullNameCreateResponse500
   | accountsUpdateUserFullNameCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUpdateUserFullNameCreateResponse =
@@ -7380,7 +7453,7 @@ export type accountsUpdateUserCreateResponseDefault = {
 
 export type accountsUpdateUserCreateResponseSuccess =
   accountsUpdateUserCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUpdateUserCreateResponseError = (
   | accountsUpdateUserCreateResponse400
@@ -7390,7 +7463,7 @@ export type accountsUpdateUserCreateResponseError = (
   | accountsUpdateUserCreateResponse500
   | accountsUpdateUserCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUpdateUserCreateResponse =
@@ -7453,7 +7526,7 @@ export type accountsUserInfoListResponseDefault = {
 
 export type accountsUserInfoListResponseSuccess =
   accountsUserInfoListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUserInfoListResponseError = (
   | accountsUserInfoListResponse400
@@ -7463,7 +7536,7 @@ export type accountsUserInfoListResponseError = (
   | accountsUserInfoListResponse500
   | accountsUserInfoListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUserInfoListResponse =
@@ -7523,7 +7596,7 @@ export type accountsUserDeactivateCreateResponseDefault = {
 
 export type accountsUserDeactivateCreateResponseSuccess =
   accountsUserDeactivateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUserDeactivateCreateResponseError = (
   | accountsUserDeactivateCreateResponse400
@@ -7533,7 +7606,7 @@ export type accountsUserDeactivateCreateResponseError = (
   | accountsUserDeactivateCreateResponse500
   | accountsUserDeactivateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUserDeactivateCreateResponse =
@@ -7599,7 +7672,7 @@ export type accountsUserDeleteCreateResponseDefault = {
 
 export type accountsUserDeleteCreateResponseSuccess =
   accountsUserDeleteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUserDeleteCreateResponseError = (
   | accountsUserDeleteCreateResponse400
@@ -7609,7 +7682,7 @@ export type accountsUserDeleteCreateResponseError = (
   | accountsUserDeleteCreateResponse500
   | accountsUserDeleteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUserDeleteCreateResponse =
@@ -7675,7 +7748,7 @@ export type accountsUserListListResponseDefault = {
 
 export type accountsUserListListResponseSuccess =
   accountsUserListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUserListListResponseError = (
   | accountsUserListListResponse400
@@ -7685,7 +7758,7 @@ export type accountsUserListListResponseError = (
   | accountsUserListListResponse500
   | accountsUserListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUserListListResponse =
@@ -7767,7 +7840,7 @@ export type accountsUserResendInviteCreateResponseDefault = {
 
 export type accountsUserResendInviteCreateResponseSuccess =
   accountsUserResendInviteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUserResendInviteCreateResponseError = (
   | accountsUserResendInviteCreateResponse400
@@ -7777,7 +7850,7 @@ export type accountsUserResendInviteCreateResponseError = (
   | accountsUserResendInviteCreateResponse500
   | accountsUserResendInviteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUserResendInviteCreateResponse =
@@ -7843,7 +7916,7 @@ export type accountsUserRoleUpdateCreateResponseDefault = {
 
 export type accountsUserRoleUpdateCreateResponseSuccess =
   accountsUserRoleUpdateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsUserRoleUpdateCreateResponseError = (
   | accountsUserRoleUpdateCreateResponse400
@@ -7853,7 +7926,7 @@ export type accountsUserRoleUpdateCreateResponseError = (
   | accountsUserRoleUpdateCreateResponse500
   | accountsUserRoleUpdateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsUserRoleUpdateCreateResponse =
@@ -7919,7 +7992,7 @@ export type accountsWorkspaceInviteCreateResponseDefault = {
 
 export type accountsWorkspaceInviteCreateResponseSuccess =
   accountsWorkspaceInviteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspaceInviteCreateResponseError = (
   | accountsWorkspaceInviteCreateResponse400
@@ -7929,7 +8002,7 @@ export type accountsWorkspaceInviteCreateResponseError = (
   | accountsWorkspaceInviteCreateResponse500
   | accountsWorkspaceInviteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspaceInviteCreateResponse =
@@ -7995,7 +8068,7 @@ export type accountsWorkspaceListListResponseDefault = {
 
 export type accountsWorkspaceListListResponseSuccess =
   accountsWorkspaceListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspaceListListResponseError = (
   | accountsWorkspaceListListResponse400
@@ -8005,7 +8078,7 @@ export type accountsWorkspaceListListResponseError = (
   | accountsWorkspaceListListResponse500
   | accountsWorkspaceListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspaceListListResponse =
@@ -8087,7 +8160,7 @@ export type accountsWorkspaceSwitchCreateResponseDefault = {
 
 export type accountsWorkspaceSwitchCreateResponseSuccess =
   accountsWorkspaceSwitchCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspaceSwitchCreateResponseError = (
   | accountsWorkspaceSwitchCreateResponse400
@@ -8097,7 +8170,7 @@ export type accountsWorkspaceSwitchCreateResponseError = (
   | accountsWorkspaceSwitchCreateResponse500
   | accountsWorkspaceSwitchCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspaceSwitchCreateResponse =
@@ -8163,7 +8236,7 @@ export type accountsWorkspaceMembersListResponseDefault = {
 
 export type accountsWorkspaceMembersListResponseSuccess =
   accountsWorkspaceMembersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspaceMembersListResponseError = (
   | accountsWorkspaceMembersListResponse400
@@ -8173,7 +8246,7 @@ export type accountsWorkspaceMembersListResponseError = (
   | accountsWorkspaceMembersListResponse500
   | accountsWorkspaceMembersListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspaceMembersListResponse =
@@ -8259,7 +8332,7 @@ export type accountsWorkspaceMembersRemoveDeleteResponseDefault = {
 
 export type accountsWorkspaceMembersRemoveDeleteResponseSuccess =
   accountsWorkspaceMembersRemoveDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspaceMembersRemoveDeleteResponseError = (
   | accountsWorkspaceMembersRemoveDeleteResponse400
@@ -8269,7 +8342,7 @@ export type accountsWorkspaceMembersRemoveDeleteResponseError = (
   | accountsWorkspaceMembersRemoveDeleteResponse500
   | accountsWorkspaceMembersRemoveDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspaceMembersRemoveDeleteResponse =
@@ -8339,7 +8412,7 @@ export type accountsWorkspaceMembersRoleCreateResponseDefault = {
 
 export type accountsWorkspaceMembersRoleCreateResponseSuccess =
   accountsWorkspaceMembersRoleCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspaceMembersRoleCreateResponseError = (
   | accountsWorkspaceMembersRoleCreateResponse400
@@ -8349,7 +8422,7 @@ export type accountsWorkspaceMembersRoleCreateResponseError = (
   | accountsWorkspaceMembersRoleCreateResponse500
   | accountsWorkspaceMembersRoleCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspaceMembersRoleCreateResponse =
@@ -8419,7 +8492,7 @@ export type accountsWorkspacesListResponseDefault = {
 
 export type accountsWorkspacesListResponseSuccess =
   accountsWorkspacesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesListResponseError = (
   | accountsWorkspacesListResponse400
@@ -8429,7 +8502,7 @@ export type accountsWorkspacesListResponseError = (
   | accountsWorkspacesListResponse500
   | accountsWorkspacesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesListResponse =
@@ -8492,7 +8565,7 @@ export type accountsWorkspacesCreateResponseDefault = {
 
 export type accountsWorkspacesCreateResponseSuccess =
   accountsWorkspacesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesCreateResponseError = (
   | accountsWorkspacesCreateResponse400
@@ -8502,7 +8575,7 @@ export type accountsWorkspacesCreateResponseError = (
   | accountsWorkspacesCreateResponse500
   | accountsWorkspacesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesCreateResponse =
@@ -8569,7 +8642,7 @@ export type accountsWorkspacesUpdateResponseDefault = {
 
 export type accountsWorkspacesUpdateResponseSuccess =
   accountsWorkspacesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesUpdateResponseError = (
   | accountsWorkspacesUpdateResponse400
@@ -8579,7 +8652,7 @@ export type accountsWorkspacesUpdateResponseError = (
   | accountsWorkspacesUpdateResponse500
   | accountsWorkspacesUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesUpdateResponse =
@@ -8646,7 +8719,7 @@ export type accountsWorkspacesDeleteResponseDefault = {
 
 export type accountsWorkspacesDeleteResponseSuccess =
   accountsWorkspacesDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesDeleteResponseError = (
   | accountsWorkspacesDeleteResponse400
@@ -8656,7 +8729,7 @@ export type accountsWorkspacesDeleteResponseError = (
   | accountsWorkspacesDeleteResponse500
   | accountsWorkspacesDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesDeleteResponse =
@@ -8720,7 +8793,7 @@ export type accountsWorkspacesReadResponseDefault = {
 
 export type accountsWorkspacesReadResponseSuccess =
   accountsWorkspacesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesReadResponseError = (
   | accountsWorkspacesReadResponse400
@@ -8730,7 +8803,7 @@ export type accountsWorkspacesReadResponseError = (
   | accountsWorkspacesReadResponse500
   | accountsWorkspacesReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesReadResponse =
@@ -8794,7 +8867,7 @@ export type accountsWorkspacesMembersListResponseDefault = {
 
 export type accountsWorkspacesMembersListResponseSuccess =
   accountsWorkspacesMembersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesMembersListResponseError = (
   | accountsWorkspacesMembersListResponse400
@@ -8804,7 +8877,7 @@ export type accountsWorkspacesMembersListResponseError = (
   | accountsWorkspacesMembersListResponse500
   | accountsWorkspacesMembersListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesMembersListResponse =
@@ -8868,7 +8941,7 @@ export type accountsWorkspacesMembersCreateResponseDefault = {
 
 export type accountsWorkspacesMembersCreateResponseSuccess =
   accountsWorkspacesMembersCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesMembersCreateResponseError = (
   | accountsWorkspacesMembersCreateResponse400
@@ -8878,7 +8951,7 @@ export type accountsWorkspacesMembersCreateResponseError = (
   | accountsWorkspacesMembersCreateResponse500
   | accountsWorkspacesMembersCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesMembersCreateResponse =
@@ -8949,7 +9022,7 @@ export type accountsWorkspacesMembersDeleteResponseDefault = {
 
 export type accountsWorkspacesMembersDeleteResponseSuccess =
   accountsWorkspacesMembersDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesMembersDeleteResponseError = (
   | accountsWorkspacesMembersDeleteResponse400
@@ -8959,7 +9032,7 @@ export type accountsWorkspacesMembersDeleteResponseError = (
   | accountsWorkspacesMembersDeleteResponse500
   | accountsWorkspacesMembersDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesMembersDeleteResponse =
@@ -9027,7 +9100,7 @@ export type accountsWorkspacesMembersReadResponseDefault = {
 
 export type accountsWorkspacesMembersReadResponseSuccess =
   accountsWorkspacesMembersReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type accountsWorkspacesMembersReadResponseError = (
   | accountsWorkspacesMembersReadResponse400
@@ -9037,7 +9110,7 @@ export type accountsWorkspacesMembersReadResponseError = (
   | accountsWorkspacesMembersReadResponse500
   | accountsWorkspacesMembersReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type accountsWorkspacesMembersReadResponse =
@@ -9090,14 +9163,14 @@ export type agentPlaygroundExecutionsNodeDetailResponseDefault = {
 
 export type agentPlaygroundExecutionsNodeDetailResponseSuccess =
   agentPlaygroundExecutionsNodeDetailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundExecutionsNodeDetailResponseError = (
   | agentPlaygroundExecutionsNodeDetailResponse404
   | agentPlaygroundExecutionsNodeDetailResponse500
   | agentPlaygroundExecutionsNodeDetailResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundExecutionsNodeDetailResponse =
@@ -9156,7 +9229,7 @@ export type agentPlaygroundGraphsListResponseDefault = {
 
 export type agentPlaygroundGraphsListResponseSuccess =
   agentPlaygroundGraphsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsListResponseError = (
   | agentPlaygroundGraphsListResponse400
@@ -9164,7 +9237,7 @@ export type agentPlaygroundGraphsListResponseError = (
   | agentPlaygroundGraphsListResponse500
   | agentPlaygroundGraphsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsListResponse =
@@ -9236,7 +9309,7 @@ export type agentPlaygroundGraphsCreateResponseDefault = {
 
 export type agentPlaygroundGraphsCreateResponseSuccess =
   agentPlaygroundGraphsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsCreateResponseError = (
   | agentPlaygroundGraphsCreateResponse400
@@ -9244,7 +9317,7 @@ export type agentPlaygroundGraphsCreateResponseError = (
   | agentPlaygroundGraphsCreateResponse500
   | agentPlaygroundGraphsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsCreateResponse =
@@ -9301,7 +9374,7 @@ export type agentPlaygroundGraphsBulkDeleteResponseDefault = {
 
 export type agentPlaygroundGraphsBulkDeleteResponseSuccess =
   agentPlaygroundGraphsBulkDeleteResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsBulkDeleteResponseError = (
   | agentPlaygroundGraphsBulkDeleteResponse400
@@ -9309,7 +9382,7 @@ export type agentPlaygroundGraphsBulkDeleteResponseError = (
   | agentPlaygroundGraphsBulkDeleteResponse500
   | agentPlaygroundGraphsBulkDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsBulkDeleteResponse =
@@ -9368,7 +9441,7 @@ export type agentPlaygroundGraphsFromTraceCreateResponseDefault = {
 
 export type agentPlaygroundGraphsFromTraceCreateResponseSuccess =
   agentPlaygroundGraphsFromTraceCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsFromTraceCreateResponseError = (
   | agentPlaygroundGraphsFromTraceCreateResponse400
@@ -9376,7 +9449,7 @@ export type agentPlaygroundGraphsFromTraceCreateResponseError = (
   | agentPlaygroundGraphsFromTraceCreateResponse500
   | agentPlaygroundGraphsFromTraceCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsFromTraceCreateResponse =
@@ -9433,7 +9506,7 @@ export type agentPlaygroundGraphsDatasetReadResponseDefault = {
 
 export type agentPlaygroundGraphsDatasetReadResponseSuccess =
   agentPlaygroundGraphsDatasetReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsDatasetReadResponseError = (
   | agentPlaygroundGraphsDatasetReadResponse400
@@ -9441,7 +9514,7 @@ export type agentPlaygroundGraphsDatasetReadResponseError = (
   | agentPlaygroundGraphsDatasetReadResponse500
   | agentPlaygroundGraphsDatasetReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsDatasetReadResponse =
@@ -9499,7 +9572,7 @@ export type agentPlaygroundGraphsDatasetUpdateCellResponseDefault = {
 
 export type agentPlaygroundGraphsDatasetUpdateCellResponseSuccess =
   agentPlaygroundGraphsDatasetUpdateCellResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsDatasetUpdateCellResponseError = (
   | agentPlaygroundGraphsDatasetUpdateCellResponse400
@@ -9507,7 +9580,7 @@ export type agentPlaygroundGraphsDatasetUpdateCellResponseError = (
   | agentPlaygroundGraphsDatasetUpdateCellResponse500
   | agentPlaygroundGraphsDatasetUpdateCellResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsDatasetUpdateCellResponse =
@@ -9568,7 +9641,7 @@ export type agentPlaygroundGraphsDatasetExecuteResponseDefault = {
 
 export type agentPlaygroundGraphsDatasetExecuteResponseSuccess =
   agentPlaygroundGraphsDatasetExecuteResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsDatasetExecuteResponseError = (
   | agentPlaygroundGraphsDatasetExecuteResponse400
@@ -9576,7 +9649,7 @@ export type agentPlaygroundGraphsDatasetExecuteResponseError = (
   | agentPlaygroundGraphsDatasetExecuteResponse500
   | agentPlaygroundGraphsDatasetExecuteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsDatasetExecuteResponse =
@@ -9633,7 +9706,7 @@ export type agentPlaygroundGraphsDatasetCreateRowResponseDefault = {
 
 export type agentPlaygroundGraphsDatasetCreateRowResponseSuccess =
   agentPlaygroundGraphsDatasetCreateRowResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsDatasetCreateRowResponseError = (
   | agentPlaygroundGraphsDatasetCreateRowResponse400
@@ -9641,7 +9714,7 @@ export type agentPlaygroundGraphsDatasetCreateRowResponseError = (
   | agentPlaygroundGraphsDatasetCreateRowResponse500
   | agentPlaygroundGraphsDatasetCreateRowResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsDatasetCreateRowResponse =
@@ -9700,7 +9773,7 @@ export type agentPlaygroundGraphsDatasetRowsDeleteRowsResponseDefault = {
 
 export type agentPlaygroundGraphsDatasetRowsDeleteRowsResponseSuccess =
   agentPlaygroundGraphsDatasetRowsDeleteRowsResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsDatasetRowsDeleteRowsResponseError = (
   | agentPlaygroundGraphsDatasetRowsDeleteRowsResponse400
@@ -9708,7 +9781,7 @@ export type agentPlaygroundGraphsDatasetRowsDeleteRowsResponseError = (
   | agentPlaygroundGraphsDatasetRowsDeleteRowsResponse500
   | agentPlaygroundGraphsDatasetRowsDeleteRowsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsDatasetRowsDeleteRowsResponse =
@@ -9754,13 +9827,13 @@ export type agentPlaygroundGraphsExecutionsListResponseDefault = {
 
 export type agentPlaygroundGraphsExecutionsListResponseSuccess =
   agentPlaygroundGraphsExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsExecutionsListResponseError = (
   | agentPlaygroundGraphsExecutionsListResponse500
   | agentPlaygroundGraphsExecutionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsExecutionsListResponse =
@@ -9829,14 +9902,14 @@ export type agentPlaygroundGraphsExecutionsReadResponseDefault = {
 
 export type agentPlaygroundGraphsExecutionsReadResponseSuccess =
   agentPlaygroundGraphsExecutionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsExecutionsReadResponseError = (
   | agentPlaygroundGraphsExecutionsReadResponse404
   | agentPlaygroundGraphsExecutionsReadResponse500
   | agentPlaygroundGraphsExecutionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsExecutionsReadResponse =
@@ -9898,7 +9971,7 @@ export type agentPlaygroundGraphsReadResponseDefault = {
 
 export type agentPlaygroundGraphsReadResponseSuccess =
   agentPlaygroundGraphsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsReadResponseError = (
   | agentPlaygroundGraphsReadResponse400
@@ -9906,7 +9979,7 @@ export type agentPlaygroundGraphsReadResponseError = (
   | agentPlaygroundGraphsReadResponse500
   | agentPlaygroundGraphsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsReadResponse =
@@ -9961,7 +10034,7 @@ export type agentPlaygroundGraphsUpdateResponseDefault = {
 
 export type agentPlaygroundGraphsUpdateResponseSuccess =
   agentPlaygroundGraphsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsUpdateResponseError = (
   | agentPlaygroundGraphsUpdateResponse400
@@ -9969,7 +10042,7 @@ export type agentPlaygroundGraphsUpdateResponseError = (
   | agentPlaygroundGraphsUpdateResponse500
   | agentPlaygroundGraphsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsUpdateResponse =
@@ -10026,7 +10099,7 @@ export type agentPlaygroundGraphsPartialUpdateResponseDefault = {
 
 export type agentPlaygroundGraphsPartialUpdateResponseSuccess =
   agentPlaygroundGraphsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsPartialUpdateResponseError = (
   | agentPlaygroundGraphsPartialUpdateResponse400
@@ -10034,7 +10107,7 @@ export type agentPlaygroundGraphsPartialUpdateResponseError = (
   | agentPlaygroundGraphsPartialUpdateResponse500
   | agentPlaygroundGraphsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsPartialUpdateResponse =
@@ -10091,7 +10164,7 @@ export type agentPlaygroundGraphsDeleteResponseDefault = {
 
 export type agentPlaygroundGraphsDeleteResponseSuccess =
   agentPlaygroundGraphsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsDeleteResponseError = (
   | agentPlaygroundGraphsDeleteResponse400
@@ -10099,7 +10172,7 @@ export type agentPlaygroundGraphsDeleteResponseError = (
   | agentPlaygroundGraphsDeleteResponse500
   | agentPlaygroundGraphsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsDeleteResponse =
@@ -10153,7 +10226,7 @@ export type agentPlaygroundGraphsReferenceableGraphsResponseDefault = {
 
 export type agentPlaygroundGraphsReferenceableGraphsResponseSuccess =
   agentPlaygroundGraphsReferenceableGraphsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsReferenceableGraphsResponseError = (
   | agentPlaygroundGraphsReferenceableGraphsResponse400
@@ -10161,7 +10234,7 @@ export type agentPlaygroundGraphsReferenceableGraphsResponseError = (
   | agentPlaygroundGraphsReferenceableGraphsResponse500
   | agentPlaygroundGraphsReferenceableGraphsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsReferenceableGraphsResponse =
@@ -10216,7 +10289,7 @@ export type agentPlaygroundGraphsVersionsReadResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsReadResponseSuccess =
   agentPlaygroundGraphsVersionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsReadResponseError = (
   | agentPlaygroundGraphsVersionsReadResponse400
@@ -10224,7 +10297,7 @@ export type agentPlaygroundGraphsVersionsReadResponseError = (
   | agentPlaygroundGraphsVersionsReadResponse500
   | agentPlaygroundGraphsVersionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsReadResponse =
@@ -10300,7 +10373,7 @@ export type agentPlaygroundGraphsVersionsCreateResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsCreateResponseSuccess =
   agentPlaygroundGraphsVersionsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsCreateResponseError = (
   | agentPlaygroundGraphsVersionsCreateResponse400
@@ -10308,7 +10381,7 @@ export type agentPlaygroundGraphsVersionsCreateResponseError = (
   | agentPlaygroundGraphsVersionsCreateResponse500
   | agentPlaygroundGraphsVersionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsCreateResponse =
@@ -10365,7 +10438,7 @@ export type agentPlaygroundGraphsVersionsUpdateResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsUpdateResponseSuccess =
   agentPlaygroundGraphsVersionsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsUpdateResponseError = (
   | agentPlaygroundGraphsVersionsUpdateResponse400
@@ -10373,7 +10446,7 @@ export type agentPlaygroundGraphsVersionsUpdateResponseError = (
   | agentPlaygroundGraphsVersionsUpdateResponse500
   | agentPlaygroundGraphsVersionsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsUpdateResponse =
@@ -10436,7 +10509,7 @@ export type agentPlaygroundGraphsVersionsPartialUpdateResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsPartialUpdateResponseSuccess =
   agentPlaygroundGraphsVersionsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsPartialUpdateResponseError = (
   | agentPlaygroundGraphsVersionsPartialUpdateResponse400
@@ -10444,7 +10517,7 @@ export type agentPlaygroundGraphsVersionsPartialUpdateResponseError = (
   | agentPlaygroundGraphsVersionsPartialUpdateResponse500
   | agentPlaygroundGraphsVersionsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsPartialUpdateResponse =
@@ -10507,7 +10580,7 @@ export type agentPlaygroundGraphsVersionsDeleteResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsDeleteResponseSuccess =
   agentPlaygroundGraphsVersionsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsDeleteResponseError = (
   | agentPlaygroundGraphsVersionsDeleteResponse400
@@ -10515,7 +10588,7 @@ export type agentPlaygroundGraphsVersionsDeleteResponseError = (
   | agentPlaygroundGraphsVersionsDeleteResponse500
   | agentPlaygroundGraphsVersionsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsDeleteResponse =
@@ -10575,7 +10648,7 @@ export type agentPlaygroundGraphsVersionsActivateVersionResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsActivateVersionResponseSuccess =
   agentPlaygroundGraphsVersionsActivateVersionResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsActivateVersionResponseError = (
   | agentPlaygroundGraphsVersionsActivateVersionResponse400
@@ -10583,7 +10656,7 @@ export type agentPlaygroundGraphsVersionsActivateVersionResponseError = (
   | agentPlaygroundGraphsVersionsActivateVersionResponse500
   | agentPlaygroundGraphsVersionsActivateVersionResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsActivateVersionResponse =
@@ -10647,7 +10720,7 @@ export type agentPlaygroundGraphsVersionsNodeConnectionsCreateResponseDefault =
 
 export type agentPlaygroundGraphsVersionsNodeConnectionsCreateResponseSuccess =
   agentPlaygroundGraphsVersionsNodeConnectionsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsNodeConnectionsCreateResponseError = (
   | agentPlaygroundGraphsVersionsNodeConnectionsCreateResponse400
@@ -10655,7 +10728,7 @@ export type agentPlaygroundGraphsVersionsNodeConnectionsCreateResponseError = (
   | agentPlaygroundGraphsVersionsNodeConnectionsCreateResponse500
   | agentPlaygroundGraphsVersionsNodeConnectionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsNodeConnectionsCreateResponse =
@@ -10717,7 +10790,7 @@ export type agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponseDefault =
 
 export type agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponseSuccess =
   agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponseError = (
   | agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponse400
@@ -10725,7 +10798,7 @@ export type agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponseError = (
   | agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponse500
   | agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsNodeConnectionsDeleteResponse =
@@ -10789,7 +10862,7 @@ export type agentPlaygroundGraphsVersionsNodesCreateResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsNodesCreateResponseSuccess =
   agentPlaygroundGraphsVersionsNodesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsNodesCreateResponseError = (
   | agentPlaygroundGraphsVersionsNodesCreateResponse400
@@ -10797,7 +10870,7 @@ export type agentPlaygroundGraphsVersionsNodesCreateResponseError = (
   | agentPlaygroundGraphsVersionsNodesCreateResponse500
   | agentPlaygroundGraphsVersionsNodesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsNodesCreateResponse =
@@ -10858,7 +10931,7 @@ export type agentPlaygroundGraphsVersionsNodesReadResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsNodesReadResponseSuccess =
   agentPlaygroundGraphsVersionsNodesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsNodesReadResponseError = (
   | agentPlaygroundGraphsVersionsNodesReadResponse400
@@ -10866,7 +10939,7 @@ export type agentPlaygroundGraphsVersionsNodesReadResponseError = (
   | agentPlaygroundGraphsVersionsNodesReadResponse500
   | agentPlaygroundGraphsVersionsNodesReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsNodesReadResponse =
@@ -10926,7 +10999,7 @@ export type agentPlaygroundGraphsVersionsNodesPartialUpdateResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsNodesPartialUpdateResponseSuccess =
   agentPlaygroundGraphsVersionsNodesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsNodesPartialUpdateResponseError = (
   | agentPlaygroundGraphsVersionsNodesPartialUpdateResponse400
@@ -10934,7 +11007,7 @@ export type agentPlaygroundGraphsVersionsNodesPartialUpdateResponseError = (
   | agentPlaygroundGraphsVersionsNodesPartialUpdateResponse500
   | agentPlaygroundGraphsVersionsNodesPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsNodesPartialUpdateResponse =
@@ -11001,7 +11074,7 @@ export type agentPlaygroundGraphsVersionsNodesDeleteResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsNodesDeleteResponseSuccess =
   agentPlaygroundGraphsVersionsNodesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsNodesDeleteResponseError = (
   | agentPlaygroundGraphsVersionsNodesDeleteResponse400
@@ -11009,7 +11082,7 @@ export type agentPlaygroundGraphsVersionsNodesDeleteResponseError = (
   | agentPlaygroundGraphsVersionsNodesDeleteResponse500
   | agentPlaygroundGraphsVersionsNodesDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsNodesDeleteResponse =
@@ -11074,7 +11147,7 @@ export type agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponseDefaul
 
 export type agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponseSuccess =
   agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponseError =
   (
@@ -11083,7 +11156,7 @@ export type agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponseError 
     | agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponse500
     | agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponse =
@@ -11169,7 +11242,7 @@ export type agentPlaygroundGraphsVersionsPortsPartialUpdateResponseDefault = {
 
 export type agentPlaygroundGraphsVersionsPortsPartialUpdateResponseSuccess =
   agentPlaygroundGraphsVersionsPortsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundGraphsVersionsPortsPartialUpdateResponseError = (
   | agentPlaygroundGraphsVersionsPortsPartialUpdateResponse400
@@ -11177,7 +11250,7 @@ export type agentPlaygroundGraphsVersionsPortsPartialUpdateResponseError = (
   | agentPlaygroundGraphsVersionsPortsPartialUpdateResponse500
   | agentPlaygroundGraphsVersionsPortsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundGraphsVersionsPortsPartialUpdateResponse =
@@ -11244,7 +11317,7 @@ export type agentPlaygroundNodeTemplatesListResponseDefault = {
 
 export type agentPlaygroundNodeTemplatesListResponseSuccess =
   agentPlaygroundNodeTemplatesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundNodeTemplatesListResponseError = (
   | agentPlaygroundNodeTemplatesListResponse400
@@ -11252,7 +11325,7 @@ export type agentPlaygroundNodeTemplatesListResponseError = (
   | agentPlaygroundNodeTemplatesListResponse500
   | agentPlaygroundNodeTemplatesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundNodeTemplatesListResponse =
@@ -11325,7 +11398,7 @@ export type agentPlaygroundNodeTemplatesReadResponseDefault = {
 
 export type agentPlaygroundNodeTemplatesReadResponseSuccess =
   agentPlaygroundNodeTemplatesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentPlaygroundNodeTemplatesReadResponseError = (
   | agentPlaygroundNodeTemplatesReadResponse400
@@ -11333,7 +11406,7 @@ export type agentPlaygroundNodeTemplatesReadResponseError = (
   | agentPlaygroundNodeTemplatesReadResponse500
   | agentPlaygroundNodeTemplatesReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentPlaygroundNodeTemplatesReadResponse =
@@ -11374,11 +11447,11 @@ export type agentccAnalyticsCostBreakdownResponseDefault = {
 
 export type agentccAnalyticsCostBreakdownResponseSuccess =
   agentccAnalyticsCostBreakdownResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsCostBreakdownResponseError =
   agentccAnalyticsCostBreakdownResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsCostBreakdownResponse =
@@ -11435,11 +11508,11 @@ export type agentccAnalyticsErrorBreakdownResponseDefault = {
 
 export type agentccAnalyticsErrorBreakdownResponseSuccess =
   agentccAnalyticsErrorBreakdownResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsErrorBreakdownResponseError =
   agentccAnalyticsErrorBreakdownResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsErrorBreakdownResponse =
@@ -11496,11 +11569,11 @@ export type agentccAnalyticsGuardrailOverviewResponseDefault = {
 
 export type agentccAnalyticsGuardrailOverviewResponseSuccess =
   agentccAnalyticsGuardrailOverviewResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsGuardrailOverviewResponseError =
   agentccAnalyticsGuardrailOverviewResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsGuardrailOverviewResponse =
@@ -11557,11 +11630,11 @@ export type agentccAnalyticsGuardrailRulesResponseDefault = {
 
 export type agentccAnalyticsGuardrailRulesResponseSuccess =
   agentccAnalyticsGuardrailRulesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsGuardrailRulesResponseError =
   agentccAnalyticsGuardrailRulesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsGuardrailRulesResponse =
@@ -11618,11 +11691,11 @@ export type agentccAnalyticsGuardrailTrendsResponseDefault = {
 
 export type agentccAnalyticsGuardrailTrendsResponseSuccess =
   agentccAnalyticsGuardrailTrendsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsGuardrailTrendsResponseError =
   agentccAnalyticsGuardrailTrendsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsGuardrailTrendsResponse =
@@ -11679,11 +11752,11 @@ export type agentccAnalyticsLatencyStatsResponseDefault = {
 
 export type agentccAnalyticsLatencyStatsResponseSuccess =
   agentccAnalyticsLatencyStatsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsLatencyStatsResponseError =
   agentccAnalyticsLatencyStatsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsLatencyStatsResponse =
@@ -11740,11 +11813,11 @@ export type agentccAnalyticsModelComparisonResponseDefault = {
 
 export type agentccAnalyticsModelComparisonResponseSuccess =
   agentccAnalyticsModelComparisonResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsModelComparisonResponseError =
   agentccAnalyticsModelComparisonResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsModelComparisonResponse =
@@ -11801,11 +11874,11 @@ export type agentccAnalyticsOverviewResponseDefault = {
 
 export type agentccAnalyticsOverviewResponseSuccess =
   agentccAnalyticsOverviewResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsOverviewResponseError =
   agentccAnalyticsOverviewResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsOverviewResponse =
@@ -11862,11 +11935,11 @@ export type agentccAnalyticsUsageTimeseriesResponseDefault = {
 
 export type agentccAnalyticsUsageTimeseriesResponseSuccess =
   agentccAnalyticsUsageTimeseriesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccAnalyticsUsageTimeseriesResponseError =
   agentccAnalyticsUsageTimeseriesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccAnalyticsUsageTimeseriesResponse =
@@ -11923,11 +11996,11 @@ export type agentccApiKeysListResponseDefault = {
 
 export type agentccApiKeysListResponseSuccess =
   agentccApiKeysListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysListResponseError =
   agentccApiKeysListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysListResponse =
@@ -11979,11 +12052,11 @@ export type agentccApiKeysCreateResponseDefault = {
 
 export type agentccApiKeysCreateResponseSuccess =
   agentccApiKeysCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysCreateResponseError =
   agentccApiKeysCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysCreateResponse =
@@ -12026,13 +12099,13 @@ export type agentccApiKeysBulkListResponseDefault = {
 
 export type agentccApiKeysBulkListResponseSuccess =
   agentccApiKeysBulkListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysBulkListResponseError = (
   | agentccApiKeysBulkListResponse400
   | agentccApiKeysBulkListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccApiKeysBulkListResponse =
@@ -12074,11 +12147,11 @@ export type agentccApiKeysSyncResponseDefault = {
 
 export type agentccApiKeysSyncResponseSuccess =
   agentccApiKeysSyncResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysSyncResponseError =
   agentccApiKeysSyncResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysSyncResponse =
@@ -12113,11 +12186,11 @@ export type agentccApiKeysReadResponseDefault = {
 
 export type agentccApiKeysReadResponseSuccess =
   agentccApiKeysReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysReadResponseError =
   agentccApiKeysReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysReadResponse =
@@ -12150,11 +12223,11 @@ export type agentccApiKeysUpdateResponseDefault = {
 
 export type agentccApiKeysUpdateResponseSuccess =
   agentccApiKeysUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysUpdateResponseError =
   agentccApiKeysUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysUpdateResponse =
@@ -12193,11 +12266,11 @@ export type agentccApiKeysPartialUpdateResponseDefault = {
 
 export type agentccApiKeysPartialUpdateResponseSuccess =
   agentccApiKeysPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysPartialUpdateResponseError =
   agentccApiKeysPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysPartialUpdateResponse =
@@ -12236,11 +12309,11 @@ export type agentccApiKeysDeleteResponseDefault = {
 
 export type agentccApiKeysDeleteResponseSuccess =
   agentccApiKeysDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysDeleteResponseError =
   agentccApiKeysDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysDeleteResponse =
@@ -12276,11 +12349,11 @@ export type agentccApiKeysRevokeResponseDefault = {
 
 export type agentccApiKeysRevokeResponseSuccess =
   agentccApiKeysRevokeResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccApiKeysRevokeResponseError =
   agentccApiKeysRevokeResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccApiKeysRevokeResponse =
@@ -12319,11 +12392,11 @@ export type agentccBlocklistsListResponseDefault = {
 
 export type agentccBlocklistsListResponseSuccess =
   agentccBlocklistsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsListResponseError =
   agentccBlocklistsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsListResponse =
@@ -12380,11 +12453,11 @@ export type agentccBlocklistsCreateResponseDefault = {
 
 export type agentccBlocklistsCreateResponseSuccess =
   agentccBlocklistsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsCreateResponseError =
   agentccBlocklistsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsCreateResponse =
@@ -12425,11 +12498,11 @@ export type agentccBlocklistsReadResponseDefault = {
 
 export type agentccBlocklistsReadResponseSuccess =
   agentccBlocklistsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsReadResponseError =
   agentccBlocklistsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsReadResponse =
@@ -12468,11 +12541,11 @@ export type agentccBlocklistsUpdateResponseDefault = {
 
 export type agentccBlocklistsUpdateResponseSuccess =
   agentccBlocklistsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsUpdateResponseError =
   agentccBlocklistsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsUpdateResponse =
@@ -12514,11 +12587,11 @@ export type agentccBlocklistsPartialUpdateResponseDefault = {
 
 export type agentccBlocklistsPartialUpdateResponseSuccess =
   agentccBlocklistsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsPartialUpdateResponseError =
   agentccBlocklistsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsPartialUpdateResponse =
@@ -12560,11 +12633,11 @@ export type agentccBlocklistsDeleteResponseDefault = {
 
 export type agentccBlocklistsDeleteResponseSuccess =
   agentccBlocklistsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsDeleteResponseError =
   agentccBlocklistsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsDeleteResponse =
@@ -12603,11 +12676,11 @@ export type agentccBlocklistsAddWordsResponseDefault = {
 
 export type agentccBlocklistsAddWordsResponseSuccess =
   agentccBlocklistsAddWordsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsAddWordsResponseError =
   agentccBlocklistsAddWordsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsAddWordsResponse =
@@ -12649,11 +12722,11 @@ export type agentccBlocklistsRemoveWordsResponseDefault = {
 
 export type agentccBlocklistsRemoveWordsResponseSuccess =
   agentccBlocklistsRemoveWordsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccBlocklistsRemoveWordsResponseError =
   agentccBlocklistsRemoveWordsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccBlocklistsRemoveWordsResponse =
@@ -12695,11 +12768,11 @@ export type agentccCustomPropertiesListResponseDefault = {
 
 export type agentccCustomPropertiesListResponseSuccess =
   agentccCustomPropertiesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccCustomPropertiesListResponseError =
   agentccCustomPropertiesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccCustomPropertiesListResponse =
@@ -12756,11 +12829,11 @@ export type agentccCustomPropertiesCreateResponseDefault = {
 
 export type agentccCustomPropertiesCreateResponseSuccess =
   agentccCustomPropertiesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccCustomPropertiesCreateResponseError =
   agentccCustomPropertiesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccCustomPropertiesCreateResponse =
@@ -12801,11 +12874,11 @@ export type agentccCustomPropertiesValidateResponseDefault = {
 
 export type agentccCustomPropertiesValidateResponseSuccess =
   agentccCustomPropertiesValidateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccCustomPropertiesValidateResponseError =
   agentccCustomPropertiesValidateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccCustomPropertiesValidateResponse =
@@ -12846,11 +12919,11 @@ export type agentccCustomPropertiesReadResponseDefault = {
 
 export type agentccCustomPropertiesReadResponseSuccess =
   agentccCustomPropertiesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccCustomPropertiesReadResponseError =
   agentccCustomPropertiesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccCustomPropertiesReadResponse =
@@ -12889,11 +12962,11 @@ export type agentccCustomPropertiesUpdateResponseDefault = {
 
 export type agentccCustomPropertiesUpdateResponseSuccess =
   agentccCustomPropertiesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccCustomPropertiesUpdateResponseError =
   agentccCustomPropertiesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccCustomPropertiesUpdateResponse =
@@ -12935,11 +13008,11 @@ export type agentccCustomPropertiesPartialUpdateResponseDefault = {
 
 export type agentccCustomPropertiesPartialUpdateResponseSuccess =
   agentccCustomPropertiesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccCustomPropertiesPartialUpdateResponseError =
   agentccCustomPropertiesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccCustomPropertiesPartialUpdateResponse =
@@ -12981,11 +13054,11 @@ export type agentccCustomPropertiesDeleteResponseDefault = {
 
 export type agentccCustomPropertiesDeleteResponseSuccess =
   agentccCustomPropertiesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccCustomPropertiesDeleteResponseError =
   agentccCustomPropertiesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccCustomPropertiesDeleteResponse =
@@ -13024,11 +13097,11 @@ export type agentccEmailAlertsListResponseDefault = {
 
 export type agentccEmailAlertsListResponseSuccess =
   agentccEmailAlertsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccEmailAlertsListResponseError =
   agentccEmailAlertsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccEmailAlertsListResponse =
@@ -13085,11 +13158,11 @@ export type agentccEmailAlertsCreateResponseDefault = {
 
 export type agentccEmailAlertsCreateResponseSuccess =
   agentccEmailAlertsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccEmailAlertsCreateResponseError =
   agentccEmailAlertsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccEmailAlertsCreateResponse =
@@ -13130,11 +13203,11 @@ export type agentccEmailAlertsReadResponseDefault = {
 
 export type agentccEmailAlertsReadResponseSuccess =
   agentccEmailAlertsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccEmailAlertsReadResponseError =
   agentccEmailAlertsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccEmailAlertsReadResponse =
@@ -13173,11 +13246,11 @@ export type agentccEmailAlertsUpdateResponseDefault = {
 
 export type agentccEmailAlertsUpdateResponseSuccess =
   agentccEmailAlertsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccEmailAlertsUpdateResponseError =
   agentccEmailAlertsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccEmailAlertsUpdateResponse =
@@ -13219,11 +13292,11 @@ export type agentccEmailAlertsPartialUpdateResponseDefault = {
 
 export type agentccEmailAlertsPartialUpdateResponseSuccess =
   agentccEmailAlertsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccEmailAlertsPartialUpdateResponseError =
   agentccEmailAlertsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccEmailAlertsPartialUpdateResponse =
@@ -13265,11 +13338,11 @@ export type agentccEmailAlertsDeleteResponseDefault = {
 
 export type agentccEmailAlertsDeleteResponseSuccess =
   agentccEmailAlertsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccEmailAlertsDeleteResponseError =
   agentccEmailAlertsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccEmailAlertsDeleteResponse =
@@ -13308,11 +13381,11 @@ export type agentccEmailAlertsTestResponseDefault = {
 
 export type agentccEmailAlertsTestResponseSuccess =
   agentccEmailAlertsTestResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccEmailAlertsTestResponseError =
   agentccEmailAlertsTestResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccEmailAlertsTestResponse =
@@ -13359,13 +13432,13 @@ export type agentccGatewaysListResponseDefault = {
 
 export type agentccGatewaysListResponseSuccess =
   agentccGatewaysListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysListResponseError = (
   | agentccGatewaysListResponse400
   | agentccGatewaysListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysListResponse =
@@ -13406,13 +13479,13 @@ export type agentccGatewaysProtectTemplatesResponseDefault = {
 
 export type agentccGatewaysProtectTemplatesResponseSuccess =
   agentccGatewaysProtectTemplatesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysProtectTemplatesResponseError = (
   | agentccGatewaysProtectTemplatesResponse400
   | agentccGatewaysProtectTemplatesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysProtectTemplatesResponse =
@@ -13455,13 +13528,13 @@ export type agentccGatewaysReadResponseDefault = {
 
 export type agentccGatewaysReadResponseSuccess =
   agentccGatewaysReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysReadResponseError = (
   | agentccGatewaysReadResponse404
   | agentccGatewaysReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysReadResponse =
@@ -13510,14 +13583,14 @@ export type agentccGatewaysCancelBatchResponseDefault = {
 
 export type agentccGatewaysCancelBatchResponseSuccess =
   agentccGatewaysCancelBatchResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysCancelBatchResponseError = (
   | agentccGatewaysCancelBatchResponse400
   | agentccGatewaysCancelBatchResponse404
   | agentccGatewaysCancelBatchResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysCancelBatchResponse =
@@ -13565,13 +13638,13 @@ export type agentccGatewaysConfigResponseDefault = {
 
 export type agentccGatewaysConfigResponseSuccess =
   agentccGatewaysConfigResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysConfigResponseError = (
   | agentccGatewaysConfigResponse400
   | agentccGatewaysConfigResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysConfigResponse =
@@ -13621,14 +13694,14 @@ export type agentccGatewaysGetBatchResponseDefault = {
 
 export type agentccGatewaysGetBatchResponseSuccess =
   agentccGatewaysGetBatchResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysGetBatchResponseError = (
   | agentccGatewaysGetBatchResponse400
   | agentccGatewaysGetBatchResponse404
   | agentccGatewaysGetBatchResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysGetBatchResponse =
@@ -13662,7 +13735,7 @@ export type agentccGatewaysHealthCheckResponse200 = {
 };
 
 export type agentccGatewaysHealthCheckResponse400 = {
-  data: AgentccErrorResponseApi;
+  data: GatewayHealthErrorResponseApi;
   status: 400;
 };
 
@@ -13673,13 +13746,13 @@ export type agentccGatewaysHealthCheckResponseDefault = {
 
 export type agentccGatewaysHealthCheckResponseSuccess =
   agentccGatewaysHealthCheckResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysHealthCheckResponseError = (
   | agentccGatewaysHealthCheckResponse400
   | agentccGatewaysHealthCheckResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysHealthCheckResponse =
@@ -13722,11 +13795,11 @@ export type agentccGatewaysMcpPromptsResponseDefault = {
 
 export type agentccGatewaysMcpPromptsResponseSuccess =
   agentccGatewaysMcpPromptsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysMcpPromptsResponseError =
   agentccGatewaysMcpPromptsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGatewaysMcpPromptsResponse =
@@ -13766,11 +13839,11 @@ export type agentccGatewaysMcpResourcesResponseDefault = {
 
 export type agentccGatewaysMcpResourcesResponseSuccess =
   agentccGatewaysMcpResourcesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysMcpResourcesResponseError =
   agentccGatewaysMcpResourcesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGatewaysMcpResourcesResponse =
@@ -13815,13 +13888,13 @@ export type agentccGatewaysMcpStatusResponseDefault = {
 
 export type agentccGatewaysMcpStatusResponseSuccess =
   agentccGatewaysMcpStatusResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysMcpStatusResponseError = (
   | agentccGatewaysMcpStatusResponse400
   | agentccGatewaysMcpStatusResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysMcpStatusResponse =
@@ -13861,11 +13934,11 @@ export type agentccGatewaysMcpToolsResponseDefault = {
 
 export type agentccGatewaysMcpToolsResponseSuccess =
   agentccGatewaysMcpToolsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysMcpToolsResponseError =
   agentccGatewaysMcpToolsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGatewaysMcpToolsResponse =
@@ -13910,13 +13983,13 @@ export type agentccGatewaysProvidersResponseDefault = {
 
 export type agentccGatewaysProvidersResponseSuccess =
   agentccGatewaysProvidersResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysProvidersResponseError = (
   | agentccGatewaysProvidersResponse400
   | agentccGatewaysProvidersResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysProvidersResponse =
@@ -13961,13 +14034,13 @@ export type agentccGatewaysReloadResponseDefault = {
 
 export type agentccGatewaysReloadResponseSuccess =
   agentccGatewaysReloadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysReloadResponseError = (
   | agentccGatewaysReloadResponse400
   | agentccGatewaysReloadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysReloadResponse =
@@ -14014,13 +14087,13 @@ export type agentccGatewaysRemoveBudgetResponseDefault = {
 
 export type agentccGatewaysRemoveBudgetResponseSuccess =
   agentccGatewaysRemoveBudgetResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysRemoveBudgetResponseError = (
   | agentccGatewaysRemoveBudgetResponse400
   | agentccGatewaysRemoveBudgetResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysRemoveBudgetResponse =
@@ -14073,14 +14146,14 @@ export type agentccGatewaysRemoveMcpServerResponseDefault = {
 
 export type agentccGatewaysRemoveMcpServerResponseSuccess =
   agentccGatewaysRemoveMcpServerResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysRemoveMcpServerResponseError = (
   | agentccGatewaysRemoveMcpServerResponse400
   | agentccGatewaysRemoveMcpServerResponse404
   | agentccGatewaysRemoveMcpServerResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysRemoveMcpServerResponse =
@@ -14133,14 +14206,14 @@ export type agentccGatewaysRemoveProviderResponseDefault = {
 
 export type agentccGatewaysRemoveProviderResponseSuccess =
   agentccGatewaysRemoveProviderResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysRemoveProviderResponseError = (
   | agentccGatewaysRemoveProviderResponse400
   | agentccGatewaysRemoveProviderResponse404
   | agentccGatewaysRemoveProviderResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysRemoveProviderResponse =
@@ -14187,13 +14260,13 @@ export type agentccGatewaysSetBudgetResponseDefault = {
 
 export type agentccGatewaysSetBudgetResponseSuccess =
   agentccGatewaysSetBudgetResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysSetBudgetResponseError = (
   | agentccGatewaysSetBudgetResponse400
   | agentccGatewaysSetBudgetResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysSetBudgetResponse =
@@ -14241,13 +14314,13 @@ export type agentccGatewaysSubmitBatchResponseDefault = {
 
 export type agentccGatewaysSubmitBatchResponseSuccess =
   agentccGatewaysSubmitBatchResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysSubmitBatchResponseError = (
   | agentccGatewaysSubmitBatchResponse400
   | agentccGatewaysSubmitBatchResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysSubmitBatchResponse =
@@ -14295,13 +14368,13 @@ export type agentccGatewaysTestMcpToolResponseDefault = {
 
 export type agentccGatewaysTestMcpToolResponseSuccess =
   agentccGatewaysTestMcpToolResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysTestMcpToolResponseError = (
   | agentccGatewaysTestMcpToolResponse400
   | agentccGatewaysTestMcpToolResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysTestMcpToolResponse =
@@ -14349,13 +14422,13 @@ export type agentccGatewaysTestPlaygroundResponseDefault = {
 
 export type agentccGatewaysTestPlaygroundResponseSuccess =
   agentccGatewaysTestPlaygroundResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysTestPlaygroundResponseError = (
   | agentccGatewaysTestPlaygroundResponse400
   | agentccGatewaysTestPlaygroundResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysTestPlaygroundResponse =
@@ -14402,13 +14475,13 @@ export type agentccGatewaysToggleGuardrailResponseDefault = {
 
 export type agentccGatewaysToggleGuardrailResponseSuccess =
   agentccGatewaysToggleGuardrailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysToggleGuardrailResponseError = (
   | agentccGatewaysToggleGuardrailResponse400
   | agentccGatewaysToggleGuardrailResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysToggleGuardrailResponse =
@@ -14456,13 +14529,13 @@ export type agentccGatewaysUpdateConfigResponseDefault = {
 
 export type agentccGatewaysUpdateConfigResponseSuccess =
   agentccGatewaysUpdateConfigResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysUpdateConfigResponseError = (
   | agentccGatewaysUpdateConfigResponse400
   | agentccGatewaysUpdateConfigResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysUpdateConfigResponse =
@@ -14509,13 +14582,13 @@ export type agentccGatewaysUpdateGuardrailResponseDefault = {
 
 export type agentccGatewaysUpdateGuardrailResponseSuccess =
   agentccGatewaysUpdateGuardrailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysUpdateGuardrailResponseError = (
   | agentccGatewaysUpdateGuardrailResponse400
   | agentccGatewaysUpdateGuardrailResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysUpdateGuardrailResponse =
@@ -14563,13 +14636,13 @@ export type agentccGatewaysUpdateMcpGuardrailsResponseDefault = {
 
 export type agentccGatewaysUpdateMcpGuardrailsResponseSuccess =
   agentccGatewaysUpdateMcpGuardrailsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysUpdateMcpGuardrailsResponseError = (
   | agentccGatewaysUpdateMcpGuardrailsResponse400
   | agentccGatewaysUpdateMcpGuardrailsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysUpdateMcpGuardrailsResponse =
@@ -14617,13 +14690,13 @@ export type agentccGatewaysUpdateMcpServerResponseDefault = {
 
 export type agentccGatewaysUpdateMcpServerResponseSuccess =
   agentccGatewaysUpdateMcpServerResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysUpdateMcpServerResponseError = (
   | agentccGatewaysUpdateMcpServerResponse400
   | agentccGatewaysUpdateMcpServerResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysUpdateMcpServerResponse =
@@ -14671,13 +14744,13 @@ export type agentccGatewaysUpdateProviderResponseDefault = {
 
 export type agentccGatewaysUpdateProviderResponseSuccess =
   agentccGatewaysUpdateProviderResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGatewaysUpdateProviderResponseError = (
   | agentccGatewaysUpdateProviderResponse400
   | agentccGatewaysUpdateProviderResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGatewaysUpdateProviderResponse =
@@ -14719,11 +14792,11 @@ export type agentccGuardrailConfigsPiiEntitiesResponseDefault = {
 
 export type agentccGuardrailConfigsPiiEntitiesResponseSuccess =
   agentccGuardrailConfigsPiiEntitiesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailConfigsPiiEntitiesResponseError =
   agentccGuardrailConfigsPiiEntitiesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailConfigsPiiEntitiesResponse =
@@ -14780,11 +14853,11 @@ export type agentccGuardrailConfigsTopicsResponseDefault = {
 
 export type agentccGuardrailConfigsTopicsResponseSuccess =
   agentccGuardrailConfigsTopicsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailConfigsTopicsResponseError =
   agentccGuardrailConfigsTopicsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailConfigsTopicsResponse =
@@ -14846,13 +14919,13 @@ export type agentccGuardrailConfigsValidateCelResponseDefault = {
 
 export type agentccGuardrailConfigsValidateCelResponseSuccess =
   agentccGuardrailConfigsValidateCelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailConfigsValidateCelResponseError = (
   | agentccGuardrailConfigsValidateCelResponse400
   | agentccGuardrailConfigsValidateCelResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccGuardrailConfigsValidateCelResponse =
@@ -14893,11 +14966,11 @@ export type agentccGuardrailFeedbackListResponseDefault = {
 
 export type agentccGuardrailFeedbackListResponseSuccess =
   agentccGuardrailFeedbackListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailFeedbackListResponseError =
   agentccGuardrailFeedbackListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailFeedbackListResponse =
@@ -14954,11 +15027,11 @@ export type agentccGuardrailFeedbackCreateResponseDefault = {
 
 export type agentccGuardrailFeedbackCreateResponseSuccess =
   agentccGuardrailFeedbackCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailFeedbackCreateResponseError =
   agentccGuardrailFeedbackCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailFeedbackCreateResponse =
@@ -14999,11 +15072,11 @@ export type agentccGuardrailFeedbackSummaryResponseDefault = {
 
 export type agentccGuardrailFeedbackSummaryResponseSuccess =
   agentccGuardrailFeedbackSummaryResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailFeedbackSummaryResponseError =
   agentccGuardrailFeedbackSummaryResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailFeedbackSummaryResponse =
@@ -15060,11 +15133,11 @@ export type agentccGuardrailFeedbackReadResponseDefault = {
 
 export type agentccGuardrailFeedbackReadResponseSuccess =
   agentccGuardrailFeedbackReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailFeedbackReadResponseError =
   agentccGuardrailFeedbackReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailFeedbackReadResponse =
@@ -15103,11 +15176,11 @@ export type agentccGuardrailFeedbackUpdateResponseDefault = {
 
 export type agentccGuardrailFeedbackUpdateResponseSuccess =
   agentccGuardrailFeedbackUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailFeedbackUpdateResponseError =
   agentccGuardrailFeedbackUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailFeedbackUpdateResponse =
@@ -15149,11 +15222,11 @@ export type agentccGuardrailFeedbackPartialUpdateResponseDefault = {
 
 export type agentccGuardrailFeedbackPartialUpdateResponseSuccess =
   agentccGuardrailFeedbackPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailFeedbackPartialUpdateResponseError =
   agentccGuardrailFeedbackPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailFeedbackPartialUpdateResponse =
@@ -15195,11 +15268,11 @@ export type agentccGuardrailFeedbackDeleteResponseDefault = {
 
 export type agentccGuardrailFeedbackDeleteResponseSuccess =
   agentccGuardrailFeedbackDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailFeedbackDeleteResponseError =
   agentccGuardrailFeedbackDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailFeedbackDeleteResponse =
@@ -15238,11 +15311,11 @@ export type agentccGuardrailPoliciesListResponseDefault = {
 
 export type agentccGuardrailPoliciesListResponseSuccess =
   agentccGuardrailPoliciesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesListResponseError =
   agentccGuardrailPoliciesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesListResponse =
@@ -15299,11 +15372,11 @@ export type agentccGuardrailPoliciesCreateResponseDefault = {
 
 export type agentccGuardrailPoliciesCreateResponseSuccess =
   agentccGuardrailPoliciesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesCreateResponseError =
   agentccGuardrailPoliciesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesCreateResponse =
@@ -15344,11 +15417,11 @@ export type agentccGuardrailPoliciesSyncResponseDefault = {
 
 export type agentccGuardrailPoliciesSyncResponseSuccess =
   agentccGuardrailPoliciesSyncResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesSyncResponseError =
   agentccGuardrailPoliciesSyncResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesSyncResponse =
@@ -15389,11 +15462,11 @@ export type agentccGuardrailPoliciesReadResponseDefault = {
 
 export type agentccGuardrailPoliciesReadResponseSuccess =
   agentccGuardrailPoliciesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesReadResponseError =
   agentccGuardrailPoliciesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesReadResponse =
@@ -15432,11 +15505,11 @@ export type agentccGuardrailPoliciesUpdateResponseDefault = {
 
 export type agentccGuardrailPoliciesUpdateResponseSuccess =
   agentccGuardrailPoliciesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesUpdateResponseError =
   agentccGuardrailPoliciesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesUpdateResponse =
@@ -15478,11 +15551,11 @@ export type agentccGuardrailPoliciesPartialUpdateResponseDefault = {
 
 export type agentccGuardrailPoliciesPartialUpdateResponseSuccess =
   agentccGuardrailPoliciesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesPartialUpdateResponseError =
   agentccGuardrailPoliciesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesPartialUpdateResponse =
@@ -15524,11 +15597,11 @@ export type agentccGuardrailPoliciesDeleteResponseDefault = {
 
 export type agentccGuardrailPoliciesDeleteResponseSuccess =
   agentccGuardrailPoliciesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesDeleteResponseError =
   agentccGuardrailPoliciesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesDeleteResponse =
@@ -15567,11 +15640,11 @@ export type agentccGuardrailPoliciesApplyResponseDefault = {
 
 export type agentccGuardrailPoliciesApplyResponseSuccess =
   agentccGuardrailPoliciesApplyResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccGuardrailPoliciesApplyResponseError =
   agentccGuardrailPoliciesApplyResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccGuardrailPoliciesApplyResponse =
@@ -15613,11 +15686,11 @@ export type agentccOrgConfigsListResponseDefault = {
 
 export type agentccOrgConfigsListResponseSuccess =
   agentccOrgConfigsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsListResponseError =
   agentccOrgConfigsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsListResponse =
@@ -15674,11 +15747,11 @@ export type agentccOrgConfigsCreateResponseDefault = {
 
 export type agentccOrgConfigsCreateResponseSuccess =
   agentccOrgConfigsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsCreateResponseError =
   agentccOrgConfigsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsCreateResponse =
@@ -15719,11 +15792,11 @@ export type agentccOrgConfigsActiveResponseDefault = {
 
 export type agentccOrgConfigsActiveResponseSuccess =
   agentccOrgConfigsActiveResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsActiveResponseError =
   agentccOrgConfigsActiveResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsActiveResponse =
@@ -15785,13 +15858,13 @@ export type agentccOrgConfigsBulkListResponseDefault = {
 
 export type agentccOrgConfigsBulkListResponseSuccess =
   agentccOrgConfigsBulkListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsBulkListResponseError = (
   | agentccOrgConfigsBulkListResponse400
   | agentccOrgConfigsBulkListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccOrgConfigsBulkListResponse =
@@ -15832,11 +15905,11 @@ export type agentccOrgConfigsReadResponseDefault = {
 
 export type agentccOrgConfigsReadResponseSuccess =
   agentccOrgConfigsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsReadResponseError =
   agentccOrgConfigsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsReadResponse =
@@ -15875,11 +15948,11 @@ export type agentccOrgConfigsUpdateResponseDefault = {
 
 export type agentccOrgConfigsUpdateResponseSuccess =
   agentccOrgConfigsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsUpdateResponseError =
   agentccOrgConfigsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsUpdateResponse =
@@ -15921,11 +15994,11 @@ export type agentccOrgConfigsPartialUpdateResponseDefault = {
 
 export type agentccOrgConfigsPartialUpdateResponseSuccess =
   agentccOrgConfigsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsPartialUpdateResponseError =
   agentccOrgConfigsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsPartialUpdateResponse =
@@ -15967,11 +16040,11 @@ export type agentccOrgConfigsDeleteResponseDefault = {
 
 export type agentccOrgConfigsDeleteResponseSuccess =
   agentccOrgConfigsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsDeleteResponseError =
   agentccOrgConfigsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsDeleteResponse =
@@ -16010,11 +16083,11 @@ export type agentccOrgConfigsActivateResponseDefault = {
 
 export type agentccOrgConfigsActivateResponseSuccess =
   agentccOrgConfigsActivateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsActivateResponseError =
   agentccOrgConfigsActivateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsActivateResponse =
@@ -16056,11 +16129,11 @@ export type agentccOrgConfigsDiffResponseDefault = {
 
 export type agentccOrgConfigsDiffResponseSuccess =
   agentccOrgConfigsDiffResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccOrgConfigsDiffResponseError =
   agentccOrgConfigsDiffResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccOrgConfigsDiffResponse =
@@ -16099,11 +16172,11 @@ export type agentccProviderCredentialsListResponseDefault = {
 
 export type agentccProviderCredentialsListResponseSuccess =
   agentccProviderCredentialsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsListResponseError =
   agentccProviderCredentialsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsListResponse =
@@ -16157,11 +16230,11 @@ export type agentccProviderCredentialsCreateResponseDefault = {
 
 export type agentccProviderCredentialsCreateResponseSuccess =
   agentccProviderCredentialsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsCreateResponseError =
   agentccProviderCredentialsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsCreateResponse =
@@ -16199,11 +16272,11 @@ export type agentccProviderCredentialsFetchModelsResponseDefault = {
 
 export type agentccProviderCredentialsFetchModelsResponseSuccess =
   agentccProviderCredentialsFetchModelsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsFetchModelsResponseError =
   agentccProviderCredentialsFetchModelsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsFetchModelsResponse =
@@ -16247,11 +16320,11 @@ export type agentccProviderCredentialsReadResponseDefault = {
 
 export type agentccProviderCredentialsReadResponseSuccess =
   agentccProviderCredentialsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsReadResponseError =
   agentccProviderCredentialsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsReadResponse =
@@ -16287,11 +16360,11 @@ export type agentccProviderCredentialsUpdateResponseDefault = {
 
 export type agentccProviderCredentialsUpdateResponseSuccess =
   agentccProviderCredentialsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsUpdateResponseError =
   agentccProviderCredentialsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsUpdateResponse =
@@ -16330,11 +16403,11 @@ export type agentccProviderCredentialsPartialUpdateResponseDefault = {
 
 export type agentccProviderCredentialsPartialUpdateResponseSuccess =
   agentccProviderCredentialsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsPartialUpdateResponseError =
   agentccProviderCredentialsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsPartialUpdateResponse =
@@ -16373,11 +16446,11 @@ export type agentccProviderCredentialsDeleteResponseDefault = {
 
 export type agentccProviderCredentialsDeleteResponseSuccess =
   agentccProviderCredentialsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsDeleteResponseError =
   agentccProviderCredentialsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsDeleteResponse =
@@ -16413,11 +16486,11 @@ export type agentccProviderCredentialsRotateResponseDefault = {
 
 export type agentccProviderCredentialsRotateResponseSuccess =
   agentccProviderCredentialsRotateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccProviderCredentialsRotateResponseError =
   agentccProviderCredentialsRotateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccProviderCredentialsRotateResponse =
@@ -16459,11 +16532,11 @@ export type agentccRequestLogsListResponseDefault = {
 
 export type agentccRequestLogsListResponseSuccess =
   agentccRequestLogsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRequestLogsListResponseError =
   agentccRequestLogsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRequestLogsListResponse =
@@ -16517,11 +16590,11 @@ export type agentccRequestLogsExportResponseDefault = {
 
 export type agentccRequestLogsExportResponseSuccess =
   agentccRequestLogsExportResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRequestLogsExportResponseError =
   agentccRequestLogsExportResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRequestLogsExportResponse =
@@ -16583,13 +16656,13 @@ export type agentccRequestLogsMetadataValuesResponseDefault = {
 
 export type agentccRequestLogsMetadataValuesResponseSuccess =
   agentccRequestLogsMetadataValuesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRequestLogsMetadataValuesResponseError = (
   | agentccRequestLogsMetadataValuesResponse400
   | agentccRequestLogsMetadataValuesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccRequestLogsMetadataValuesResponse =
@@ -16627,11 +16700,11 @@ export type agentccRequestLogsSearchResponseDefault = {
 
 export type agentccRequestLogsSearchResponseSuccess =
   agentccRequestLogsSearchResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRequestLogsSearchResponseError =
   agentccRequestLogsSearchResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRequestLogsSearchResponse =
@@ -16688,11 +16761,11 @@ export type agentccRequestLogsSessionsResponseDefault = {
 
 export type agentccRequestLogsSessionsResponseSuccess =
   agentccRequestLogsSessionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRequestLogsSessionsResponseError =
   agentccRequestLogsSessionsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRequestLogsSessionsResponse =
@@ -16749,11 +16822,11 @@ export type agentccRequestLogsSessionDetailResponseDefault = {
 
 export type agentccRequestLogsSessionDetailResponseSuccess =
   agentccRequestLogsSessionDetailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRequestLogsSessionDetailResponseError =
   agentccRequestLogsSessionDetailResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRequestLogsSessionDetailResponse =
@@ -16812,11 +16885,11 @@ export type agentccRequestLogsReadResponseDefault = {
 
 export type agentccRequestLogsReadResponseSuccess =
   agentccRequestLogsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRequestLogsReadResponseError =
   agentccRequestLogsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRequestLogsReadResponse =
@@ -16852,11 +16925,11 @@ export type agentccRoutingPoliciesListResponseDefault = {
 
 export type agentccRoutingPoliciesListResponseSuccess =
   agentccRoutingPoliciesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesListResponseError =
   agentccRoutingPoliciesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesListResponse =
@@ -16913,11 +16986,11 @@ export type agentccRoutingPoliciesCreateResponseDefault = {
 
 export type agentccRoutingPoliciesCreateResponseSuccess =
   agentccRoutingPoliciesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesCreateResponseError =
   agentccRoutingPoliciesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesCreateResponse =
@@ -16958,11 +17031,11 @@ export type agentccRoutingPoliciesSyncResponseDefault = {
 
 export type agentccRoutingPoliciesSyncResponseSuccess =
   agentccRoutingPoliciesSyncResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesSyncResponseError =
   agentccRoutingPoliciesSyncResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesSyncResponse =
@@ -17003,11 +17076,11 @@ export type agentccRoutingPoliciesReadResponseDefault = {
 
 export type agentccRoutingPoliciesReadResponseSuccess =
   agentccRoutingPoliciesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesReadResponseError =
   agentccRoutingPoliciesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesReadResponse =
@@ -17046,11 +17119,11 @@ export type agentccRoutingPoliciesUpdateResponseDefault = {
 
 export type agentccRoutingPoliciesUpdateResponseSuccess =
   agentccRoutingPoliciesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesUpdateResponseError =
   agentccRoutingPoliciesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesUpdateResponse =
@@ -17092,11 +17165,11 @@ export type agentccRoutingPoliciesPartialUpdateResponseDefault = {
 
 export type agentccRoutingPoliciesPartialUpdateResponseSuccess =
   agentccRoutingPoliciesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesPartialUpdateResponseError =
   agentccRoutingPoliciesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesPartialUpdateResponse =
@@ -17138,11 +17211,11 @@ export type agentccRoutingPoliciesDeleteResponseDefault = {
 
 export type agentccRoutingPoliciesDeleteResponseSuccess =
   agentccRoutingPoliciesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesDeleteResponseError =
   agentccRoutingPoliciesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesDeleteResponse =
@@ -17181,11 +17254,11 @@ export type agentccRoutingPoliciesActivateResponseDefault = {
 
 export type agentccRoutingPoliciesActivateResponseSuccess =
   agentccRoutingPoliciesActivateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccRoutingPoliciesActivateResponseError =
   agentccRoutingPoliciesActivateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccRoutingPoliciesActivateResponse =
@@ -17227,11 +17300,11 @@ export type agentccSessionsListResponseDefault = {
 
 export type agentccSessionsListResponseSuccess =
   agentccSessionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsListResponseError =
   agentccSessionsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsListResponse =
@@ -17288,11 +17361,11 @@ export type agentccSessionsCreateResponseDefault = {
 
 export type agentccSessionsCreateResponseSuccess =
   agentccSessionsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsCreateResponseError =
   agentccSessionsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsCreateResponse =
@@ -17333,11 +17406,11 @@ export type agentccSessionsReadResponseDefault = {
 
 export type agentccSessionsReadResponseSuccess =
   agentccSessionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsReadResponseError =
   agentccSessionsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsReadResponse =
@@ -17376,11 +17449,11 @@ export type agentccSessionsUpdateResponseDefault = {
 
 export type agentccSessionsUpdateResponseSuccess =
   agentccSessionsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsUpdateResponseError =
   agentccSessionsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsUpdateResponse =
@@ -17422,11 +17495,11 @@ export type agentccSessionsPartialUpdateResponseDefault = {
 
 export type agentccSessionsPartialUpdateResponseSuccess =
   agentccSessionsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsPartialUpdateResponseError =
   agentccSessionsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsPartialUpdateResponse =
@@ -17468,11 +17541,11 @@ export type agentccSessionsDeleteResponseDefault = {
 
 export type agentccSessionsDeleteResponseSuccess =
   agentccSessionsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsDeleteResponseError =
   agentccSessionsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsDeleteResponse =
@@ -17511,11 +17584,11 @@ export type agentccSessionsCloseResponseDefault = {
 
 export type agentccSessionsCloseResponseSuccess =
   agentccSessionsCloseResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsCloseResponseError =
   agentccSessionsCloseResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsCloseResponse =
@@ -17557,11 +17630,11 @@ export type agentccSessionsRequestsResponseDefault = {
 
 export type agentccSessionsRequestsResponseSuccess =
   agentccSessionsRequestsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSessionsRequestsResponseError =
   agentccSessionsRequestsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccSessionsRequestsResponse =
@@ -17600,11 +17673,11 @@ export type agentccShadowExperimentsListResponseDefault = {
 
 export type agentccShadowExperimentsListResponseSuccess =
   agentccShadowExperimentsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsListResponseError =
   agentccShadowExperimentsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsListResponse =
@@ -17661,11 +17734,11 @@ export type agentccShadowExperimentsCreateResponseDefault = {
 
 export type agentccShadowExperimentsCreateResponseSuccess =
   agentccShadowExperimentsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsCreateResponseError =
   agentccShadowExperimentsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsCreateResponse =
@@ -17706,11 +17779,11 @@ export type agentccShadowExperimentsReadResponseDefault = {
 
 export type agentccShadowExperimentsReadResponseSuccess =
   agentccShadowExperimentsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsReadResponseError =
   agentccShadowExperimentsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsReadResponse =
@@ -17749,11 +17822,11 @@ export type agentccShadowExperimentsUpdateResponseDefault = {
 
 export type agentccShadowExperimentsUpdateResponseSuccess =
   agentccShadowExperimentsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsUpdateResponseError =
   agentccShadowExperimentsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsUpdateResponse =
@@ -17795,11 +17868,11 @@ export type agentccShadowExperimentsPartialUpdateResponseDefault = {
 
 export type agentccShadowExperimentsPartialUpdateResponseSuccess =
   agentccShadowExperimentsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsPartialUpdateResponseError =
   agentccShadowExperimentsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsPartialUpdateResponse =
@@ -17841,11 +17914,11 @@ export type agentccShadowExperimentsDeleteResponseDefault = {
 
 export type agentccShadowExperimentsDeleteResponseSuccess =
   agentccShadowExperimentsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsDeleteResponseError =
   agentccShadowExperimentsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsDeleteResponse =
@@ -17884,11 +17957,11 @@ export type agentccShadowExperimentsCompleteResponseDefault = {
 
 export type agentccShadowExperimentsCompleteResponseSuccess =
   agentccShadowExperimentsCompleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsCompleteResponseError =
   agentccShadowExperimentsCompleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsCompleteResponse =
@@ -17930,11 +18003,11 @@ export type agentccShadowExperimentsPauseResponseDefault = {
 
 export type agentccShadowExperimentsPauseResponseSuccess =
   agentccShadowExperimentsPauseResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsPauseResponseError =
   agentccShadowExperimentsPauseResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsPauseResponse =
@@ -17976,11 +18049,11 @@ export type agentccShadowExperimentsResumeResponseDefault = {
 
 export type agentccShadowExperimentsResumeResponseSuccess =
   agentccShadowExperimentsResumeResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsResumeResponseError =
   agentccShadowExperimentsResumeResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsResumeResponse =
@@ -18022,11 +18095,11 @@ export type agentccShadowExperimentsStatsResponseDefault = {
 
 export type agentccShadowExperimentsStatsResponseSuccess =
   agentccShadowExperimentsStatsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowExperimentsStatsResponseError =
   agentccShadowExperimentsStatsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowExperimentsStatsResponse =
@@ -18065,11 +18138,11 @@ export type agentccShadowResultsListResponseDefault = {
 
 export type agentccShadowResultsListResponseSuccess =
   agentccShadowResultsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowResultsListResponseError =
   agentccShadowResultsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowResultsListResponse =
@@ -18126,11 +18199,11 @@ export type agentccShadowResultsReadResponseDefault = {
 
 export type agentccShadowResultsReadResponseSuccess =
   agentccShadowResultsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccShadowResultsReadResponseError =
   agentccShadowResultsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccShadowResultsReadResponse =
@@ -18174,13 +18247,13 @@ export type agentccSpendSummaryListResponseDefault = {
 
 export type agentccSpendSummaryListResponseSuccess =
   agentccSpendSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccSpendSummaryListResponseError = (
   | agentccSpendSummaryListResponse500
   | agentccSpendSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccSpendSummaryListResponse =
@@ -18240,11 +18313,11 @@ export type agentccWebhookEventsListResponseDefault = {
 
 export type agentccWebhookEventsListResponseSuccess =
   agentccWebhookEventsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhookEventsListResponseError =
   agentccWebhookEventsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhookEventsListResponse =
@@ -18301,11 +18374,11 @@ export type agentccWebhookEventsReadResponseDefault = {
 
 export type agentccWebhookEventsReadResponseSuccess =
   agentccWebhookEventsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhookEventsReadResponseError =
   agentccWebhookEventsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhookEventsReadResponse =
@@ -18344,11 +18417,11 @@ export type agentccWebhookEventsRetryResponseDefault = {
 
 export type agentccWebhookEventsRetryResponseSuccess =
   agentccWebhookEventsRetryResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhookEventsRetryResponseError =
   agentccWebhookEventsRetryResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhookEventsRetryResponse =
@@ -18395,13 +18468,13 @@ export type agentccWebhookLogsCreateResponseDefault = {
 
 export type agentccWebhookLogsCreateResponseSuccess =
   agentccWebhookLogsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhookLogsCreateResponseError = (
   | agentccWebhookLogsCreateResponse400
   | agentccWebhookLogsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccWebhookLogsCreateResponse =
@@ -18444,13 +18517,13 @@ export type agentccWebhookShadowResultsCreateResponseDefault = {
 
 export type agentccWebhookShadowResultsCreateResponseSuccess =
   agentccWebhookShadowResultsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhookShadowResultsCreateResponseError = (
   | agentccWebhookShadowResultsCreateResponse400
   | agentccWebhookShadowResultsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type agentccWebhookShadowResultsCreateResponse =
@@ -18492,11 +18565,11 @@ export type agentccWebhooksListResponseDefault = {
 
 export type agentccWebhooksListResponseSuccess =
   agentccWebhooksListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhooksListResponseError =
   agentccWebhooksListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhooksListResponse =
@@ -18553,11 +18626,11 @@ export type agentccWebhooksCreateResponseDefault = {
 
 export type agentccWebhooksCreateResponseSuccess =
   agentccWebhooksCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhooksCreateResponseError =
   agentccWebhooksCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhooksCreateResponse =
@@ -18598,11 +18671,11 @@ export type agentccWebhooksReadResponseDefault = {
 
 export type agentccWebhooksReadResponseSuccess =
   agentccWebhooksReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhooksReadResponseError =
   agentccWebhooksReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhooksReadResponse =
@@ -18641,11 +18714,11 @@ export type agentccWebhooksUpdateResponseDefault = {
 
 export type agentccWebhooksUpdateResponseSuccess =
   agentccWebhooksUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhooksUpdateResponseError =
   agentccWebhooksUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhooksUpdateResponse =
@@ -18687,11 +18760,11 @@ export type agentccWebhooksPartialUpdateResponseDefault = {
 
 export type agentccWebhooksPartialUpdateResponseSuccess =
   agentccWebhooksPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhooksPartialUpdateResponseError =
   agentccWebhooksPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhooksPartialUpdateResponse =
@@ -18733,11 +18806,11 @@ export type agentccWebhooksDeleteResponseDefault = {
 
 export type agentccWebhooksDeleteResponseSuccess =
   agentccWebhooksDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhooksDeleteResponseError =
   agentccWebhooksDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhooksDeleteResponse =
@@ -18776,11 +18849,11 @@ export type agentccWebhooksTestResponseDefault = {
 
 export type agentccWebhooksTestResponseSuccess =
   agentccWebhooksTestResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type agentccWebhooksTestResponseError =
   agentccWebhooksTestResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type agentccWebhooksTestResponse =
@@ -18831,14 +18904,14 @@ export type aiToolsToolsListResponseDefault = {
 };
 
 export type aiToolsToolsListResponseSuccess = aiToolsToolsListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type aiToolsToolsListResponseError = (
   | aiToolsToolsListResponse403
   | aiToolsToolsListResponse500
   | aiToolsToolsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type aiToolsToolsListResponse =
@@ -18873,11 +18946,11 @@ export type apiCapabilitiesListResponseDefault = {
 
 export type apiCapabilitiesListResponseSuccess =
   apiCapabilitiesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiCapabilitiesListResponseError =
   apiCapabilitiesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type apiCapabilitiesListResponse =
@@ -18914,13 +18987,13 @@ export type apiDeploymentInfoListResponseDefault = {
 
 export type apiDeploymentInfoListResponseSuccess =
   apiDeploymentInfoListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiDeploymentInfoListResponseError = (
   | apiDeploymentInfoListResponse500
   | apiDeploymentInfoListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiDeploymentInfoListResponse =
@@ -18964,13 +19037,13 @@ export type apiHealthClickhouseListResponseDefault = {
 
 export type apiHealthClickhouseListResponseSuccess =
   apiHealthClickhouseListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiHealthClickhouseListResponseError = (
   | apiHealthClickhouseListResponse503
   | apiHealthClickhouseListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiHealthClickhouseListResponse =
@@ -18985,7 +19058,10 @@ export const getApiHealthClickhouseListUrl = () => {
  * Returns JSON with:
 - status: healthy | degraded | unhealthy | disabled
 - clickhouse_connected: bool
-- cdc_lag: per-table replication lag in seconds
+- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty
+- cdc_lag_verified: optional per-table boolean; true only for complete coverage
+  with an observed sync timestamp on every relevant destination. Incomplete
+  coverage alone does not degrade health; metadata-denial failures still do.
 - routing: per-query-type routing configuration
 
 No authentication required (intended for infrastructure monitoring).
@@ -18996,6 +19072,82 @@ export const apiHealthClickhouseList = async (
 ): Promise<apiHealthClickhouseListResponse> => {
   return apiMutator<apiHealthClickhouseListResponse>(
     getApiHealthClickhouseListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type apiHostUpdateStatusListResponse200 = {
+  data: HostUpdateStatusResponseApi;
+  status: 200;
+};
+
+export type apiHostUpdateStatusListResponse400 = {
+  data: HostUpdateStatusErrorApi;
+  status: 400;
+};
+
+export type apiHostUpdateStatusListResponse401 = {
+  data: HostUpdateStatusErrorApi;
+  status: 401;
+};
+
+export type apiHostUpdateStatusListResponse403 = {
+  data: HostUpdateStatusErrorApi;
+  status: 403;
+};
+
+export type apiHostUpdateStatusListResponse404 = {
+  data: HostUpdateStatusErrorApi;
+  status: 404;
+};
+
+export type apiHostUpdateStatusListResponse405 = {
+  data: HostUpdateStatusErrorApi;
+  status: 405;
+};
+
+export type apiHostUpdateStatusListResponse503 = {
+  data: HostUpdateStatusErrorApi;
+  status: 503;
+};
+
+export type apiHostUpdateStatusListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 405 | 503>;
+};
+
+export type apiHostUpdateStatusListResponseSuccess =
+  apiHostUpdateStatusListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type apiHostUpdateStatusListResponseError = (
+  | apiHostUpdateStatusListResponse400
+  | apiHostUpdateStatusListResponse401
+  | apiHostUpdateStatusListResponse403
+  | apiHostUpdateStatusListResponse404
+  | apiHostUpdateStatusListResponse405
+  | apiHostUpdateStatusListResponse503
+  | apiHostUpdateStatusListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type apiHostUpdateStatusListResponse =
+  | apiHostUpdateStatusListResponseSuccess
+  | apiHostUpdateStatusListResponseError;
+
+export const getApiHostUpdateStatusListUrl = () => {
+  return `/api/host-update-status/`;
+};
+
+export const apiHostUpdateStatusList = async (
+  options?: RequestInit,
+): Promise<apiHostUpdateStatusListResponse> => {
+  return apiMutator<apiHostUpdateStatusListResponse>(
+    getApiHostUpdateStatusListUrl(),
     {
       ...options,
       method: "GET",
@@ -19030,7 +19182,7 @@ export type apiPublicHealthListResponseDefault = {
 
 export type apiPublicHealthListResponseSuccess =
   apiPublicHealthListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiPublicHealthListResponseError = (
   | apiPublicHealthListResponse401
@@ -19038,7 +19190,7 @@ export type apiPublicHealthListResponseError = (
   | apiPublicHealthListResponse500
   | apiPublicHealthListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiPublicHealthListResponse =
@@ -19085,13 +19237,13 @@ export type apiPublicIngestionCreateResponseDefault = {
 
 export type apiPublicIngestionCreateResponseSuccess =
   apiPublicIngestionCreateResponse207 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiPublicIngestionCreateResponseError = (
   | apiPublicIngestionCreateResponse403
   | apiPublicIngestionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiPublicIngestionCreateResponse =
@@ -19152,7 +19304,7 @@ export type apiPublicTracesListResponseDefault = {
 
 export type apiPublicTracesListResponseSuccess =
   apiPublicTracesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiPublicTracesListResponseError = (
   | apiPublicTracesListResponse401
@@ -19160,7 +19312,7 @@ export type apiPublicTracesListResponseError = (
   | apiPublicTracesListResponse500
   | apiPublicTracesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiPublicTracesListResponse =
@@ -19208,14 +19360,14 @@ export type apiSetupChecksListResponseDefault = {
 
 export type apiSetupChecksListResponseSuccess =
   apiSetupChecksListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiSetupChecksListResponseError = (
   | apiSetupChecksListResponse404
   | apiSetupChecksListResponse500
   | apiSetupChecksListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiSetupChecksListResponse =
@@ -19277,7 +19429,7 @@ export type apiTracesSpanAttributeDetailListResponseDefault = {
 
 export type apiTracesSpanAttributeDetailListResponseSuccess =
   apiTracesSpanAttributeDetailListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiTracesSpanAttributeDetailListResponseError = (
   | apiTracesSpanAttributeDetailListResponse400
@@ -19286,7 +19438,7 @@ export type apiTracesSpanAttributeDetailListResponseError = (
   | apiTracesSpanAttributeDetailListResponse503
   | apiTracesSpanAttributeDetailListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiTracesSpanAttributeDetailListResponse =
@@ -19364,7 +19516,7 @@ export type apiTracesSpanAttributeKeysListResponseDefault = {
 
 export type apiTracesSpanAttributeKeysListResponseSuccess =
   apiTracesSpanAttributeKeysListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiTracesSpanAttributeKeysListResponseError = (
   | apiTracesSpanAttributeKeysListResponse400
@@ -19373,7 +19525,7 @@ export type apiTracesSpanAttributeKeysListResponseError = (
   | apiTracesSpanAttributeKeysListResponse503
   | apiTracesSpanAttributeKeysListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiTracesSpanAttributeKeysListResponse =
@@ -19458,7 +19610,7 @@ export type apiTracesSpanAttributeValuesListResponseDefault = {
 
 export type apiTracesSpanAttributeValuesListResponseSuccess =
   apiTracesSpanAttributeValuesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type apiTracesSpanAttributeValuesListResponseError = (
   | apiTracesSpanAttributeValuesListResponse400
@@ -19467,7 +19619,7 @@ export type apiTracesSpanAttributeValuesListResponseError = (
   | apiTracesSpanAttributeValuesListResponse503
   | apiTracesSpanAttributeValuesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type apiTracesSpanAttributeValuesListResponse =
@@ -19533,13 +19685,13 @@ export type callWebsocketCreateResponseDefault = {
 
 export type callWebsocketCreateResponseSuccess =
   callWebsocketCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type callWebsocketCreateResponseError = (
   | callWebsocketCreateResponse400
   | callWebsocketCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type callWebsocketCreateResponse =
@@ -19579,13 +19731,13 @@ export type falconAiConversationsListResponseDefault = {
 
 export type falconAiConversationsListResponseSuccess =
   falconAiConversationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiConversationsListResponseError = (
   | falconAiConversationsListResponse403
   | falconAiConversationsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiConversationsListResponse =
@@ -19628,13 +19780,13 @@ export type falconAiConversationsCreateResponseDefault = {
 
 export type falconAiConversationsCreateResponseSuccess =
   falconAiConversationsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiConversationsCreateResponseError = (
   | falconAiConversationsCreateResponse403
   | falconAiConversationsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiConversationsCreateResponse =
@@ -19685,14 +19837,14 @@ export type falconAiConversationsReadResponseDefault = {
 
 export type falconAiConversationsReadResponseSuccess =
   falconAiConversationsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiConversationsReadResponseError = (
   | falconAiConversationsReadResponse403
   | falconAiConversationsReadResponse404
   | falconAiConversationsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiConversationsReadResponse =
@@ -19741,14 +19893,14 @@ export type falconAiConversationsPartialUpdateResponseDefault = {
 
 export type falconAiConversationsPartialUpdateResponseSuccess =
   falconAiConversationsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiConversationsPartialUpdateResponseError = (
   | falconAiConversationsPartialUpdateResponse403
   | falconAiConversationsPartialUpdateResponse404
   | falconAiConversationsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiConversationsPartialUpdateResponse =
@@ -19802,14 +19954,14 @@ export type falconAiConversationsDeleteResponseDefault = {
 
 export type falconAiConversationsDeleteResponseSuccess =
   falconAiConversationsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiConversationsDeleteResponseError = (
   | falconAiConversationsDeleteResponse403
   | falconAiConversationsDeleteResponse404
   | falconAiConversationsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiConversationsDeleteResponse =
@@ -19858,14 +20010,14 @@ export type falconAiConversationsStreamStatusListResponseDefault = {
 
 export type falconAiConversationsStreamStatusListResponseSuccess =
   falconAiConversationsStreamStatusListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiConversationsStreamStatusListResponseError = (
   | falconAiConversationsStreamStatusListResponse403
   | falconAiConversationsStreamStatusListResponse404
   | falconAiConversationsStreamStatusListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiConversationsStreamStatusListResponse =
@@ -19909,21 +20061,27 @@ export type falconAiFilesUploadCreateResponse403 = {
   status: 403;
 };
 
+export type falconAiFilesUploadCreateResponse503 = {
+  data: FalconErrorResponseApi;
+  status: 503;
+};
+
 export type falconAiFilesUploadCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 403>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 503>;
 };
 
 export type falconAiFilesUploadCreateResponseSuccess =
   falconAiFilesUploadCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiFilesUploadCreateResponseError = (
   | falconAiFilesUploadCreateResponse400
   | falconAiFilesUploadCreateResponse403
+  | falconAiFilesUploadCreateResponse503
   | falconAiFilesUploadCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiFilesUploadCreateResponse =
@@ -19973,13 +20131,13 @@ export type falconAiMcpConnectorsListResponseDefault = {
 
 export type falconAiMcpConnectorsListResponseSuccess =
   falconAiMcpConnectorsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsListResponseError = (
   | falconAiMcpConnectorsListResponse403
   | falconAiMcpConnectorsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsListResponse =
@@ -20027,14 +20185,14 @@ export type falconAiMcpConnectorsCreateResponseDefault = {
 
 export type falconAiMcpConnectorsCreateResponseSuccess =
   falconAiMcpConnectorsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsCreateResponseError = (
   | falconAiMcpConnectorsCreateResponse403
   | falconAiMcpConnectorsCreateResponse409
   | falconAiMcpConnectorsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsCreateResponse =
@@ -20085,14 +20243,14 @@ export type falconAiMcpConnectorsReadResponseDefault = {
 
 export type falconAiMcpConnectorsReadResponseSuccess =
   falconAiMcpConnectorsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsReadResponseError = (
   | falconAiMcpConnectorsReadResponse403
   | falconAiMcpConnectorsReadResponse404
   | falconAiMcpConnectorsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsReadResponse =
@@ -20141,14 +20299,14 @@ export type falconAiMcpConnectorsPartialUpdateResponseDefault = {
 
 export type falconAiMcpConnectorsPartialUpdateResponseSuccess =
   falconAiMcpConnectorsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsPartialUpdateResponseError = (
   | falconAiMcpConnectorsPartialUpdateResponse403
   | falconAiMcpConnectorsPartialUpdateResponse404
   | falconAiMcpConnectorsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsPartialUpdateResponse =
@@ -20202,14 +20360,14 @@ export type falconAiMcpConnectorsDeleteResponseDefault = {
 
 export type falconAiMcpConnectorsDeleteResponseSuccess =
   falconAiMcpConnectorsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsDeleteResponseError = (
   | falconAiMcpConnectorsDeleteResponse403
   | falconAiMcpConnectorsDeleteResponse404
   | falconAiMcpConnectorsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsDeleteResponse =
@@ -20263,7 +20421,7 @@ export type falconAiMcpConnectorsAuthenticateCreateResponseDefault = {
 
 export type falconAiMcpConnectorsAuthenticateCreateResponseSuccess =
   falconAiMcpConnectorsAuthenticateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsAuthenticateCreateResponseError = (
   | falconAiMcpConnectorsAuthenticateCreateResponse403
@@ -20271,7 +20429,7 @@ export type falconAiMcpConnectorsAuthenticateCreateResponseError = (
   | falconAiMcpConnectorsAuthenticateCreateResponse502
   | falconAiMcpConnectorsAuthenticateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsAuthenticateCreateResponse =
@@ -20332,7 +20490,7 @@ export type falconAiMcpConnectorsDiscoverCreateResponseDefault = {
 
 export type falconAiMcpConnectorsDiscoverCreateResponseSuccess =
   falconAiMcpConnectorsDiscoverCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsDiscoverCreateResponseError = (
   | falconAiMcpConnectorsDiscoverCreateResponse403
@@ -20340,7 +20498,7 @@ export type falconAiMcpConnectorsDiscoverCreateResponseError = (
   | falconAiMcpConnectorsDiscoverCreateResponse502
   | falconAiMcpConnectorsDiscoverCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsDiscoverCreateResponse =
@@ -20394,14 +20552,14 @@ export type falconAiMcpConnectorsOauthCallbackListResponseDefault = {
 
 export type falconAiMcpConnectorsOauthCallbackListResponseSuccess =
   falconAiMcpConnectorsOauthCallbackListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsOauthCallbackListResponseError = (
   | falconAiMcpConnectorsOauthCallbackListResponse400
   | falconAiMcpConnectorsOauthCallbackListResponse502
   | falconAiMcpConnectorsOauthCallbackListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsOauthCallbackListResponse =
@@ -20481,7 +20639,7 @@ export type falconAiMcpConnectorsTestCreateResponseDefault = {
 
 export type falconAiMcpConnectorsTestCreateResponseSuccess =
   falconAiMcpConnectorsTestCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsTestCreateResponseError = (
   | falconAiMcpConnectorsTestCreateResponse403
@@ -20489,7 +20647,7 @@ export type falconAiMcpConnectorsTestCreateResponseError = (
   | falconAiMcpConnectorsTestCreateResponse502
   | falconAiMcpConnectorsTestCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsTestCreateResponse =
@@ -20546,7 +20704,7 @@ export type falconAiMcpConnectorsToolsPartialUpdateResponseDefault = {
 
 export type falconAiMcpConnectorsToolsPartialUpdateResponseSuccess =
   falconAiMcpConnectorsToolsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMcpConnectorsToolsPartialUpdateResponseError = (
   | falconAiMcpConnectorsToolsPartialUpdateResponse400
@@ -20554,7 +20712,7 @@ export type falconAiMcpConnectorsToolsPartialUpdateResponseError = (
   | falconAiMcpConnectorsToolsPartialUpdateResponse404
   | falconAiMcpConnectorsToolsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMcpConnectorsToolsPartialUpdateResponse =
@@ -20603,13 +20761,13 @@ export type falconAiMemoryListResponseDefault = {
 
 export type falconAiMemoryListResponseSuccess =
   falconAiMemoryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMemoryListResponseError = (
   | falconAiMemoryListResponse403
   | falconAiMemoryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMemoryListResponse =
@@ -20656,13 +20814,13 @@ export type falconAiMemoryCreateResponseSuccess = (
   | falconAiMemoryCreateResponse200
   | falconAiMemoryCreateResponse201
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type falconAiMemoryCreateResponseError = (
   | falconAiMemoryCreateResponse403
   | falconAiMemoryCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMemoryCreateResponse =
@@ -20713,14 +20871,14 @@ export type falconAiMemoryDeleteResponseDefault = {
 
 export type falconAiMemoryDeleteResponseSuccess =
   falconAiMemoryDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMemoryDeleteResponseError = (
   | falconAiMemoryDeleteResponse403
   | falconAiMemoryDeleteResponse404
   | falconAiMemoryDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMemoryDeleteResponse =
@@ -20769,14 +20927,14 @@ export type falconAiMessagesFeedbackCreateResponseDefault = {
 
 export type falconAiMessagesFeedbackCreateResponseSuccess =
   falconAiMessagesFeedbackCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiMessagesFeedbackCreateResponseError = (
   | falconAiMessagesFeedbackCreateResponse403
   | falconAiMessagesFeedbackCreateResponse404
   | falconAiMessagesFeedbackCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiMessagesFeedbackCreateResponse =
@@ -20833,7 +20991,7 @@ export type falconAiQuickAnalysisCreateResponseDefault = {
 
 export type falconAiQuickAnalysisCreateResponseSuccess =
   falconAiQuickAnalysisCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiQuickAnalysisCreateResponseError = (
   | falconAiQuickAnalysisCreateResponse429
@@ -20841,7 +20999,7 @@ export type falconAiQuickAnalysisCreateResponseError = (
   | falconAiQuickAnalysisCreateResponse504
   | falconAiQuickAnalysisCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiQuickAnalysisCreateResponse =
@@ -20884,13 +21042,13 @@ export type falconAiSkillsListResponseDefault = {
 
 export type falconAiSkillsListResponseSuccess =
   falconAiSkillsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiSkillsListResponseError = (
   | falconAiSkillsListResponse403
   | falconAiSkillsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiSkillsListResponse =
@@ -20935,14 +21093,14 @@ export type falconAiSkillsCreateResponseDefault = {
 
 export type falconAiSkillsCreateResponseSuccess =
   falconAiSkillsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiSkillsCreateResponseError = (
   | falconAiSkillsCreateResponse403
   | falconAiSkillsCreateResponse409
   | falconAiSkillsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiSkillsCreateResponse =
@@ -20993,14 +21151,14 @@ export type falconAiSkillsReadResponseDefault = {
 
 export type falconAiSkillsReadResponseSuccess =
   falconAiSkillsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiSkillsReadResponseError = (
   | falconAiSkillsReadResponse403
   | falconAiSkillsReadResponse404
   | falconAiSkillsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiSkillsReadResponse =
@@ -21049,14 +21207,14 @@ export type falconAiSkillsPartialUpdateResponseDefault = {
 
 export type falconAiSkillsPartialUpdateResponseSuccess =
   falconAiSkillsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiSkillsPartialUpdateResponseError = (
   | falconAiSkillsPartialUpdateResponse403
   | falconAiSkillsPartialUpdateResponse404
   | falconAiSkillsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiSkillsPartialUpdateResponse =
@@ -21108,14 +21266,14 @@ export type falconAiSkillsDeleteResponseDefault = {
 
 export type falconAiSkillsDeleteResponseSuccess =
   falconAiSkillsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type falconAiSkillsDeleteResponseError = (
   | falconAiSkillsDeleteResponse403
   | falconAiSkillsDeleteResponse404
   | falconAiSkillsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type falconAiSkillsDeleteResponse =
@@ -21158,13 +21316,13 @@ export type healthListResponseDefault = {
 };
 
 export type healthListResponseSuccess = healthListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type healthListResponseError = (
   | healthListResponse500
   | healthListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type healthListResponse =
@@ -21215,7 +21373,7 @@ export type integrationsConnectionsListResponseDefault = {
 
 export type integrationsConnectionsListResponseSuccess =
   integrationsConnectionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsListResponseError = (
   | integrationsConnectionsListResponse400
@@ -21223,7 +21381,7 @@ export type integrationsConnectionsListResponseError = (
   | integrationsConnectionsListResponse500
   | integrationsConnectionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsListResponse =
@@ -21295,7 +21453,7 @@ export type integrationsConnectionsCreateResponseDefault = {
 
 export type integrationsConnectionsCreateResponseSuccess =
   integrationsConnectionsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsCreateResponseError = (
   | integrationsConnectionsCreateResponse400
@@ -21303,7 +21461,7 @@ export type integrationsConnectionsCreateResponseError = (
   | integrationsConnectionsCreateResponse500
   | integrationsConnectionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsCreateResponse =
@@ -21359,7 +21517,7 @@ export type integrationsConnectionsValidateCredentialsResponseDefault = {
 
 export type integrationsConnectionsValidateCredentialsResponseSuccess =
   integrationsConnectionsValidateCredentialsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsValidateCredentialsResponseError = (
   | integrationsConnectionsValidateCredentialsResponse400
@@ -21367,7 +21525,7 @@ export type integrationsConnectionsValidateCredentialsResponseError = (
   | integrationsConnectionsValidateCredentialsResponse500
   | integrationsConnectionsValidateCredentialsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsValidateCredentialsResponse =
@@ -21408,11 +21566,11 @@ export type integrationsConnectionsSlackChannelsListResponseDefault = {
 
 export type integrationsConnectionsSlackChannelsListResponseSuccess =
   integrationsConnectionsSlackChannelsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsSlackChannelsListResponseError =
   integrationsConnectionsSlackChannelsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type integrationsConnectionsSlackChannelsListResponse =
@@ -21483,7 +21641,7 @@ export type integrationsConnectionsReadResponseDefault = {
 
 export type integrationsConnectionsReadResponseSuccess =
   integrationsConnectionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsReadResponseError = (
   | integrationsConnectionsReadResponse400
@@ -21491,7 +21649,7 @@ export type integrationsConnectionsReadResponseError = (
   | integrationsConnectionsReadResponse500
   | integrationsConnectionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsReadResponse =
@@ -21545,7 +21703,7 @@ export type integrationsConnectionsUpdateResponseDefault = {
 
 export type integrationsConnectionsUpdateResponseSuccess =
   integrationsConnectionsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsUpdateResponseError = (
   | integrationsConnectionsUpdateResponse400
@@ -21553,7 +21711,7 @@ export type integrationsConnectionsUpdateResponseError = (
   | integrationsConnectionsUpdateResponse500
   | integrationsConnectionsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsUpdateResponse =
@@ -21610,7 +21768,7 @@ export type integrationsConnectionsPartialUpdateResponseDefault = {
 
 export type integrationsConnectionsPartialUpdateResponseSuccess =
   integrationsConnectionsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsPartialUpdateResponseError = (
   | integrationsConnectionsPartialUpdateResponse400
@@ -21618,7 +21776,7 @@ export type integrationsConnectionsPartialUpdateResponseError = (
   | integrationsConnectionsPartialUpdateResponse500
   | integrationsConnectionsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsPartialUpdateResponse =
@@ -21675,7 +21833,7 @@ export type integrationsConnectionsDeleteResponseDefault = {
 
 export type integrationsConnectionsDeleteResponseSuccess =
   integrationsConnectionsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsDeleteResponseError = (
   | integrationsConnectionsDeleteResponse400
@@ -21683,7 +21841,7 @@ export type integrationsConnectionsDeleteResponseError = (
   | integrationsConnectionsDeleteResponse500
   | integrationsConnectionsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsDeleteResponse =
@@ -21737,7 +21895,7 @@ export type integrationsConnectionsPauseResponseDefault = {
 
 export type integrationsConnectionsPauseResponseSuccess =
   integrationsConnectionsPauseResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsPauseResponseError = (
   | integrationsConnectionsPauseResponse400
@@ -21745,7 +21903,7 @@ export type integrationsConnectionsPauseResponseError = (
   | integrationsConnectionsPauseResponse500
   | integrationsConnectionsPauseResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsPauseResponse =
@@ -21802,7 +21960,7 @@ export type integrationsConnectionsResumeResponseDefault = {
 
 export type integrationsConnectionsResumeResponseSuccess =
   integrationsConnectionsResumeResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsResumeResponseError = (
   | integrationsConnectionsResumeResponse400
@@ -21810,7 +21968,7 @@ export type integrationsConnectionsResumeResponseError = (
   | integrationsConnectionsResumeResponse500
   | integrationsConnectionsResumeResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsResumeResponse =
@@ -21872,7 +22030,7 @@ export type integrationsConnectionsSyncNowResponseDefault = {
 
 export type integrationsConnectionsSyncNowResponseSuccess =
   integrationsConnectionsSyncNowResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsConnectionsSyncNowResponseError = (
   | integrationsConnectionsSyncNowResponse400
@@ -21881,7 +22039,7 @@ export type integrationsConnectionsSyncNowResponseError = (
   | integrationsConnectionsSyncNowResponse500
   | integrationsConnectionsSyncNowResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsConnectionsSyncNowResponse =
@@ -21923,11 +22081,11 @@ export type integrationsSlackInstallCreateResponseDefault = {
 
 export type integrationsSlackInstallCreateResponseSuccess =
   integrationsSlackInstallCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsSlackInstallCreateResponseError =
   integrationsSlackInstallCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type integrationsSlackInstallCreateResponse =
@@ -21980,7 +22138,7 @@ export type integrationsSyncLogsListResponseDefault = {
 
 export type integrationsSyncLogsListResponseSuccess =
   integrationsSyncLogsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsSyncLogsListResponseError = (
   | integrationsSyncLogsListResponse400
@@ -21988,7 +22146,7 @@ export type integrationsSyncLogsListResponseError = (
   | integrationsSyncLogsListResponse500
   | integrationsSyncLogsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsSyncLogsListResponse =
@@ -22060,7 +22218,7 @@ export type integrationsSyncLogsReadResponseDefault = {
 
 export type integrationsSyncLogsReadResponseSuccess =
   integrationsSyncLogsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type integrationsSyncLogsReadResponseError = (
   | integrationsSyncLogsReadResponse400
@@ -22068,7 +22226,7 @@ export type integrationsSyncLogsReadResponseError = (
   | integrationsSyncLogsReadResponse500
   | integrationsSyncLogsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type integrationsSyncLogsReadResponse =
@@ -22112,13 +22270,13 @@ export type mcpAnalyticsSummaryListResponseDefault = {
 
 export type mcpAnalyticsSummaryListResponseSuccess =
   mcpAnalyticsSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpAnalyticsSummaryListResponseError = (
   | mcpAnalyticsSummaryListResponse403
   | mcpAnalyticsSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpAnalyticsSummaryListResponse =
@@ -22161,13 +22319,13 @@ export type mcpAnalyticsTimelineListResponseDefault = {
 
 export type mcpAnalyticsTimelineListResponseSuccess =
   mcpAnalyticsTimelineListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpAnalyticsTimelineListResponseError = (
   | mcpAnalyticsTimelineListResponse403
   | mcpAnalyticsTimelineListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpAnalyticsTimelineListResponse =
@@ -22210,13 +22368,13 @@ export type mcpAnalyticsToolsListResponseDefault = {
 
 export type mcpAnalyticsToolsListResponseSuccess =
   mcpAnalyticsToolsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpAnalyticsToolsListResponseError = (
   | mcpAnalyticsToolsListResponse403
   | mcpAnalyticsToolsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpAnalyticsToolsListResponse =
@@ -22258,13 +22416,13 @@ export type mcpConfigListResponseDefault = {
 };
 
 export type mcpConfigListResponseSuccess = mcpConfigListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type mcpConfigListResponseError = (
   | mcpConfigListResponse403
   | mcpConfigListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpConfigListResponse =
@@ -22308,14 +22466,14 @@ export type mcpConfigUpdateResponseDefault = {
 };
 
 export type mcpConfigUpdateResponseSuccess = mcpConfigUpdateResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type mcpConfigUpdateResponseError = (
   | mcpConfigUpdateResponse403
   | mcpConfigUpdateResponse404
   | mcpConfigUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpConfigUpdateResponse =
@@ -22363,14 +22521,14 @@ export type mcpConfigToolGroupsListResponseDefault = {
 
 export type mcpConfigToolGroupsListResponseSuccess =
   mcpConfigToolGroupsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpConfigToolGroupsListResponseError = (
   | mcpConfigToolGroupsListResponse403
   | mcpConfigToolGroupsListResponse500
   | mcpConfigToolGroupsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpConfigToolGroupsListResponse =
@@ -22413,13 +22571,13 @@ export type mcpConfigToolGroupsUpdateResponseDefault = {
 
 export type mcpConfigToolGroupsUpdateResponseSuccess =
   mcpConfigToolGroupsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpConfigToolGroupsUpdateResponseError = (
   | mcpConfigToolGroupsUpdateResponse403
   | mcpConfigToolGroupsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpConfigToolGroupsUpdateResponse =
@@ -22464,13 +22622,13 @@ export type mcpHealthListResponseDefault = {
 };
 
 export type mcpHealthListResponseSuccess = mcpHealthListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type mcpHealthListResponseError = (
   | mcpHealthListResponse500
   | mcpHealthListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpHealthListResponse =
@@ -22530,7 +22688,7 @@ export type mcpInternalToolCallCreateResponseDefault = {
 
 export type mcpInternalToolCallCreateResponseSuccess =
   mcpInternalToolCallCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpInternalToolCallCreateResponseError = (
   | mcpInternalToolCallCreateResponse400
@@ -22540,7 +22698,7 @@ export type mcpInternalToolCallCreateResponseError = (
   | mcpInternalToolCallCreateResponse500
   | mcpInternalToolCallCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpInternalToolCallCreateResponse =
@@ -22586,13 +22744,13 @@ export type mcpInternalToolsListResponseDefault = {
 
 export type mcpInternalToolsListResponseSuccess =
   mcpInternalToolsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpInternalToolsListResponseError = (
   | mcpInternalToolsListResponse403
   | mcpInternalToolsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpInternalToolsListResponse =
@@ -22640,14 +22798,14 @@ export type mcpOauthApproveInfoListResponseDefault = {
 
 export type mcpOauthApproveInfoListResponseSuccess =
   mcpOauthApproveInfoListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpOauthApproveInfoListResponseError = (
   | mcpOauthApproveInfoListResponse400
   | mcpOauthApproveInfoListResponse404
   | mcpOauthApproveInfoListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpOauthApproveInfoListResponse =
@@ -22702,7 +22860,7 @@ export type mcpOauthApproveCreateResponseDefault = {
 
 export type mcpOauthApproveCreateResponseSuccess =
   mcpOauthApproveCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpOauthApproveCreateResponseError = (
   | mcpOauthApproveCreateResponse400
@@ -22710,7 +22868,7 @@ export type mcpOauthApproveCreateResponseError = (
   | mcpOauthApproveCreateResponse404
   | mcpOauthApproveCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpOauthApproveCreateResponse =
@@ -22758,13 +22916,13 @@ export type mcpOauthAuthorizeListResponseDefault = {
 
 export type mcpOauthAuthorizeListResponseSuccess =
   mcpOauthAuthorizeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpOauthAuthorizeListResponseError = (
   | mcpOauthAuthorizeListResponse400
   | mcpOauthAuthorizeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpOauthAuthorizeListResponse =
@@ -22812,14 +22970,14 @@ export type mcpOauthConsentCreateResponseDefault = {
 
 export type mcpOauthConsentCreateResponseSuccess =
   mcpOauthConsentCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpOauthConsentCreateResponseError = (
   | mcpOauthConsentCreateResponse400
   | mcpOauthConsentCreateResponse403
   | mcpOauthConsentCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpOauthConsentCreateResponse =
@@ -22875,7 +23033,7 @@ export type mcpOauthTokenCreateResponseDefault = {
 
 export type mcpOauthTokenCreateResponseSuccess =
   mcpOauthTokenCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type mcpOauthTokenCreateResponseError = (
   | mcpOauthTokenCreateResponse400
@@ -22883,7 +23041,7 @@ export type mcpOauthTokenCreateResponseError = (
   | mcpOauthTokenCreateResponse429
   | mcpOauthTokenCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpOauthTokenCreateResponse =
@@ -22925,13 +23083,13 @@ export type mcpSessionsListResponseDefault = {
 };
 
 export type mcpSessionsListResponseSuccess = mcpSessionsListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type mcpSessionsListResponseError = (
   | mcpSessionsListResponse403
   | mcpSessionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpSessionsListResponse =
@@ -22980,7 +23138,7 @@ export type mcpSessionsDeleteResponseDefault = {
 };
 
 export type mcpSessionsDeleteResponseSuccess = mcpSessionsDeleteResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type mcpSessionsDeleteResponseError = (
   | mcpSessionsDeleteResponse403
@@ -22988,7 +23146,7 @@ export type mcpSessionsDeleteResponseError = (
   | mcpSessionsDeleteResponse500
   | mcpSessionsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type mcpSessionsDeleteResponse =
@@ -23052,7 +23210,7 @@ export type modelHubAiEvalWriterCreateResponseDefault = {
 
 export type modelHubAiEvalWriterCreateResponseSuccess =
   modelHubAiEvalWriterCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAiEvalWriterCreateResponseError = (
   | modelHubAiEvalWriterCreateResponse400
@@ -23062,7 +23220,7 @@ export type modelHubAiEvalWriterCreateResponseError = (
   | modelHubAiEvalWriterCreateResponse500
   | modelHubAiEvalWriterCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAiEvalWriterCreateResponse =
@@ -23123,7 +23281,7 @@ export type modelHubAiFilterCreateResponseDefault = {
 
 export type modelHubAiFilterCreateResponseSuccess =
   modelHubAiFilterCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAiFilterCreateResponseError = (
   | modelHubAiFilterCreateResponse400
@@ -23132,7 +23290,7 @@ export type modelHubAiFilterCreateResponseError = (
   | modelHubAiFilterCreateResponse503
   | modelHubAiFilterCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAiFilterCreateResponse =
@@ -23187,11 +23345,11 @@ export type modelHubAnnotationQueuesListResponseDefault = {
 
 export type modelHubAnnotationQueuesListResponseSuccess =
   modelHubAnnotationQueuesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesListResponseError =
   modelHubAnnotationQueuesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesListResponse =
@@ -23245,11 +23403,11 @@ export type modelHubAnnotationQueuesCreateResponseDefault = {
 
 export type modelHubAnnotationQueuesCreateResponseSuccess =
   modelHubAnnotationQueuesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesCreateResponseError =
   modelHubAnnotationQueuesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesCreateResponse =
@@ -23312,7 +23470,7 @@ export type modelHubAnnotationQueuesForSourceResponseDefault = {
 
 export type modelHubAnnotationQueuesForSourceResponseSuccess =
   modelHubAnnotationQueuesForSourceResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesForSourceResponseError = (
   | modelHubAnnotationQueuesForSourceResponse400
@@ -23322,7 +23480,7 @@ export type modelHubAnnotationQueuesForSourceResponseError = (
   | modelHubAnnotationQueuesForSourceResponse500
   | modelHubAnnotationQueuesForSourceResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesForSourceResponse =
@@ -23412,7 +23570,7 @@ export type modelHubAnnotationQueuesGetOrCreateDefaultResponseDefault = {
 
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponseSuccess =
   modelHubAnnotationQueuesGetOrCreateDefaultResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponseError = (
   | modelHubAnnotationQueuesGetOrCreateDefaultResponse400
@@ -23422,7 +23580,7 @@ export type modelHubAnnotationQueuesGetOrCreateDefaultResponseError = (
   | modelHubAnnotationQueuesGetOrCreateDefaultResponse500
   | modelHubAnnotationQueuesGetOrCreateDefaultResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesGetOrCreateDefaultResponse =
@@ -23469,11 +23627,11 @@ export type modelHubAnnotationQueuesReadResponseDefault = {
 
 export type modelHubAnnotationQueuesReadResponseSuccess =
   modelHubAnnotationQueuesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesReadResponseError =
   modelHubAnnotationQueuesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesReadResponse =
@@ -23509,11 +23667,11 @@ export type modelHubAnnotationQueuesUpdateResponseDefault = {
 
 export type modelHubAnnotationQueuesUpdateResponseSuccess =
   modelHubAnnotationQueuesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesUpdateResponseError =
   modelHubAnnotationQueuesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesUpdateResponse =
@@ -23555,11 +23713,11 @@ export type modelHubAnnotationQueuesPartialUpdateResponseDefault = {
 
 export type modelHubAnnotationQueuesPartialUpdateResponseSuccess =
   modelHubAnnotationQueuesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesPartialUpdateResponseError =
   modelHubAnnotationQueuesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesPartialUpdateResponse =
@@ -23598,11 +23756,11 @@ export type modelHubAnnotationQueuesDeleteResponseDefault = {
 
 export type modelHubAnnotationQueuesDeleteResponseSuccess =
   modelHubAnnotationQueuesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesDeleteResponseError =
   modelHubAnnotationQueuesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesDeleteResponse =
@@ -23673,7 +23831,7 @@ export type modelHubAnnotationQueuesAddLabelResponseDefault = {
 
 export type modelHubAnnotationQueuesAddLabelResponseSuccess =
   modelHubAnnotationQueuesAddLabelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAddLabelResponseError = (
   | modelHubAnnotationQueuesAddLabelResponse400
@@ -23683,7 +23841,7 @@ export type modelHubAnnotationQueuesAddLabelResponseError = (
   | modelHubAnnotationQueuesAddLabelResponse500
   | modelHubAnnotationQueuesAddLabelResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesAddLabelResponse =
@@ -23752,7 +23910,7 @@ export type modelHubAnnotationQueuesAgreementResponseDefault = {
 
 export type modelHubAnnotationQueuesAgreementResponseSuccess =
   modelHubAnnotationQueuesAgreementResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAgreementResponseError = (
   | modelHubAnnotationQueuesAgreementResponse400
@@ -23762,7 +23920,7 @@ export type modelHubAnnotationQueuesAgreementResponseError = (
   | modelHubAnnotationQueuesAgreementResponse500
   | modelHubAnnotationQueuesAgreementResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesAgreementResponse =
@@ -23826,7 +23984,7 @@ export type modelHubAnnotationQueuesAnalyticsResponseDefault = {
 
 export type modelHubAnnotationQueuesAnalyticsResponseSuccess =
   modelHubAnnotationQueuesAnalyticsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAnalyticsResponseError = (
   | modelHubAnnotationQueuesAnalyticsResponse400
@@ -23836,7 +23994,7 @@ export type modelHubAnnotationQueuesAnalyticsResponseError = (
   | modelHubAnnotationQueuesAnalyticsResponse500
   | modelHubAnnotationQueuesAnalyticsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesAnalyticsResponse =
@@ -23900,7 +24058,7 @@ export type modelHubAnnotationQueuesExportFieldsResponseDefault = {
 
 export type modelHubAnnotationQueuesExportFieldsResponseSuccess =
   modelHubAnnotationQueuesExportFieldsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesExportFieldsResponseError = (
   | modelHubAnnotationQueuesExportFieldsResponse400
@@ -23910,7 +24068,7 @@ export type modelHubAnnotationQueuesExportFieldsResponseError = (
   | modelHubAnnotationQueuesExportFieldsResponse500
   | modelHubAnnotationQueuesExportFieldsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesExportFieldsResponse =
@@ -23974,7 +24132,7 @@ export type modelHubAnnotationQueuesExportToDatasetResponseDefault = {
 
 export type modelHubAnnotationQueuesExportToDatasetResponseSuccess =
   modelHubAnnotationQueuesExportToDatasetResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesExportToDatasetResponseError = (
   | modelHubAnnotationQueuesExportToDatasetResponse400
@@ -23984,7 +24142,7 @@ export type modelHubAnnotationQueuesExportToDatasetResponseError = (
   | modelHubAnnotationQueuesExportToDatasetResponse500
   | modelHubAnnotationQueuesExportToDatasetResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesExportToDatasetResponse =
@@ -24056,7 +24214,7 @@ export type modelHubAnnotationQueuesExportAnnotationsResponseDefault = {
 
 export type modelHubAnnotationQueuesExportAnnotationsResponseSuccess =
   modelHubAnnotationQueuesExportAnnotationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesExportAnnotationsResponseError = (
   | modelHubAnnotationQueuesExportAnnotationsResponse400
@@ -24067,7 +24225,7 @@ export type modelHubAnnotationQueuesExportAnnotationsResponseError = (
   | modelHubAnnotationQueuesExportAnnotationsResponse500
   | modelHubAnnotationQueuesExportAnnotationsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesExportAnnotationsResponse =
@@ -24151,7 +24309,7 @@ export type modelHubAnnotationQueuesHardDeleteResponseDefault = {
 
 export type modelHubAnnotationQueuesHardDeleteResponseSuccess =
   modelHubAnnotationQueuesHardDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesHardDeleteResponseError = (
   | modelHubAnnotationQueuesHardDeleteResponse400
@@ -24161,7 +24319,7 @@ export type modelHubAnnotationQueuesHardDeleteResponseError = (
   | modelHubAnnotationQueuesHardDeleteResponse500
   | modelHubAnnotationQueuesHardDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesHardDeleteResponse =
@@ -24233,7 +24391,7 @@ export type modelHubAnnotationQueuesProgressResponseDefault = {
 
 export type modelHubAnnotationQueuesProgressResponseSuccess =
   modelHubAnnotationQueuesProgressResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesProgressResponseError = (
   | modelHubAnnotationQueuesProgressResponse400
@@ -24243,7 +24401,7 @@ export type modelHubAnnotationQueuesProgressResponseError = (
   | modelHubAnnotationQueuesProgressResponse500
   | modelHubAnnotationQueuesProgressResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesProgressResponse =
@@ -24304,7 +24462,7 @@ export type modelHubAnnotationQueuesRemoveLabelResponseDefault = {
 
 export type modelHubAnnotationQueuesRemoveLabelResponseSuccess =
   modelHubAnnotationQueuesRemoveLabelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesRemoveLabelResponseError = (
   | modelHubAnnotationQueuesRemoveLabelResponse400
@@ -24314,7 +24472,7 @@ export type modelHubAnnotationQueuesRemoveLabelResponseError = (
   | modelHubAnnotationQueuesRemoveLabelResponse500
   | modelHubAnnotationQueuesRemoveLabelResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesRemoveLabelResponse =
@@ -24381,7 +24539,7 @@ export type modelHubAnnotationQueuesRestoreResponseDefault = {
 
 export type modelHubAnnotationQueuesRestoreResponseSuccess =
   modelHubAnnotationQueuesRestoreResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesRestoreResponseError = (
   | modelHubAnnotationQueuesRestoreResponse400
@@ -24391,7 +24549,7 @@ export type modelHubAnnotationQueuesRestoreResponseError = (
   | modelHubAnnotationQueuesRestoreResponse500
   | modelHubAnnotationQueuesRestoreResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesRestoreResponse =
@@ -24455,7 +24613,7 @@ export type modelHubAnnotationQueuesUpdateStatusResponseDefault = {
 
 export type modelHubAnnotationQueuesUpdateStatusResponseSuccess =
   modelHubAnnotationQueuesUpdateStatusResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesUpdateStatusResponseError = (
   | modelHubAnnotationQueuesUpdateStatusResponse400
@@ -24465,7 +24623,7 @@ export type modelHubAnnotationQueuesUpdateStatusResponseError = (
   | modelHubAnnotationQueuesUpdateStatusResponse500
   | modelHubAnnotationQueuesUpdateStatusResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesUpdateStatusResponse =
@@ -24504,11 +24662,11 @@ export type modelHubAnnotationQueuesAutomationRulesListResponseDefault = {
 
 export type modelHubAnnotationQueuesAutomationRulesListResponseSuccess =
   modelHubAnnotationQueuesAutomationRulesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAutomationRulesListResponseError =
   modelHubAnnotationQueuesAutomationRulesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesAutomationRulesListResponse =
@@ -24564,11 +24722,11 @@ export type modelHubAnnotationQueuesAutomationRulesCreateResponseDefault = {
 
 export type modelHubAnnotationQueuesAutomationRulesCreateResponseSuccess =
   modelHubAnnotationQueuesAutomationRulesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAutomationRulesCreateResponseError =
   modelHubAnnotationQueuesAutomationRulesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesAutomationRulesCreateResponse =
@@ -24609,11 +24767,11 @@ export type modelHubAnnotationQueuesAutomationRulesReadResponseDefault = {
 
 export type modelHubAnnotationQueuesAutomationRulesReadResponseSuccess =
   modelHubAnnotationQueuesAutomationRulesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAutomationRulesReadResponseError =
   modelHubAnnotationQueuesAutomationRulesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesAutomationRulesReadResponse =
@@ -24653,11 +24811,11 @@ export type modelHubAnnotationQueuesAutomationRulesUpdateResponseDefault = {
 
 export type modelHubAnnotationQueuesAutomationRulesUpdateResponseSuccess =
   modelHubAnnotationQueuesAutomationRulesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAutomationRulesUpdateResponseError =
   modelHubAnnotationQueuesAutomationRulesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesAutomationRulesUpdateResponse =
@@ -24701,11 +24859,11 @@ export type modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseDefault 
 
 export type modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseSuccess =
   modelHubAnnotationQueuesAutomationRulesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseError =
   modelHubAnnotationQueuesAutomationRulesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesAutomationRulesPartialUpdateResponse =
@@ -24748,11 +24906,11 @@ export type modelHubAnnotationQueuesAutomationRulesDeleteResponseDefault = {
 
 export type modelHubAnnotationQueuesAutomationRulesDeleteResponseSuccess =
   modelHubAnnotationQueuesAutomationRulesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAutomationRulesDeleteResponseError =
   modelHubAnnotationQueuesAutomationRulesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesAutomationRulesDeleteResponse =
@@ -24824,7 +24982,7 @@ export type modelHubAnnotationQueuesAutomationRulesEvaluateResponseSuccess = (
   | modelHubAnnotationQueuesAutomationRulesEvaluateResponse200
   | modelHubAnnotationQueuesAutomationRulesEvaluateResponse202
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponseError = (
   | modelHubAnnotationQueuesAutomationRulesEvaluateResponse400
@@ -24834,7 +24992,7 @@ export type modelHubAnnotationQueuesAutomationRulesEvaluateResponseError = (
   | modelHubAnnotationQueuesAutomationRulesEvaluateResponse500
   | modelHubAnnotationQueuesAutomationRulesEvaluateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesAutomationRulesEvaluateResponse =
@@ -24915,7 +25073,7 @@ export type modelHubAnnotationQueuesAutomationRulesPreviewResponseDefault = {
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponseSuccess =
   modelHubAnnotationQueuesAutomationRulesPreviewResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponseError = (
   | modelHubAnnotationQueuesAutomationRulesPreviewResponse400
@@ -24925,7 +25083,7 @@ export type modelHubAnnotationQueuesAutomationRulesPreviewResponseError = (
   | modelHubAnnotationQueuesAutomationRulesPreviewResponse500
   | modelHubAnnotationQueuesAutomationRulesPreviewResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesAutomationRulesPreviewResponse =
@@ -24968,11 +25126,11 @@ export type modelHubAnnotationQueuesItemsListResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsListResponseSuccess =
   modelHubAnnotationQueuesItemsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsListResponseError =
   modelHubAnnotationQueuesItemsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsListResponse =
@@ -25028,11 +25186,11 @@ export type modelHubAnnotationQueuesItemsCreateResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsCreateResponseSuccess =
   modelHubAnnotationQueuesItemsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsCreateResponseError =
   modelHubAnnotationQueuesItemsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsCreateResponse =
@@ -25096,7 +25254,7 @@ export type modelHubAnnotationQueuesItemsAddItemsResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsAddItemsResponseSuccess =
   modelHubAnnotationQueuesItemsAddItemsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsAddItemsResponseError = (
   | modelHubAnnotationQueuesItemsAddItemsResponse400
@@ -25106,7 +25264,7 @@ export type modelHubAnnotationQueuesItemsAddItemsResponseError = (
   | modelHubAnnotationQueuesItemsAddItemsResponse503
   | modelHubAnnotationQueuesItemsAddItemsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsAddItemsResponse =
@@ -25172,7 +25330,7 @@ export type modelHubAnnotationQueuesItemsAssignItemsResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsAssignItemsResponseSuccess =
   modelHubAnnotationQueuesItemsAssignItemsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsAssignItemsResponseError = (
   | modelHubAnnotationQueuesItemsAssignItemsResponse400
@@ -25182,7 +25340,7 @@ export type modelHubAnnotationQueuesItemsAssignItemsResponseError = (
   | modelHubAnnotationQueuesItemsAssignItemsResponse500
   | modelHubAnnotationQueuesItemsAssignItemsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsAssignItemsResponse =
@@ -25251,7 +25409,7 @@ export type modelHubAnnotationQueuesItemsBulkRemoveResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsBulkRemoveResponseSuccess =
   modelHubAnnotationQueuesItemsBulkRemoveResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsBulkRemoveResponseError = (
   | modelHubAnnotationQueuesItemsBulkRemoveResponse400
@@ -25261,7 +25419,7 @@ export type modelHubAnnotationQueuesItemsBulkRemoveResponseError = (
   | modelHubAnnotationQueuesItemsBulkRemoveResponse500
   | modelHubAnnotationQueuesItemsBulkRemoveResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsBulkRemoveResponse =
@@ -25327,7 +25485,7 @@ export type modelHubAnnotationQueuesItemsBulkReviewResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsBulkReviewResponseSuccess =
   modelHubAnnotationQueuesItemsBulkReviewResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsBulkReviewResponseError = (
   | modelHubAnnotationQueuesItemsBulkReviewResponse400
@@ -25337,7 +25495,7 @@ export type modelHubAnnotationQueuesItemsBulkReviewResponseError = (
   | modelHubAnnotationQueuesItemsBulkReviewResponse500
   | modelHubAnnotationQueuesItemsBulkReviewResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsBulkReviewResponse =
@@ -25406,7 +25564,7 @@ export type modelHubAnnotationQueuesItemsNextItemResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsNextItemResponseSuccess =
   modelHubAnnotationQueuesItemsNextItemResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsNextItemResponseError = (
   | modelHubAnnotationQueuesItemsNextItemResponse400
@@ -25416,7 +25574,7 @@ export type modelHubAnnotationQueuesItemsNextItemResponseError = (
   | modelHubAnnotationQueuesItemsNextItemResponse500
   | modelHubAnnotationQueuesItemsNextItemResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsNextItemResponse =
@@ -25481,11 +25639,11 @@ export type modelHubAnnotationQueuesItemsReadResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsReadResponseSuccess =
   modelHubAnnotationQueuesItemsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsReadResponseError =
   modelHubAnnotationQueuesItemsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsReadResponse =
@@ -25525,11 +25683,11 @@ export type modelHubAnnotationQueuesItemsUpdateResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsUpdateResponseSuccess =
   modelHubAnnotationQueuesItemsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsUpdateResponseError =
   modelHubAnnotationQueuesItemsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsUpdateResponse =
@@ -25572,11 +25730,11 @@ export type modelHubAnnotationQueuesItemsPartialUpdateResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsPartialUpdateResponseSuccess =
   modelHubAnnotationQueuesItemsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsPartialUpdateResponseError =
   modelHubAnnotationQueuesItemsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsPartialUpdateResponse =
@@ -25619,11 +25777,11 @@ export type modelHubAnnotationQueuesItemsDeleteResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsDeleteResponseSuccess =
   modelHubAnnotationQueuesItemsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDeleteResponseError =
   modelHubAnnotationQueuesItemsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsDeleteResponse =
@@ -25688,7 +25846,7 @@ export type modelHubAnnotationQueuesItemsAnnotateDetailResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponseSuccess =
   modelHubAnnotationQueuesItemsAnnotateDetailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponseError = (
   | modelHubAnnotationQueuesItemsAnnotateDetailResponse400
@@ -25698,7 +25856,7 @@ export type modelHubAnnotationQueuesItemsAnnotateDetailResponseError = (
   | modelHubAnnotationQueuesItemsAnnotateDetailResponse500
   | modelHubAnnotationQueuesItemsAnnotateDetailResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsAnnotateDetailResponse =
@@ -25784,7 +25942,7 @@ export type modelHubAnnotationQueuesItemsAnnotationsListResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsAnnotationsListResponseSuccess =
   modelHubAnnotationQueuesItemsAnnotationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsAnnotationsListResponseError = (
   | modelHubAnnotationQueuesItemsAnnotationsListResponse400
@@ -25794,7 +25952,7 @@ export type modelHubAnnotationQueuesItemsAnnotationsListResponseError = (
   | modelHubAnnotationQueuesItemsAnnotationsListResponse500
   | modelHubAnnotationQueuesItemsAnnotationsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsAnnotationsListResponse =
@@ -25869,7 +26027,7 @@ export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponseDef
 
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponseSuccess =
   modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponseError =
   (
@@ -25880,7 +26038,7 @@ export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponseErr
     | modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse500
     | modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsAnnotationsImportAnnotationsResponse =
@@ -25961,7 +26119,7 @@ export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponseDef
 
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponseSuccess =
   modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponseError =
   (
@@ -25972,7 +26130,7 @@ export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponseErr
     | modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse500
     | modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsAnnotationsSubmitAnnotationsResponse =
@@ -26046,7 +26204,7 @@ export type modelHubAnnotationQueuesItemsCompleteItemResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsCompleteItemResponseSuccess =
   modelHubAnnotationQueuesItemsCompleteItemResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsCompleteItemResponseError = (
   | modelHubAnnotationQueuesItemsCompleteItemResponse400
@@ -26056,7 +26214,7 @@ export type modelHubAnnotationQueuesItemsCompleteItemResponseError = (
   | modelHubAnnotationQueuesItemsCompleteItemResponse500
   | modelHubAnnotationQueuesItemsCompleteItemResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsCompleteItemResponse =
@@ -26127,7 +26285,7 @@ export type modelHubAnnotationQueuesItemsDiscussionReadResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsDiscussionReadResponseSuccess =
   modelHubAnnotationQueuesItemsDiscussionReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDiscussionReadResponseError = (
   | modelHubAnnotationQueuesItemsDiscussionReadResponse400
@@ -26137,7 +26295,7 @@ export type modelHubAnnotationQueuesItemsDiscussionReadResponseError = (
   | modelHubAnnotationQueuesItemsDiscussionReadResponse500
   | modelHubAnnotationQueuesItemsDiscussionReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsDiscussionReadResponse =
@@ -26205,7 +26363,7 @@ export type modelHubAnnotationQueuesItemsDiscussionCreateResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponseSuccess =
   modelHubAnnotationQueuesItemsDiscussionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponseError = (
   | modelHubAnnotationQueuesItemsDiscussionCreateResponse400
@@ -26215,7 +26373,7 @@ export type modelHubAnnotationQueuesItemsDiscussionCreateResponseError = (
   | modelHubAnnotationQueuesItemsDiscussionCreateResponse500
   | modelHubAnnotationQueuesItemsDiscussionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsDiscussionCreateResponse =
@@ -26293,7 +26451,7 @@ export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseSuccess =
   modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseError =
   (
@@ -26304,7 +26462,7 @@ export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse
     | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse500
     | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse =
@@ -26356,11 +26514,11 @@ export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseDefault
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseSuccess =
   modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseError =
   modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponse =
@@ -26441,7 +26599,7 @@ export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReac
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponseSuccess =
   modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponseError =
   (
@@ -26452,7 +26610,7 @@ export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReac
     | modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse500
     | modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsDiscussionCommentsDiscussionCommentReactionResponse =
@@ -26535,7 +26693,7 @@ export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadRespons
 
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponseSuccess =
   modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponseError =
   (
@@ -26546,7 +26704,7 @@ export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadRespons
     | modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse500
     | modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsDiscussionReopenDiscussionThreadResponse =
@@ -26626,7 +26784,7 @@ export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadRespon
 
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponseSuccess =
   modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponseError =
   (
@@ -26637,7 +26795,7 @@ export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadRespon
     | modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse500
     | modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationQueuesItemsDiscussionResolveDiscussionThreadResponse =
@@ -26710,7 +26868,7 @@ export type modelHubAnnotationQueuesItemsReleaseReservationResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsReleaseReservationResponseSuccess =
   modelHubAnnotationQueuesItemsReleaseReservationResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsReleaseReservationResponseError = (
   | modelHubAnnotationQueuesItemsReleaseReservationResponse400
@@ -26720,7 +26878,7 @@ export type modelHubAnnotationQueuesItemsReleaseReservationResponseError = (
   | modelHubAnnotationQueuesItemsReleaseReservationResponse500
   | modelHubAnnotationQueuesItemsReleaseReservationResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsReleaseReservationResponse =
@@ -26791,7 +26949,7 @@ export type modelHubAnnotationQueuesItemsReviewItemResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsReviewItemResponseSuccess =
   modelHubAnnotationQueuesItemsReviewItemResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsReviewItemResponseError = (
   | modelHubAnnotationQueuesItemsReviewItemResponse400
@@ -26801,7 +26959,7 @@ export type modelHubAnnotationQueuesItemsReviewItemResponseError = (
   | modelHubAnnotationQueuesItemsReviewItemResponse500
   | modelHubAnnotationQueuesItemsReviewItemResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsReviewItemResponse =
@@ -26872,7 +27030,7 @@ export type modelHubAnnotationQueuesItemsSkipItemResponseDefault = {
 
 export type modelHubAnnotationQueuesItemsSkipItemResponseSuccess =
   modelHubAnnotationQueuesItemsSkipItemResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationQueuesItemsSkipItemResponseError = (
   | modelHubAnnotationQueuesItemsSkipItemResponse400
@@ -26882,7 +27040,7 @@ export type modelHubAnnotationQueuesItemsSkipItemResponseError = (
   | modelHubAnnotationQueuesItemsSkipItemResponse500
   | modelHubAnnotationQueuesItemsSkipItemResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationQueuesItemsSkipItemResponse =
@@ -26928,11 +27086,11 @@ export type modelHubAnnotationTasksListResponseDefault = {
 
 export type modelHubAnnotationTasksListResponseSuccess =
   modelHubAnnotationTasksListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationTasksListResponseError =
   modelHubAnnotationTasksListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationTasksListResponse =
@@ -26986,11 +27144,11 @@ export type modelHubAnnotationTasksReadResponseDefault = {
 
 export type modelHubAnnotationTasksReadResponseSuccess =
   modelHubAnnotationTasksReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationTasksReadResponseError =
   modelHubAnnotationTasksReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationTasksReadResponse =
@@ -27041,7 +27199,7 @@ export type modelHubAnnotationsLabelsListResponseDefault = {
 
 export type modelHubAnnotationsLabelsListResponseSuccess =
   modelHubAnnotationsLabelsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsLabelsListResponseError = (
   | modelHubAnnotationsLabelsListResponse400
@@ -27049,7 +27207,7 @@ export type modelHubAnnotationsLabelsListResponseError = (
   | modelHubAnnotationsLabelsListResponse500
   | modelHubAnnotationsLabelsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationsLabelsListResponse =
@@ -27118,7 +27276,7 @@ export type modelHubAnnotationsLabelsCreateResponseDefault = {
 
 export type modelHubAnnotationsLabelsCreateResponseSuccess =
   modelHubAnnotationsLabelsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsLabelsCreateResponseError = (
   | modelHubAnnotationsLabelsCreateResponse400
@@ -27126,7 +27284,7 @@ export type modelHubAnnotationsLabelsCreateResponseError = (
   | modelHubAnnotationsLabelsCreateResponse500
   | modelHubAnnotationsLabelsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationsLabelsCreateResponse =
@@ -27167,11 +27325,11 @@ export type modelHubAnnotationsLabelsReadResponseDefault = {
 
 export type modelHubAnnotationsLabelsReadResponseSuccess =
   modelHubAnnotationsLabelsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsLabelsReadResponseError =
   modelHubAnnotationsLabelsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsLabelsReadResponse =
@@ -27207,11 +27365,11 @@ export type modelHubAnnotationsLabelsUpdateResponseDefault = {
 
 export type modelHubAnnotationsLabelsUpdateResponseSuccess =
   modelHubAnnotationsLabelsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsLabelsUpdateResponseError =
   modelHubAnnotationsLabelsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsLabelsUpdateResponse =
@@ -27250,11 +27408,11 @@ export type modelHubAnnotationsLabelsPartialUpdateResponseDefault = {
 
 export type modelHubAnnotationsLabelsPartialUpdateResponseSuccess =
   modelHubAnnotationsLabelsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsLabelsPartialUpdateResponseError =
   modelHubAnnotationsLabelsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsLabelsPartialUpdateResponse =
@@ -27293,11 +27451,11 @@ export type modelHubAnnotationsLabelsDeleteResponseDefault = {
 
 export type modelHubAnnotationsLabelsDeleteResponseSuccess =
   modelHubAnnotationsLabelsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsLabelsDeleteResponseError =
   modelHubAnnotationsLabelsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsLabelsDeleteResponse =
@@ -27348,7 +27506,7 @@ export type modelHubAnnotationsLabelsRestoreResponseDefault = {
 
 export type modelHubAnnotationsLabelsRestoreResponseSuccess =
   modelHubAnnotationsLabelsRestoreResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsLabelsRestoreResponseError = (
   | modelHubAnnotationsLabelsRestoreResponse400
@@ -27356,7 +27514,7 @@ export type modelHubAnnotationsLabelsRestoreResponseError = (
   | modelHubAnnotationsLabelsRestoreResponse500
   | modelHubAnnotationsLabelsRestoreResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationsLabelsRestoreResponse =
@@ -27398,11 +27556,11 @@ export type modelHubAnnotationsListResponseDefault = {
 
 export type modelHubAnnotationsListResponseSuccess =
   modelHubAnnotationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsListResponseError =
   modelHubAnnotationsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsListResponse =
@@ -27456,11 +27614,11 @@ export type modelHubAnnotationsCreateResponseDefault = {
 
 export type modelHubAnnotationsCreateResponseSuccess =
   modelHubAnnotationsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsCreateResponseError =
   modelHubAnnotationsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsCreateResponse =
@@ -27513,7 +27671,7 @@ export type modelHubAnnotationsBulkDestroyResponseDefault = {
 
 export type modelHubAnnotationsBulkDestroyResponseSuccess =
   modelHubAnnotationsBulkDestroyResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsBulkDestroyResponseError = (
   | modelHubAnnotationsBulkDestroyResponse400
@@ -27521,7 +27679,7 @@ export type modelHubAnnotationsBulkDestroyResponseError = (
   | modelHubAnnotationsBulkDestroyResponse500
   | modelHubAnnotationsBulkDestroyResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationsBulkDestroyResponse =
@@ -27578,7 +27736,7 @@ export type modelHubAnnotationsPreviewAnnotationsResponseDefault = {
 
 export type modelHubAnnotationsPreviewAnnotationsResponseSuccess =
   modelHubAnnotationsPreviewAnnotationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsPreviewAnnotationsResponseError = (
   | modelHubAnnotationsPreviewAnnotationsResponse400
@@ -27586,7 +27744,7 @@ export type modelHubAnnotationsPreviewAnnotationsResponseError = (
   | modelHubAnnotationsPreviewAnnotationsResponse500
   | modelHubAnnotationsPreviewAnnotationsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationsPreviewAnnotationsResponse =
@@ -27627,11 +27785,11 @@ export type modelHubAnnotationsReadResponseDefault = {
 
 export type modelHubAnnotationsReadResponseSuccess =
   modelHubAnnotationsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsReadResponseError =
   modelHubAnnotationsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsReadResponse =
@@ -27667,11 +27825,11 @@ export type modelHubAnnotationsUpdateResponseDefault = {
 
 export type modelHubAnnotationsUpdateResponseSuccess =
   modelHubAnnotationsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsUpdateResponseError =
   modelHubAnnotationsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsUpdateResponse =
@@ -27710,11 +27868,11 @@ export type modelHubAnnotationsPartialUpdateResponseDefault = {
 
 export type modelHubAnnotationsPartialUpdateResponseSuccess =
   modelHubAnnotationsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsPartialUpdateResponseError =
   modelHubAnnotationsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsPartialUpdateResponse =
@@ -27753,11 +27911,11 @@ export type modelHubAnnotationsDeleteResponseDefault = {
 
 export type modelHubAnnotationsDeleteResponseSuccess =
   modelHubAnnotationsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsDeleteResponseError =
   modelHubAnnotationsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsDeleteResponse =
@@ -27793,11 +27951,11 @@ export type modelHubAnnotationsAnnotateRowResponseDefault = {
 
 export type modelHubAnnotationsAnnotateRowResponseSuccess =
   modelHubAnnotationsAnnotateRowResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsAnnotateRowResponseError =
   modelHubAnnotationsAnnotateRowResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubAnnotationsAnnotateRowResponse =
@@ -27871,7 +28029,7 @@ export type modelHubAnnotationsResetAnnotationsResponseDefault = {
 
 export type modelHubAnnotationsResetAnnotationsResponseSuccess =
   modelHubAnnotationsResetAnnotationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsResetAnnotationsResponseError = (
   | modelHubAnnotationsResetAnnotationsResponse400
@@ -27879,7 +28037,7 @@ export type modelHubAnnotationsResetAnnotationsResponseError = (
   | modelHubAnnotationsResetAnnotationsResponse500
   | modelHubAnnotationsResetAnnotationsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationsResetAnnotationsResponse =
@@ -27933,7 +28091,7 @@ export type modelHubAnnotationsUpdateCellsResponseDefault = {
 
 export type modelHubAnnotationsUpdateCellsResponseSuccess =
   modelHubAnnotationsUpdateCellsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubAnnotationsUpdateCellsResponseError = (
   | modelHubAnnotationsUpdateCellsResponse400
@@ -27941,7 +28099,7 @@ export type modelHubAnnotationsUpdateCellsResponseError = (
   | modelHubAnnotationsUpdateCellsResponse500
   | modelHubAnnotationsUpdateCellsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubAnnotationsUpdateCellsResponse =
@@ -28005,7 +28163,7 @@ export type modelHubApiKeysListResponseDefault = {
 
 export type modelHubApiKeysListResponseSuccess =
   modelHubApiKeysListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiKeysListResponseError = (
   | modelHubApiKeysListResponse400
@@ -28015,7 +28173,7 @@ export type modelHubApiKeysListResponseError = (
   | modelHubApiKeysListResponse500
   | modelHubApiKeysListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiKeysListResponse =
@@ -28094,7 +28252,7 @@ export type modelHubApiKeysCreateResponseDefault = {
 
 export type modelHubApiKeysCreateResponseSuccess =
   modelHubApiKeysCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiKeysCreateResponseError = (
   | modelHubApiKeysCreateResponse400
@@ -28104,7 +28262,7 @@ export type modelHubApiKeysCreateResponseError = (
   | modelHubApiKeysCreateResponse500
   | modelHubApiKeysCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiKeysCreateResponse =
@@ -28167,7 +28325,7 @@ export type modelHubApiKeysReadResponseDefault = {
 
 export type modelHubApiKeysReadResponseSuccess =
   modelHubApiKeysReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiKeysReadResponseError = (
   | modelHubApiKeysReadResponse400
@@ -28177,7 +28335,7 @@ export type modelHubApiKeysReadResponseError = (
   | modelHubApiKeysReadResponse500
   | modelHubApiKeysReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiKeysReadResponse =
@@ -28238,7 +28396,7 @@ export type modelHubApiKeysUpdateResponseDefault = {
 
 export type modelHubApiKeysUpdateResponseSuccess =
   modelHubApiKeysUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiKeysUpdateResponseError = (
   | modelHubApiKeysUpdateResponse400
@@ -28248,7 +28406,7 @@ export type modelHubApiKeysUpdateResponseError = (
   | modelHubApiKeysUpdateResponse500
   | modelHubApiKeysUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiKeysUpdateResponse =
@@ -28312,7 +28470,7 @@ export type modelHubApiKeysPartialUpdateResponseDefault = {
 
 export type modelHubApiKeysPartialUpdateResponseSuccess =
   modelHubApiKeysPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiKeysPartialUpdateResponseError = (
   | modelHubApiKeysPartialUpdateResponse400
@@ -28322,7 +28480,7 @@ export type modelHubApiKeysPartialUpdateResponseError = (
   | modelHubApiKeysPartialUpdateResponse500
   | modelHubApiKeysPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiKeysPartialUpdateResponse =
@@ -28361,11 +28519,11 @@ export type modelHubApiKeysDeleteResponseDefault = {
 
 export type modelHubApiKeysDeleteResponseSuccess =
   modelHubApiKeysDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiKeysDeleteResponseError =
   modelHubApiKeysDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubApiKeysDeleteResponse =
@@ -28433,7 +28591,7 @@ export type modelHubApiModelParametersListResponseDefault = {
 
 export type modelHubApiModelParametersListResponseSuccess =
   modelHubApiModelParametersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiModelParametersListResponseError = (
   | modelHubApiModelParametersListResponse400
@@ -28443,7 +28601,7 @@ export type modelHubApiModelParametersListResponseError = (
   | modelHubApiModelParametersListResponse500
   | modelHubApiModelParametersListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiModelParametersListResponse =
@@ -28503,7 +28661,7 @@ export type modelHubApiModelVoicesListResponseDefault = {
 
 export type modelHubApiModelVoicesListResponseSuccess =
   modelHubApiModelVoicesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiModelVoicesListResponseError = (
   | modelHubApiModelVoicesListResponse400
@@ -28513,7 +28671,7 @@ export type modelHubApiModelVoicesListResponseError = (
   | modelHubApiModelVoicesListResponse500
   | modelHubApiModelVoicesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiModelVoicesListResponse =
@@ -28542,7 +28700,7 @@ export const modelHubApiModelVoicesList = async (
 };
 
 export type modelHubApiModelsListListResponse200 = {
-  data: ModelHubPaginatedResponseApi;
+  data: ModelListResponseApi;
   status: 200;
 };
 
@@ -28578,7 +28736,7 @@ export type modelHubApiModelsListListResponseDefault = {
 
 export type modelHubApiModelsListListResponseSuccess =
   modelHubApiModelsListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubApiModelsListListResponseError = (
   | modelHubApiModelsListListResponse400
@@ -28588,22 +28746,41 @@ export type modelHubApiModelsListListResponseError = (
   | modelHubApiModelsListListResponse500
   | modelHubApiModelsListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubApiModelsListListResponse =
   | modelHubApiModelsListListResponseSuccess
   | modelHubApiModelsListListResponseError;
 
-export const getModelHubApiModelsListListUrl = () => {
-  return `/model-hub/api/models_list/`;
+export const getModelHubApiModelsListListUrl = (
+  params?: ModelHubApiModelsListListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/api/models_list/?${stringifiedParams}`
+    : `/model-hub/api/models_list/`;
 };
 
 export const modelHubApiModelsListList = async (
+  params?: ModelHubApiModelsListListParams,
   options?: RequestInit,
 ): Promise<modelHubApiModelsListListResponse> => {
   return apiMutator<modelHubApiModelsListListResponse>(
-    getModelHubApiModelsListListUrl(),
+    getModelHubApiModelsListListUrl(params),
     {
       ...options,
       method: "GET",
@@ -28648,7 +28825,7 @@ export type modelHubCellsRunErrorLocalizerListResponseDefault = {
 
 export type modelHubCellsRunErrorLocalizerListResponseSuccess =
   modelHubCellsRunErrorLocalizerListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCellsRunErrorLocalizerListResponseError = (
   | modelHubCellsRunErrorLocalizerListResponse400
@@ -28658,7 +28835,7 @@ export type modelHubCellsRunErrorLocalizerListResponseError = (
   | modelHubCellsRunErrorLocalizerListResponse500
   | modelHubCellsRunErrorLocalizerListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCellsRunErrorLocalizerListResponse =
@@ -28723,7 +28900,7 @@ export type modelHubCellsRunErrorLocalizerCreateResponseDefault = {
 
 export type modelHubCellsRunErrorLocalizerCreateResponseSuccess =
   modelHubCellsRunErrorLocalizerCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCellsRunErrorLocalizerCreateResponseError = (
   | modelHubCellsRunErrorLocalizerCreateResponse400
@@ -28733,7 +28910,7 @@ export type modelHubCellsRunErrorLocalizerCreateResponseError = (
   | modelHubCellsRunErrorLocalizerCreateResponse500
   | modelHubCellsRunErrorLocalizerCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCellsRunErrorLocalizerCreateResponse =
@@ -28820,7 +28997,7 @@ export type modelHubColumnConfigReadResponseDefault = {
 
 export type modelHubColumnConfigReadResponseSuccess =
   modelHubColumnConfigReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubColumnConfigReadResponseError = (
   | modelHubColumnConfigReadResponse400
@@ -28830,7 +29007,7 @@ export type modelHubColumnConfigReadResponseError = (
   | modelHubColumnConfigReadResponse500
   | modelHubColumnConfigReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubColumnConfigReadResponse =
@@ -28891,7 +29068,7 @@ export type modelHubColumnsOperationConfigListResponseDefault = {
 
 export type modelHubColumnsOperationConfigListResponseSuccess =
   modelHubColumnsOperationConfigListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubColumnsOperationConfigListResponseError = (
   | modelHubColumnsOperationConfigListResponse400
@@ -28901,7 +29078,7 @@ export type modelHubColumnsOperationConfigListResponseError = (
   | modelHubColumnsOperationConfigListResponse500
   | modelHubColumnsOperationConfigListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubColumnsOperationConfigListResponse =
@@ -28965,7 +29142,7 @@ export type modelHubColumnsRerunOperationCreateResponseDefault = {
 
 export type modelHubColumnsRerunOperationCreateResponseSuccess =
   modelHubColumnsRerunOperationCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubColumnsRerunOperationCreateResponseError = (
   | modelHubColumnsRerunOperationCreateResponse400
@@ -28975,7 +29152,7 @@ export type modelHubColumnsRerunOperationCreateResponseError = (
   | modelHubColumnsRerunOperationCreateResponse500
   | modelHubColumnsRerunOperationCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubColumnsRerunOperationCreateResponse =
@@ -29042,7 +29219,7 @@ export type modelHubCreateCustomEvalsCreateResponseDefault = {
 
 export type modelHubCreateCustomEvalsCreateResponseSuccess =
   modelHubCreateCustomEvalsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCreateCustomEvalsCreateResponseError = (
   | modelHubCreateCustomEvalsCreateResponse400
@@ -29052,7 +29229,7 @@ export type modelHubCreateCustomEvalsCreateResponseError = (
   | modelHubCreateCustomEvalsCreateResponse500
   | modelHubCreateCustomEvalsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCreateCustomEvalsCreateResponse =
@@ -29115,7 +29292,7 @@ export type modelHubCustomMetricAllReadResponseDefault = {
 
 export type modelHubCustomMetricAllReadResponseSuccess =
   modelHubCustomMetricAllReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomMetricAllReadResponseError = (
   | modelHubCustomMetricAllReadResponse400
@@ -29125,7 +29302,7 @@ export type modelHubCustomMetricAllReadResponseError = (
   | modelHubCustomMetricAllReadResponse500
   | modelHubCustomMetricAllReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomMetricAllReadResponse =
@@ -29186,7 +29363,7 @@ export type modelHubCustomMetricCreateCreateResponseDefault = {
 
 export type modelHubCustomMetricCreateCreateResponseSuccess =
   modelHubCustomMetricCreateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomMetricCreateCreateResponseError = (
   | modelHubCustomMetricCreateCreateResponse400
@@ -29196,7 +29373,7 @@ export type modelHubCustomMetricCreateCreateResponseError = (
   | modelHubCustomMetricCreateCreateResponse500
   | modelHubCustomMetricCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomMetricCreateCreateResponse =
@@ -29259,7 +29436,7 @@ export type modelHubCustomMetricTagOptionsReadResponseDefault = {
 
 export type modelHubCustomMetricTagOptionsReadResponseSuccess =
   modelHubCustomMetricTagOptionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomMetricTagOptionsReadResponseError = (
   | modelHubCustomMetricTagOptionsReadResponse400
@@ -29269,7 +29446,7 @@ export type modelHubCustomMetricTagOptionsReadResponseError = (
   | modelHubCustomMetricTagOptionsReadResponse500
   | modelHubCustomMetricTagOptionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomMetricTagOptionsReadResponse =
@@ -29330,7 +29507,7 @@ export type modelHubCustomMetricTestCreateResponseDefault = {
 
 export type modelHubCustomMetricTestCreateResponseSuccess =
   modelHubCustomMetricTestCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomMetricTestCreateResponseError = (
   | modelHubCustomMetricTestCreateResponse400
@@ -29340,7 +29517,7 @@ export type modelHubCustomMetricTestCreateResponseError = (
   | modelHubCustomMetricTestCreateResponse500
   | modelHubCustomMetricTestCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomMetricTestCreateResponse =
@@ -29403,7 +29580,7 @@ export type modelHubCustomMetricUpdateCreateResponseDefault = {
 
 export type modelHubCustomMetricUpdateCreateResponseSuccess =
   modelHubCustomMetricUpdateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomMetricUpdateCreateResponseError = (
   | modelHubCustomMetricUpdateCreateResponse400
@@ -29413,7 +29590,7 @@ export type modelHubCustomMetricUpdateCreateResponseError = (
   | modelHubCustomMetricUpdateCreateResponse500
   | modelHubCustomMetricUpdateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomMetricUpdateCreateResponse =
@@ -29476,7 +29653,7 @@ export type modelHubCustomMetricReadResponseDefault = {
 
 export type modelHubCustomMetricReadResponseSuccess =
   modelHubCustomMetricReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomMetricReadResponseError = (
   | modelHubCustomMetricReadResponse400
@@ -29486,7 +29663,7 @@ export type modelHubCustomMetricReadResponseError = (
   | modelHubCustomMetricReadResponse500
   | modelHubCustomMetricReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomMetricReadResponse =
@@ -29547,7 +29724,7 @@ export type modelHubCustomModelsListResponseDefault = {
 
 export type modelHubCustomModelsListResponseSuccess =
   modelHubCustomModelsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsListResponseError = (
   | modelHubCustomModelsListResponse400
@@ -29557,7 +29734,7 @@ export type modelHubCustomModelsListResponseError = (
   | modelHubCustomModelsListResponse500
   | modelHubCustomModelsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsListResponse =
@@ -29620,7 +29797,7 @@ export type modelHubCustomModelsListListResponseDefault = {
 
 export type modelHubCustomModelsListListResponseSuccess =
   modelHubCustomModelsListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsListListResponseError = (
   | modelHubCustomModelsListListResponse400
@@ -29630,7 +29807,7 @@ export type modelHubCustomModelsListListResponseError = (
   | modelHubCustomModelsListListResponse500
   | modelHubCustomModelsListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsListListResponse =
@@ -29690,7 +29867,7 @@ export type modelHubCustomModelsReadResponseDefault = {
 
 export type modelHubCustomModelsReadResponseSuccess =
   modelHubCustomModelsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsReadResponseError = (
   | modelHubCustomModelsReadResponse400
@@ -29700,7 +29877,7 @@ export type modelHubCustomModelsReadResponseError = (
   | modelHubCustomModelsReadResponse500
   | modelHubCustomModelsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsReadResponse =
@@ -29764,7 +29941,7 @@ export type modelHubCustomModelsCreateResponseDefault = {
 
 export type modelHubCustomModelsCreateResponseSuccess =
   modelHubCustomModelsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsCreateResponseError = (
   | modelHubCustomModelsCreateResponse400
@@ -29774,7 +29951,7 @@ export type modelHubCustomModelsCreateResponseError = (
   | modelHubCustomModelsCreateResponse500
   | modelHubCustomModelsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsCreateResponse =
@@ -29841,7 +30018,7 @@ export type modelHubCustomModelsCreateCreateResponseDefault = {
 
 export type modelHubCustomModelsCreateCreateResponseSuccess =
   modelHubCustomModelsCreateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsCreateCreateResponseError = (
   | modelHubCustomModelsCreateCreateResponse400
@@ -29851,7 +30028,7 @@ export type modelHubCustomModelsCreateCreateResponseError = (
   | modelHubCustomModelsCreateCreateResponse500
   | modelHubCustomModelsCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsCreateCreateResponse =
@@ -29914,7 +30091,7 @@ export type modelHubCustomModelsDeleteDeleteResponseDefault = {
 
 export type modelHubCustomModelsDeleteDeleteResponseSuccess =
   modelHubCustomModelsDeleteDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsDeleteDeleteResponseError = (
   | modelHubCustomModelsDeleteDeleteResponse400
@@ -29924,7 +30101,7 @@ export type modelHubCustomModelsDeleteDeleteResponseError = (
   | modelHubCustomModelsDeleteDeleteResponse500
   | modelHubCustomModelsDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsDeleteDeleteResponse =
@@ -29987,7 +30164,7 @@ export type modelHubCustomModelsEditListResponseDefault = {
 
 export type modelHubCustomModelsEditListResponseSuccess =
   modelHubCustomModelsEditListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsEditListResponseError = (
   | modelHubCustomModelsEditListResponse400
@@ -29997,7 +30174,7 @@ export type modelHubCustomModelsEditListResponseError = (
   | modelHubCustomModelsEditListResponse500
   | modelHubCustomModelsEditListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsEditListResponse =
@@ -30057,7 +30234,7 @@ export type modelHubCustomModelsEditPartialUpdateResponseDefault = {
 
 export type modelHubCustomModelsEditPartialUpdateResponseSuccess =
   modelHubCustomModelsEditPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsEditPartialUpdateResponseError = (
   | modelHubCustomModelsEditPartialUpdateResponse400
@@ -30067,7 +30244,7 @@ export type modelHubCustomModelsEditPartialUpdateResponseError = (
   | modelHubCustomModelsEditPartialUpdateResponse500
   | modelHubCustomModelsEditPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsEditPartialUpdateResponse =
@@ -30130,7 +30307,7 @@ export type modelHubCustomModelsUpdateBaselineCreateResponseDefault = {
 
 export type modelHubCustomModelsUpdateBaselineCreateResponseSuccess =
   modelHubCustomModelsUpdateBaselineCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsUpdateBaselineCreateResponseError = (
   | modelHubCustomModelsUpdateBaselineCreateResponse400
@@ -30140,7 +30317,7 @@ export type modelHubCustomModelsUpdateBaselineCreateResponseError = (
   | modelHubCustomModelsUpdateBaselineCreateResponse500
   | modelHubCustomModelsUpdateBaselineCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsUpdateBaselineCreateResponse =
@@ -30204,7 +30381,7 @@ export type modelHubCustomModelsUpdateMetricCreateResponseDefault = {
 
 export type modelHubCustomModelsUpdateMetricCreateResponseSuccess =
   modelHubCustomModelsUpdateMetricCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubCustomModelsUpdateMetricCreateResponseError = (
   | modelHubCustomModelsUpdateMetricCreateResponse400
@@ -30214,7 +30391,7 @@ export type modelHubCustomModelsUpdateMetricCreateResponseError = (
   | modelHubCustomModelsUpdateMetricCreateResponse500
   | modelHubCustomModelsUpdateMetricCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubCustomModelsUpdateMetricCreateResponse =
@@ -30256,11 +30433,11 @@ export type modelHubDatasetOptimizationListResponseDefault = {
 
 export type modelHubDatasetOptimizationListResponseSuccess =
   modelHubDatasetOptimizationListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationListResponseError =
   modelHubDatasetOptimizationListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationListResponse =
@@ -30317,11 +30494,11 @@ export type modelHubDatasetOptimizationCreateResponseDefault = {
 
 export type modelHubDatasetOptimizationCreateResponseSuccess =
   modelHubDatasetOptimizationCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationCreateResponseError =
   modelHubDatasetOptimizationCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationCreateResponse =
@@ -30362,11 +30539,11 @@ export type modelHubDatasetOptimizationReadResponseDefault = {
 
 export type modelHubDatasetOptimizationReadResponseSuccess =
   modelHubDatasetOptimizationReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationReadResponseError =
   modelHubDatasetOptimizationReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationReadResponse =
@@ -30405,11 +30582,11 @@ export type modelHubDatasetOptimizationUpdateResponseDefault = {
 
 export type modelHubDatasetOptimizationUpdateResponseSuccess =
   modelHubDatasetOptimizationUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationUpdateResponseError =
   modelHubDatasetOptimizationUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationUpdateResponse =
@@ -30451,11 +30628,11 @@ export type modelHubDatasetOptimizationPartialUpdateResponseDefault = {
 
 export type modelHubDatasetOptimizationPartialUpdateResponseSuccess =
   modelHubDatasetOptimizationPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationPartialUpdateResponseError =
   modelHubDatasetOptimizationPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationPartialUpdateResponse =
@@ -30497,11 +30674,11 @@ export type modelHubDatasetOptimizationDeleteResponseDefault = {
 
 export type modelHubDatasetOptimizationDeleteResponseSuccess =
   modelHubDatasetOptimizationDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationDeleteResponseError =
   modelHubDatasetOptimizationDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationDeleteResponse =
@@ -30540,11 +30717,11 @@ export type modelHubDatasetOptimizationGraphResponseDefault = {
 
 export type modelHubDatasetOptimizationGraphResponseSuccess =
   modelHubDatasetOptimizationGraphResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationGraphResponseError =
   modelHubDatasetOptimizationGraphResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationGraphResponse =
@@ -30583,11 +30760,11 @@ export type modelHubDatasetOptimizationStepsResponseDefault = {
 
 export type modelHubDatasetOptimizationStepsResponseSuccess =
   modelHubDatasetOptimizationStepsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationStepsResponseError =
   modelHubDatasetOptimizationStepsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationStepsResponse =
@@ -30626,11 +30803,11 @@ export type modelHubDatasetOptimizationStopResponseDefault = {
 
 export type modelHubDatasetOptimizationStopResponseSuccess =
   modelHubDatasetOptimizationStopResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationStopResponseError =
   modelHubDatasetOptimizationStopResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationStopResponse =
@@ -30672,11 +30849,11 @@ export type modelHubDatasetOptimizationTrialDetailResponseDefault = {
 
 export type modelHubDatasetOptimizationTrialDetailResponseSuccess =
   modelHubDatasetOptimizationTrialDetailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationTrialDetailResponseError =
   modelHubDatasetOptimizationTrialDetailResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationTrialDetailResponse =
@@ -30719,11 +30896,11 @@ export type modelHubDatasetOptimizationTrialTrialEvaluationsResponseDefault = {
 
 export type modelHubDatasetOptimizationTrialTrialEvaluationsResponseSuccess =
   modelHubDatasetOptimizationTrialTrialEvaluationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationTrialTrialEvaluationsResponseError =
   modelHubDatasetOptimizationTrialTrialEvaluationsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationTrialTrialEvaluationsResponse =
@@ -30766,11 +30943,11 @@ export type modelHubDatasetOptimizationTrialTrialPromptResponseDefault = {
 
 export type modelHubDatasetOptimizationTrialTrialPromptResponseSuccess =
   modelHubDatasetOptimizationTrialTrialPromptResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationTrialTrialPromptResponseError =
   modelHubDatasetOptimizationTrialTrialPromptResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationTrialTrialPromptResponse =
@@ -30813,11 +30990,11 @@ export type modelHubDatasetOptimizationTrialTrialScenariosResponseDefault = {
 
 export type modelHubDatasetOptimizationTrialTrialScenariosResponseSuccess =
   modelHubDatasetOptimizationTrialTrialScenariosResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetOptimizationTrialTrialScenariosResponseError =
   modelHubDatasetOptimizationTrialTrialScenariosResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDatasetOptimizationTrialTrialScenariosResponse =
@@ -30885,7 +31062,7 @@ export type modelHubDatasetColumnsReadResponseDefault = {
 
 export type modelHubDatasetColumnsReadResponseSuccess =
   modelHubDatasetColumnsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetColumnsReadResponseError = (
   | modelHubDatasetColumnsReadResponse400
@@ -30895,7 +31072,7 @@ export type modelHubDatasetColumnsReadResponseError = (
   | modelHubDatasetColumnsReadResponse500
   | modelHubDatasetColumnsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetColumnsReadResponse =
@@ -30946,7 +31123,7 @@ export type modelHubDatasetAnnotationSummaryListResponseDefault = {
 
 export type modelHubDatasetAnnotationSummaryListResponseSuccess =
   modelHubDatasetAnnotationSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetAnnotationSummaryListResponseError = (
   | modelHubDatasetAnnotationSummaryListResponse400
@@ -30954,7 +31131,7 @@ export type modelHubDatasetAnnotationSummaryListResponseError = (
   | modelHubDatasetAnnotationSummaryListResponse500
   | modelHubDatasetAnnotationSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetAnnotationSummaryListResponse =
@@ -31017,7 +31194,7 @@ export type modelHubDatasetEvalStatsListResponseDefault = {
 
 export type modelHubDatasetEvalStatsListResponseSuccess =
   modelHubDatasetEvalStatsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetEvalStatsListResponseError = (
   | modelHubDatasetEvalStatsListResponse400
@@ -31027,7 +31204,7 @@ export type modelHubDatasetEvalStatsListResponseError = (
   | modelHubDatasetEvalStatsListResponse500
   | modelHubDatasetEvalStatsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetEvalStatsListResponse =
@@ -31088,7 +31265,7 @@ export type modelHubDatasetJsonSchemaListResponseDefault = {
 
 export type modelHubDatasetJsonSchemaListResponseSuccess =
   modelHubDatasetJsonSchemaListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetJsonSchemaListResponseError = (
   | modelHubDatasetJsonSchemaListResponse400
@@ -31098,7 +31275,7 @@ export type modelHubDatasetJsonSchemaListResponseError = (
   | modelHubDatasetJsonSchemaListResponse500
   | modelHubDatasetJsonSchemaListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetJsonSchemaListResponse =
@@ -31164,7 +31341,7 @@ export type modelHubDatasetRunPromptStatsListResponseDefault = {
 
 export type modelHubDatasetRunPromptStatsListResponseSuccess =
   modelHubDatasetRunPromptStatsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetRunPromptStatsListResponseError = (
   | modelHubDatasetRunPromptStatsListResponse400
@@ -31174,7 +31351,7 @@ export type modelHubDatasetRunPromptStatsListResponseError = (
   | modelHubDatasetRunPromptStatsListResponse500
   | modelHubDatasetRunPromptStatsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetRunPromptStatsListResponse =
@@ -31235,7 +31412,7 @@ export type modelHubDatasetsCompareGetEvalsListCreateResponseDefault = {
 
 export type modelHubDatasetsCompareGetEvalsListCreateResponseSuccess =
   modelHubDatasetsCompareGetEvalsListCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsCompareGetEvalsListCreateResponseError = (
   | modelHubDatasetsCompareGetEvalsListCreateResponse400
@@ -31245,7 +31422,7 @@ export type modelHubDatasetsCompareGetEvalsListCreateResponseError = (
   | modelHubDatasetsCompareGetEvalsListCreateResponse500
   | modelHubDatasetsCompareGetEvalsListCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsCompareGetEvalsListCreateResponse =
@@ -31308,7 +31485,7 @@ export type modelHubDatasetsComparePreviewRunEvalCreateResponseDefault = {
 
 export type modelHubDatasetsComparePreviewRunEvalCreateResponseSuccess =
   modelHubDatasetsComparePreviewRunEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsComparePreviewRunEvalCreateResponseError = (
   | modelHubDatasetsComparePreviewRunEvalCreateResponse400
@@ -31318,7 +31495,7 @@ export type modelHubDatasetsComparePreviewRunEvalCreateResponseError = (
   | modelHubDatasetsComparePreviewRunEvalCreateResponse500
   | modelHubDatasetsComparePreviewRunEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsComparePreviewRunEvalCreateResponse =
@@ -31381,7 +31558,7 @@ export type modelHubDatasetsDeleteCompareReadResponseDefault = {
 
 export type modelHubDatasetsDeleteCompareReadResponseSuccess =
   modelHubDatasetsDeleteCompareReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsDeleteCompareReadResponseError = (
   | modelHubDatasetsDeleteCompareReadResponse400
@@ -31391,7 +31568,7 @@ export type modelHubDatasetsDeleteCompareReadResponseError = (
   | modelHubDatasetsDeleteCompareReadResponse500
   | modelHubDatasetsDeleteCompareReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsDeleteCompareReadResponse =
@@ -31452,7 +31629,7 @@ export type modelHubDatasetsDeleteCompareDeleteResponseDefault = {
 
 export type modelHubDatasetsDeleteCompareDeleteResponseSuccess =
   modelHubDatasetsDeleteCompareDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsDeleteCompareDeleteResponseError = (
   | modelHubDatasetsDeleteCompareDeleteResponse400
@@ -31462,7 +31639,7 @@ export type modelHubDatasetsDeleteCompareDeleteResponseError = (
   | modelHubDatasetsDeleteCompareDeleteResponse500
   | modelHubDatasetsDeleteCompareDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsDeleteCompareDeleteResponse =
@@ -31525,7 +31702,7 @@ export type modelHubDatasetsExplanationSummaryReadResponseDefault = {
 
 export type modelHubDatasetsExplanationSummaryReadResponseSuccess =
   modelHubDatasetsExplanationSummaryReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsExplanationSummaryReadResponseError = (
   | modelHubDatasetsExplanationSummaryReadResponse400
@@ -31535,7 +31712,7 @@ export type modelHubDatasetsExplanationSummaryReadResponseError = (
   | modelHubDatasetsExplanationSummaryReadResponse500
   | modelHubDatasetsExplanationSummaryReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsExplanationSummaryReadResponse =
@@ -31598,7 +31775,7 @@ export type modelHubDatasetsExplanationSummaryRefreshCreateResponseDefault = {
 
 export type modelHubDatasetsExplanationSummaryRefreshCreateResponseSuccess =
   modelHubDatasetsExplanationSummaryRefreshCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsExplanationSummaryRefreshCreateResponseError = (
   | modelHubDatasetsExplanationSummaryRefreshCreateResponse400
@@ -31608,7 +31785,7 @@ export type modelHubDatasetsExplanationSummaryRefreshCreateResponseError = (
   | modelHubDatasetsExplanationSummaryRefreshCreateResponse500
   | modelHubDatasetsExplanationSummaryRefreshCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsExplanationSummaryRefreshCreateResponse =
@@ -31674,7 +31851,7 @@ export type modelHubDatasetsGetBaseColumnsListResponseDefault = {
 
 export type modelHubDatasetsGetBaseColumnsListResponseSuccess =
   modelHubDatasetsGetBaseColumnsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsGetBaseColumnsListResponseError = (
   | modelHubDatasetsGetBaseColumnsListResponse400
@@ -31684,7 +31861,7 @@ export type modelHubDatasetsGetBaseColumnsListResponseError = (
   | modelHubDatasetsGetBaseColumnsListResponse500
   | modelHubDatasetsGetBaseColumnsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsGetBaseColumnsListResponse =
@@ -31744,7 +31921,7 @@ export type modelHubDatasetsGetCompareRowReadResponseDefault = {
 
 export type modelHubDatasetsGetCompareRowReadResponseSuccess =
   modelHubDatasetsGetCompareRowReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsGetCompareRowReadResponseError = (
   | modelHubDatasetsGetCompareRowReadResponse400
@@ -31754,7 +31931,7 @@ export type modelHubDatasetsGetCompareRowReadResponseError = (
   | modelHubDatasetsGetCompareRowReadResponse500
   | modelHubDatasetsGetCompareRowReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsGetCompareRowReadResponse =
@@ -31819,7 +31996,7 @@ export type modelHubDatasetsGetCompareRowDeleteResponseDefault = {
 
 export type modelHubDatasetsGetCompareRowDeleteResponseSuccess =
   modelHubDatasetsGetCompareRowDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsGetCompareRowDeleteResponseError = (
   | modelHubDatasetsGetCompareRowDeleteResponse400
@@ -31829,7 +32006,7 @@ export type modelHubDatasetsGetCompareRowDeleteResponseError = (
   | modelHubDatasetsGetCompareRowDeleteResponse500
   | modelHubDatasetsGetCompareRowDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsGetCompareRowDeleteResponse =
@@ -31894,7 +32071,7 @@ export type modelHubDatasetsHuggingfaceDetailCreateResponseDefault = {
 
 export type modelHubDatasetsHuggingfaceDetailCreateResponseSuccess =
   modelHubDatasetsHuggingfaceDetailCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsHuggingfaceDetailCreateResponseError = (
   | modelHubDatasetsHuggingfaceDetailCreateResponse400
@@ -31904,7 +32081,7 @@ export type modelHubDatasetsHuggingfaceDetailCreateResponseError = (
   | modelHubDatasetsHuggingfaceDetailCreateResponse500
   | modelHubDatasetsHuggingfaceDetailCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsHuggingfaceDetailCreateResponse =
@@ -31967,7 +32144,7 @@ export type modelHubDatasetsHuggingfaceListCreateResponseDefault = {
 
 export type modelHubDatasetsHuggingfaceListCreateResponseSuccess =
   modelHubDatasetsHuggingfaceListCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsHuggingfaceListCreateResponseError = (
   | modelHubDatasetsHuggingfaceListCreateResponse400
@@ -31977,7 +32154,7 @@ export type modelHubDatasetsHuggingfaceListCreateResponseError = (
   | modelHubDatasetsHuggingfaceListCreateResponse500
   | modelHubDatasetsHuggingfaceListCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsHuggingfaceListCreateResponse =
@@ -32040,7 +32217,7 @@ export type modelHubDatasetsAddApiColumnCreateResponseDefault = {
 
 export type modelHubDatasetsAddApiColumnCreateResponseSuccess =
   modelHubDatasetsAddApiColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsAddApiColumnCreateResponseError = (
   | modelHubDatasetsAddApiColumnCreateResponse400
@@ -32050,7 +32227,7 @@ export type modelHubDatasetsAddApiColumnCreateResponseError = (
   | modelHubDatasetsAddApiColumnCreateResponse500
   | modelHubDatasetsAddApiColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsAddApiColumnCreateResponse =
@@ -32114,7 +32291,7 @@ export type modelHubDatasetsAddVectorDbColumnCreateResponseDefault = {
 
 export type modelHubDatasetsAddVectorDbColumnCreateResponseSuccess =
   modelHubDatasetsAddVectorDbColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsAddVectorDbColumnCreateResponseError = (
   | modelHubDatasetsAddVectorDbColumnCreateResponse400
@@ -32124,7 +32301,7 @@ export type modelHubDatasetsAddVectorDbColumnCreateResponseError = (
   | modelHubDatasetsAddVectorDbColumnCreateResponse500
   | modelHubDatasetsAddVectorDbColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsAddVectorDbColumnCreateResponse =
@@ -32190,7 +32367,7 @@ export type modelHubDatasetsClassifyColumnCreateResponseDefault = {
 
 export type modelHubDatasetsClassifyColumnCreateResponseSuccess =
   modelHubDatasetsClassifyColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsClassifyColumnCreateResponseError = (
   | modelHubDatasetsClassifyColumnCreateResponse400
@@ -32200,7 +32377,7 @@ export type modelHubDatasetsClassifyColumnCreateResponseError = (
   | modelHubDatasetsClassifyColumnCreateResponse500
   | modelHubDatasetsClassifyColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsClassifyColumnCreateResponse =
@@ -32266,7 +32443,7 @@ export type modelHubDatasetsCompareDatasetsCreateResponseDefault = {
 
 export type modelHubDatasetsCompareDatasetsCreateResponseSuccess =
   modelHubDatasetsCompareDatasetsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsCompareDatasetsCreateResponseError = (
   | modelHubDatasetsCompareDatasetsCreateResponse400
@@ -32276,7 +32453,7 @@ export type modelHubDatasetsCompareDatasetsCreateResponseError = (
   | modelHubDatasetsCompareDatasetsCreateResponse500
   | modelHubDatasetsCompareDatasetsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsCompareDatasetsCreateResponse =
@@ -32342,7 +32519,7 @@ export type modelHubDatasetsCompareDatasetsAddEvalCreateResponseDefault = {
 
 export type modelHubDatasetsCompareDatasetsAddEvalCreateResponseSuccess =
   modelHubDatasetsCompareDatasetsAddEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsCompareDatasetsAddEvalCreateResponseError = (
   | modelHubDatasetsCompareDatasetsAddEvalCreateResponse400
@@ -32352,7 +32529,7 @@ export type modelHubDatasetsCompareDatasetsAddEvalCreateResponseError = (
   | modelHubDatasetsCompareDatasetsAddEvalCreateResponse500
   | modelHubDatasetsCompareDatasetsAddEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsCompareDatasetsAddEvalCreateResponse =
@@ -32418,7 +32595,7 @@ export type modelHubDatasetsCompareDatasetsDownloadCreateResponseDefault = {
 
 export type modelHubDatasetsCompareDatasetsDownloadCreateResponseSuccess =
   modelHubDatasetsCompareDatasetsDownloadCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsCompareDatasetsDownloadCreateResponseError = (
   | modelHubDatasetsCompareDatasetsDownloadCreateResponse400
@@ -32428,7 +32605,7 @@ export type modelHubDatasetsCompareDatasetsDownloadCreateResponseError = (
   | modelHubDatasetsCompareDatasetsDownloadCreateResponse500
   | modelHubDatasetsCompareDatasetsDownloadCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsCompareDatasetsDownloadCreateResponse =
@@ -32494,7 +32671,7 @@ export type modelHubDatasetsCompareDatasetsStartEvalCreateResponseDefault = {
 
 export type modelHubDatasetsCompareDatasetsStartEvalCreateResponseSuccess =
   modelHubDatasetsCompareDatasetsStartEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsCompareDatasetsStartEvalCreateResponseError = (
   | modelHubDatasetsCompareDatasetsStartEvalCreateResponse400
@@ -32504,7 +32681,7 @@ export type modelHubDatasetsCompareDatasetsStartEvalCreateResponseError = (
   | modelHubDatasetsCompareDatasetsStartEvalCreateResponse500
   | modelHubDatasetsCompareDatasetsStartEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsCompareDatasetsStartEvalCreateResponse =
@@ -32570,7 +32747,7 @@ export type modelHubDatasetsCompareStatsCreateResponseDefault = {
 
 export type modelHubDatasetsCompareStatsCreateResponseSuccess =
   modelHubDatasetsCompareStatsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsCompareStatsCreateResponseError = (
   | modelHubDatasetsCompareStatsCreateResponse400
@@ -32580,7 +32757,7 @@ export type modelHubDatasetsCompareStatsCreateResponseError = (
   | modelHubDatasetsCompareStatsCreateResponse500
   | modelHubDatasetsCompareStatsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsCompareStatsCreateResponse =
@@ -32644,7 +32821,7 @@ export type modelHubDatasetsConditionalColumnCreateResponseDefault = {
 
 export type modelHubDatasetsConditionalColumnCreateResponseSuccess =
   modelHubDatasetsConditionalColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsConditionalColumnCreateResponseError = (
   | modelHubDatasetsConditionalColumnCreateResponse400
@@ -32654,7 +32831,7 @@ export type modelHubDatasetsConditionalColumnCreateResponseError = (
   | modelHubDatasetsConditionalColumnCreateResponse500
   | modelHubDatasetsConditionalColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsConditionalColumnCreateResponse =
@@ -32720,7 +32897,7 @@ export type modelHubDatasetsDerivedVariablesListResponseDefault = {
 
 export type modelHubDatasetsDerivedVariablesListResponseSuccess =
   modelHubDatasetsDerivedVariablesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsDerivedVariablesListResponseError = (
   | modelHubDatasetsDerivedVariablesListResponse400
@@ -32730,7 +32907,7 @@ export type modelHubDatasetsDerivedVariablesListResponseError = (
   | modelHubDatasetsDerivedVariablesListResponse500
   | modelHubDatasetsDerivedVariablesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsDerivedVariablesListResponse =
@@ -32802,7 +32979,7 @@ export type modelHubDatasetsDuplicateRowsCreateResponseDefault = {
 
 export type modelHubDatasetsDuplicateRowsCreateResponseSuccess =
   modelHubDatasetsDuplicateRowsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsDuplicateRowsCreateResponseError = (
   | modelHubDatasetsDuplicateRowsCreateResponse400
@@ -32812,7 +32989,7 @@ export type modelHubDatasetsDuplicateRowsCreateResponseError = (
   | modelHubDatasetsDuplicateRowsCreateResponse500
   | modelHubDatasetsDuplicateRowsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsDuplicateRowsCreateResponse =
@@ -32883,7 +33060,7 @@ export type modelHubDatasetsDuplicateCreateResponseDefault = {
 
 export type modelHubDatasetsDuplicateCreateResponseSuccess =
   modelHubDatasetsDuplicateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsDuplicateCreateResponseError = (
   | modelHubDatasetsDuplicateCreateResponse400
@@ -32894,7 +33071,7 @@ export type modelHubDatasetsDuplicateCreateResponseError = (
   | modelHubDatasetsDuplicateCreateResponse503
   | modelHubDatasetsDuplicateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsDuplicateCreateResponse =
@@ -32958,7 +33135,7 @@ export type modelHubDatasetsExtractEntitiesCreateResponseDefault = {
 
 export type modelHubDatasetsExtractEntitiesCreateResponseSuccess =
   modelHubDatasetsExtractEntitiesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsExtractEntitiesCreateResponseError = (
   | modelHubDatasetsExtractEntitiesCreateResponse400
@@ -32968,7 +33145,7 @@ export type modelHubDatasetsExtractEntitiesCreateResponseError = (
   | modelHubDatasetsExtractEntitiesCreateResponse500
   | modelHubDatasetsExtractEntitiesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsExtractEntitiesCreateResponse =
@@ -33034,7 +33211,7 @@ export type modelHubDatasetsMergeCreateResponseDefault = {
 
 export type modelHubDatasetsMergeCreateResponseSuccess =
   modelHubDatasetsMergeCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsMergeCreateResponseError = (
   | modelHubDatasetsMergeCreateResponse400
@@ -33044,7 +33221,7 @@ export type modelHubDatasetsMergeCreateResponseError = (
   | modelHubDatasetsMergeCreateResponse500
   | modelHubDatasetsMergeCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsMergeCreateResponse =
@@ -33108,7 +33285,7 @@ export type modelHubDatasetsPreviewCreateResponseDefault = {
 
 export type modelHubDatasetsPreviewCreateResponseSuccess =
   modelHubDatasetsPreviewCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDatasetsPreviewCreateResponseError = (
   | modelHubDatasetsPreviewCreateResponse400
@@ -33118,7 +33295,7 @@ export type modelHubDatasetsPreviewCreateResponseError = (
   | modelHubDatasetsPreviewCreateResponse500
   | modelHubDatasetsPreviewCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDatasetsPreviewCreateResponse =
@@ -33186,7 +33363,7 @@ export type modelHubDeleteEvalTemplateCreateResponseDefault = {
 
 export type modelHubDeleteEvalTemplateCreateResponseSuccess =
   modelHubDeleteEvalTemplateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDeleteEvalTemplateCreateResponseError = (
   | modelHubDeleteEvalTemplateCreateResponse400
@@ -33196,7 +33373,7 @@ export type modelHubDeleteEvalTemplateCreateResponseError = (
   | modelHubDeleteEvalTemplateCreateResponse500
   | modelHubDeleteEvalTemplateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDeleteEvalTemplateCreateResponse =
@@ -33264,7 +33441,7 @@ export type modelHubDevelopsAddAsNewCreateResponseDefault = {
 
 export type modelHubDevelopsAddAsNewCreateResponseSuccess =
   modelHubDevelopsAddAsNewCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddAsNewCreateResponseError = (
   | modelHubDevelopsAddAsNewCreateResponse400
@@ -33275,7 +33452,7 @@ export type modelHubDevelopsAddAsNewCreateResponseError = (
   | modelHubDevelopsAddAsNewCreateResponse503
   | modelHubDevelopsAddAsNewCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddAsNewCreateResponse =
@@ -33338,7 +33515,7 @@ export type modelHubDevelopsAddRowsFromFileCreateResponseDefault = {
 
 export type modelHubDevelopsAddRowsFromFileCreateResponseSuccess =
   modelHubDevelopsAddRowsFromFileCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddRowsFromFileCreateResponseError = (
   | modelHubDevelopsAddRowsFromFileCreateResponse400
@@ -33348,7 +33525,7 @@ export type modelHubDevelopsAddRowsFromFileCreateResponseError = (
   | modelHubDevelopsAddRowsFromFileCreateResponse500
   | modelHubDevelopsAddRowsFromFileCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddRowsFromFileCreateResponse =
@@ -33411,7 +33588,7 @@ export type modelHubDevelopsAddRowsSdkCreateResponseDefault = {
 
 export type modelHubDevelopsAddRowsSdkCreateResponseSuccess =
   modelHubDevelopsAddRowsSdkCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddRowsSdkCreateResponseError = (
   | modelHubDevelopsAddRowsSdkCreateResponse400
@@ -33421,7 +33598,7 @@ export type modelHubDevelopsAddRowsSdkCreateResponseError = (
   | modelHubDevelopsAddRowsSdkCreateResponse500
   | modelHubDevelopsAddRowsSdkCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddRowsSdkCreateResponse =
@@ -33484,7 +33661,7 @@ export type modelHubDevelopsAddRunPromptColumnCreateResponseDefault = {
 
 export type modelHubDevelopsAddRunPromptColumnCreateResponseSuccess =
   modelHubDevelopsAddRunPromptColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddRunPromptColumnCreateResponseError = (
   | modelHubDevelopsAddRunPromptColumnCreateResponse400
@@ -33494,7 +33671,7 @@ export type modelHubDevelopsAddRunPromptColumnCreateResponseError = (
   | modelHubDevelopsAddRunPromptColumnCreateResponse500
   | modelHubDevelopsAddRunPromptColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddRunPromptColumnCreateResponse =
@@ -33562,7 +33739,7 @@ export type modelHubDevelopsCloneDatasetCreateResponseDefault = {
 
 export type modelHubDevelopsCloneDatasetCreateResponseSuccess =
   modelHubDevelopsCloneDatasetCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsCloneDatasetCreateResponseError = (
   | modelHubDevelopsCloneDatasetCreateResponse400
@@ -33573,7 +33750,7 @@ export type modelHubDevelopsCloneDatasetCreateResponseError = (
   | modelHubDevelopsCloneDatasetCreateResponse503
   | modelHubDevelopsCloneDatasetCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsCloneDatasetCreateResponse =
@@ -33643,7 +33820,7 @@ export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseDefault =
 
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseSuccess =
   modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse400
@@ -33654,7 +33831,7 @@ export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse503
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse =
@@ -33722,7 +33899,7 @@ export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseDefault = {
 
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseSuccess =
   modelHubDevelopsCreateDatasetFromLocalFileCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse400
@@ -33733,7 +33910,7 @@ export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse503
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponse =
@@ -33801,7 +33978,7 @@ export type modelHubDevelopsCreateDatasetManuallyCreateResponseDefault = {
 
 export type modelHubDevelopsCreateDatasetManuallyCreateResponseSuccess =
   modelHubDevelopsCreateDatasetManuallyCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsCreateDatasetManuallyCreateResponseError = (
   | modelHubDevelopsCreateDatasetManuallyCreateResponse400
@@ -33812,7 +33989,7 @@ export type modelHubDevelopsCreateDatasetManuallyCreateResponseError = (
   | modelHubDevelopsCreateDatasetManuallyCreateResponse503
   | modelHubDevelopsCreateDatasetManuallyCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsCreateDatasetManuallyCreateResponse =
@@ -33880,7 +34057,7 @@ export type modelHubDevelopsCreateEmptyDatasetCreateResponseDefault = {
 
 export type modelHubDevelopsCreateEmptyDatasetCreateResponseSuccess =
   modelHubDevelopsCreateEmptyDatasetCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsCreateEmptyDatasetCreateResponseError = (
   | modelHubDevelopsCreateEmptyDatasetCreateResponse400
@@ -33891,7 +34068,7 @@ export type modelHubDevelopsCreateEmptyDatasetCreateResponseError = (
   | modelHubDevelopsCreateEmptyDatasetCreateResponse503
   | modelHubDevelopsCreateEmptyDatasetCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsCreateEmptyDatasetCreateResponse =
@@ -33959,7 +34136,7 @@ export type modelHubDevelopsCreateSyntheticDatasetCreateResponseDefault = {
 
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponseSuccess =
   modelHubDevelopsCreateSyntheticDatasetCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponseError = (
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse400
@@ -33970,7 +34147,7 @@ export type modelHubDevelopsCreateSyntheticDatasetCreateResponseError = (
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse503
   | modelHubDevelopsCreateSyntheticDatasetCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponse =
@@ -34033,7 +34210,7 @@ export type modelHubDevelopsDatasetCreationProgressReadResponseDefault = {
 
 export type modelHubDevelopsDatasetCreationProgressReadResponseSuccess =
   modelHubDevelopsDatasetCreationProgressReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsDatasetCreationProgressReadResponseError = (
   | modelHubDevelopsDatasetCreationProgressReadResponse400
@@ -34043,7 +34220,7 @@ export type modelHubDevelopsDatasetCreationProgressReadResponseError = (
   | modelHubDevelopsDatasetCreationProgressReadResponse500
   | modelHubDevelopsDatasetCreationProgressReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsDatasetCreationProgressReadResponse =
@@ -34109,7 +34286,7 @@ export type modelHubDevelopsDeleteDatasetDeleteResponseDefault = {
 
 export type modelHubDevelopsDeleteDatasetDeleteResponseSuccess =
   modelHubDevelopsDeleteDatasetDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsDeleteDatasetDeleteResponseError = (
   | modelHubDevelopsDeleteDatasetDeleteResponse400
@@ -34119,7 +34296,7 @@ export type modelHubDevelopsDeleteDatasetDeleteResponseError = (
   | modelHubDevelopsDeleteDatasetDeleteResponse500
   | modelHubDevelopsDeleteDatasetDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsDeleteDatasetDeleteResponse =
@@ -34182,7 +34359,7 @@ export type modelHubDevelopsEditRunPromptColumnCreateResponseDefault = {
 
 export type modelHubDevelopsEditRunPromptColumnCreateResponseSuccess =
   modelHubDevelopsEditRunPromptColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsEditRunPromptColumnCreateResponseError = (
   | modelHubDevelopsEditRunPromptColumnCreateResponse400
@@ -34192,7 +34369,7 @@ export type modelHubDevelopsEditRunPromptColumnCreateResponseError = (
   | modelHubDevelopsEditRunPromptColumnCreateResponse500
   | modelHubDevelopsEditRunPromptColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsEditRunPromptColumnCreateResponse =
@@ -34255,7 +34432,7 @@ export type modelHubDevelopsGetCellDataCreateResponseDefault = {
 
 export type modelHubDevelopsGetCellDataCreateResponseSuccess =
   modelHubDevelopsGetCellDataCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetCellDataCreateResponseError = (
   | modelHubDevelopsGetCellDataCreateResponse400
@@ -34265,7 +34442,7 @@ export type modelHubDevelopsGetCellDataCreateResponseError = (
   | modelHubDevelopsGetCellDataCreateResponse500
   | modelHubDevelopsGetCellDataCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetCellDataCreateResponse =
@@ -34328,7 +34505,7 @@ export type modelHubDevelopsGetDatasetsNamesListResponseDefault = {
 
 export type modelHubDevelopsGetDatasetsNamesListResponseSuccess =
   modelHubDevelopsGetDatasetsNamesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetDatasetsNamesListResponseError = (
   | modelHubDevelopsGetDatasetsNamesListResponse400
@@ -34338,7 +34515,7 @@ export type modelHubDevelopsGetDatasetsNamesListResponseError = (
   | modelHubDevelopsGetDatasetsNamesListResponse500
   | modelHubDevelopsGetDatasetsNamesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetDatasetsNamesListResponse =
@@ -34398,7 +34575,7 @@ export type modelHubDevelopsGetDatasetsListResponseDefault = {
 
 export type modelHubDevelopsGetDatasetsListResponseSuccess =
   modelHubDevelopsGetDatasetsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetDatasetsListResponseError = (
   | modelHubDevelopsGetDatasetsListResponse400
@@ -34408,7 +34585,7 @@ export type modelHubDevelopsGetDatasetsListResponseError = (
   | modelHubDevelopsGetDatasetsListResponse500
   | modelHubDevelopsGetDatasetsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetDatasetsListResponse =
@@ -34487,7 +34664,7 @@ export type modelHubDevelopsGetDerivedDatasetsReadResponseDefault = {
 
 export type modelHubDevelopsGetDerivedDatasetsReadResponseSuccess =
   modelHubDevelopsGetDerivedDatasetsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetDerivedDatasetsReadResponseError = (
   | modelHubDevelopsGetDerivedDatasetsReadResponse400
@@ -34497,7 +34674,7 @@ export type modelHubDevelopsGetDerivedDatasetsReadResponseError = (
   | modelHubDevelopsGetDerivedDatasetsReadResponse500
   | modelHubDevelopsGetDerivedDatasetsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetDerivedDatasetsReadResponse =
@@ -34560,7 +34737,7 @@ export type modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponseDefault = {
 
 export type modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponseSuccess =
   modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponseError = (
   | modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponse400
@@ -34570,7 +34747,7 @@ export type modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponseError = (
   | modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponse500
   | modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetHuggingfaceDatasetConfigCreateResponse =
@@ -34633,7 +34810,7 @@ export type modelHubDevelopsGetRowDiffCreateResponseDefault = {
 
 export type modelHubDevelopsGetRowDiffCreateResponseSuccess =
   modelHubDevelopsGetRowDiffCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetRowDiffCreateResponseError = (
   | modelHubDevelopsGetRowDiffCreateResponse400
@@ -34643,7 +34820,7 @@ export type modelHubDevelopsGetRowDiffCreateResponseError = (
   | modelHubDevelopsGetRowDiffCreateResponse500
   | modelHubDevelopsGetRowDiffCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetRowDiffCreateResponse =
@@ -34706,7 +34883,7 @@ export type modelHubDevelopsGetFunctionListListResponseDefault = {
 
 export type modelHubDevelopsGetFunctionListListResponseSuccess =
   modelHubDevelopsGetFunctionListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetFunctionListListResponseError = (
   | modelHubDevelopsGetFunctionListListResponse400
@@ -34716,7 +34893,7 @@ export type modelHubDevelopsGetFunctionListListResponseError = (
   | modelHubDevelopsGetFunctionListListResponse500
   | modelHubDevelopsGetFunctionListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetFunctionListListResponse =
@@ -34776,7 +34953,7 @@ export type modelHubDevelopsPreviewRunPromptColumnCreateResponseDefault = {
 
 export type modelHubDevelopsPreviewRunPromptColumnCreateResponseSuccess =
   modelHubDevelopsPreviewRunPromptColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsPreviewRunPromptColumnCreateResponseError = (
   | modelHubDevelopsPreviewRunPromptColumnCreateResponse400
@@ -34786,7 +34963,7 @@ export type modelHubDevelopsPreviewRunPromptColumnCreateResponseError = (
   | modelHubDevelopsPreviewRunPromptColumnCreateResponse500
   | modelHubDevelopsPreviewRunPromptColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsPreviewRunPromptColumnCreateResponse =
@@ -34849,7 +35026,7 @@ export type modelHubDevelopsProviderStatusListResponseDefault = {
 
 export type modelHubDevelopsProviderStatusListResponseSuccess =
   modelHubDevelopsProviderStatusListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsProviderStatusListResponseError = (
   | modelHubDevelopsProviderStatusListResponse400
@@ -34859,7 +35036,7 @@ export type modelHubDevelopsProviderStatusListResponseError = (
   | modelHubDevelopsProviderStatusListResponse500
   | modelHubDevelopsProviderStatusListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsProviderStatusListResponse =
@@ -34919,7 +35096,7 @@ export type modelHubDevelopsRetrieveRunPromptColumnConfigListResponseDefault = {
 
 export type modelHubDevelopsRetrieveRunPromptColumnConfigListResponseSuccess =
   modelHubDevelopsRetrieveRunPromptColumnConfigListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsRetrieveRunPromptColumnConfigListResponseError = (
   | modelHubDevelopsRetrieveRunPromptColumnConfigListResponse400
@@ -34929,7 +35106,7 @@ export type modelHubDevelopsRetrieveRunPromptColumnConfigListResponseError = (
   | modelHubDevelopsRetrieveRunPromptColumnConfigListResponse500
   | modelHubDevelopsRetrieveRunPromptColumnConfigListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsRetrieveRunPromptColumnConfigListResponse =
@@ -34989,7 +35166,7 @@ export type modelHubDevelopsRetrieveRunPromptOptionsListResponseDefault = {
 
 export type modelHubDevelopsRetrieveRunPromptOptionsListResponseSuccess =
   modelHubDevelopsRetrieveRunPromptOptionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsRetrieveRunPromptOptionsListResponseError = (
   | modelHubDevelopsRetrieveRunPromptOptionsListResponse400
@@ -34999,7 +35176,7 @@ export type modelHubDevelopsRetrieveRunPromptOptionsListResponseError = (
   | modelHubDevelopsRetrieveRunPromptOptionsListResponse500
   | modelHubDevelopsRetrieveRunPromptOptionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsRetrieveRunPromptOptionsListResponse =
@@ -35059,7 +35236,7 @@ export type modelHubDevelopsAddColumnsCreateResponseDefault = {
 
 export type modelHubDevelopsAddColumnsCreateResponseSuccess =
   modelHubDevelopsAddColumnsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddColumnsCreateResponseError = (
   | modelHubDevelopsAddColumnsCreateResponse400
@@ -35069,7 +35246,7 @@ export type modelHubDevelopsAddColumnsCreateResponseError = (
   | modelHubDevelopsAddColumnsCreateResponse500
   | modelHubDevelopsAddColumnsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddColumnsCreateResponse =
@@ -35133,7 +35310,7 @@ export type modelHubDevelopsAddEmptyColumnsCreateResponseDefault = {
 
 export type modelHubDevelopsAddEmptyColumnsCreateResponseSuccess =
   modelHubDevelopsAddEmptyColumnsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddEmptyColumnsCreateResponseError = (
   | modelHubDevelopsAddEmptyColumnsCreateResponse400
@@ -35143,7 +35320,7 @@ export type modelHubDevelopsAddEmptyColumnsCreateResponseError = (
   | modelHubDevelopsAddEmptyColumnsCreateResponse500
   | modelHubDevelopsAddEmptyColumnsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddEmptyColumnsCreateResponse =
@@ -35209,7 +35386,7 @@ export type modelHubDevelopsAddEmptyRowsCreateResponseDefault = {
 
 export type modelHubDevelopsAddEmptyRowsCreateResponseSuccess =
   modelHubDevelopsAddEmptyRowsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddEmptyRowsCreateResponseError = (
   | modelHubDevelopsAddEmptyRowsCreateResponse400
@@ -35219,7 +35396,7 @@ export type modelHubDevelopsAddEmptyRowsCreateResponseError = (
   | modelHubDevelopsAddEmptyRowsCreateResponse500
   | modelHubDevelopsAddEmptyRowsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddEmptyRowsCreateResponse =
@@ -35283,7 +35460,7 @@ export type modelHubDevelopsAddMultipleStaticColumnsCreateResponseDefault = {
 
 export type modelHubDevelopsAddMultipleStaticColumnsCreateResponseSuccess =
   modelHubDevelopsAddMultipleStaticColumnsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddMultipleStaticColumnsCreateResponseError = (
   | modelHubDevelopsAddMultipleStaticColumnsCreateResponse400
@@ -35293,7 +35470,7 @@ export type modelHubDevelopsAddMultipleStaticColumnsCreateResponseError = (
   | modelHubDevelopsAddMultipleStaticColumnsCreateResponse500
   | modelHubDevelopsAddMultipleStaticColumnsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddMultipleStaticColumnsCreateResponse =
@@ -35377,7 +35554,7 @@ export type modelHubDevelopsAddRowsCreateResponseDefault = {
 
 export type modelHubDevelopsAddRowsCreateResponseSuccess =
   modelHubDevelopsAddRowsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddRowsCreateResponseError = (
   | modelHubDevelopsAddRowsCreateResponse400
@@ -35387,7 +35564,7 @@ export type modelHubDevelopsAddRowsCreateResponseError = (
   | modelHubDevelopsAddRowsCreateResponse500
   | modelHubDevelopsAddRowsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddRowsCreateResponse =
@@ -35451,7 +35628,7 @@ export type modelHubDevelopsAddRowsFromExistingDatasetCreateResponseDefault = {
 
 export type modelHubDevelopsAddRowsFromExistingDatasetCreateResponseSuccess =
   modelHubDevelopsAddRowsFromExistingDatasetCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddRowsFromExistingDatasetCreateResponseError = (
   | modelHubDevelopsAddRowsFromExistingDatasetCreateResponse400
@@ -35461,7 +35638,7 @@ export type modelHubDevelopsAddRowsFromExistingDatasetCreateResponseError = (
   | modelHubDevelopsAddRowsFromExistingDatasetCreateResponse500
   | modelHubDevelopsAddRowsFromExistingDatasetCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddRowsFromExistingDatasetCreateResponse =
@@ -35527,7 +35704,7 @@ export type modelHubDevelopsAddRowsFromHuggingfaceCreateResponseDefault = {
 
 export type modelHubDevelopsAddRowsFromHuggingfaceCreateResponseSuccess =
   modelHubDevelopsAddRowsFromHuggingfaceCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddRowsFromHuggingfaceCreateResponseError = (
   | modelHubDevelopsAddRowsFromHuggingfaceCreateResponse400
@@ -35537,7 +35714,7 @@ export type modelHubDevelopsAddRowsFromHuggingfaceCreateResponseError = (
   | modelHubDevelopsAddRowsFromHuggingfaceCreateResponse500
   | modelHubDevelopsAddRowsFromHuggingfaceCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddRowsFromHuggingfaceCreateResponse =
@@ -35603,7 +35780,7 @@ export type modelHubDevelopsAddStaticColumnCreateResponseDefault = {
 
 export type modelHubDevelopsAddStaticColumnCreateResponseSuccess =
   modelHubDevelopsAddStaticColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddStaticColumnCreateResponseError = (
   | modelHubDevelopsAddStaticColumnCreateResponse400
@@ -35613,7 +35790,7 @@ export type modelHubDevelopsAddStaticColumnCreateResponseError = (
   | modelHubDevelopsAddStaticColumnCreateResponse500
   | modelHubDevelopsAddStaticColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddStaticColumnCreateResponse =
@@ -35679,7 +35856,7 @@ export type modelHubDevelopsAddSyntheticDataCreateResponseDefault = {
 
 export type modelHubDevelopsAddSyntheticDataCreateResponseSuccess =
   modelHubDevelopsAddSyntheticDataCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddSyntheticDataCreateResponseError = (
   | modelHubDevelopsAddSyntheticDataCreateResponse400
@@ -35689,7 +35866,7 @@ export type modelHubDevelopsAddSyntheticDataCreateResponseError = (
   | modelHubDevelopsAddSyntheticDataCreateResponse500
   | modelHubDevelopsAddSyntheticDataCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddSyntheticDataCreateResponse =
@@ -35755,7 +35932,7 @@ export type modelHubDevelopsAddUserEvalCreateResponseDefault = {
 
 export type modelHubDevelopsAddUserEvalCreateResponseSuccess =
   modelHubDevelopsAddUserEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsAddUserEvalCreateResponseError = (
   | modelHubDevelopsAddUserEvalCreateResponse400
@@ -35765,7 +35942,7 @@ export type modelHubDevelopsAddUserEvalCreateResponseError = (
   | modelHubDevelopsAddUserEvalCreateResponse500
   | modelHubDevelopsAddUserEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsAddUserEvalCreateResponse =
@@ -35804,11 +35981,11 @@ export type modelHubDevelopsDeleteColumnDeleteResponseDefault = {
 
 export type modelHubDevelopsDeleteColumnDeleteResponseSuccess =
   modelHubDevelopsDeleteColumnDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsDeleteColumnDeleteResponseError =
   modelHubDevelopsDeleteColumnDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDevelopsDeleteColumnDeleteResponse =
@@ -35848,11 +36025,11 @@ export type modelHubDevelopsDeleteRowDeleteResponseDefault = {
 
 export type modelHubDevelopsDeleteRowDeleteResponseSuccess =
   modelHubDevelopsDeleteRowDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsDeleteRowDeleteResponseError =
   modelHubDevelopsDeleteRowDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDevelopsDeleteRowDeleteResponse =
@@ -35888,11 +36065,11 @@ export type modelHubDevelopsDeleteTemplateEvalDeleteResponseDefault = {
 
 export type modelHubDevelopsDeleteTemplateEvalDeleteResponseSuccess =
   modelHubDevelopsDeleteTemplateEvalDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsDeleteTemplateEvalDeleteResponseError =
   modelHubDevelopsDeleteTemplateEvalDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDevelopsDeleteTemplateEvalDeleteResponse =
@@ -35932,11 +36109,11 @@ export type modelHubDevelopsDeleteUserEvalDeleteResponseDefault = {
 
 export type modelHubDevelopsDeleteUserEvalDeleteResponseSuccess =
   modelHubDevelopsDeleteUserEvalDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsDeleteUserEvalDeleteResponseError =
   modelHubDevelopsDeleteUserEvalDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubDevelopsDeleteUserEvalDeleteResponse =
@@ -36001,7 +36178,7 @@ export type modelHubDevelopsDownloadDatasetListResponseDefault = {
 
 export type modelHubDevelopsDownloadDatasetListResponseSuccess =
   modelHubDevelopsDownloadDatasetListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsDownloadDatasetListResponseError = (
   | modelHubDevelopsDownloadDatasetListResponse400
@@ -36011,7 +36188,7 @@ export type modelHubDevelopsDownloadDatasetListResponseError = (
   | modelHubDevelopsDownloadDatasetListResponse500
   | modelHubDevelopsDownloadDatasetListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsDownloadDatasetListResponse =
@@ -36074,7 +36251,7 @@ export type modelHubDevelopsEditAndRunUserEvalCreateResponseDefault = {
 
 export type modelHubDevelopsEditAndRunUserEvalCreateResponseSuccess =
   modelHubDevelopsEditAndRunUserEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsEditAndRunUserEvalCreateResponseError = (
   | modelHubDevelopsEditAndRunUserEvalCreateResponse400
@@ -36084,7 +36261,7 @@ export type modelHubDevelopsEditAndRunUserEvalCreateResponseError = (
   | modelHubDevelopsEditAndRunUserEvalCreateResponse500
   | modelHubDevelopsEditAndRunUserEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsEditAndRunUserEvalCreateResponse =
@@ -36152,7 +36329,7 @@ export type modelHubDevelopsEditDatasetBehaviorUpdateResponseDefault = {
 
 export type modelHubDevelopsEditDatasetBehaviorUpdateResponseSuccess =
   modelHubDevelopsEditDatasetBehaviorUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsEditDatasetBehaviorUpdateResponseError = (
   | modelHubDevelopsEditDatasetBehaviorUpdateResponse400
@@ -36162,7 +36339,7 @@ export type modelHubDevelopsEditDatasetBehaviorUpdateResponseError = (
   | modelHubDevelopsEditDatasetBehaviorUpdateResponse500
   | modelHubDevelopsEditDatasetBehaviorUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsEditDatasetBehaviorUpdateResponse =
@@ -36228,7 +36405,7 @@ export type modelHubDevelopsExtractJsonColumnCreateResponseDefault = {
 
 export type modelHubDevelopsExtractJsonColumnCreateResponseSuccess =
   modelHubDevelopsExtractJsonColumnCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsExtractJsonColumnCreateResponseError = (
   | modelHubDevelopsExtractJsonColumnCreateResponse400
@@ -36238,7 +36415,7 @@ export type modelHubDevelopsExtractJsonColumnCreateResponseError = (
   | modelHubDevelopsExtractJsonColumnCreateResponse500
   | modelHubDevelopsExtractJsonColumnCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsExtractJsonColumnCreateResponse =
@@ -36317,7 +36494,7 @@ export type modelHubDevelopsGetDatasetTableListResponseDefault = {
 
 export type modelHubDevelopsGetDatasetTableListResponseSuccess =
   modelHubDevelopsGetDatasetTableListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetDatasetTableListResponseError = (
   | modelHubDevelopsGetDatasetTableListResponse400
@@ -36329,7 +36506,7 @@ export type modelHubDevelopsGetDatasetTableListResponseError = (
   | modelHubDevelopsGetDatasetTableListResponse503
   | modelHubDevelopsGetDatasetTableListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetDatasetTableListResponse =
@@ -36423,7 +36600,7 @@ export type modelHubDevelopsGetRowDataCreateResponseDefault = {
 
 export type modelHubDevelopsGetRowDataCreateResponseSuccess =
   modelHubDevelopsGetRowDataCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetRowDataCreateResponseError = (
   | modelHubDevelopsGetRowDataCreateResponse400
@@ -36435,7 +36612,7 @@ export type modelHubDevelopsGetRowDataCreateResponseError = (
   | modelHubDevelopsGetRowDataCreateResponse503
   | modelHubDevelopsGetRowDataCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetRowDataCreateResponse =
@@ -36499,7 +36676,7 @@ export type modelHubDevelopsGetEvalStructureReadResponseDefault = {
 
 export type modelHubDevelopsGetEvalStructureReadResponseSuccess =
   modelHubDevelopsGetEvalStructureReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetEvalStructureReadResponseError = (
   | modelHubDevelopsGetEvalStructureReadResponse400
@@ -36509,7 +36686,7 @@ export type modelHubDevelopsGetEvalStructureReadResponseError = (
   | modelHubDevelopsGetEvalStructureReadResponse500
   | modelHubDevelopsGetEvalStructureReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetEvalStructureReadResponse =
@@ -36592,7 +36769,7 @@ export type modelHubDevelopsGetEvalsListListResponseDefault = {
 
 export type modelHubDevelopsGetEvalsListListResponseSuccess =
   modelHubDevelopsGetEvalsListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetEvalsListListResponseError = (
   | modelHubDevelopsGetEvalsListListResponse400
@@ -36602,7 +36779,7 @@ export type modelHubDevelopsGetEvalsListListResponseError = (
   | modelHubDevelopsGetEvalsListListResponse500
   | modelHubDevelopsGetEvalsListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetEvalsListListResponse =
@@ -36683,7 +36860,7 @@ export type modelHubDevelopsPreviewRunEvalCreateResponseDefault = {
 
 export type modelHubDevelopsPreviewRunEvalCreateResponseSuccess =
   modelHubDevelopsPreviewRunEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsPreviewRunEvalCreateResponseError = (
   | modelHubDevelopsPreviewRunEvalCreateResponse400
@@ -36693,7 +36870,7 @@ export type modelHubDevelopsPreviewRunEvalCreateResponseError = (
   | modelHubDevelopsPreviewRunEvalCreateResponse500
   | modelHubDevelopsPreviewRunEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsPreviewRunEvalCreateResponse =
@@ -36759,7 +36936,7 @@ export type modelHubDevelopsStartEvalsProcessCreateResponseDefault = {
 
 export type modelHubDevelopsStartEvalsProcessCreateResponseSuccess =
   modelHubDevelopsStartEvalsProcessCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsStartEvalsProcessCreateResponseError = (
   | modelHubDevelopsStartEvalsProcessCreateResponse400
@@ -36769,7 +36946,7 @@ export type modelHubDevelopsStartEvalsProcessCreateResponseError = (
   | modelHubDevelopsStartEvalsProcessCreateResponse500
   | modelHubDevelopsStartEvalsProcessCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsStartEvalsProcessCreateResponse =
@@ -36835,7 +37012,7 @@ export type modelHubDevelopsStopUserEvalCreateResponseDefault = {
 
 export type modelHubDevelopsStopUserEvalCreateResponseSuccess =
   modelHubDevelopsStopUserEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsStopUserEvalCreateResponseError = (
   | modelHubDevelopsStopUserEvalCreateResponse400
@@ -36845,7 +37022,7 @@ export type modelHubDevelopsStopUserEvalCreateResponseError = (
   | modelHubDevelopsStopUserEvalCreateResponse500
   | modelHubDevelopsStopUserEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsStopUserEvalCreateResponse =
@@ -36921,7 +37098,7 @@ export type modelHubDevelopsSyntheticConfigListResponseDefault = {
 
 export type modelHubDevelopsSyntheticConfigListResponseSuccess =
   modelHubDevelopsSyntheticConfigListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsSyntheticConfigListResponseError = (
   | modelHubDevelopsSyntheticConfigListResponse400
@@ -36931,7 +37108,7 @@ export type modelHubDevelopsSyntheticConfigListResponseError = (
   | modelHubDevelopsSyntheticConfigListResponse500
   | modelHubDevelopsSyntheticConfigListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsSyntheticConfigListResponse =
@@ -36994,7 +37171,7 @@ export type modelHubDevelopsUpdateSyntheticConfigUpdateResponseDefault = {
 
 export type modelHubDevelopsUpdateSyntheticConfigUpdateResponseSuccess =
   modelHubDevelopsUpdateSyntheticConfigUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsUpdateSyntheticConfigUpdateResponseError = (
   | modelHubDevelopsUpdateSyntheticConfigUpdateResponse400
@@ -37004,7 +37181,7 @@ export type modelHubDevelopsUpdateSyntheticConfigUpdateResponseError = (
   | modelHubDevelopsUpdateSyntheticConfigUpdateResponse500
   | modelHubDevelopsUpdateSyntheticConfigUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsUpdateSyntheticConfigUpdateResponse =
@@ -37070,7 +37247,7 @@ export type modelHubDevelopsUpdateCellValueCreateResponseDefault = {
 
 export type modelHubDevelopsUpdateCellValueCreateResponseSuccess =
   modelHubDevelopsUpdateCellValueCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsUpdateCellValueCreateResponseError = (
   | modelHubDevelopsUpdateCellValueCreateResponse400
@@ -37080,7 +37257,7 @@ export type modelHubDevelopsUpdateCellValueCreateResponseError = (
   | modelHubDevelopsUpdateCellValueCreateResponse500
   | modelHubDevelopsUpdateCellValueCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsUpdateCellValueCreateResponse =
@@ -37146,7 +37323,7 @@ export type modelHubDevelopsUpdateColumnNameUpdateResponseDefault = {
 
 export type modelHubDevelopsUpdateColumnNameUpdateResponseSuccess =
   modelHubDevelopsUpdateColumnNameUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsUpdateColumnNameUpdateResponseError = (
   | modelHubDevelopsUpdateColumnNameUpdateResponse400
@@ -37156,7 +37333,7 @@ export type modelHubDevelopsUpdateColumnNameUpdateResponseError = (
   | modelHubDevelopsUpdateColumnNameUpdateResponse500
   | modelHubDevelopsUpdateColumnNameUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsUpdateColumnNameUpdateResponse =
@@ -37224,7 +37401,7 @@ export type modelHubDevelopsUpdateColumnTypeUpdateResponseDefault = {
 
 export type modelHubDevelopsUpdateColumnTypeUpdateResponseSuccess =
   modelHubDevelopsUpdateColumnTypeUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsUpdateColumnTypeUpdateResponseError = (
   | modelHubDevelopsUpdateColumnTypeUpdateResponse400
@@ -37234,7 +37411,7 @@ export type modelHubDevelopsUpdateColumnTypeUpdateResponseError = (
   | modelHubDevelopsUpdateColumnTypeUpdateResponse500
   | modelHubDevelopsUpdateColumnTypeUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsUpdateColumnTypeUpdateResponse =
@@ -37307,7 +37484,7 @@ export type modelHubDevelopsCreateDatasetCreateResponseDefault = {
 
 export type modelHubDevelopsCreateDatasetCreateResponseSuccess =
   modelHubDevelopsCreateDatasetCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsCreateDatasetCreateResponseError = (
   | modelHubDevelopsCreateDatasetCreateResponse400
@@ -37318,7 +37495,7 @@ export type modelHubDevelopsCreateDatasetCreateResponseError = (
   | modelHubDevelopsCreateDatasetCreateResponse503
   | modelHubDevelopsCreateDatasetCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsCreateDatasetCreateResponse =
@@ -37402,7 +37579,7 @@ export type modelHubDevelopsGetExperimentDatasetTableListResponseDefault = {
 
 export type modelHubDevelopsGetExperimentDatasetTableListResponseSuccess =
   modelHubDevelopsGetExperimentDatasetTableListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDevelopsGetExperimentDatasetTableListResponseError = (
   | modelHubDevelopsGetExperimentDatasetTableListResponse400
@@ -37415,7 +37592,7 @@ export type modelHubDevelopsGetExperimentDatasetTableListResponseError = (
   | modelHubDevelopsGetExperimentDatasetTableListResponse503
   | modelHubDevelopsGetExperimentDatasetTableListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDevelopsGetExperimentDatasetTableListResponse =
@@ -37499,7 +37676,7 @@ export type modelHubDuplicateEvalTemplateCreateResponseDefault = {
 
 export type modelHubDuplicateEvalTemplateCreateResponseSuccess =
   modelHubDuplicateEvalTemplateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubDuplicateEvalTemplateCreateResponseError = (
   | modelHubDuplicateEvalTemplateCreateResponse400
@@ -37509,7 +37686,7 @@ export type modelHubDuplicateEvalTemplateCreateResponseError = (
   | modelHubDuplicateEvalTemplateCreateResponse500
   | modelHubDuplicateEvalTemplateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubDuplicateEvalTemplateCreateResponse =
@@ -37572,7 +37749,7 @@ export type modelHubEmbeddingsListResponseDefault = {
 
 export type modelHubEmbeddingsListResponseSuccess =
   modelHubEmbeddingsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEmbeddingsListResponseError = (
   | modelHubEmbeddingsListResponse400
@@ -37582,7 +37759,7 @@ export type modelHubEmbeddingsListResponseError = (
   | modelHubEmbeddingsListResponse500
   | modelHubEmbeddingsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEmbeddingsListResponse =
@@ -37642,7 +37819,7 @@ export type modelHubEmbeddingsReadResponseDefault = {
 
 export type modelHubEmbeddingsReadResponseSuccess =
   modelHubEmbeddingsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEmbeddingsReadResponseError = (
   | modelHubEmbeddingsReadResponse400
@@ -37652,7 +37829,7 @@ export type modelHubEmbeddingsReadResponseError = (
   | modelHubEmbeddingsReadResponse500
   | modelHubEmbeddingsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEmbeddingsReadResponse =
@@ -37688,11 +37865,11 @@ export type modelHubEvalGroupsListResponseDefault = {
 
 export type modelHubEvalGroupsListResponseSuccess =
   modelHubEvalGroupsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsListResponseError =
   modelHubEvalGroupsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsListResponse =
@@ -37753,11 +37930,11 @@ export type modelHubEvalGroupsCreateResponseDefault = {
 
 export type modelHubEvalGroupsCreateResponseSuccess =
   modelHubEvalGroupsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsCreateResponseError =
   modelHubEvalGroupsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsCreateResponse =
@@ -37799,11 +37976,11 @@ export type modelHubEvalGroupsApplyEvalGroupResponseDefault = {
 
 export type modelHubEvalGroupsApplyEvalGroupResponseSuccess =
   modelHubEvalGroupsApplyEvalGroupResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsApplyEvalGroupResponseError =
   modelHubEvalGroupsApplyEvalGroupResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsApplyEvalGroupResponse =
@@ -37845,11 +38022,11 @@ export type modelHubEvalGroupsEditEvalListResponseDefault = {
 
 export type modelHubEvalGroupsEditEvalListResponseSuccess =
   modelHubEvalGroupsEditEvalListResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsEditEvalListResponseError =
   modelHubEvalGroupsEditEvalListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsEditEvalListResponse =
@@ -37891,11 +38068,11 @@ export type modelHubEvalGroupsReadResponseDefault = {
 
 export type modelHubEvalGroupsReadResponseSuccess =
   modelHubEvalGroupsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsReadResponseError =
   modelHubEvalGroupsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsReadResponse =
@@ -37954,11 +38131,11 @@ export type modelHubEvalGroupsUpdateResponseDefault = {
 
 export type modelHubEvalGroupsUpdateResponseSuccess =
   modelHubEvalGroupsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsUpdateResponseError =
   modelHubEvalGroupsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsUpdateResponse =
@@ -38000,11 +38177,11 @@ export type modelHubEvalGroupsPartialUpdateResponseDefault = {
 
 export type modelHubEvalGroupsPartialUpdateResponseSuccess =
   modelHubEvalGroupsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsPartialUpdateResponseError =
   modelHubEvalGroupsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsPartialUpdateResponse =
@@ -38046,11 +38223,11 @@ export type modelHubEvalGroupsDeleteResponseDefault = {
 
 export type modelHubEvalGroupsDeleteResponseSuccess =
   modelHubEvalGroupsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalGroupsDeleteResponseError =
   modelHubEvalGroupsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubEvalGroupsDeleteResponse =
@@ -38087,6 +38264,11 @@ export type modelHubEvalPlaygroundCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubEvalPlaygroundCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubEvalPlaygroundCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -38102,6 +38284,11 @@ export type modelHubEvalPlaygroundCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubEvalPlaygroundCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubEvalPlaygroundCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -38109,22 +38296,27 @@ export type modelHubEvalPlaygroundCreateResponse500 = {
 
 export type modelHubEvalPlaygroundCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubEvalPlaygroundCreateResponseSuccess =
   modelHubEvalPlaygroundCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalPlaygroundCreateResponseError = (
   | modelHubEvalPlaygroundCreateResponse400
+  | modelHubEvalPlaygroundCreateResponse402
   | modelHubEvalPlaygroundCreateResponse403
   | modelHubEvalPlaygroundCreateResponse404
   | modelHubEvalPlaygroundCreateResponse409
+  | modelHubEvalPlaygroundCreateResponse429
   | modelHubEvalPlaygroundCreateResponse500
   | modelHubEvalPlaygroundCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalPlaygroundCreateResponse =
@@ -38187,7 +38379,7 @@ export type modelHubEvalPlaygroundFeedbackCreateResponseDefault = {
 
 export type modelHubEvalPlaygroundFeedbackCreateResponseSuccess =
   modelHubEvalPlaygroundFeedbackCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalPlaygroundFeedbackCreateResponseError = (
   | modelHubEvalPlaygroundFeedbackCreateResponse400
@@ -38197,7 +38389,7 @@ export type modelHubEvalPlaygroundFeedbackCreateResponseError = (
   | modelHubEvalPlaygroundFeedbackCreateResponse500
   | modelHubEvalPlaygroundFeedbackCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalPlaygroundFeedbackCreateResponse =
@@ -38260,7 +38452,7 @@ export type modelHubEvalSdkCodeListResponseDefault = {
 
 export type modelHubEvalSdkCodeListResponseSuccess =
   modelHubEvalSdkCodeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalSdkCodeListResponseError = (
   | modelHubEvalSdkCodeListResponse400
@@ -38270,7 +38462,7 @@ export type modelHubEvalSdkCodeListResponseError = (
   | modelHubEvalSdkCodeListResponse500
   | modelHubEvalSdkCodeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalSdkCodeListResponse =
@@ -38330,7 +38522,7 @@ export type modelHubEvalSummaryTemplatesListResponseDefault = {
 
 export type modelHubEvalSummaryTemplatesListResponseSuccess =
   modelHubEvalSummaryTemplatesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalSummaryTemplatesListResponseError = (
   | modelHubEvalSummaryTemplatesListResponse400
@@ -38340,7 +38532,7 @@ export type modelHubEvalSummaryTemplatesListResponseError = (
   | modelHubEvalSummaryTemplatesListResponse500
   | modelHubEvalSummaryTemplatesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalSummaryTemplatesListResponse =
@@ -38400,7 +38592,7 @@ export type modelHubEvalSummaryTemplatesCreateResponseDefault = {
 
 export type modelHubEvalSummaryTemplatesCreateResponseSuccess =
   modelHubEvalSummaryTemplatesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalSummaryTemplatesCreateResponseError = (
   | modelHubEvalSummaryTemplatesCreateResponse400
@@ -38410,7 +38602,7 @@ export type modelHubEvalSummaryTemplatesCreateResponseError = (
   | modelHubEvalSummaryTemplatesCreateResponse500
   | modelHubEvalSummaryTemplatesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalSummaryTemplatesCreateResponse =
@@ -38473,7 +38665,7 @@ export type modelHubEvalSummaryTemplatesUpdateResponseDefault = {
 
 export type modelHubEvalSummaryTemplatesUpdateResponseSuccess =
   modelHubEvalSummaryTemplatesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalSummaryTemplatesUpdateResponseError = (
   | modelHubEvalSummaryTemplatesUpdateResponse400
@@ -38483,7 +38675,7 @@ export type modelHubEvalSummaryTemplatesUpdateResponseError = (
   | modelHubEvalSummaryTemplatesUpdateResponse500
   | modelHubEvalSummaryTemplatesUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalSummaryTemplatesUpdateResponse =
@@ -38549,7 +38741,7 @@ export type modelHubEvalSummaryTemplatesDeleteResponseDefault = {
 
 export type modelHubEvalSummaryTemplatesDeleteResponseSuccess =
   modelHubEvalSummaryTemplatesDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalSummaryTemplatesDeleteResponseError = (
   | modelHubEvalSummaryTemplatesDeleteResponse400
@@ -38559,7 +38751,7 @@ export type modelHubEvalSummaryTemplatesDeleteResponseError = (
   | modelHubEvalSummaryTemplatesDeleteResponse500
   | modelHubEvalSummaryTemplatesDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalSummaryTemplatesDeleteResponse =
@@ -38622,7 +38814,7 @@ export type modelHubEvalTemplateCreateCreateResponseDefault = {
 
 export type modelHubEvalTemplateCreateCreateResponseSuccess =
   modelHubEvalTemplateCreateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplateCreateCreateResponseError = (
   | modelHubEvalTemplateCreateCreateResponse400
@@ -38632,7 +38824,7 @@ export type modelHubEvalTemplateCreateCreateResponseError = (
   | modelHubEvalTemplateCreateCreateResponse500
   | modelHubEvalTemplateCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplateCreateCreateResponse =
@@ -38695,7 +38887,7 @@ export type modelHubEvalTemplatesBulkDeleteCreateResponseDefault = {
 
 export type modelHubEvalTemplatesBulkDeleteCreateResponseSuccess =
   modelHubEvalTemplatesBulkDeleteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesBulkDeleteCreateResponseError = (
   | modelHubEvalTemplatesBulkDeleteCreateResponse400
@@ -38705,7 +38897,7 @@ export type modelHubEvalTemplatesBulkDeleteCreateResponseError = (
   | modelHubEvalTemplatesBulkDeleteCreateResponse500
   | modelHubEvalTemplatesBulkDeleteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesBulkDeleteCreateResponse =
@@ -38772,7 +38964,7 @@ export type modelHubEvalTemplatesCompositeExecuteAdhocCreateResponseDefault = {
 
 export type modelHubEvalTemplatesCompositeExecuteAdhocCreateResponseSuccess =
   modelHubEvalTemplatesCompositeExecuteAdhocCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesCompositeExecuteAdhocCreateResponseError = (
   | modelHubEvalTemplatesCompositeExecuteAdhocCreateResponse400
@@ -38782,7 +38974,7 @@ export type modelHubEvalTemplatesCompositeExecuteAdhocCreateResponseError = (
   | modelHubEvalTemplatesCompositeExecuteAdhocCreateResponse500
   | modelHubEvalTemplatesCompositeExecuteAdhocCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesCompositeExecuteAdhocCreateResponse =
@@ -38853,7 +39045,7 @@ export type modelHubEvalTemplatesCreateCompositeCreateResponseDefault = {
 
 export type modelHubEvalTemplatesCreateCompositeCreateResponseSuccess =
   modelHubEvalTemplatesCreateCompositeCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesCreateCompositeCreateResponseError = (
   | modelHubEvalTemplatesCreateCompositeCreateResponse400
@@ -38863,7 +39055,7 @@ export type modelHubEvalTemplatesCreateCompositeCreateResponseError = (
   | modelHubEvalTemplatesCreateCompositeCreateResponse500
   | modelHubEvalTemplatesCreateCompositeCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesCreateCompositeCreateResponse =
@@ -38930,7 +39122,7 @@ export type modelHubEvalTemplatesCreateV2CreateResponseDefault = {
 
 export type modelHubEvalTemplatesCreateV2CreateResponseSuccess =
   modelHubEvalTemplatesCreateV2CreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesCreateV2CreateResponseError = (
   | modelHubEvalTemplatesCreateV2CreateResponse400
@@ -38940,7 +39132,7 @@ export type modelHubEvalTemplatesCreateV2CreateResponseError = (
   | modelHubEvalTemplatesCreateV2CreateResponse500
   | modelHubEvalTemplatesCreateV2CreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesCreateV2CreateResponse =
@@ -39008,7 +39200,7 @@ export type modelHubEvalTemplatesListChartsCreateResponseDefault = {
 
 export type modelHubEvalTemplatesListChartsCreateResponseSuccess =
   modelHubEvalTemplatesListChartsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesListChartsCreateResponseError = (
   | modelHubEvalTemplatesListChartsCreateResponse400
@@ -39018,7 +39210,7 @@ export type modelHubEvalTemplatesListChartsCreateResponseError = (
   | modelHubEvalTemplatesListChartsCreateResponse500
   | modelHubEvalTemplatesListChartsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesListChartsCreateResponse =
@@ -39087,7 +39279,7 @@ export type modelHubEvalTemplatesListCreateResponseDefault = {
 
 export type modelHubEvalTemplatesListCreateResponseSuccess =
   modelHubEvalTemplatesListCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesListCreateResponseError = (
   | modelHubEvalTemplatesListCreateResponse400
@@ -39097,7 +39289,7 @@ export type modelHubEvalTemplatesListCreateResponseError = (
   | modelHubEvalTemplatesListCreateResponse500
   | modelHubEvalTemplatesListCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesListCreateResponse =
@@ -39165,7 +39357,7 @@ export type modelHubEvalTemplatesCompositeListResponseDefault = {
 
 export type modelHubEvalTemplatesCompositeListResponseSuccess =
   modelHubEvalTemplatesCompositeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesCompositeListResponseError = (
   | modelHubEvalTemplatesCompositeListResponse400
@@ -39175,7 +39367,7 @@ export type modelHubEvalTemplatesCompositeListResponseError = (
   | modelHubEvalTemplatesCompositeListResponse500
   | modelHubEvalTemplatesCompositeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesCompositeListResponse =
@@ -39242,7 +39434,7 @@ export type modelHubEvalTemplatesCompositePartialUpdateResponseDefault = {
 
 export type modelHubEvalTemplatesCompositePartialUpdateResponseSuccess =
   modelHubEvalTemplatesCompositePartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesCompositePartialUpdateResponseError = (
   | modelHubEvalTemplatesCompositePartialUpdateResponse400
@@ -39252,7 +39444,7 @@ export type modelHubEvalTemplatesCompositePartialUpdateResponseError = (
   | modelHubEvalTemplatesCompositePartialUpdateResponse500
   | modelHubEvalTemplatesCompositePartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesCompositePartialUpdateResponse =
@@ -39326,7 +39518,7 @@ export type modelHubEvalTemplatesCompositeExecuteCreateResponseDefault = {
 
 export type modelHubEvalTemplatesCompositeExecuteCreateResponseSuccess =
   modelHubEvalTemplatesCompositeExecuteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesCompositeExecuteCreateResponseError = (
   | modelHubEvalTemplatesCompositeExecuteCreateResponse400
@@ -39336,7 +39528,7 @@ export type modelHubEvalTemplatesCompositeExecuteCreateResponseError = (
   | modelHubEvalTemplatesCompositeExecuteCreateResponse500
   | modelHubEvalTemplatesCompositeExecuteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesCompositeExecuteCreateResponse =
@@ -39409,7 +39601,7 @@ export type modelHubEvalTemplatesDetailListResponseDefault = {
 
 export type modelHubEvalTemplatesDetailListResponseSuccess =
   modelHubEvalTemplatesDetailListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesDetailListResponseError = (
   | modelHubEvalTemplatesDetailListResponse400
@@ -39419,7 +39611,7 @@ export type modelHubEvalTemplatesDetailListResponseError = (
   | modelHubEvalTemplatesDetailListResponse500
   | modelHubEvalTemplatesDetailListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesDetailListResponse =
@@ -39484,7 +39676,7 @@ export type modelHubEvalTemplatesFeedbackListListResponseDefault = {
 
 export type modelHubEvalTemplatesFeedbackListListResponseSuccess =
   modelHubEvalTemplatesFeedbackListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesFeedbackListListResponseError = (
   | modelHubEvalTemplatesFeedbackListListResponse400
@@ -39494,7 +39686,7 @@ export type modelHubEvalTemplatesFeedbackListListResponseError = (
   | modelHubEvalTemplatesFeedbackListListResponse500
   | modelHubEvalTemplatesFeedbackListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesFeedbackListListResponse =
@@ -39562,7 +39754,7 @@ export type modelHubEvalTemplatesGroundTruthListResponseDefault = {
 
 export type modelHubEvalTemplatesGroundTruthListResponseSuccess =
   modelHubEvalTemplatesGroundTruthListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesGroundTruthListResponseError = (
   | modelHubEvalTemplatesGroundTruthListResponse400
@@ -39572,7 +39764,7 @@ export type modelHubEvalTemplatesGroundTruthListResponseError = (
   | modelHubEvalTemplatesGroundTruthListResponse500
   | modelHubEvalTemplatesGroundTruthListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesGroundTruthListResponse =
@@ -39638,7 +39830,7 @@ export type modelHubEvalTemplatesGroundTruthUploadCreateResponseDefault = {
 
 export type modelHubEvalTemplatesGroundTruthUploadCreateResponseSuccess =
   modelHubEvalTemplatesGroundTruthUploadCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesGroundTruthUploadCreateResponseError = (
   | modelHubEvalTemplatesGroundTruthUploadCreateResponse400
@@ -39648,7 +39840,7 @@ export type modelHubEvalTemplatesGroundTruthUploadCreateResponseError = (
   | modelHubEvalTemplatesGroundTruthUploadCreateResponse500
   | modelHubEvalTemplatesGroundTruthUploadCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesGroundTruthUploadCreateResponse =
@@ -39720,7 +39912,7 @@ export type modelHubEvalTemplatesUpdateUpdateResponseDefault = {
 
 export type modelHubEvalTemplatesUpdateUpdateResponseSuccess =
   modelHubEvalTemplatesUpdateUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesUpdateUpdateResponseError = (
   | modelHubEvalTemplatesUpdateUpdateResponse400
@@ -39730,7 +39922,7 @@ export type modelHubEvalTemplatesUpdateUpdateResponseError = (
   | modelHubEvalTemplatesUpdateUpdateResponse500
   | modelHubEvalTemplatesUpdateUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesUpdateUpdateResponse =
@@ -39798,7 +39990,7 @@ export type modelHubEvalTemplatesUsageListResponseDefault = {
 
 export type modelHubEvalTemplatesUsageListResponseSuccess =
   modelHubEvalTemplatesUsageListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesUsageListResponseError = (
   | modelHubEvalTemplatesUsageListResponse400
@@ -39808,7 +40000,7 @@ export type modelHubEvalTemplatesUsageListResponseError = (
   | modelHubEvalTemplatesUsageListResponse500
   | modelHubEvalTemplatesUsageListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesUsageListResponse =
@@ -39908,7 +40100,7 @@ export type modelHubEvalTemplatesVersionsListResponseDefault = {
 
 export type modelHubEvalTemplatesVersionsListResponseSuccess =
   modelHubEvalTemplatesVersionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesVersionsListResponseError = (
   | modelHubEvalTemplatesVersionsListResponse400
@@ -39918,7 +40110,7 @@ export type modelHubEvalTemplatesVersionsListResponseError = (
   | modelHubEvalTemplatesVersionsListResponse500
   | modelHubEvalTemplatesVersionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesVersionsListResponse =
@@ -39983,7 +40175,7 @@ export type modelHubEvalTemplatesVersionsCreateCreateResponseDefault = {
 
 export type modelHubEvalTemplatesVersionsCreateCreateResponseSuccess =
   modelHubEvalTemplatesVersionsCreateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesVersionsCreateCreateResponseError = (
   | modelHubEvalTemplatesVersionsCreateCreateResponse400
@@ -39993,7 +40185,7 @@ export type modelHubEvalTemplatesVersionsCreateCreateResponseError = (
   | modelHubEvalTemplatesVersionsCreateCreateResponse500
   | modelHubEvalTemplatesVersionsCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesVersionsCreateCreateResponse =
@@ -40063,7 +40255,7 @@ export type modelHubEvalTemplatesVersionsRestoreCreateResponseDefault = {
 
 export type modelHubEvalTemplatesVersionsRestoreCreateResponseSuccess =
   modelHubEvalTemplatesVersionsRestoreCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesVersionsRestoreCreateResponseError = (
   | modelHubEvalTemplatesVersionsRestoreCreateResponse400
@@ -40073,7 +40265,7 @@ export type modelHubEvalTemplatesVersionsRestoreCreateResponseError = (
   | modelHubEvalTemplatesVersionsRestoreCreateResponse500
   | modelHubEvalTemplatesVersionsRestoreCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesVersionsRestoreCreateResponse =
@@ -40146,7 +40338,7 @@ export type modelHubEvalTemplatesVersionsSetDefaultUpdateResponseDefault = {
 
 export type modelHubEvalTemplatesVersionsSetDefaultUpdateResponseSuccess =
   modelHubEvalTemplatesVersionsSetDefaultUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalTemplatesVersionsSetDefaultUpdateResponseError = (
   | modelHubEvalTemplatesVersionsSetDefaultUpdateResponse400
@@ -40156,7 +40348,7 @@ export type modelHubEvalTemplatesVersionsSetDefaultUpdateResponseError = (
   | modelHubEvalTemplatesVersionsSetDefaultUpdateResponse500
   | modelHubEvalTemplatesVersionsSetDefaultUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalTemplatesVersionsSetDefaultUpdateResponse =
@@ -40228,7 +40420,7 @@ export type modelHubEvalUserTemplateCreateCreateResponseDefault = {
 
 export type modelHubEvalUserTemplateCreateCreateResponseSuccess =
   modelHubEvalUserTemplateCreateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvalUserTemplateCreateCreateResponseError = (
   | modelHubEvalUserTemplateCreateCreateResponse400
@@ -40238,7 +40430,7 @@ export type modelHubEvalUserTemplateCreateCreateResponseError = (
   | modelHubEvalUserTemplateCreateCreateResponse500
   | modelHubEvalUserTemplateCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvalUserTemplateCreateCreateResponse =
@@ -40301,7 +40493,7 @@ export type modelHubEvaluateRowsCreateResponseDefault = {
 
 export type modelHubEvaluateRowsCreateResponseSuccess =
   modelHubEvaluateRowsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubEvaluateRowsCreateResponseError = (
   | modelHubEvaluateRowsCreateResponse400
@@ -40311,7 +40503,7 @@ export type modelHubEvaluateRowsCreateResponseError = (
   | modelHubEvaluateRowsCreateResponse500
   | modelHubEvaluateRowsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubEvaluateRowsCreateResponse =
@@ -40349,11 +40541,11 @@ export type modelHubExperimentDetailListResponseDefault = {
 
 export type modelHubExperimentDetailListResponseSuccess =
   modelHubExperimentDetailListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentDetailListResponseError =
   modelHubExperimentDetailListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubExperimentDetailListResponse =
@@ -40432,7 +40624,7 @@ export type modelHubExperimentsListResponseDefault = {
 
 export type modelHubExperimentsListResponseSuccess =
   modelHubExperimentsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsListResponseError = (
   | modelHubExperimentsListResponse400
@@ -40442,7 +40634,7 @@ export type modelHubExperimentsListResponseError = (
   | modelHubExperimentsListResponse500
   | modelHubExperimentsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsListResponse =
@@ -40502,7 +40694,7 @@ export type modelHubExperimentsCreateResponseDefault = {
 
 export type modelHubExperimentsCreateResponseSuccess =
   modelHubExperimentsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsCreateResponseError = (
   | modelHubExperimentsCreateResponse400
@@ -40512,7 +40704,7 @@ export type modelHubExperimentsCreateResponseError = (
   | modelHubExperimentsCreateResponse500
   | modelHubExperimentsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsCreateResponse =
@@ -40575,7 +40767,7 @@ export type modelHubExperimentsUpdateResponseDefault = {
 
 export type modelHubExperimentsUpdateResponseSuccess =
   modelHubExperimentsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsUpdateResponseError = (
   | modelHubExperimentsUpdateResponse400
@@ -40585,7 +40777,7 @@ export type modelHubExperimentsUpdateResponseError = (
   | modelHubExperimentsUpdateResponse500
   | modelHubExperimentsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsUpdateResponse =
@@ -40623,11 +40815,11 @@ export type modelHubExperimentsDataListResponseDefault = {
 
 export type modelHubExperimentsDataListResponseSuccess =
   modelHubExperimentsDataListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsDataListResponseError =
   modelHubExperimentsDataListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubExperimentsDataListResponse =
@@ -40681,11 +40873,11 @@ export type modelHubExperimentsDeleteDeleteResponseDefault = {
 
 export type modelHubExperimentsDeleteDeleteResponseSuccess =
   modelHubExperimentsDeleteDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsDeleteDeleteResponseError =
   modelHubExperimentsDeleteDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubExperimentsDeleteDeleteResponse =
@@ -40745,7 +40937,7 @@ export type modelHubExperimentsReRunCreateResponseDefault = {
 
 export type modelHubExperimentsReRunCreateResponseSuccess =
   modelHubExperimentsReRunCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsReRunCreateResponseError = (
   | modelHubExperimentsReRunCreateResponse400
@@ -40755,7 +40947,7 @@ export type modelHubExperimentsReRunCreateResponseError = (
   | modelHubExperimentsReRunCreateResponse500
   | modelHubExperimentsReRunCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsReRunCreateResponse =
@@ -40818,7 +41010,7 @@ export type modelHubExperimentsV2CreateResponseDefault = {
 
 export type modelHubExperimentsV2CreateResponseSuccess =
   modelHubExperimentsV2CreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2CreateResponseError = (
   | modelHubExperimentsV2CreateResponse400
@@ -40828,7 +41020,7 @@ export type modelHubExperimentsV2CreateResponseError = (
   | modelHubExperimentsV2CreateResponse500
   | modelHubExperimentsV2CreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2CreateResponse =
@@ -40866,11 +41058,11 @@ export type modelHubExperimentsV2DeleteDeleteResponseDefault = {
 
 export type modelHubExperimentsV2DeleteDeleteResponseSuccess =
   modelHubExperimentsV2DeleteDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2DeleteDeleteResponseError =
   modelHubExperimentsV2DeleteDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubExperimentsV2DeleteDeleteResponse =
@@ -40908,11 +41100,11 @@ export type modelHubExperimentsV2ListListResponseDefault = {
 
 export type modelHubExperimentsV2ListListResponseSuccess =
   modelHubExperimentsV2ListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2ListListResponseError =
   modelHubExperimentsV2ListListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubExperimentsV2ListListResponse =
@@ -40994,7 +41186,7 @@ export type modelHubExperimentsV2ReRunCreateResponseDefault = {
 
 export type modelHubExperimentsV2ReRunCreateResponseSuccess =
   modelHubExperimentsV2ReRunCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2ReRunCreateResponseError = (
   | modelHubExperimentsV2ReRunCreateResponse400
@@ -41004,7 +41196,7 @@ export type modelHubExperimentsV2ReRunCreateResponseError = (
   | modelHubExperimentsV2ReRunCreateResponse500
   | modelHubExperimentsV2ReRunCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2ReRunCreateResponse =
@@ -41073,7 +41265,7 @@ export type modelHubExperimentsV2RowDiffCreateResponseDefault = {
 
 export type modelHubExperimentsV2RowDiffCreateResponseSuccess =
   modelHubExperimentsV2RowDiffCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2RowDiffCreateResponseError = (
   | modelHubExperimentsV2RowDiffCreateResponse400
@@ -41083,7 +41275,7 @@ export type modelHubExperimentsV2RowDiffCreateResponseError = (
   | modelHubExperimentsV2RowDiffCreateResponse500
   | modelHubExperimentsV2RowDiffCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2RowDiffCreateResponse =
@@ -41146,7 +41338,7 @@ export type modelHubExperimentsV2SuggestNameReadResponseDefault = {
 
 export type modelHubExperimentsV2SuggestNameReadResponseSuccess =
   modelHubExperimentsV2SuggestNameReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2SuggestNameReadResponseError = (
   | modelHubExperimentsV2SuggestNameReadResponse400
@@ -41156,7 +41348,7 @@ export type modelHubExperimentsV2SuggestNameReadResponseError = (
   | modelHubExperimentsV2SuggestNameReadResponse500
   | modelHubExperimentsV2SuggestNameReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2SuggestNameReadResponse =
@@ -41222,7 +41414,7 @@ export type modelHubExperimentsV2ValidateNameListResponseDefault = {
 
 export type modelHubExperimentsV2ValidateNameListResponseSuccess =
   modelHubExperimentsV2ValidateNameListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2ValidateNameListResponseError = (
   | modelHubExperimentsV2ValidateNameListResponse400
@@ -41232,7 +41424,7 @@ export type modelHubExperimentsV2ValidateNameListResponseError = (
   | modelHubExperimentsV2ValidateNameListResponse500
   | modelHubExperimentsV2ValidateNameListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2ValidateNameListResponse =
@@ -41295,7 +41487,7 @@ export type modelHubExperimentsV2ReadResponseDefault = {
 
 export type modelHubExperimentsV2ReadResponseSuccess =
   modelHubExperimentsV2ReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2ReadResponseError = (
   | modelHubExperimentsV2ReadResponse400
@@ -41305,7 +41497,7 @@ export type modelHubExperimentsV2ReadResponseError = (
   | modelHubExperimentsV2ReadResponse500
   | modelHubExperimentsV2ReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2ReadResponse =
@@ -41366,7 +41558,7 @@ export type modelHubExperimentsV2UpdateResponseDefault = {
 
 export type modelHubExperimentsV2UpdateResponseSuccess =
   modelHubExperimentsV2UpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2UpdateResponseError = (
   | modelHubExperimentsV2UpdateResponse400
@@ -41376,7 +41568,7 @@ export type modelHubExperimentsV2UpdateResponseError = (
   | modelHubExperimentsV2UpdateResponse500
   | modelHubExperimentsV2UpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2UpdateResponse =
@@ -41449,7 +41641,7 @@ export type modelHubExperimentsV2CompareExperimentsCreateResponseDefault = {
 
 export type modelHubExperimentsV2CompareExperimentsCreateResponseSuccess =
   modelHubExperimentsV2CompareExperimentsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2CompareExperimentsCreateResponseError = (
   | modelHubExperimentsV2CompareExperimentsCreateResponse400
@@ -41459,7 +41651,7 @@ export type modelHubExperimentsV2CompareExperimentsCreateResponseError = (
   | modelHubExperimentsV2CompareExperimentsCreateResponse500
   | modelHubExperimentsV2CompareExperimentsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2CompareExperimentsCreateResponse =
@@ -41528,7 +41720,7 @@ export type modelHubExperimentsV2ComparisonsListResponseDefault = {
 
 export type modelHubExperimentsV2ComparisonsListResponseSuccess =
   modelHubExperimentsV2ComparisonsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2ComparisonsListResponseError = (
   | modelHubExperimentsV2ComparisonsListResponse400
@@ -41538,7 +41730,7 @@ export type modelHubExperimentsV2ComparisonsListResponseError = (
   | modelHubExperimentsV2ComparisonsListResponse500
   | modelHubExperimentsV2ComparisonsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2ComparisonsListResponse =
@@ -41601,7 +41793,7 @@ export type modelHubExperimentsV2DerivedVariablesListResponseDefault = {
 
 export type modelHubExperimentsV2DerivedVariablesListResponseSuccess =
   modelHubExperimentsV2DerivedVariablesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2DerivedVariablesListResponseError = (
   | modelHubExperimentsV2DerivedVariablesListResponse400
@@ -41611,7 +41803,7 @@ export type modelHubExperimentsV2DerivedVariablesListResponseError = (
   | modelHubExperimentsV2DerivedVariablesListResponse500
   | modelHubExperimentsV2DerivedVariablesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2DerivedVariablesListResponse =
@@ -41678,7 +41870,7 @@ export type modelHubExperimentsV2DownloadListResponseDefault = {
 
 export type modelHubExperimentsV2DownloadListResponseSuccess =
   modelHubExperimentsV2DownloadListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2DownloadListResponseError = (
   | modelHubExperimentsV2DownloadListResponse400
@@ -41688,7 +41880,7 @@ export type modelHubExperimentsV2DownloadListResponseError = (
   | modelHubExperimentsV2DownloadListResponse500
   | modelHubExperimentsV2DownloadListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2DownloadListResponse =
@@ -41751,7 +41943,7 @@ export type modelHubExperimentsV2EvaluationsStatsListResponseDefault = {
 
 export type modelHubExperimentsV2EvaluationsStatsListResponseSuccess =
   modelHubExperimentsV2EvaluationsStatsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2EvaluationsStatsListResponseError = (
   | modelHubExperimentsV2EvaluationsStatsListResponse400
@@ -41761,7 +41953,7 @@ export type modelHubExperimentsV2EvaluationsStatsListResponseError = (
   | modelHubExperimentsV2EvaluationsStatsListResponse500
   | modelHubExperimentsV2EvaluationsStatsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2EvaluationsStatsListResponse =
@@ -41826,7 +42018,7 @@ export type modelHubExperimentsV2FeedbackCreateResponseDefault = {
 
 export type modelHubExperimentsV2FeedbackCreateResponseSuccess =
   modelHubExperimentsV2FeedbackCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2FeedbackCreateResponseError = (
   | modelHubExperimentsV2FeedbackCreateResponse400
@@ -41836,7 +42028,7 @@ export type modelHubExperimentsV2FeedbackCreateResponseError = (
   | modelHubExperimentsV2FeedbackCreateResponse500
   | modelHubExperimentsV2FeedbackCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2FeedbackCreateResponse =
@@ -41906,7 +42098,7 @@ export type modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponseDefault =
 
 export type modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponseSuccess =
   modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponseError = (
   | modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponse400
@@ -41916,7 +42108,7 @@ export type modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponseError = (
   | modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponse500
   | modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2FeedbackGetFeedbackDetailsListResponse =
@@ -41982,7 +42174,7 @@ export type modelHubExperimentsV2FeedbackGetTemplateListResponseDefault = {
 
 export type modelHubExperimentsV2FeedbackGetTemplateListResponseSuccess =
   modelHubExperimentsV2FeedbackGetTemplateListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2FeedbackGetTemplateListResponseError = (
   | modelHubExperimentsV2FeedbackGetTemplateListResponse400
@@ -41992,7 +42184,7 @@ export type modelHubExperimentsV2FeedbackGetTemplateListResponseError = (
   | modelHubExperimentsV2FeedbackGetTemplateListResponse500
   | modelHubExperimentsV2FeedbackGetTemplateListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2FeedbackGetTemplateListResponse =
@@ -42058,7 +42250,7 @@ export type modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponseDefault = {
 
 export type modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponseSuccess =
   modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponseError = (
   | modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponse400
@@ -42068,7 +42260,7 @@ export type modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponseError = (
   | modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponse500
   | modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2FeedbackSubmitFeedbackCreateResponse =
@@ -42137,7 +42329,7 @@ export type modelHubExperimentsV2JsonSchemaListResponseDefault = {
 
 export type modelHubExperimentsV2JsonSchemaListResponseSuccess =
   modelHubExperimentsV2JsonSchemaListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2JsonSchemaListResponseError = (
   | modelHubExperimentsV2JsonSchemaListResponse400
@@ -42147,7 +42339,7 @@ export type modelHubExperimentsV2JsonSchemaListResponseError = (
   | modelHubExperimentsV2JsonSchemaListResponse500
   | modelHubExperimentsV2JsonSchemaListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2JsonSchemaListResponse =
@@ -42214,7 +42406,7 @@ export type modelHubExperimentsV2RerunCellsCreateResponseDefault = {
 
 export type modelHubExperimentsV2RerunCellsCreateResponseSuccess =
   modelHubExperimentsV2RerunCellsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2RerunCellsCreateResponseError = (
   | modelHubExperimentsV2RerunCellsCreateResponse400
@@ -42224,7 +42416,7 @@ export type modelHubExperimentsV2RerunCellsCreateResponseError = (
   | modelHubExperimentsV2RerunCellsCreateResponse500
   | modelHubExperimentsV2RerunCellsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2RerunCellsCreateResponse =
@@ -42315,7 +42507,7 @@ export type modelHubExperimentsV2RowsListResponseDefault = {
 
 export type modelHubExperimentsV2RowsListResponseSuccess =
   modelHubExperimentsV2RowsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2RowsListResponseError = (
   | modelHubExperimentsV2RowsListResponse400
@@ -42328,7 +42520,7 @@ export type modelHubExperimentsV2RowsListResponseError = (
   | modelHubExperimentsV2RowsListResponse503
   | modelHubExperimentsV2RowsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2RowsListResponse =
@@ -42427,7 +42619,7 @@ export type modelHubExperimentsV2RowsReadResponseDefault = {
 
 export type modelHubExperimentsV2RowsReadResponseSuccess =
   modelHubExperimentsV2RowsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2RowsReadResponseError = (
   | modelHubExperimentsV2RowsReadResponse400
@@ -42440,7 +42632,7 @@ export type modelHubExperimentsV2RowsReadResponseError = (
   | modelHubExperimentsV2RowsReadResponse503
   | modelHubExperimentsV2RowsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2RowsReadResponse =
@@ -42523,7 +42715,7 @@ export type modelHubExperimentsV2StatsListResponseDefault = {
 
 export type modelHubExperimentsV2StatsListResponseSuccess =
   modelHubExperimentsV2StatsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2StatsListResponseError = (
   | modelHubExperimentsV2StatsListResponse400
@@ -42533,7 +42725,7 @@ export type modelHubExperimentsV2StatsListResponseError = (
   | modelHubExperimentsV2StatsListResponse500
   | modelHubExperimentsV2StatsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2StatsListResponse =
@@ -42597,7 +42789,7 @@ export type modelHubExperimentsV2StopCreateResponseDefault = {
 
 export type modelHubExperimentsV2StopCreateResponseSuccess =
   modelHubExperimentsV2StopCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsV2StopCreateResponseError = (
   | modelHubExperimentsV2StopCreateResponse400
@@ -42607,7 +42799,7 @@ export type modelHubExperimentsV2StopCreateResponseError = (
   | modelHubExperimentsV2StopCreateResponse500
   | modelHubExperimentsV2StopCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsV2StopCreateResponse =
@@ -42696,7 +42888,7 @@ export type modelHubExperimentsReadResponseDefault = {
 
 export type modelHubExperimentsReadResponseSuccess =
   modelHubExperimentsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsReadResponseError = (
   | modelHubExperimentsReadResponse400
@@ -42709,7 +42901,7 @@ export type modelHubExperimentsReadResponseError = (
   | modelHubExperimentsReadResponse503
   | modelHubExperimentsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsReadResponse =
@@ -42792,7 +42984,7 @@ export type modelHubExperimentsAddEvalCreateResponseDefault = {
 
 export type modelHubExperimentsAddEvalCreateResponseSuccess =
   modelHubExperimentsAddEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsAddEvalCreateResponseError = (
   | modelHubExperimentsAddEvalCreateResponse400
@@ -42802,7 +42994,7 @@ export type modelHubExperimentsAddEvalCreateResponseError = (
   | modelHubExperimentsAddEvalCreateResponse500
   | modelHubExperimentsAddEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsAddEvalCreateResponse =
@@ -42868,7 +43060,7 @@ export type modelHubExperimentsCompareExperimentsCreateResponseDefault = {
 
 export type modelHubExperimentsCompareExperimentsCreateResponseSuccess =
   modelHubExperimentsCompareExperimentsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsCompareExperimentsCreateResponseError = (
   | modelHubExperimentsCompareExperimentsCreateResponse400
@@ -42878,7 +43070,7 @@ export type modelHubExperimentsCompareExperimentsCreateResponseError = (
   | modelHubExperimentsCompareExperimentsCreateResponse500
   | modelHubExperimentsCompareExperimentsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsCompareExperimentsCreateResponse =
@@ -42944,7 +43136,7 @@ export type modelHubExperimentsComparisonsListResponseDefault = {
 
 export type modelHubExperimentsComparisonsListResponseSuccess =
   modelHubExperimentsComparisonsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsComparisonsListResponseError = (
   | modelHubExperimentsComparisonsListResponse400
@@ -42954,7 +43146,7 @@ export type modelHubExperimentsComparisonsListResponseError = (
   | modelHubExperimentsComparisonsListResponse500
   | modelHubExperimentsComparisonsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsComparisonsListResponse =
@@ -43017,7 +43209,7 @@ export type modelHubExperimentsDownloadListResponseDefault = {
 
 export type modelHubExperimentsDownloadListResponseSuccess =
   modelHubExperimentsDownloadListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsDownloadListResponseError = (
   | modelHubExperimentsDownloadListResponse400
@@ -43027,7 +43219,7 @@ export type modelHubExperimentsDownloadListResponseError = (
   | modelHubExperimentsDownloadListResponse500
   | modelHubExperimentsDownloadListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsDownloadListResponse =
@@ -43088,7 +43280,7 @@ export type modelHubExperimentsEvaluationsStatsListResponseDefault = {
 
 export type modelHubExperimentsEvaluationsStatsListResponseSuccess =
   modelHubExperimentsEvaluationsStatsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsEvaluationsStatsListResponseError = (
   | modelHubExperimentsEvaluationsStatsListResponse400
@@ -43098,7 +43290,7 @@ export type modelHubExperimentsEvaluationsStatsListResponseError = (
   | modelHubExperimentsEvaluationsStatsListResponse500
   | modelHubExperimentsEvaluationsStatsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsEvaluationsStatsListResponse =
@@ -43163,7 +43355,7 @@ export type modelHubExperimentsRunEvaluationsCreateResponseDefault = {
 
 export type modelHubExperimentsRunEvaluationsCreateResponseSuccess =
   modelHubExperimentsRunEvaluationsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsRunEvaluationsCreateResponseError = (
   | modelHubExperimentsRunEvaluationsCreateResponse400
@@ -43173,7 +43365,7 @@ export type modelHubExperimentsRunEvaluationsCreateResponseError = (
   | modelHubExperimentsRunEvaluationsCreateResponse500
   | modelHubExperimentsRunEvaluationsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsRunEvaluationsCreateResponse =
@@ -43245,7 +43437,7 @@ export type modelHubExperimentsStatsListResponseDefault = {
 
 export type modelHubExperimentsStatsListResponseSuccess =
   modelHubExperimentsStatsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubExperimentsStatsListResponseError = (
   | modelHubExperimentsStatsListResponse400
@@ -43255,7 +43447,7 @@ export type modelHubExperimentsStatsListResponseError = (
   | modelHubExperimentsStatsListResponse500
   | modelHubExperimentsStatsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubExperimentsStatsListResponse =
@@ -43291,11 +43483,11 @@ export type modelHubFeedbackListResponseDefault = {
 
 export type modelHubFeedbackListResponseSuccess =
   modelHubFeedbackListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackListResponseError =
   modelHubFeedbackListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackListResponse =
@@ -43349,11 +43541,11 @@ export type modelHubFeedbackCreateResponseDefault = {
 
 export type modelHubFeedbackCreateResponseSuccess =
   modelHubFeedbackCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackCreateResponseError =
   modelHubFeedbackCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackCreateResponse =
@@ -43416,7 +43608,7 @@ export type modelHubFeedbackGetFeedbackDetailsResponseDefault = {
 
 export type modelHubFeedbackGetFeedbackDetailsResponseSuccess =
   modelHubFeedbackGetFeedbackDetailsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackGetFeedbackDetailsResponseError = (
   | modelHubFeedbackGetFeedbackDetailsResponse400
@@ -43426,7 +43618,7 @@ export type modelHubFeedbackGetFeedbackDetailsResponseError = (
   | modelHubFeedbackGetFeedbackDetailsResponse500
   | modelHubFeedbackGetFeedbackDetailsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubFeedbackGetFeedbackDetailsResponse =
@@ -43483,11 +43675,11 @@ export type modelHubFeedbackGetFeedbackSummaryResponseDefault = {
 
 export type modelHubFeedbackGetFeedbackSummaryResponseSuccess =
   modelHubFeedbackGetFeedbackSummaryResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackGetFeedbackSummaryResponseError =
   modelHubFeedbackGetFeedbackSummaryResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackGetFeedbackSummaryResponse =
@@ -43544,11 +43736,11 @@ export type modelHubFeedbackGetTemplateResponseDefault = {
 
 export type modelHubFeedbackGetTemplateResponseSuccess =
   modelHubFeedbackGetTemplateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackGetTemplateResponseError =
   modelHubFeedbackGetTemplateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackGetTemplateResponse =
@@ -43605,11 +43797,11 @@ export type modelHubFeedbackSubmitFeedbackActionResponseDefault = {
 
 export type modelHubFeedbackSubmitFeedbackActionResponseSuccess =
   modelHubFeedbackSubmitFeedbackActionResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackSubmitFeedbackActionResponseError =
   modelHubFeedbackSubmitFeedbackActionResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackSubmitFeedbackActionResponse =
@@ -43650,11 +43842,11 @@ export type modelHubFeedbackReadResponseDefault = {
 
 export type modelHubFeedbackReadResponseSuccess =
   modelHubFeedbackReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackReadResponseError =
   modelHubFeedbackReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackReadResponse =
@@ -43690,11 +43882,11 @@ export type modelHubFeedbackUpdateResponseDefault = {
 
 export type modelHubFeedbackUpdateResponseSuccess =
   modelHubFeedbackUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackUpdateResponseError =
   modelHubFeedbackUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackUpdateResponse =
@@ -43733,11 +43925,11 @@ export type modelHubFeedbackPartialUpdateResponseDefault = {
 
 export type modelHubFeedbackPartialUpdateResponseSuccess =
   modelHubFeedbackPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackPartialUpdateResponseError =
   modelHubFeedbackPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackPartialUpdateResponse =
@@ -43776,11 +43968,11 @@ export type modelHubFeedbackDeleteResponseDefault = {
 
 export type modelHubFeedbackDeleteResponseSuccess =
   modelHubFeedbackDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubFeedbackDeleteResponseError =
   modelHubFeedbackDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubFeedbackDeleteResponse =
@@ -43841,7 +44033,7 @@ export type modelHubGetColumnValuesCreateResponseDefault = {
 
 export type modelHubGetColumnValuesCreateResponseSuccess =
   modelHubGetColumnValuesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetColumnValuesCreateResponseError = (
   | modelHubGetColumnValuesCreateResponse400
@@ -43851,7 +44043,7 @@ export type modelHubGetColumnValuesCreateResponseError = (
   | modelHubGetColumnValuesCreateResponse500
   | modelHubGetColumnValuesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetColumnValuesCreateResponse =
@@ -43914,7 +44106,7 @@ export type modelHubGetEvalConfigListResponseDefault = {
 
 export type modelHubGetEvalConfigListResponseSuccess =
   modelHubGetEvalConfigListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalConfigListResponseError = (
   | modelHubGetEvalConfigListResponse400
@@ -43924,7 +44116,7 @@ export type modelHubGetEvalConfigListResponseError = (
   | modelHubGetEvalConfigListResponse500
   | modelHubGetEvalConfigListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalConfigListResponse =
@@ -44003,7 +44195,7 @@ export type modelHubGetEvalLogsListResponseDefault = {
 
 export type modelHubGetEvalLogsListResponseSuccess =
   modelHubGetEvalLogsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalLogsListResponseError = (
   | modelHubGetEvalLogsListResponse400
@@ -44013,22 +44205,41 @@ export type modelHubGetEvalLogsListResponseError = (
   | modelHubGetEvalLogsListResponse500
   | modelHubGetEvalLogsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalLogsListResponse =
   | modelHubGetEvalLogsListResponseSuccess
   | modelHubGetEvalLogsListResponseError;
 
-export const getModelHubGetEvalLogsListUrl = () => {
-  return `/model-hub/get-eval-logs`;
+export const getModelHubGetEvalLogsListUrl = (
+  params: ModelHubGetEvalLogsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/get-eval-logs?${stringifiedParams}`
+    : `/model-hub/get-eval-logs`;
 };
 
 export const modelHubGetEvalLogsList = async (
+  params: ModelHubGetEvalLogsListParams,
   options?: RequestInit,
 ): Promise<modelHubGetEvalLogsListResponse> => {
   return apiMutator<modelHubGetEvalLogsListResponse>(
-    getModelHubGetEvalLogsListUrl(),
+    getModelHubGetEvalLogsListUrl(params),
     {
       ...options,
       method: "GET",
@@ -44073,7 +44284,7 @@ export type modelHubGetEvalLogsPartialUpdateResponseDefault = {
 
 export type modelHubGetEvalLogsPartialUpdateResponseSuccess =
   modelHubGetEvalLogsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalLogsPartialUpdateResponseError = (
   | modelHubGetEvalLogsPartialUpdateResponse400
@@ -44083,7 +44294,7 @@ export type modelHubGetEvalLogsPartialUpdateResponseError = (
   | modelHubGetEvalLogsPartialUpdateResponse500
   | modelHubGetEvalLogsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalLogsPartialUpdateResponse =
@@ -44121,11 +44332,11 @@ export type modelHubGetEvalLogsDeleteResponseDefault = {
 
 export type modelHubGetEvalLogsDeleteResponseSuccess =
   modelHubGetEvalLogsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalLogsDeleteResponseError =
   modelHubGetEvalLogsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubGetEvalLogsDeleteResponse =
@@ -44198,7 +44409,7 @@ export type modelHubGetEvalLogsDetailsListResponseDefault = {
 
 export type modelHubGetEvalLogsDetailsListResponseSuccess =
   modelHubGetEvalLogsDetailsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalLogsDetailsListResponseError = (
   | modelHubGetEvalLogsDetailsListResponse400
@@ -44210,7 +44421,7 @@ export type modelHubGetEvalLogsDetailsListResponseError = (
   | modelHubGetEvalLogsDetailsListResponse503
   | modelHubGetEvalLogsDetailsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalLogsDetailsListResponse =
@@ -44302,7 +44513,7 @@ export type modelHubGetEvalMetricsListResponseDefault = {
 
 export type modelHubGetEvalMetricsListResponseSuccess =
   modelHubGetEvalMetricsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalMetricsListResponseError = (
   | modelHubGetEvalMetricsListResponse400
@@ -44314,7 +44525,7 @@ export type modelHubGetEvalMetricsListResponseError = (
   | modelHubGetEvalMetricsListResponse503
   | modelHubGetEvalMetricsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalMetricsListResponse =
@@ -44406,7 +44617,7 @@ export type modelHubGetEvalMetricsCreateResponseDefault = {
 
 export type modelHubGetEvalMetricsCreateResponseSuccess =
   modelHubGetEvalMetricsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalMetricsCreateResponseError = (
   | modelHubGetEvalMetricsCreateResponse400
@@ -44418,7 +44629,7 @@ export type modelHubGetEvalMetricsCreateResponseError = (
   | modelHubGetEvalMetricsCreateResponse503
   | modelHubGetEvalMetricsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalMetricsCreateResponse =
@@ -44481,7 +44692,7 @@ export type modelHubGetEvalTemplateNamesCreateResponseDefault = {
 
 export type modelHubGetEvalTemplateNamesCreateResponseSuccess =
   modelHubGetEvalTemplateNamesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalTemplateNamesCreateResponseError = (
   | modelHubGetEvalTemplateNamesCreateResponse400
@@ -44491,7 +44702,7 @@ export type modelHubGetEvalTemplateNamesCreateResponseError = (
   | modelHubGetEvalTemplateNamesCreateResponse500
   | modelHubGetEvalTemplateNamesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalTemplateNamesCreateResponse =
@@ -44554,7 +44765,7 @@ export type modelHubGetEvalTemplatesCreateResponseDefault = {
 
 export type modelHubGetEvalTemplatesCreateResponseSuccess =
   modelHubGetEvalTemplatesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGetEvalTemplatesCreateResponseError = (
   | modelHubGetEvalTemplatesCreateResponse400
@@ -44564,7 +44775,7 @@ export type modelHubGetEvalTemplatesCreateResponseError = (
   | modelHubGetEvalTemplatesCreateResponse500
   | modelHubGetEvalTemplatesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGetEvalTemplatesCreateResponse =
@@ -44627,7 +44838,7 @@ export type modelHubGroundTruthDeleteResponseDefault = {
 
 export type modelHubGroundTruthDeleteResponseSuccess =
   modelHubGroundTruthDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGroundTruthDeleteResponseError = (
   | modelHubGroundTruthDeleteResponse400
@@ -44637,7 +44848,7 @@ export type modelHubGroundTruthDeleteResponseError = (
   | modelHubGroundTruthDeleteResponse500
   | modelHubGroundTruthDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGroundTruthDeleteResponse =
@@ -44701,7 +44912,7 @@ export type modelHubGroundTruthDataListResponseDefault = {
 
 export type modelHubGroundTruthDataListResponseSuccess =
   modelHubGroundTruthDataListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGroundTruthDataListResponseError = (
   | modelHubGroundTruthDataListResponse400
@@ -44711,7 +44922,7 @@ export type modelHubGroundTruthDataListResponseError = (
   | modelHubGroundTruthDataListResponse500
   | modelHubGroundTruthDataListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGroundTruthDataListResponse =
@@ -44775,7 +44986,7 @@ export type modelHubGroundTruthEmbedCreateResponseDefault = {
 
 export type modelHubGroundTruthEmbedCreateResponseSuccess =
   modelHubGroundTruthEmbedCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGroundTruthEmbedCreateResponseError = (
   | modelHubGroundTruthEmbedCreateResponse400
@@ -44785,7 +44996,7 @@ export type modelHubGroundTruthEmbedCreateResponseError = (
   | modelHubGroundTruthEmbedCreateResponse500
   | modelHubGroundTruthEmbedCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGroundTruthEmbedCreateResponse =
@@ -44852,7 +45063,7 @@ export type modelHubGroundTruthSetupUpdateResponseDefault = {
 
 export type modelHubGroundTruthSetupUpdateResponseSuccess =
   modelHubGroundTruthSetupUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGroundTruthSetupUpdateResponseError = (
   | modelHubGroundTruthSetupUpdateResponse400
@@ -44862,7 +45073,7 @@ export type modelHubGroundTruthSetupUpdateResponseError = (
   | modelHubGroundTruthSetupUpdateResponse500
   | modelHubGroundTruthSetupUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGroundTruthSetupUpdateResponse =
@@ -44929,7 +45140,7 @@ export type modelHubGroundTruthStatusListResponseDefault = {
 
 export type modelHubGroundTruthStatusListResponseSuccess =
   modelHubGroundTruthStatusListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubGroundTruthStatusListResponseError = (
   | modelHubGroundTruthStatusListResponse400
@@ -44939,7 +45150,7 @@ export type modelHubGroundTruthStatusListResponseError = (
   | modelHubGroundTruthStatusListResponse500
   | modelHubGroundTruthStatusListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubGroundTruthStatusListResponse =
@@ -45002,7 +45213,7 @@ export type modelHubKbListResponseDefault = {
 };
 
 export type modelHubKbListResponseSuccess = modelHubKbListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubKbListResponseError = (
   | modelHubKbListResponse400
@@ -45012,7 +45223,7 @@ export type modelHubKbListResponseError = (
   | modelHubKbListResponse500
   | modelHubKbListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKbListResponse =
@@ -45089,7 +45300,7 @@ export type modelHubKbCreateResponseDefault = {
 };
 
 export type modelHubKbCreateResponseSuccess = modelHubKbCreateResponse201 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubKbCreateResponseError = (
   | modelHubKbCreateResponse400
@@ -45099,7 +45310,7 @@ export type modelHubKbCreateResponseError = (
   | modelHubKbCreateResponse500
   | modelHubKbCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKbCreateResponse =
@@ -45163,7 +45374,7 @@ export type modelHubKbSupportedEmbeddingModelsResponseDefault = {
 
 export type modelHubKbSupportedEmbeddingModelsResponseSuccess =
   modelHubKbSupportedEmbeddingModelsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKbSupportedEmbeddingModelsResponseError = (
   | modelHubKbSupportedEmbeddingModelsResponse400
@@ -45173,7 +45384,7 @@ export type modelHubKbSupportedEmbeddingModelsResponseError = (
   | modelHubKbSupportedEmbeddingModelsResponse500
   | modelHubKbSupportedEmbeddingModelsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKbSupportedEmbeddingModelsResponse =
@@ -45255,7 +45466,7 @@ export type modelHubKbReadResponseDefault = {
 };
 
 export type modelHubKbReadResponseSuccess = modelHubKbReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubKbReadResponseError = (
   | modelHubKbReadResponse400
@@ -45265,7 +45476,7 @@ export type modelHubKbReadResponseError = (
   | modelHubKbReadResponse500
   | modelHubKbReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKbReadResponse =
@@ -45326,7 +45537,7 @@ export type modelHubKbUpdateResponseDefault = {
 };
 
 export type modelHubKbUpdateResponseSuccess = modelHubKbUpdateResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubKbUpdateResponseError = (
   | modelHubKbUpdateResponse400
@@ -45336,7 +45547,7 @@ export type modelHubKbUpdateResponseError = (
   | modelHubKbUpdateResponse500
   | modelHubKbUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKbUpdateResponse =
@@ -45401,7 +45612,7 @@ export type modelHubKbPartialUpdateResponseDefault = {
 
 export type modelHubKbPartialUpdateResponseSuccess =
   modelHubKbPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKbPartialUpdateResponseError = (
   | modelHubKbPartialUpdateResponse400
@@ -45411,7 +45622,7 @@ export type modelHubKbPartialUpdateResponseError = (
   | modelHubKbPartialUpdateResponse500
   | modelHubKbPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKbPartialUpdateResponse =
@@ -45478,7 +45689,7 @@ export type modelHubKbDeleteResponseDefault = {
 };
 
 export type modelHubKbDeleteResponseSuccess = modelHubKbDeleteResponse204 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubKbDeleteResponseError = (
   | modelHubKbDeleteResponse400
@@ -45488,7 +45699,7 @@ export type modelHubKbDeleteResponseError = (
   | modelHubKbDeleteResponse500
   | modelHubKbDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKbDeleteResponse =
@@ -45511,6 +45722,101 @@ export const modelHubKbDelete = async (
     ...options,
     method: "DELETE",
   });
+};
+
+export type modelHubKbDownloadFileResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type modelHubKbDownloadFileResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubKbDownloadFileResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubKbDownloadFileResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubKbDownloadFileResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubKbDownloadFileResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
+};
+
+export type modelHubKbDownloadFileResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+};
+
+export type modelHubKbDownloadFileResponseSuccess =
+  modelHubKbDownloadFileResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type modelHubKbDownloadFileResponseError = (
+  | modelHubKbDownloadFileResponse400
+  | modelHubKbDownloadFileResponse403
+  | modelHubKbDownloadFileResponse404
+  | modelHubKbDownloadFileResponse409
+  | modelHubKbDownloadFileResponse500
+  | modelHubKbDownloadFileResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type modelHubKbDownloadFileResponse =
+  | modelHubKbDownloadFileResponseSuccess
+  | modelHubKbDownloadFileResponseError;
+
+export const getModelHubKbDownloadFileUrl = (
+  id: string,
+  params: ModelHubKbDownloadFileParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/kb/${id}/download-file/?${stringifiedParams}`
+    : `/model-hub/kb/${id}/download-file/`;
+};
+
+/**
+ * Download an active file from the knowledge-base file collection. Requires current organization and workspace read access. Returns an attachment, never a public storage URL. Unauthorized scope is 403; a missing or deleted file is 404.
+ * @summary Download a KB file.
+ */
+export const modelHubKbDownloadFile = async (
+  id: string,
+  params: ModelHubKbDownloadFileParams,
+  options?: RequestInit,
+): Promise<modelHubKbDownloadFileResponse> => {
+  return apiMutator<modelHubKbDownloadFileResponse>(
+    getModelHubKbDownloadFileUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type modelHubKnowledgeBaseListResponse200 = {
@@ -45550,7 +45856,7 @@ export type modelHubKnowledgeBaseListResponseDefault = {
 
 export type modelHubKnowledgeBaseListResponseSuccess =
   modelHubKnowledgeBaseListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBaseListResponseError = (
   | modelHubKnowledgeBaseListResponse400
@@ -45560,7 +45866,7 @@ export type modelHubKnowledgeBaseListResponseError = (
   | modelHubKnowledgeBaseListResponse500
   | modelHubKnowledgeBaseListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBaseListResponse =
@@ -45620,7 +45926,7 @@ export type modelHubKnowledgeBaseCreateResponseDefault = {
 
 export type modelHubKnowledgeBaseCreateResponseSuccess =
   modelHubKnowledgeBaseCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBaseCreateResponseError = (
   | modelHubKnowledgeBaseCreateResponse400
@@ -45630,7 +45936,7 @@ export type modelHubKnowledgeBaseCreateResponseError = (
   | modelHubKnowledgeBaseCreateResponse500
   | modelHubKnowledgeBaseCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBaseCreateResponse =
@@ -45693,7 +45999,7 @@ export type modelHubKnowledgeBasePartialUpdateResponseDefault = {
 
 export type modelHubKnowledgeBasePartialUpdateResponseSuccess =
   modelHubKnowledgeBasePartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBasePartialUpdateResponseError = (
   | modelHubKnowledgeBasePartialUpdateResponse400
@@ -45703,7 +46009,7 @@ export type modelHubKnowledgeBasePartialUpdateResponseError = (
   | modelHubKnowledgeBasePartialUpdateResponse500
   | modelHubKnowledgeBasePartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBasePartialUpdateResponse =
@@ -45766,7 +46072,7 @@ export type modelHubKnowledgeBaseDeleteResponseDefault = {
 
 export type modelHubKnowledgeBaseDeleteResponseSuccess =
   modelHubKnowledgeBaseDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBaseDeleteResponseError = (
   | modelHubKnowledgeBaseDeleteResponse400
@@ -45776,7 +46082,7 @@ export type modelHubKnowledgeBaseDeleteResponseError = (
   | modelHubKnowledgeBaseDeleteResponse500
   | modelHubKnowledgeBaseDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBaseDeleteResponse =
@@ -45839,7 +46145,7 @@ export type modelHubKnowledgeBaseFilesCreateResponseDefault = {
 
 export type modelHubKnowledgeBaseFilesCreateResponseSuccess =
   modelHubKnowledgeBaseFilesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBaseFilesCreateResponseError = (
   | modelHubKnowledgeBaseFilesCreateResponse400
@@ -45849,7 +46155,7 @@ export type modelHubKnowledgeBaseFilesCreateResponseError = (
   | modelHubKnowledgeBaseFilesCreateResponse500
   | modelHubKnowledgeBaseFilesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBaseFilesCreateResponse =
@@ -45912,7 +46218,7 @@ export type modelHubKnowledgeBaseFilesDeleteResponseDefault = {
 
 export type modelHubKnowledgeBaseFilesDeleteResponseSuccess =
   modelHubKnowledgeBaseFilesDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBaseFilesDeleteResponseError = (
   | modelHubKnowledgeBaseFilesDeleteResponse400
@@ -45922,7 +46228,7 @@ export type modelHubKnowledgeBaseFilesDeleteResponseError = (
   | modelHubKnowledgeBaseFilesDeleteResponse500
   | modelHubKnowledgeBaseFilesDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBaseFilesDeleteResponse =
@@ -45985,7 +46291,7 @@ export type modelHubKnowledgeBaseGetListResponseDefault = {
 
 export type modelHubKnowledgeBaseGetListResponseSuccess =
   modelHubKnowledgeBaseGetListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBaseGetListResponseError = (
   | modelHubKnowledgeBaseGetListResponse400
@@ -45995,7 +46301,7 @@ export type modelHubKnowledgeBaseGetListResponseError = (
   | modelHubKnowledgeBaseGetListResponse500
   | modelHubKnowledgeBaseGetListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBaseGetListResponse =
@@ -46055,7 +46361,7 @@ export type modelHubKnowledgeBaseListListResponseDefault = {
 
 export type modelHubKnowledgeBaseListListResponseSuccess =
   modelHubKnowledgeBaseListListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubKnowledgeBaseListListResponseError = (
   | modelHubKnowledgeBaseListListResponse400
@@ -46065,7 +46371,7 @@ export type modelHubKnowledgeBaseListListResponseError = (
   | modelHubKnowledgeBaseListListResponse500
   | modelHubKnowledgeBaseListListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubKnowledgeBaseListListResponse =
@@ -46125,7 +46431,7 @@ export type modelHubMetricsByColumnListResponseDefault = {
 
 export type modelHubMetricsByColumnListResponseSuccess =
   modelHubMetricsByColumnListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubMetricsByColumnListResponseError = (
   | modelHubMetricsByColumnListResponse400
@@ -46135,7 +46441,7 @@ export type modelHubMetricsByColumnListResponseError = (
   | modelHubMetricsByColumnListResponse500
   | modelHubMetricsByColumnListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubMetricsByColumnListResponse =
@@ -46170,11 +46476,11 @@ export type modelHubOptimisationListResponseDefault = {
 
 export type modelHubOptimisationListResponseSuccess =
   modelHubOptimisationListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimisationListResponseError =
   modelHubOptimisationListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOptimisationListResponse =
@@ -46253,7 +46559,7 @@ export type modelHubOptimisationCreateCreateResponseDefault = {
 
 export type modelHubOptimisationCreateCreateResponseSuccess =
   modelHubOptimisationCreateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimisationCreateCreateResponseError = (
   | modelHubOptimisationCreateCreateResponse400
@@ -46263,7 +46569,7 @@ export type modelHubOptimisationCreateCreateResponseError = (
   | modelHubOptimisationCreateCreateResponse500
   | modelHubOptimisationCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimisationCreateCreateResponse =
@@ -46326,7 +46632,7 @@ export type modelHubOptimisationCreateUpdateResponseDefault = {
 
 export type modelHubOptimisationCreateUpdateResponseSuccess =
   modelHubOptimisationCreateUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimisationCreateUpdateResponseError = (
   | modelHubOptimisationCreateUpdateResponse400
@@ -46336,7 +46642,7 @@ export type modelHubOptimisationCreateUpdateResponseError = (
   | modelHubOptimisationCreateUpdateResponse500
   | modelHubOptimisationCreateUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimisationCreateUpdateResponse =
@@ -46399,7 +46705,7 @@ export type modelHubOptimisationUpdateCreateResponseDefault = {
 
 export type modelHubOptimisationUpdateCreateResponseSuccess =
   modelHubOptimisationUpdateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimisationUpdateCreateResponseError = (
   | modelHubOptimisationUpdateCreateResponse400
@@ -46409,7 +46715,7 @@ export type modelHubOptimisationUpdateCreateResponseError = (
   | modelHubOptimisationUpdateCreateResponse500
   | modelHubOptimisationUpdateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimisationUpdateCreateResponse =
@@ -46473,7 +46779,7 @@ export type modelHubOptimisationUpdateUpdateResponseDefault = {
 
 export type modelHubOptimisationUpdateUpdateResponseSuccess =
   modelHubOptimisationUpdateUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimisationUpdateUpdateResponseError = (
   | modelHubOptimisationUpdateUpdateResponse400
@@ -46483,7 +46789,7 @@ export type modelHubOptimisationUpdateUpdateResponseError = (
   | modelHubOptimisationUpdateUpdateResponse500
   | modelHubOptimisationUpdateUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimisationUpdateUpdateResponse =
@@ -46522,11 +46828,11 @@ export type modelHubOptimisationReadResponseDefault = {
 
 export type modelHubOptimisationReadResponseSuccess =
   modelHubOptimisationReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimisationReadResponseError =
   modelHubOptimisationReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOptimisationReadResponse =
@@ -46562,11 +46868,11 @@ export type modelHubOptimisationDetailsReadResponseDefault = {
 
 export type modelHubOptimisationDetailsReadResponseSuccess =
   modelHubOptimisationDetailsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimisationDetailsReadResponseError =
   modelHubOptimisationDetailsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOptimisationDetailsReadResponse =
@@ -46602,11 +46908,11 @@ export type modelHubOptimizeDatasetListResponseDefault = {
 
 export type modelHubOptimizeDatasetListResponseSuccess =
   modelHubOptimizeDatasetListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetListResponseError =
   modelHubOptimizeDatasetListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOptimizeDatasetListResponse =
@@ -46685,7 +46991,7 @@ export type modelHubOptimizeDatasetKbReadResponseDefault = {
 
 export type modelHubOptimizeDatasetKbReadResponseSuccess =
   modelHubOptimizeDatasetKbReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetKbReadResponseError = (
   | modelHubOptimizeDatasetKbReadResponse400
@@ -46695,7 +47001,7 @@ export type modelHubOptimizeDatasetKbReadResponseError = (
   | modelHubOptimizeDatasetKbReadResponse500
   | modelHubOptimizeDatasetKbReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetKbReadResponse =
@@ -46756,7 +47062,7 @@ export type modelHubOptimizeDatasetKnowledgeBaseCreateResponseDefault = {
 
 export type modelHubOptimizeDatasetKnowledgeBaseCreateResponseSuccess =
   modelHubOptimizeDatasetKnowledgeBaseCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetKnowledgeBaseCreateResponseError = (
   | modelHubOptimizeDatasetKnowledgeBaseCreateResponse400
@@ -46766,7 +47072,7 @@ export type modelHubOptimizeDatasetKnowledgeBaseCreateResponseError = (
   | modelHubOptimizeDatasetKnowledgeBaseCreateResponse500
   | modelHubOptimizeDatasetKnowledgeBaseCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse =
@@ -46829,7 +47135,7 @@ export type modelHubOptimizeDatasetReadResponseDefault = {
 
 export type modelHubOptimizeDatasetReadResponseSuccess =
   modelHubOptimizeDatasetReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetReadResponseError = (
   | modelHubOptimizeDatasetReadResponse400
@@ -46839,7 +47145,7 @@ export type modelHubOptimizeDatasetReadResponseError = (
   | modelHubOptimizeDatasetReadResponse500
   | modelHubOptimizeDatasetReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetReadResponse =
@@ -46904,7 +47210,7 @@ export type modelHubOptimizeDatasetCreateResponseDefault = {
 
 export type modelHubOptimizeDatasetCreateResponseSuccess =
   modelHubOptimizeDatasetCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetCreateResponseError = (
   | modelHubOptimizeDatasetCreateResponse400
@@ -46914,7 +47220,7 @@ export type modelHubOptimizeDatasetCreateResponseError = (
   | modelHubOptimizeDatasetCreateResponse500
   | modelHubOptimizeDatasetCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetCreateResponse =
@@ -46978,7 +47284,7 @@ export type modelHubOptimizeDatasetColumnConfigListResponseDefault = {
 
 export type modelHubOptimizeDatasetColumnConfigListResponseSuccess =
   modelHubOptimizeDatasetColumnConfigListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetColumnConfigListResponseError = (
   | modelHubOptimizeDatasetColumnConfigListResponse400
@@ -46988,7 +47294,7 @@ export type modelHubOptimizeDatasetColumnConfigListResponseError = (
   | modelHubOptimizeDatasetColumnConfigListResponse500
   | modelHubOptimizeDatasetColumnConfigListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetColumnConfigListResponse =
@@ -47051,7 +47357,7 @@ export type modelHubOptimizeDatasetColumnConfigCreateResponseDefault = {
 
 export type modelHubOptimizeDatasetColumnConfigCreateResponseSuccess =
   modelHubOptimizeDatasetColumnConfigCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetColumnConfigCreateResponseError = (
   | modelHubOptimizeDatasetColumnConfigCreateResponse400
@@ -47061,7 +47367,7 @@ export type modelHubOptimizeDatasetColumnConfigCreateResponseError = (
   | modelHubOptimizeDatasetColumnConfigCreateResponse500
   | modelHubOptimizeDatasetColumnConfigCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetColumnConfigCreateResponse =
@@ -47134,7 +47440,7 @@ export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseSuccess =
   modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseError =
   (
@@ -47145,7 +47451,7 @@ export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse
     | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse500
     | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse =
@@ -47220,7 +47526,7 @@ export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateRespon
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseSuccess =
   modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseError =
   (
@@ -47231,7 +47537,7 @@ export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateRespon
     | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse500
     | modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse =
@@ -47303,7 +47609,7 @@ export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseDefault =
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseSuccess =
   modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseError = (
   | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse400
@@ -47313,7 +47619,7 @@ export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseError = (
   | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse500
   | modelHubOptimizeDatasetColumnConfigRightAnswersReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse =
@@ -47382,7 +47688,7 @@ export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseDefault
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseSuccess =
   modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseError =
   (
@@ -47393,7 +47699,7 @@ export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseError =
     | modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse500
     | modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse =
@@ -47465,7 +47771,7 @@ export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponseDefault =
 
 export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponseSuccess =
   modelHubOptimizeDatasetPromptTemplateExploreCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponseError = (
   | modelHubOptimizeDatasetPromptTemplateExploreCreateResponse400
@@ -47475,7 +47781,7 @@ export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponseError = (
   | modelHubOptimizeDatasetPromptTemplateExploreCreateResponse500
   | modelHubOptimizeDatasetPromptTemplateExploreCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse =
@@ -47546,7 +47852,7 @@ export type modelHubOptimizeDatasetPromptTemplateResultCreateResponseDefault = {
 
 export type modelHubOptimizeDatasetPromptTemplateResultCreateResponseSuccess =
   modelHubOptimizeDatasetPromptTemplateResultCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetPromptTemplateResultCreateResponseError = (
   | modelHubOptimizeDatasetPromptTemplateResultCreateResponse400
@@ -47556,7 +47862,7 @@ export type modelHubOptimizeDatasetPromptTemplateResultCreateResponseError = (
   | modelHubOptimizeDatasetPromptTemplateResultCreateResponse500
   | modelHubOptimizeDatasetPromptTemplateResultCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse =
@@ -47627,7 +47933,7 @@ export type modelHubOptimizeDatasetRightAnswersCreateResponseDefault = {
 
 export type modelHubOptimizeDatasetRightAnswersCreateResponseSuccess =
   modelHubOptimizeDatasetRightAnswersCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOptimizeDatasetRightAnswersCreateResponseError = (
   | modelHubOptimizeDatasetRightAnswersCreateResponse400
@@ -47637,7 +47943,7 @@ export type modelHubOptimizeDatasetRightAnswersCreateResponseError = (
   | modelHubOptimizeDatasetRightAnswersCreateResponse500
   | modelHubOptimizeDatasetRightAnswersCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOptimizeDatasetRightAnswersCreateResponse =
@@ -47680,11 +47986,11 @@ export type modelHubOrganizationsUsersListResponseDefault = {
 
 export type modelHubOrganizationsUsersListResponseSuccess =
   modelHubOrganizationsUsersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOrganizationsUsersListResponseError =
   modelHubOrganizationsUsersListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOrganizationsUsersListResponse =
@@ -47740,11 +48046,11 @@ export type modelHubOrganizationsUsersReadResponseDefault = {
 
 export type modelHubOrganizationsUsersReadResponseSuccess =
   modelHubOrganizationsUsersReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOrganizationsUsersReadResponseError =
   modelHubOrganizationsUsersReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubOrganizationsUsersReadResponse =
@@ -47809,7 +48115,7 @@ export type modelHubOverviewListResponseDefault = {
 
 export type modelHubOverviewListResponseSuccess =
   modelHubOverviewListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubOverviewListResponseError = (
   | modelHubOverviewListResponse400
@@ -47819,7 +48125,7 @@ export type modelHubOverviewListResponseError = (
   | modelHubOverviewListResponse500
   | modelHubOverviewListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubOverviewListResponse =
@@ -47879,7 +48185,7 @@ export type modelHubPerformanceDetailCreateResponseDefault = {
 
 export type modelHubPerformanceDetailCreateResponseSuccess =
   modelHubPerformanceDetailCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceDetailCreateResponseError = (
   | modelHubPerformanceDetailCreateResponse400
@@ -47889,7 +48195,7 @@ export type modelHubPerformanceDetailCreateResponseError = (
   | modelHubPerformanceDetailCreateResponse500
   | modelHubPerformanceDetailCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceDetailCreateResponse =
@@ -47953,7 +48259,7 @@ export type modelHubPerformanceExportCreateResponseDefault = {
 
 export type modelHubPerformanceExportCreateResponseSuccess =
   modelHubPerformanceExportCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceExportCreateResponseError = (
   | modelHubPerformanceExportCreateResponse400
@@ -47963,7 +48269,7 @@ export type modelHubPerformanceExportCreateResponseError = (
   | modelHubPerformanceExportCreateResponse500
   | modelHubPerformanceExportCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceExportCreateResponse =
@@ -48027,7 +48333,7 @@ export type modelHubPerformanceOptionsReadResponseDefault = {
 
 export type modelHubPerformanceOptionsReadResponseSuccess =
   modelHubPerformanceOptionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceOptionsReadResponseError = (
   | modelHubPerformanceOptionsReadResponse400
@@ -48037,7 +48343,7 @@ export type modelHubPerformanceOptionsReadResponseError = (
   | modelHubPerformanceOptionsReadResponse500
   | modelHubPerformanceOptionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceOptionsReadResponse =
@@ -48098,7 +48404,7 @@ export type modelHubPerformanceReportReadResponseDefault = {
 
 export type modelHubPerformanceReportReadResponseSuccess =
   modelHubPerformanceReportReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceReportReadResponseError = (
   | modelHubPerformanceReportReadResponse400
@@ -48108,7 +48414,7 @@ export type modelHubPerformanceReportReadResponseError = (
   | modelHubPerformanceReportReadResponse500
   | modelHubPerformanceReportReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceReportReadResponse =
@@ -48169,7 +48475,7 @@ export type modelHubPerformanceReportCreateResponseDefault = {
 
 export type modelHubPerformanceReportCreateResponseSuccess =
   modelHubPerformanceReportCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceReportCreateResponseError = (
   | modelHubPerformanceReportCreateResponse400
@@ -48179,7 +48485,7 @@ export type modelHubPerformanceReportCreateResponseError = (
   | modelHubPerformanceReportCreateResponse500
   | modelHubPerformanceReportCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceReportCreateResponse =
@@ -48243,7 +48549,7 @@ export type modelHubPerformanceReportDeleteResponseDefault = {
 
 export type modelHubPerformanceReportDeleteResponseSuccess =
   modelHubPerformanceReportDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceReportDeleteResponseError = (
   | modelHubPerformanceReportDeleteResponse400
@@ -48253,7 +48559,7 @@ export type modelHubPerformanceReportDeleteResponseError = (
   | modelHubPerformanceReportDeleteResponse500
   | modelHubPerformanceReportDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceReportDeleteResponse =
@@ -48318,7 +48624,7 @@ export type modelHubPerformanceTagDistributionCreateResponseDefault = {
 
 export type modelHubPerformanceTagDistributionCreateResponseSuccess =
   modelHubPerformanceTagDistributionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceTagDistributionCreateResponseError = (
   | modelHubPerformanceTagDistributionCreateResponse400
@@ -48328,7 +48634,7 @@ export type modelHubPerformanceTagDistributionCreateResponseError = (
   | modelHubPerformanceTagDistributionCreateResponse500
   | modelHubPerformanceTagDistributionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceTagDistributionCreateResponse =
@@ -48394,7 +48700,7 @@ export type modelHubPerformanceCreateResponseDefault = {
 
 export type modelHubPerformanceCreateResponseSuccess =
   modelHubPerformanceCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPerformanceCreateResponseError = (
   | modelHubPerformanceCreateResponse400
@@ -48404,7 +48710,7 @@ export type modelHubPerformanceCreateResponseError = (
   | modelHubPerformanceCreateResponse500
   | modelHubPerformanceCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPerformanceCreateResponse =
@@ -48443,11 +48749,11 @@ export type modelHubPromptBaseTemplatesListResponseDefault = {
 
 export type modelHubPromptBaseTemplatesListResponseSuccess =
   modelHubPromptBaseTemplatesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptBaseTemplatesListResponseError =
   modelHubPromptBaseTemplatesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptBaseTemplatesListResponse =
@@ -48504,11 +48810,11 @@ export type modelHubPromptBaseTemplatesCreateResponseDefault = {
 
 export type modelHubPromptBaseTemplatesCreateResponseSuccess =
   modelHubPromptBaseTemplatesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptBaseTemplatesCreateResponseError =
   modelHubPromptBaseTemplatesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptBaseTemplatesCreateResponse =
@@ -48549,11 +48855,11 @@ export type modelHubPromptBaseTemplatesGetAllCategoriesResponseDefault = {
 
 export type modelHubPromptBaseTemplatesGetAllCategoriesResponseSuccess =
   modelHubPromptBaseTemplatesGetAllCategoriesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptBaseTemplatesGetAllCategoriesResponseError =
   modelHubPromptBaseTemplatesGetAllCategoriesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptBaseTemplatesGetAllCategoriesResponse =
@@ -48610,11 +48916,11 @@ export type modelHubPromptBaseTemplatesReadResponseDefault = {
 
 export type modelHubPromptBaseTemplatesReadResponseSuccess =
   modelHubPromptBaseTemplatesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptBaseTemplatesReadResponseError =
   modelHubPromptBaseTemplatesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptBaseTemplatesReadResponse =
@@ -48653,11 +48959,11 @@ export type modelHubPromptBaseTemplatesUpdateResponseDefault = {
 
 export type modelHubPromptBaseTemplatesUpdateResponseSuccess =
   modelHubPromptBaseTemplatesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptBaseTemplatesUpdateResponseError =
   modelHubPromptBaseTemplatesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptBaseTemplatesUpdateResponse =
@@ -48699,11 +49005,11 @@ export type modelHubPromptBaseTemplatesPartialUpdateResponseDefault = {
 
 export type modelHubPromptBaseTemplatesPartialUpdateResponseSuccess =
   modelHubPromptBaseTemplatesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptBaseTemplatesPartialUpdateResponseError =
   modelHubPromptBaseTemplatesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptBaseTemplatesPartialUpdateResponse =
@@ -48745,11 +49051,11 @@ export type modelHubPromptBaseTemplatesDeleteResponseDefault = {
 
 export type modelHubPromptBaseTemplatesDeleteResponseSuccess =
   modelHubPromptBaseTemplatesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptBaseTemplatesDeleteResponseError =
   modelHubPromptBaseTemplatesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptBaseTemplatesDeleteResponse =
@@ -48788,11 +49094,11 @@ export type modelHubPromptExecutionsListResponseDefault = {
 
 export type modelHubPromptExecutionsListResponseSuccess =
   modelHubPromptExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptExecutionsListResponseError =
   modelHubPromptExecutionsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptExecutionsListResponse =
@@ -48846,11 +49152,11 @@ export type modelHubPromptExecutionsReadResponseDefault = {
 
 export type modelHubPromptExecutionsReadResponseSuccess =
   modelHubPromptExecutionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptExecutionsReadResponseError =
   modelHubPromptExecutionsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptExecutionsReadResponse =
@@ -48886,11 +49192,11 @@ export type modelHubPromptFoldersListResponseDefault = {
 
 export type modelHubPromptFoldersListResponseSuccess =
   modelHubPromptFoldersListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptFoldersListResponseError =
   modelHubPromptFoldersListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptFoldersListResponse =
@@ -48947,11 +49253,11 @@ export type modelHubPromptFoldersCreateResponseDefault = {
 
 export type modelHubPromptFoldersCreateResponseSuccess =
   modelHubPromptFoldersCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptFoldersCreateResponseError =
   modelHubPromptFoldersCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptFoldersCreateResponse =
@@ -48992,11 +49298,11 @@ export type modelHubPromptFoldersReadResponseDefault = {
 
 export type modelHubPromptFoldersReadResponseSuccess =
   modelHubPromptFoldersReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptFoldersReadResponseError =
   modelHubPromptFoldersReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptFoldersReadResponse =
@@ -49035,11 +49341,11 @@ export type modelHubPromptFoldersUpdateResponseDefault = {
 
 export type modelHubPromptFoldersUpdateResponseSuccess =
   modelHubPromptFoldersUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptFoldersUpdateResponseError =
   modelHubPromptFoldersUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptFoldersUpdateResponse =
@@ -49081,11 +49387,11 @@ export type modelHubPromptFoldersPartialUpdateResponseDefault = {
 
 export type modelHubPromptFoldersPartialUpdateResponseSuccess =
   modelHubPromptFoldersPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptFoldersPartialUpdateResponseError =
   modelHubPromptFoldersPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptFoldersPartialUpdateResponse =
@@ -49127,11 +49433,11 @@ export type modelHubPromptFoldersDeleteResponseDefault = {
 
 export type modelHubPromptFoldersDeleteResponseSuccess =
   modelHubPromptFoldersDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptFoldersDeleteResponseError =
   modelHubPromptFoldersDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptFoldersDeleteResponse =
@@ -49170,11 +49476,11 @@ export type modelHubPromptHistoryExecutionsListResponseDefault = {
 
 export type modelHubPromptHistoryExecutionsListResponseSuccess =
   modelHubPromptHistoryExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptHistoryExecutionsListResponseError =
   modelHubPromptHistoryExecutionsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptHistoryExecutionsListResponse =
@@ -49229,11 +49535,11 @@ export type modelHubPromptHistoryExecutionsGetExecutionDetailsResponseDefault =
 
 export type modelHubPromptHistoryExecutionsGetExecutionDetailsResponseSuccess =
   modelHubPromptHistoryExecutionsGetExecutionDetailsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptHistoryExecutionsGetExecutionDetailsResponseError =
   modelHubPromptHistoryExecutionsGetExecutionDetailsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptHistoryExecutionsGetExecutionDetailsResponse =
@@ -49295,11 +49601,11 @@ export type modelHubPromptHistoryExecutionsReadResponseDefault = {
 
 export type modelHubPromptHistoryExecutionsReadResponseSuccess =
   modelHubPromptHistoryExecutionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptHistoryExecutionsReadResponseError =
   modelHubPromptHistoryExecutionsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptHistoryExecutionsReadResponse =
@@ -49360,7 +49666,7 @@ export type modelHubPromptLabelsListResponseDefault = {
 
 export type modelHubPromptLabelsListResponseSuccess =
   modelHubPromptLabelsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsListResponseError = (
   | modelHubPromptLabelsListResponse400
@@ -49370,7 +49676,7 @@ export type modelHubPromptLabelsListResponseError = (
   | modelHubPromptLabelsListResponse500
   | modelHubPromptLabelsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsListResponse =
@@ -49449,7 +49755,7 @@ export type modelHubPromptLabelsCreateResponseDefault = {
 
 export type modelHubPromptLabelsCreateResponseSuccess =
   modelHubPromptLabelsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsCreateResponseError = (
   | modelHubPromptLabelsCreateResponse400
@@ -49459,7 +49765,7 @@ export type modelHubPromptLabelsCreateResponseError = (
   | modelHubPromptLabelsCreateResponse500
   | modelHubPromptLabelsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsCreateResponse =
@@ -49522,7 +49828,7 @@ export type modelHubPromptLabelsAssignMultipleLabelsResponseDefault = {
 
 export type modelHubPromptLabelsAssignMultipleLabelsResponseSuccess =
   modelHubPromptLabelsAssignMultipleLabelsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsAssignMultipleLabelsResponseError = (
   | modelHubPromptLabelsAssignMultipleLabelsResponse400
@@ -49532,7 +49838,7 @@ export type modelHubPromptLabelsAssignMultipleLabelsResponseError = (
   | modelHubPromptLabelsAssignMultipleLabelsResponse500
   | modelHubPromptLabelsAssignMultipleLabelsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsAssignMultipleLabelsResponse =
@@ -49595,7 +49901,7 @@ export type modelHubPromptLabelsCreateSystemLabelsResponseDefault = {
 
 export type modelHubPromptLabelsCreateSystemLabelsResponseSuccess =
   modelHubPromptLabelsCreateSystemLabelsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsCreateSystemLabelsResponseError = (
   | modelHubPromptLabelsCreateSystemLabelsResponse400
@@ -49605,7 +49911,7 @@ export type modelHubPromptLabelsCreateSystemLabelsResponseError = (
   | modelHubPromptLabelsCreateSystemLabelsResponse500
   | modelHubPromptLabelsCreateSystemLabelsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsCreateSystemLabelsResponse =
@@ -49671,7 +49977,7 @@ export type modelHubPromptLabelsGetByNameResponseDefault = {
 
 export type modelHubPromptLabelsGetByNameResponseSuccess =
   modelHubPromptLabelsGetByNameResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsGetByNameResponseError = (
   | modelHubPromptLabelsGetByNameResponse400
@@ -49681,7 +49987,7 @@ export type modelHubPromptLabelsGetByNameResponseError = (
   | modelHubPromptLabelsGetByNameResponse500
   | modelHubPromptLabelsGetByNameResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsGetByNameResponse =
@@ -49767,7 +50073,7 @@ export type modelHubPromptLabelsRemoveLabelFromVersionResponseDefault = {
 
 export type modelHubPromptLabelsRemoveLabelFromVersionResponseSuccess =
   modelHubPromptLabelsRemoveLabelFromVersionResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsRemoveLabelFromVersionResponseError = (
   | modelHubPromptLabelsRemoveLabelFromVersionResponse400
@@ -49777,7 +50083,7 @@ export type modelHubPromptLabelsRemoveLabelFromVersionResponseError = (
   | modelHubPromptLabelsRemoveLabelFromVersionResponse500
   | modelHubPromptLabelsRemoveLabelFromVersionResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsRemoveLabelFromVersionResponse =
@@ -49843,7 +50149,7 @@ export type modelHubPromptLabelsSetDefaultResponseDefault = {
 
 export type modelHubPromptLabelsSetDefaultResponseSuccess =
   modelHubPromptLabelsSetDefaultResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsSetDefaultResponseError = (
   | modelHubPromptLabelsSetDefaultResponse400
@@ -49853,7 +50159,7 @@ export type modelHubPromptLabelsSetDefaultResponseError = (
   | modelHubPromptLabelsSetDefaultResponse500
   | modelHubPromptLabelsSetDefaultResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsSetDefaultResponse =
@@ -49919,7 +50225,7 @@ export type modelHubPromptLabelsTemplateLabelsResponseDefault = {
 
 export type modelHubPromptLabelsTemplateLabelsResponseSuccess =
   modelHubPromptLabelsTemplateLabelsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsTemplateLabelsResponseError = (
   | modelHubPromptLabelsTemplateLabelsResponse400
@@ -49929,7 +50235,7 @@ export type modelHubPromptLabelsTemplateLabelsResponseError = (
   | modelHubPromptLabelsTemplateLabelsResponse500
   | modelHubPromptLabelsTemplateLabelsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsTemplateLabelsResponse =
@@ -50011,7 +50317,7 @@ export type modelHubPromptLabelsReadResponseDefault = {
 
 export type modelHubPromptLabelsReadResponseSuccess =
   modelHubPromptLabelsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsReadResponseError = (
   | modelHubPromptLabelsReadResponse400
@@ -50021,7 +50327,7 @@ export type modelHubPromptLabelsReadResponseError = (
   | modelHubPromptLabelsReadResponse500
   | modelHubPromptLabelsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsReadResponse =
@@ -50082,7 +50388,7 @@ export type modelHubPromptLabelsUpdateResponseDefault = {
 
 export type modelHubPromptLabelsUpdateResponseSuccess =
   modelHubPromptLabelsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsUpdateResponseError = (
   | modelHubPromptLabelsUpdateResponse400
@@ -50092,7 +50398,7 @@ export type modelHubPromptLabelsUpdateResponseError = (
   | modelHubPromptLabelsUpdateResponse500
   | modelHubPromptLabelsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsUpdateResponse =
@@ -50156,7 +50462,7 @@ export type modelHubPromptLabelsPartialUpdateResponseDefault = {
 
 export type modelHubPromptLabelsPartialUpdateResponseSuccess =
   modelHubPromptLabelsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsPartialUpdateResponseError = (
   | modelHubPromptLabelsPartialUpdateResponse400
@@ -50166,7 +50472,7 @@ export type modelHubPromptLabelsPartialUpdateResponseError = (
   | modelHubPromptLabelsPartialUpdateResponse500
   | modelHubPromptLabelsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsPartialUpdateResponse =
@@ -50230,7 +50536,7 @@ export type modelHubPromptLabelsDeleteResponseDefault = {
 
 export type modelHubPromptLabelsDeleteResponseSuccess =
   modelHubPromptLabelsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsDeleteResponseError = (
   | modelHubPromptLabelsDeleteResponse400
@@ -50240,7 +50546,7 @@ export type modelHubPromptLabelsDeleteResponseError = (
   | modelHubPromptLabelsDeleteResponse500
   | modelHubPromptLabelsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsDeleteResponse =
@@ -50301,7 +50607,7 @@ export type modelHubPromptLabelsAssignLabelByIdResponseDefault = {
 
 export type modelHubPromptLabelsAssignLabelByIdResponseSuccess =
   modelHubPromptLabelsAssignLabelByIdResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptLabelsAssignLabelByIdResponseError = (
   | modelHubPromptLabelsAssignLabelByIdResponse400
@@ -50311,7 +50617,7 @@ export type modelHubPromptLabelsAssignLabelByIdResponseError = (
   | modelHubPromptLabelsAssignLabelByIdResponse500
   | modelHubPromptLabelsAssignLabelByIdResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptLabelsAssignLabelByIdResponse =
@@ -50357,11 +50663,11 @@ export type modelHubPromptTemplatesListResponseDefault = {
 
 export type modelHubPromptTemplatesListResponseSuccess =
   modelHubPromptTemplatesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesListResponseError =
   modelHubPromptTemplatesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesListResponse =
@@ -50415,11 +50721,11 @@ export type modelHubPromptTemplatesCreateResponseDefault = {
 
 export type modelHubPromptTemplatesCreateResponseSuccess =
   modelHubPromptTemplatesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesCreateResponseError =
   modelHubPromptTemplatesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesCreateResponse =
@@ -50457,11 +50763,11 @@ export type modelHubPromptTemplatesAnalyzePromptResponseDefault = {
 
 export type modelHubPromptTemplatesAnalyzePromptResponseSuccess =
   modelHubPromptTemplatesAnalyzePromptResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesAnalyzePromptResponseError =
   modelHubPromptTemplatesAnalyzePromptResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesAnalyzePromptResponse =
@@ -50499,11 +50805,11 @@ export type modelHubPromptTemplatesBulkDeleteResponseDefault = {
 
 export type modelHubPromptTemplatesBulkDeleteResponseSuccess =
   modelHubPromptTemplatesBulkDeleteResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesBulkDeleteResponseError =
   modelHubPromptTemplatesBulkDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesBulkDeleteResponse =
@@ -50544,11 +50850,11 @@ export type modelHubPromptTemplatesCreateDraftResponseDefault = {
 
 export type modelHubPromptTemplatesCreateDraftResponseSuccess =
   modelHubPromptTemplatesCreateDraftResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesCreateDraftResponseError =
   modelHubPromptTemplatesCreateDraftResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesCreateDraftResponse =
@@ -50615,7 +50921,7 @@ export type modelHubPromptTemplatesDerivedVariablesPreviewCreateResponseDefault 
 
 export type modelHubPromptTemplatesDerivedVariablesPreviewCreateResponseSuccess =
   modelHubPromptTemplatesDerivedVariablesPreviewCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesDerivedVariablesPreviewCreateResponseError =
   (
@@ -50626,7 +50932,7 @@ export type modelHubPromptTemplatesDerivedVariablesPreviewCreateResponseError =
     | modelHubPromptTemplatesDerivedVariablesPreviewCreateResponse500
     | modelHubPromptTemplatesDerivedVariablesPreviewCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesDerivedVariablesPreviewCreateResponse =
@@ -50673,11 +50979,11 @@ export type modelHubPromptTemplatesGeneratePromptResponseDefault = {
 
 export type modelHubPromptTemplatesGeneratePromptResponseSuccess =
   modelHubPromptTemplatesGeneratePromptResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGeneratePromptResponseError =
   modelHubPromptTemplatesGeneratePromptResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesGeneratePromptResponse =
@@ -50715,11 +51021,11 @@ export type modelHubPromptTemplatesGenerateVariablesResponseDefault = {
 
 export type modelHubPromptTemplatesGenerateVariablesResponseSuccess =
   modelHubPromptTemplatesGenerateVariablesResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGenerateVariablesResponseError =
   modelHubPromptTemplatesGenerateVariablesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesGenerateVariablesResponse =
@@ -50768,11 +51074,11 @@ export type modelHubPromptTemplatesGetTemplateByNameResponseDefault = {
 
 export type modelHubPromptTemplatesGetTemplateByNameResponseSuccess =
   modelHubPromptTemplatesGetTemplateByNameResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGetTemplateByNameResponseError =
   modelHubPromptTemplatesGetTemplateByNameResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesGetTemplateByNameResponse =
@@ -50831,11 +51137,11 @@ export type modelHubPromptTemplatesImprovePromptResponseDefault = {
 
 export type modelHubPromptTemplatesImprovePromptResponseSuccess =
   modelHubPromptTemplatesImprovePromptResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesImprovePromptResponseError =
   modelHubPromptTemplatesImprovePromptResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesImprovePromptResponse =
@@ -50873,11 +51179,11 @@ export type modelHubPromptTemplatesReadResponseDefault = {
 
 export type modelHubPromptTemplatesReadResponseSuccess =
   modelHubPromptTemplatesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesReadResponseError =
   modelHubPromptTemplatesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesReadResponse =
@@ -50917,11 +51223,11 @@ export type modelHubPromptTemplatesUpdateResponseDefault = {
 
 export type modelHubPromptTemplatesUpdateResponseSuccess =
   modelHubPromptTemplatesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesUpdateResponseError =
   modelHubPromptTemplatesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesUpdateResponse =
@@ -50960,11 +51266,11 @@ export type modelHubPromptTemplatesPartialUpdateResponseDefault = {
 
 export type modelHubPromptTemplatesPartialUpdateResponseSuccess =
   modelHubPromptTemplatesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesPartialUpdateResponseError =
   modelHubPromptTemplatesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesPartialUpdateResponse =
@@ -51003,11 +51309,11 @@ export type modelHubPromptTemplatesDeleteResponseDefault = {
 
 export type modelHubPromptTemplatesDeleteResponseSuccess =
   modelHubPromptTemplatesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesDeleteResponseError =
   modelHubPromptTemplatesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesDeleteResponse =
@@ -51043,11 +51349,11 @@ export type modelHubPromptTemplatesAddNewDraftResponseDefault = {
 
 export type modelHubPromptTemplatesAddNewDraftResponseSuccess =
   modelHubPromptTemplatesAddNewDraftResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesAddNewDraftResponseError =
   modelHubPromptTemplatesAddNewDraftResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesAddNewDraftResponse =
@@ -51089,11 +51395,11 @@ export type modelHubPromptTemplatesGetAllVariablesResponseDefault = {
 
 export type modelHubPromptTemplatesGetAllVariablesResponseSuccess =
   modelHubPromptTemplatesGetAllVariablesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGetAllVariablesResponseError =
   modelHubPromptTemplatesGetAllVariablesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesGetAllVariablesResponse =
@@ -51132,11 +51438,11 @@ export type modelHubPromptTemplatesCommitResponseDefault = {
 
 export type modelHubPromptTemplatesCommitResponseSuccess =
   modelHubPromptTemplatesCommitResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesCommitResponseError =
   modelHubPromptTemplatesCommitResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesCommitResponse =
@@ -51175,11 +51481,11 @@ export type modelHubPromptTemplatesCompareVersionsResponseDefault = {
 
 export type modelHubPromptTemplatesCompareVersionsResponseSuccess =
   modelHubPromptTemplatesCompareVersionsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesCompareVersionsResponseError =
   modelHubPromptTemplatesCompareVersionsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesCompareVersionsResponse =
@@ -51221,11 +51527,11 @@ export type modelHubPromptTemplatesDeleteEvaluationConfigResponseDefault = {
 
 export type modelHubPromptTemplatesDeleteEvaluationConfigResponseSuccess =
   modelHubPromptTemplatesDeleteEvaluationConfigResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesDeleteEvaluationConfigResponseError =
   modelHubPromptTemplatesDeleteEvaluationConfigResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesDeleteEvaluationConfigResponse =
@@ -51268,11 +51574,11 @@ export type modelHubPromptTemplatesGetEvaluationConfigsResponseDefault = {
 
 export type modelHubPromptTemplatesGetEvaluationConfigsResponseSuccess =
   modelHubPromptTemplatesGetEvaluationConfigsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGetEvaluationConfigsResponseError =
   modelHubPromptTemplatesGetEvaluationConfigsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesGetEvaluationConfigsResponse =
@@ -51313,11 +51619,11 @@ export type modelHubPromptTemplatesRetrieveEvaluationsResponseDefault = {
 
 export type modelHubPromptTemplatesRetrieveEvaluationsResponseSuccess =
   modelHubPromptTemplatesRetrieveEvaluationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesRetrieveEvaluationsResponseError =
   modelHubPromptTemplatesRetrieveEvaluationsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesRetrieveEvaluationsResponse =
@@ -51355,11 +51661,11 @@ export type modelHubPromptTemplatesGetNextVersionResponseDefault = {
 
 export type modelHubPromptTemplatesGetNextVersionResponseSuccess =
   modelHubPromptTemplatesGetNextVersionResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGetNextVersionResponseError =
   modelHubPromptTemplatesGetNextVersionResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesGetNextVersionResponse =
@@ -51423,7 +51729,7 @@ export type modelHubPromptTemplatesGetRunStatusResponseDefault = {
 
 export type modelHubPromptTemplatesGetRunStatusResponseSuccess =
   modelHubPromptTemplatesGetRunStatusResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGetRunStatusResponseError = (
   | modelHubPromptTemplatesGetRunStatusResponse400
@@ -51433,7 +51739,7 @@ export type modelHubPromptTemplatesGetRunStatusResponseError = (
   | modelHubPromptTemplatesGetRunStatusResponse500
   | modelHubPromptTemplatesGetRunStatusResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptTemplatesGetRunStatusResponse =
@@ -51492,11 +51798,11 @@ export type modelHubPromptTemplatesGetSdkCodeResponseDefault = {
 
 export type modelHubPromptTemplatesGetSdkCodeResponseSuccess =
   modelHubPromptTemplatesGetSdkCodeResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesGetSdkCodeResponseError =
   modelHubPromptTemplatesGetSdkCodeResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesGetSdkCodeResponse =
@@ -51540,11 +51846,11 @@ export type modelHubPromptTemplatesRunEvalsOnMultipleVersionsResponseDefault = {
 
 export type modelHubPromptTemplatesRunEvalsOnMultipleVersionsResponseSuccess =
   modelHubPromptTemplatesRunEvalsOnMultipleVersionsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesRunEvalsOnMultipleVersionsResponseError =
   modelHubPromptTemplatesRunEvalsOnMultipleVersionsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesRunEvalsOnMultipleVersionsResponse =
@@ -51585,11 +51891,11 @@ export type modelHubPromptTemplatesRunTemplateResponseDefault = {
 
 export type modelHubPromptTemplatesRunTemplateResponseSuccess =
   modelHubPromptTemplatesRunTemplateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesRunTemplateResponseError =
   modelHubPromptTemplatesRunTemplateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesRunTemplateResponse =
@@ -51631,11 +51937,11 @@ export type modelHubPromptTemplatesSaveNameResponseDefault = {
 
 export type modelHubPromptTemplatesSaveNameResponseSuccess =
   modelHubPromptTemplatesSaveNameResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesSaveNameResponseError =
   modelHubPromptTemplatesSaveNameResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesSaveNameResponse =
@@ -51677,11 +51983,11 @@ export type modelHubPromptTemplatesSavePromptFolderResponseDefault = {
 
 export type modelHubPromptTemplatesSavePromptFolderResponseSuccess =
   modelHubPromptTemplatesSavePromptFolderResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesSavePromptFolderResponseError =
   modelHubPromptTemplatesSavePromptFolderResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesSavePromptFolderResponse =
@@ -51720,11 +52026,11 @@ export type modelHubPromptTemplatesSetDefaultResponseDefault = {
 
 export type modelHubPromptTemplatesSetDefaultResponseSuccess =
   modelHubPromptTemplatesSetDefaultResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesSetDefaultResponseError =
   modelHubPromptTemplatesSetDefaultResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesSetDefaultResponse =
@@ -51766,11 +52072,11 @@ export type modelHubPromptTemplatesStopStreamingResponseDefault = {
 
 export type modelHubPromptTemplatesStopStreamingResponseSuccess =
   modelHubPromptTemplatesStopStreamingResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesStopStreamingResponseError =
   modelHubPromptTemplatesStopStreamingResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesStopStreamingResponse =
@@ -51806,11 +52112,11 @@ export type modelHubPromptTemplatesUpdateEvaluationConfigsResponseDefault = {
 
 export type modelHubPromptTemplatesUpdateEvaluationConfigsResponseSuccess =
   modelHubPromptTemplatesUpdateEvaluationConfigsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesUpdateEvaluationConfigsResponseError =
   modelHubPromptTemplatesUpdateEvaluationConfigsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesUpdateEvaluationConfigsResponse =
@@ -51857,11 +52163,11 @@ export type modelHubPromptTemplatesVersionsResponseDefault = {
 
 export type modelHubPromptTemplatesVersionsResponseSuccess =
   modelHubPromptTemplatesVersionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesVersionsResponseError =
   modelHubPromptTemplatesVersionsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesVersionsResponse =
@@ -51942,7 +52248,7 @@ export type modelHubPromptTemplatesDerivedVariablesListResponseDefault = {
 
 export type modelHubPromptTemplatesDerivedVariablesListResponseSuccess =
   modelHubPromptTemplatesDerivedVariablesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesDerivedVariablesListResponseError = (
   | modelHubPromptTemplatesDerivedVariablesListResponse400
@@ -51952,7 +52258,7 @@ export type modelHubPromptTemplatesDerivedVariablesListResponseError = (
   | modelHubPromptTemplatesDerivedVariablesListResponse500
   | modelHubPromptTemplatesDerivedVariablesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptTemplatesDerivedVariablesListResponse =
@@ -52024,7 +52330,7 @@ export type modelHubPromptTemplatesDerivedVariablesExtractCreateResponseDefault 
 
 export type modelHubPromptTemplatesDerivedVariablesExtractCreateResponseSuccess =
   modelHubPromptTemplatesDerivedVariablesExtractCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesDerivedVariablesExtractCreateResponseError =
   (
@@ -52035,7 +52341,7 @@ export type modelHubPromptTemplatesDerivedVariablesExtractCreateResponseError =
     | modelHubPromptTemplatesDerivedVariablesExtractCreateResponse500
     | modelHubPromptTemplatesDerivedVariablesExtractCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubPromptTemplatesDerivedVariablesExtractCreateResponse =
@@ -52112,7 +52418,7 @@ export type modelHubPromptTemplatesDerivedVariablesSchemaListResponseDefault = {
 
 export type modelHubPromptTemplatesDerivedVariablesSchemaListResponseSuccess =
   modelHubPromptTemplatesDerivedVariablesSchemaListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptTemplatesDerivedVariablesSchemaListResponseError = (
   | modelHubPromptTemplatesDerivedVariablesSchemaListResponse400
@@ -52122,7 +52428,7 @@ export type modelHubPromptTemplatesDerivedVariablesSchemaListResponseError = (
   | modelHubPromptTemplatesDerivedVariablesSchemaListResponse500
   | modelHubPromptTemplatesDerivedVariablesSchemaListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptTemplatesDerivedVariablesSchemaListResponse =
@@ -52214,7 +52520,7 @@ export type modelHubPromptMetricsListResponseDefault = {
 
 export type modelHubPromptMetricsListResponseSuccess =
   modelHubPromptMetricsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptMetricsListResponseError = (
   | modelHubPromptMetricsListResponse400
@@ -52226,7 +52532,7 @@ export type modelHubPromptMetricsListResponseError = (
   | modelHubPromptMetricsListResponse503
   | modelHubPromptMetricsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptMetricsListResponse =
@@ -52305,7 +52611,7 @@ export type modelHubPromptMetricsEmptyScreenListResponseDefault = {
 
 export type modelHubPromptMetricsEmptyScreenListResponseSuccess =
   modelHubPromptMetricsEmptyScreenListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptMetricsEmptyScreenListResponseError = (
   | modelHubPromptMetricsEmptyScreenListResponse400
@@ -52315,7 +52621,7 @@ export type modelHubPromptMetricsEmptyScreenListResponseError = (
   | modelHubPromptMetricsEmptyScreenListResponse500
   | modelHubPromptMetricsEmptyScreenListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptMetricsEmptyScreenListResponse =
@@ -52388,7 +52694,7 @@ export type modelHubPromptSpanMetricsListResponseDefault = {
 
 export type modelHubPromptSpanMetricsListResponseSuccess =
   modelHubPromptSpanMetricsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubPromptSpanMetricsListResponseError = (
   | modelHubPromptSpanMetricsListResponse400
@@ -52400,7 +52706,7 @@ export type modelHubPromptSpanMetricsListResponseError = (
   | modelHubPromptSpanMetricsListResponse503
   | modelHubPromptSpanMetricsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubPromptSpanMetricsListResponse =
@@ -52454,11 +52760,11 @@ export type modelHubResponseSchemaListResponseDefault = {
 
 export type modelHubResponseSchemaListResponseSuccess =
   modelHubResponseSchemaListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubResponseSchemaListResponseError =
   modelHubResponseSchemaListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubResponseSchemaListResponse =
@@ -52512,11 +52818,11 @@ export type modelHubResponseSchemaCreateResponseDefault = {
 
 export type modelHubResponseSchemaCreateResponseSuccess =
   modelHubResponseSchemaCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubResponseSchemaCreateResponseError =
   modelHubResponseSchemaCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubResponseSchemaCreateResponse =
@@ -52554,11 +52860,11 @@ export type modelHubResponseSchemaReadResponseDefault = {
 
 export type modelHubResponseSchemaReadResponseSuccess =
   modelHubResponseSchemaReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubResponseSchemaReadResponseError =
   modelHubResponseSchemaReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubResponseSchemaReadResponse =
@@ -52594,11 +52900,11 @@ export type modelHubResponseSchemaUpdateResponseDefault = {
 
 export type modelHubResponseSchemaUpdateResponseSuccess =
   modelHubResponseSchemaUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubResponseSchemaUpdateResponseError =
   modelHubResponseSchemaUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubResponseSchemaUpdateResponse =
@@ -52637,11 +52943,11 @@ export type modelHubResponseSchemaPartialUpdateResponseDefault = {
 
 export type modelHubResponseSchemaPartialUpdateResponseSuccess =
   modelHubResponseSchemaPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubResponseSchemaPartialUpdateResponseError =
   modelHubResponseSchemaPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubResponseSchemaPartialUpdateResponse =
@@ -52680,11 +52986,11 @@ export type modelHubResponseSchemaDeleteResponseDefault = {
 
 export type modelHubResponseSchemaDeleteResponseSuccess =
   modelHubResponseSchemaDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubResponseSchemaDeleteResponseError =
   modelHubResponseSchemaDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubResponseSchemaDeleteResponse =
@@ -52745,7 +53051,7 @@ export type modelHubRunPromptForRowsCreateResponseDefault = {
 
 export type modelHubRunPromptForRowsCreateResponseSuccess =
   modelHubRunPromptForRowsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubRunPromptForRowsCreateResponseError = (
   | modelHubRunPromptForRowsCreateResponse400
@@ -52755,7 +53061,7 @@ export type modelHubRunPromptForRowsCreateResponseError = (
   | modelHubRunPromptForRowsCreateResponse500
   | modelHubRunPromptForRowsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubRunPromptForRowsCreateResponse =
@@ -52818,7 +53124,7 @@ export type modelHubRunPromptCreateResponseDefault = {
 
 export type modelHubRunPromptCreateResponseSuccess =
   modelHubRunPromptCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubRunPromptCreateResponseError = (
   | modelHubRunPromptCreateResponse400
@@ -52828,7 +53134,7 @@ export type modelHubRunPromptCreateResponseError = (
   | modelHubRunPromptCreateResponse500
   | modelHubRunPromptCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubRunPromptCreateResponse =
@@ -52866,11 +53172,11 @@ export type modelHubScoresListResponseDefault = {
 
 export type modelHubScoresListResponseSuccess =
   modelHubScoresListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresListResponseError =
   modelHubScoresListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubScoresListResponse =
@@ -52954,7 +53260,7 @@ export type modelHubScoresCreateResponseDefault = {
 
 export type modelHubScoresCreateResponseSuccess =
   modelHubScoresCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresCreateResponseError = (
   | modelHubScoresCreateResponse400
@@ -52964,7 +53270,7 @@ export type modelHubScoresCreateResponseError = (
   | modelHubScoresCreateResponse500
   | modelHubScoresCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubScoresCreateResponse =
@@ -53030,7 +53336,7 @@ export type modelHubScoresBulkCreateResponseDefault = {
 
 export type modelHubScoresBulkCreateResponseSuccess =
   modelHubScoresBulkCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresBulkCreateResponseError = (
   | modelHubScoresBulkCreateResponse400
@@ -53040,7 +53346,7 @@ export type modelHubScoresBulkCreateResponseError = (
   | modelHubScoresBulkCreateResponse500
   | modelHubScoresBulkCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubScoresBulkCreateResponse =
@@ -53106,7 +53412,7 @@ export type modelHubScoresForSourceResponseDefault = {
 
 export type modelHubScoresForSourceResponseSuccess =
   modelHubScoresForSourceResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresForSourceResponseError = (
   | modelHubScoresForSourceResponse400
@@ -53116,7 +53422,7 @@ export type modelHubScoresForSourceResponseError = (
   | modelHubScoresForSourceResponse500
   | modelHubScoresForSourceResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubScoresForSourceResponse =
@@ -53174,11 +53480,11 @@ export type modelHubScoresReadResponseDefault = {
 
 export type modelHubScoresReadResponseSuccess =
   modelHubScoresReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresReadResponseError =
   modelHubScoresReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubScoresReadResponse =
@@ -53243,7 +53549,7 @@ export type modelHubScoresUpdateResponseDefault = {
 
 export type modelHubScoresUpdateResponseSuccess =
   modelHubScoresUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresUpdateResponseError = (
   | modelHubScoresUpdateResponse400
@@ -53253,7 +53559,7 @@ export type modelHubScoresUpdateResponseError = (
   | modelHubScoresUpdateResponse500
   | modelHubScoresUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubScoresUpdateResponse =
@@ -53324,7 +53630,7 @@ export type modelHubScoresPartialUpdateResponseDefault = {
 
 export type modelHubScoresPartialUpdateResponseSuccess =
   modelHubScoresPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresPartialUpdateResponseError = (
   | modelHubScoresPartialUpdateResponse400
@@ -53334,7 +53640,7 @@ export type modelHubScoresPartialUpdateResponseError = (
   | modelHubScoresPartialUpdateResponse500
   | modelHubScoresPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubScoresPartialUpdateResponse =
@@ -53405,7 +53711,7 @@ export type modelHubScoresDeleteResponseDefault = {
 
 export type modelHubScoresDeleteResponseSuccess =
   modelHubScoresDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubScoresDeleteResponseError = (
   | modelHubScoresDeleteResponse400
@@ -53415,7 +53721,7 @@ export type modelHubScoresDeleteResponseError = (
   | modelHubScoresDeleteResponse500
   | modelHubScoresDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubScoresDeleteResponse =
@@ -53456,11 +53762,11 @@ export type modelHubSecretsListResponseDefault = {
 
 export type modelHubSecretsListResponseSuccess =
   modelHubSecretsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubSecretsListResponseError =
   modelHubSecretsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubSecretsListResponse =
@@ -53518,11 +53824,11 @@ export type modelHubSecretsCreateResponseDefault = {
 
 export type modelHubSecretsCreateResponseSuccess =
   modelHubSecretsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubSecretsCreateResponseError =
   modelHubSecretsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubSecretsCreateResponse =
@@ -53564,11 +53870,11 @@ export type modelHubSecretsReadResponseDefault = {
 
 export type modelHubSecretsReadResponseSuccess =
   modelHubSecretsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubSecretsReadResponseError =
   modelHubSecretsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubSecretsReadResponse =
@@ -53608,11 +53914,11 @@ export type modelHubSecretsUpdateResponseDefault = {
 
 export type modelHubSecretsUpdateResponseSuccess =
   modelHubSecretsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubSecretsUpdateResponseError =
   modelHubSecretsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubSecretsUpdateResponse =
@@ -53655,11 +53961,11 @@ export type modelHubSecretsPartialUpdateResponseDefault = {
 
 export type modelHubSecretsPartialUpdateResponseSuccess =
   modelHubSecretsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubSecretsPartialUpdateResponseError =
   modelHubSecretsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubSecretsPartialUpdateResponse =
@@ -53702,11 +54008,11 @@ export type modelHubSecretsDeleteResponseDefault = {
 
 export type modelHubSecretsDeleteResponseSuccess =
   modelHubSecretsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubSecretsDeleteResponseError =
   modelHubSecretsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubSecretsDeleteResponse =
@@ -53744,6 +54050,11 @@ export type modelHubTestEvaluationCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubTestEvaluationCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubTestEvaluationCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -53759,6 +54070,11 @@ export type modelHubTestEvaluationCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubTestEvaluationCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubTestEvaluationCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -53766,22 +54082,27 @@ export type modelHubTestEvaluationCreateResponse500 = {
 
 export type modelHubTestEvaluationCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubTestEvaluationCreateResponseSuccess =
   modelHubTestEvaluationCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubTestEvaluationCreateResponseError = (
   | modelHubTestEvaluationCreateResponse400
+  | modelHubTestEvaluationCreateResponse402
   | modelHubTestEvaluationCreateResponse403
   | modelHubTestEvaluationCreateResponse404
   | modelHubTestEvaluationCreateResponse409
+  | modelHubTestEvaluationCreateResponse429
   | modelHubTestEvaluationCreateResponse500
   | modelHubTestEvaluationCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubTestEvaluationCreateResponse =
@@ -53818,11 +54139,11 @@ export type modelHubToolsListResponseDefault = {
 };
 
 export type modelHubToolsListResponseSuccess = modelHubToolsListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubToolsListResponseError =
   modelHubToolsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubToolsListResponse =
@@ -53874,11 +54195,11 @@ export type modelHubToolsCreateResponseDefault = {
 
 export type modelHubToolsCreateResponseSuccess =
   modelHubToolsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubToolsCreateResponseError =
   modelHubToolsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubToolsCreateResponse =
@@ -53912,11 +54233,11 @@ export type modelHubToolsReadResponseDefault = {
 };
 
 export type modelHubToolsReadResponseSuccess = modelHubToolsReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type modelHubToolsReadResponseError =
   modelHubToolsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubToolsReadResponse =
@@ -53949,11 +54270,11 @@ export type modelHubToolsUpdateResponseDefault = {
 
 export type modelHubToolsUpdateResponseSuccess =
   modelHubToolsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubToolsUpdateResponseError =
   modelHubToolsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubToolsUpdateResponse =
@@ -53992,11 +54313,11 @@ export type modelHubToolsPartialUpdateResponseDefault = {
 
 export type modelHubToolsPartialUpdateResponseSuccess =
   modelHubToolsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubToolsPartialUpdateResponseError =
   modelHubToolsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubToolsPartialUpdateResponse =
@@ -54035,11 +54356,11 @@ export type modelHubToolsDeleteResponseDefault = {
 
 export type modelHubToolsDeleteResponseSuccess =
   modelHubToolsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubToolsDeleteResponseError =
   modelHubToolsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubToolsDeleteResponse =
@@ -54075,11 +54396,11 @@ export type modelHubTtsVoicesListResponseDefault = {
 
 export type modelHubTtsVoicesListResponseSuccess =
   modelHubTtsVoicesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubTtsVoicesListResponseError =
   modelHubTtsVoicesListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubTtsVoicesListResponse =
@@ -54133,11 +54454,11 @@ export type modelHubTtsVoicesCreateResponseDefault = {
 
 export type modelHubTtsVoicesCreateResponseSuccess =
   modelHubTtsVoicesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubTtsVoicesCreateResponseError =
   modelHubTtsVoicesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubTtsVoicesCreateResponse =
@@ -54175,11 +54496,11 @@ export type modelHubTtsVoicesReadResponseDefault = {
 
 export type modelHubTtsVoicesReadResponseSuccess =
   modelHubTtsVoicesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubTtsVoicesReadResponseError =
   modelHubTtsVoicesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubTtsVoicesReadResponse =
@@ -54215,11 +54536,11 @@ export type modelHubTtsVoicesUpdateResponseDefault = {
 
 export type modelHubTtsVoicesUpdateResponseSuccess =
   modelHubTtsVoicesUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubTtsVoicesUpdateResponseError =
   modelHubTtsVoicesUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubTtsVoicesUpdateResponse =
@@ -54258,11 +54579,11 @@ export type modelHubTtsVoicesPartialUpdateResponseDefault = {
 
 export type modelHubTtsVoicesPartialUpdateResponseSuccess =
   modelHubTtsVoicesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubTtsVoicesPartialUpdateResponseError =
   modelHubTtsVoicesPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubTtsVoicesPartialUpdateResponse =
@@ -54301,11 +54622,11 @@ export type modelHubTtsVoicesDeleteResponseDefault = {
 
 export type modelHubTtsVoicesDeleteResponseSuccess =
   modelHubTtsVoicesDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubTtsVoicesDeleteResponseError =
   modelHubTtsVoicesDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type modelHubTtsVoicesDeleteResponse =
@@ -54366,7 +54687,7 @@ export type modelHubUpdateEvalTemplateCreateResponseDefault = {
 
 export type modelHubUpdateEvalTemplateCreateResponseSuccess =
   modelHubUpdateEvalTemplateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubUpdateEvalTemplateCreateResponseError = (
   | modelHubUpdateEvalTemplateCreateResponse400
@@ -54376,7 +54697,7 @@ export type modelHubUpdateEvalTemplateCreateResponseError = (
   | modelHubUpdateEvalTemplateCreateResponse500
   | modelHubUpdateEvalTemplateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubUpdateEvalTemplateCreateResponse =
@@ -54439,7 +54760,7 @@ export type modelHubUploadFileCreateResponseDefault = {
 
 export type modelHubUploadFileCreateResponseSuccess =
   modelHubUploadFileCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type modelHubUploadFileCreateResponseError = (
   | modelHubUploadFileCreateResponse400
@@ -54449,7 +54770,7 @@ export type modelHubUploadFileCreateResponseError = (
   | modelHubUploadFileCreateResponse500
   | modelHubUploadFileCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type modelHubUploadFileCreateResponse =
@@ -54494,7 +54815,7 @@ export type saml2AuthAcsCreateResponseError = (
   | saml2AuthAcsCreateResponse400
   | saml2AuthAcsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthAcsCreateResponse = saml2AuthAcsCreateResponseError;
@@ -54535,7 +54856,7 @@ export type saml2AuthAuthCallbackListResponseError = (
   | saml2AuthAuthCallbackListResponse400
   | saml2AuthAuthCallbackListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthAuthCallbackListResponse =
@@ -54595,7 +54916,7 @@ export type saml2AuthAuthReadResponseError = (
   | saml2AuthAuthReadResponse400
   | saml2AuthAuthReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthAuthReadResponse = saml2AuthAuthReadResponseError;
@@ -54656,7 +54977,7 @@ export type saml2AuthCompleteListResponseError = (
   | saml2AuthCompleteListResponse400
   | saml2AuthCompleteListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthCompleteListResponse = saml2AuthCompleteListResponseError;
@@ -54715,7 +55036,7 @@ export type saml2AuthGithubCallbackListResponseError = (
   | saml2AuthGithubCallbackListResponse400
   | saml2AuthGithubCallbackListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthGithubCallbackListResponse =
@@ -54775,7 +55096,7 @@ export type saml2AuthGithubReadResponseError = (
   | saml2AuthGithubReadResponse400
   | saml2AuthGithubReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthGithubReadResponse = saml2AuthGithubReadResponseError;
@@ -54834,13 +55155,13 @@ export type saml2AuthIdpLoginListResponseDefault = {
 
 export type saml2AuthIdpLoginListResponseSuccess =
   saml2AuthIdpLoginListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type saml2AuthIdpLoginListResponseError = (
   | saml2AuthIdpLoginListResponse400
   | saml2AuthIdpLoginListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthIdpLoginListResponse =
@@ -54904,14 +55225,14 @@ export type saml2AuthIdpUploadsListResponseDefault = {
 
 export type saml2AuthIdpUploadsListResponseSuccess =
   saml2AuthIdpUploadsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type saml2AuthIdpUploadsListResponseError = (
   | saml2AuthIdpUploadsListResponse400
   | saml2AuthIdpUploadsListResponse500
   | saml2AuthIdpUploadsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthIdpUploadsListResponse =
@@ -54975,14 +55296,14 @@ export type saml2AuthIdpUploadsCreateResponseDefault = {
 
 export type saml2AuthIdpUploadsCreateResponseSuccess =
   saml2AuthIdpUploadsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type saml2AuthIdpUploadsCreateResponseError = (
   | saml2AuthIdpUploadsCreateResponse400
   | saml2AuthIdpUploadsCreateResponse500
   | saml2AuthIdpUploadsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthIdpUploadsCreateResponse =
@@ -55031,14 +55352,14 @@ export type saml2AuthIdpUploadsReadResponseDefault = {
 
 export type saml2AuthIdpUploadsReadResponseSuccess =
   saml2AuthIdpUploadsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type saml2AuthIdpUploadsReadResponseError = (
   | saml2AuthIdpUploadsReadResponse400
   | saml2AuthIdpUploadsReadResponse500
   | saml2AuthIdpUploadsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthIdpUploadsReadResponse =
@@ -55084,14 +55405,14 @@ export type saml2AuthIdpUploadsUpdateResponseDefault = {
 
 export type saml2AuthIdpUploadsUpdateResponseSuccess =
   saml2AuthIdpUploadsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type saml2AuthIdpUploadsUpdateResponseError = (
   | saml2AuthIdpUploadsUpdateResponse400
   | saml2AuthIdpUploadsUpdateResponse500
   | saml2AuthIdpUploadsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthIdpUploadsUpdateResponse =
@@ -55141,14 +55462,14 @@ export type saml2AuthIdpUploadsDeleteResponseDefault = {
 
 export type saml2AuthIdpUploadsDeleteResponseSuccess =
   saml2AuthIdpUploadsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type saml2AuthIdpUploadsDeleteResponseError = (
   | saml2AuthIdpUploadsDeleteResponse400
   | saml2AuthIdpUploadsDeleteResponse500
   | saml2AuthIdpUploadsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthIdpUploadsDeleteResponse =
@@ -55189,13 +55510,13 @@ export type saml2AuthLoginListResponseDefault = {
 
 export type saml2AuthLoginListResponseSuccess =
   saml2AuthLoginListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type saml2AuthLoginListResponseError = (
   | saml2AuthLoginListResponse400
   | saml2AuthLoginListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthLoginListResponse =
@@ -55251,13 +55572,13 @@ export type saml2AuthReadResponseDefault = {
 };
 
 export type saml2AuthReadResponseSuccess = saml2AuthReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type saml2AuthReadResponseError = (
   | saml2AuthReadResponse400
   | saml2AuthReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthReadResponse =
@@ -55320,7 +55641,7 @@ export type saml2AuthMicrosoftCallbackListResponseError = (
   | saml2AuthMicrosoftCallbackListResponse400
   | saml2AuthMicrosoftCallbackListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthMicrosoftCallbackListResponse =
@@ -55380,7 +55701,7 @@ export type saml2AuthMicrosoftReadResponseError = (
   | saml2AuthMicrosoftReadResponse400
   | saml2AuthMicrosoftReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type saml2AuthMicrosoftReadResponse =
@@ -55445,14 +55766,14 @@ export type sdkApiV1ConfigureEvaluationsCreateResponseDefault = {
 
 export type sdkApiV1ConfigureEvaluationsCreateResponseSuccess =
   sdkApiV1ConfigureEvaluationsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1ConfigureEvaluationsCreateResponseError = (
   | sdkApiV1ConfigureEvaluationsCreateResponse400
   | sdkApiV1ConfigureEvaluationsCreateResponse500
   | sdkApiV1ConfigureEvaluationsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1ConfigureEvaluationsCreateResponse =
@@ -55488,6 +55809,16 @@ export type sdkApiV1EvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1EvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1EvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1EvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -55495,19 +55826,21 @@ export type sdkApiV1EvalCreateResponse500 = {
 
 export type sdkApiV1EvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1EvalCreateResponseSuccess =
   sdkApiV1EvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1EvalCreateResponseError = (
   | sdkApiV1EvalCreateResponse400
+  | sdkApiV1EvalCreateResponse402
+  | sdkApiV1EvalCreateResponse429
   | sdkApiV1EvalCreateResponse500
   | sdkApiV1EvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1EvalCreateResponse =
@@ -55551,14 +55884,14 @@ export type sdkApiV1EvalReadResponseDefault = {
 };
 
 export type sdkApiV1EvalReadResponseSuccess = sdkApiV1EvalReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type sdkApiV1EvalReadResponseError = (
   | sdkApiV1EvalReadResponse400
   | sdkApiV1EvalReadResponse500
   | sdkApiV1EvalReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1EvalReadResponse =
@@ -55601,14 +55934,14 @@ export type sdkApiV1EvaluatePipelineListResponseDefault = {
 
 export type sdkApiV1EvaluatePipelineListResponseSuccess =
   sdkApiV1EvaluatePipelineListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1EvaluatePipelineListResponseError = (
   | sdkApiV1EvaluatePipelineListResponse400
   | sdkApiV1EvaluatePipelineListResponse500
   | sdkApiV1EvaluatePipelineListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1EvaluatePipelineListResponse =
@@ -55672,14 +56005,14 @@ export type sdkApiV1EvaluatePipelineCreateResponseDefault = {
 
 export type sdkApiV1EvaluatePipelineCreateResponseSuccess =
   sdkApiV1EvaluatePipelineCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1EvaluatePipelineCreateResponseError = (
   | sdkApiV1EvaluatePipelineCreateResponse400
   | sdkApiV1EvaluatePipelineCreateResponse500
   | sdkApiV1EvaluatePipelineCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1EvaluatePipelineCreateResponse =
@@ -55722,13 +56055,13 @@ export type sdkApiV1GetEvalsListResponseDefault = {
 
 export type sdkApiV1GetEvalsListResponseSuccess =
   sdkApiV1GetEvalsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1GetEvalsListResponseError = (
   | sdkApiV1GetEvalsListResponse500
   | sdkApiV1GetEvalsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1GetEvalsListResponse =
@@ -55773,14 +56106,14 @@ export type sdkApiV1NewEvalListResponseDefault = {
 
 export type sdkApiV1NewEvalListResponseSuccess =
   sdkApiV1NewEvalListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1NewEvalListResponseError = (
   | sdkApiV1NewEvalListResponse400
   | sdkApiV1NewEvalListResponse500
   | sdkApiV1NewEvalListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1NewEvalListResponse =
@@ -55832,6 +56165,16 @@ export type sdkApiV1NewEvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1NewEvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1NewEvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1NewEvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -55839,19 +56182,21 @@ export type sdkApiV1NewEvalCreateResponse500 = {
 
 export type sdkApiV1NewEvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1NewEvalCreateResponseSuccess =
   sdkApiV1NewEvalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1NewEvalCreateResponseError = (
   | sdkApiV1NewEvalCreateResponse400
+  | sdkApiV1NewEvalCreateResponse402
+  | sdkApiV1NewEvalCreateResponse429
   | sdkApiV1NewEvalCreateResponse500
   | sdkApiV1NewEvalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1NewEvalCreateResponse =
@@ -55904,7 +56249,7 @@ export type sdkApiV1SimulationAnalyticsListResponseDefault = {
 
 export type sdkApiV1SimulationAnalyticsListResponseSuccess =
   sdkApiV1SimulationAnalyticsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1SimulationAnalyticsListResponseError = (
   | sdkApiV1SimulationAnalyticsListResponse400
@@ -55912,7 +56257,7 @@ export type sdkApiV1SimulationAnalyticsListResponseError = (
   | sdkApiV1SimulationAnalyticsListResponse500
   | sdkApiV1SimulationAnalyticsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1SimulationAnalyticsListResponse =
@@ -55986,7 +56331,7 @@ export type sdkApiV1SimulationMetricsListResponseDefault = {
 
 export type sdkApiV1SimulationMetricsListResponseSuccess =
   sdkApiV1SimulationMetricsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1SimulationMetricsListResponseError = (
   | sdkApiV1SimulationMetricsListResponse400
@@ -55994,7 +56339,7 @@ export type sdkApiV1SimulationMetricsListResponseError = (
   | sdkApiV1SimulationMetricsListResponse500
   | sdkApiV1SimulationMetricsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1SimulationMetricsListResponse =
@@ -56067,7 +56412,7 @@ export type sdkApiV1SimulationRunsListResponseDefault = {
 
 export type sdkApiV1SimulationRunsListResponseSuccess =
   sdkApiV1SimulationRunsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type sdkApiV1SimulationRunsListResponseError = (
   | sdkApiV1SimulationRunsListResponse400
@@ -56075,7 +56420,7 @@ export type sdkApiV1SimulationRunsListResponseError = (
   | sdkApiV1SimulationRunsListResponse500
   | sdkApiV1SimulationRunsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type sdkApiV1SimulationRunsListResponse =
@@ -56148,7 +56493,7 @@ export type simulateAgentDefinitionsListResponseDefault = {
 
 export type simulateAgentDefinitionsListResponseSuccess =
   simulateAgentDefinitionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsListResponseError = (
   | simulateAgentDefinitionsListResponse400
@@ -56156,7 +56501,7 @@ export type simulateAgentDefinitionsListResponseError = (
   | simulateAgentDefinitionsListResponse500
   | simulateAgentDefinitionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsListResponse =
@@ -56223,14 +56568,14 @@ export type simulateAgentDefinitionsDeleteResponseDefault = {
 
 export type simulateAgentDefinitionsDeleteResponseSuccess =
   simulateAgentDefinitionsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsDeleteResponseError = (
   | simulateAgentDefinitionsDeleteResponse400
   | simulateAgentDefinitionsDeleteResponse500
   | simulateAgentDefinitionsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsDeleteResponse =
@@ -56286,7 +56631,7 @@ export type simulateAgentDefinitionsCreateCreateResponseDefault = {
 
 export type simulateAgentDefinitionsCreateCreateResponseSuccess =
   simulateAgentDefinitionsCreateCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsCreateCreateResponseError = (
   | simulateAgentDefinitionsCreateCreateResponse400
@@ -56294,7 +56639,7 @@ export type simulateAgentDefinitionsCreateCreateResponseError = (
   | simulateAgentDefinitionsCreateCreateResponse500
   | simulateAgentDefinitionsCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsCreateCreateResponse =
@@ -56345,14 +56690,14 @@ export type simulateAgentDefinitionsReadResponseDefault = {
 
 export type simulateAgentDefinitionsReadResponseSuccess =
   simulateAgentDefinitionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsReadResponseError = (
   | simulateAgentDefinitionsReadResponse404
   | simulateAgentDefinitionsReadResponse500
   | simulateAgentDefinitionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsReadResponse =
@@ -56401,14 +56746,14 @@ export type simulateAgentDefinitionsDeleteDeleteResponseDefault = {
 
 export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
   simulateAgentDefinitionsDeleteDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsDeleteDeleteResponseError = (
   | simulateAgentDefinitionsDeleteDeleteResponse404
   | simulateAgentDefinitionsDeleteDeleteResponse500
   | simulateAgentDefinitionsDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsDeleteDeleteResponse =
@@ -56462,7 +56807,7 @@ export type simulateAgentDefinitionsEditUpdateResponseDefault = {
 
 export type simulateAgentDefinitionsEditUpdateResponseSuccess =
   simulateAgentDefinitionsEditUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsEditUpdateResponseError = (
   | simulateAgentDefinitionsEditUpdateResponse400
@@ -56470,7 +56815,7 @@ export type simulateAgentDefinitionsEditUpdateResponseError = (
   | simulateAgentDefinitionsEditUpdateResponse500
   | simulateAgentDefinitionsEditUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsEditUpdateResponse =
@@ -56517,13 +56862,13 @@ export type simulateAgentDefinitionsRunsListResponseDefault = {
 
 export type simulateAgentDefinitionsRunsListResponseSuccess =
   simulateAgentDefinitionsRunsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsRunsListResponseError = (
   | simulateAgentDefinitionsRunsListResponse404
   | simulateAgentDefinitionsRunsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsRunsListResponse =
@@ -56589,14 +56934,14 @@ export type simulateAgentDefinitionsVersionsListResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsListResponseSuccess =
   simulateAgentDefinitionsVersionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsListResponseError = (
   | simulateAgentDefinitionsVersionsListResponse404
   | simulateAgentDefinitionsVersionsListResponse500
   | simulateAgentDefinitionsVersionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsListResponse =
@@ -56650,7 +56995,7 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess =
   simulateAgentDefinitionsVersionsCreateCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsCreateCreateResponseError = (
   | simulateAgentDefinitionsVersionsCreateCreateResponse400
@@ -56658,7 +57003,7 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponseError = (
   | simulateAgentDefinitionsVersionsCreateCreateResponse500
   | simulateAgentDefinitionsVersionsCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponse =
@@ -56712,14 +57057,14 @@ export type simulateAgentDefinitionsVersionsReadResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsReadResponseSuccess =
   simulateAgentDefinitionsVersionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsReadResponseError = (
   | simulateAgentDefinitionsVersionsReadResponse404
   | simulateAgentDefinitionsVersionsReadResponse500
   | simulateAgentDefinitionsVersionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsReadResponse =
@@ -56772,14 +57117,14 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess =
   simulateAgentDefinitionsVersionsActivateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsActivateCreateResponseError = (
   | simulateAgentDefinitionsVersionsActivateCreateResponse404
   | simulateAgentDefinitionsVersionsActivateCreateResponse500
   | simulateAgentDefinitionsVersionsActivateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponse =
@@ -56835,14 +57180,14 @@ export type simulateAgentDefinitionsVersionsAgentListResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsAgentListResponseSuccess =
   simulateAgentDefinitionsVersionsAgentListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsAgentListResponseError = (
   | simulateAgentDefinitionsVersionsAgentListResponse404
   | simulateAgentDefinitionsVersionsAgentListResponse500
   | simulateAgentDefinitionsVersionsAgentListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsAgentListResponse =
@@ -56893,14 +57238,14 @@ export type simulateAgentDefinitionsVersionsCallExecutionsListResponseDefault =
 
 export type simulateAgentDefinitionsVersionsCallExecutionsListResponseSuccess =
   simulateAgentDefinitionsVersionsCallExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsCallExecutionsListResponseError = (
   | simulateAgentDefinitionsVersionsCallExecutionsListResponse404
   | simulateAgentDefinitionsVersionsCallExecutionsListResponse500
   | simulateAgentDefinitionsVersionsCallExecutionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsCallExecutionsListResponse =
@@ -56961,7 +57306,7 @@ export type simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess =
   simulateAgentDefinitionsVersionsDeleteDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseError = (
   | simulateAgentDefinitionsVersionsDeleteDeleteResponse400
@@ -56969,7 +57314,7 @@ export type simulateAgentDefinitionsVersionsDeleteDeleteResponseError = (
   | simulateAgentDefinitionsVersionsDeleteDeleteResponse500
   | simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponse =
@@ -57022,14 +57367,14 @@ export type simulateAgentDefinitionsVersionsEvalSummaryListResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsEvalSummaryListResponseSuccess =
   simulateAgentDefinitionsVersionsEvalSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsEvalSummaryListResponseError = (
   | simulateAgentDefinitionsVersionsEvalSummaryListResponse404
   | simulateAgentDefinitionsVersionsEvalSummaryListResponse500
   | simulateAgentDefinitionsVersionsEvalSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsEvalSummaryListResponse =
@@ -57087,7 +57432,7 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponseDefault = {
 
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess =
   simulateAgentDefinitionsVersionsRestoreCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseError = (
   | simulateAgentDefinitionsVersionsRestoreCreateResponse400
@@ -57095,7 +57440,7 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponseError = (
   | simulateAgentDefinitionsVersionsRestoreCreateResponse500
   | simulateAgentDefinitionsVersionsRestoreCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateAgentDefinitionsVersionsRestoreCreateResponse =
@@ -57151,14 +57496,14 @@ export type simulateApiAgentDefinitionOperationsListResponseDefault = {
 
 export type simulateApiAgentDefinitionOperationsListResponseSuccess =
   simulateApiAgentDefinitionOperationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsListResponseError = (
   | simulateApiAgentDefinitionOperationsListResponse400
   | simulateApiAgentDefinitionOperationsListResponse500
   | simulateApiAgentDefinitionOperationsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentDefinitionOperationsListResponse =
@@ -57222,14 +57567,14 @@ export type simulateApiAgentDefinitionOperationsCreateResponseDefault = {
 
 export type simulateApiAgentDefinitionOperationsCreateResponseSuccess =
   simulateApiAgentDefinitionOperationsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsCreateResponseError = (
   | simulateApiAgentDefinitionOperationsCreateResponse400
   | simulateApiAgentDefinitionOperationsCreateResponse500
   | simulateApiAgentDefinitionOperationsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentDefinitionOperationsCreateResponse =
@@ -57287,7 +57632,7 @@ export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderRespon
 
 export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseSuccess =
   simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseError =
   (
@@ -57296,7 +57641,7 @@ export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderRespon
     | simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse500
     | simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse =
@@ -57351,14 +57696,14 @@ export type simulateApiAgentDefinitionOperationsReadResponseDefault = {
 
 export type simulateApiAgentDefinitionOperationsReadResponseSuccess =
   simulateApiAgentDefinitionOperationsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsReadResponseError = (
   | simulateApiAgentDefinitionOperationsReadResponse404
   | simulateApiAgentDefinitionOperationsReadResponse500
   | simulateApiAgentDefinitionOperationsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentDefinitionOperationsReadResponse =
@@ -57409,7 +57754,7 @@ export type simulateApiAgentDefinitionOperationsUpdateResponseDefault = {
 
 export type simulateApiAgentDefinitionOperationsUpdateResponseSuccess =
   simulateApiAgentDefinitionOperationsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsUpdateResponseError = (
   | simulateApiAgentDefinitionOperationsUpdateResponse400
@@ -57417,7 +57762,7 @@ export type simulateApiAgentDefinitionOperationsUpdateResponseError = (
   | simulateApiAgentDefinitionOperationsUpdateResponse500
   | simulateApiAgentDefinitionOperationsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentDefinitionOperationsUpdateResponse =
@@ -57473,7 +57818,7 @@ export type simulateApiAgentDefinitionOperationsPartialUpdateResponseDefault = {
 
 export type simulateApiAgentDefinitionOperationsPartialUpdateResponseSuccess =
   simulateApiAgentDefinitionOperationsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsPartialUpdateResponseError = (
   | simulateApiAgentDefinitionOperationsPartialUpdateResponse400
@@ -57481,7 +57826,7 @@ export type simulateApiAgentDefinitionOperationsPartialUpdateResponseError = (
   | simulateApiAgentDefinitionOperationsPartialUpdateResponse500
   | simulateApiAgentDefinitionOperationsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentDefinitionOperationsPartialUpdateResponse =
@@ -57532,14 +57877,14 @@ export type simulateApiAgentDefinitionOperationsDeleteResponseDefault = {
 
 export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess =
   simulateApiAgentDefinitionOperationsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsDeleteResponseError = (
   | simulateApiAgentDefinitionOperationsDeleteResponse404
   | simulateApiAgentDefinitionOperationsDeleteResponse500
   | simulateApiAgentDefinitionOperationsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentDefinitionOperationsDeleteResponse =
@@ -57577,11 +57922,11 @@ export type simulateApiAgentFixEngineBriefResponseDefault = {
 
 export type simulateApiAgentFixEngineBriefResponseSuccess =
   simulateApiAgentFixEngineBriefResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixEngineBriefResponseError =
   simulateApiAgentFixEngineBriefResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixEngineBriefResponse =
@@ -57622,11 +57967,11 @@ export type simulateApiAgentFixEngineCandidatesResponseDefault = {
 
 export type simulateApiAgentFixEngineCandidatesResponseSuccess =
   simulateApiAgentFixEngineCandidatesResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixEngineCandidatesResponseError =
   simulateApiAgentFixEngineCandidatesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixEngineCandidatesResponse =
@@ -57671,11 +58016,11 @@ export type simulateApiAgentFixEngineCheckRunsResponseDefault = {
 
 export type simulateApiAgentFixEngineCheckRunsResponseSuccess =
   simulateApiAgentFixEngineCheckRunsResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixEngineCheckRunsResponseError =
   simulateApiAgentFixEngineCheckRunsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixEngineCheckRunsResponse =
@@ -57719,11 +58064,11 @@ export type simulateApiAgentFixEngineCheckRunResponseDefault = {
 
 export type simulateApiAgentFixEngineCheckRunResponseSuccess =
   simulateApiAgentFixEngineCheckRunResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixEngineCheckRunResponseError =
   simulateApiAgentFixEngineCheckRunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixEngineCheckRunResponse =
@@ -57768,11 +58113,11 @@ export type simulateApiAgentFixEngineReportResponseDefault = {
 
 export type simulateApiAgentFixEngineReportResponseSuccess =
   simulateApiAgentFixEngineReportResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixEngineReportResponseError =
   simulateApiAgentFixEngineReportResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixEngineReportResponse =
@@ -57816,11 +58161,11 @@ export type simulateApiAgentFixEngineSourceResponseDefault = {
 
 export type simulateApiAgentFixEngineSourceResponseSuccess =
   simulateApiAgentFixEngineSourceResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixEngineSourceResponseError =
   simulateApiAgentFixEngineSourceResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixEngineSourceResponse =
@@ -57861,11 +58206,11 @@ export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault = {
 
 export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseSuccess =
   simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseError =
   simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse =
@@ -57912,11 +58257,11 @@ export type simulateApiAgentFixRunsListResponseDefault = {
 
 export type simulateApiAgentFixRunsListResponseSuccess =
   simulateApiAgentFixRunsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsListResponseError =
   simulateApiAgentFixRunsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsListResponse =
@@ -57974,11 +58319,11 @@ export type simulateApiAgentFixRunsCreateResponseDefault = {
 
 export type simulateApiAgentFixRunsCreateResponseSuccess =
   simulateApiAgentFixRunsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsCreateResponseError =
   simulateApiAgentFixRunsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsCreateResponse =
@@ -58020,11 +58365,11 @@ export type simulateApiAgentFixRunsLaunchOptionsResponseDefault = {
 
 export type simulateApiAgentFixRunsLaunchOptionsResponseSuccess =
   simulateApiAgentFixRunsLaunchOptionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsLaunchOptionsResponseError =
   simulateApiAgentFixRunsLaunchOptionsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsLaunchOptionsResponse =
@@ -58082,11 +58427,11 @@ export type simulateApiAgentFixRunsReadResponseDefault = {
 
 export type simulateApiAgentFixRunsReadResponseSuccess =
   simulateApiAgentFixRunsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsReadResponseError =
   simulateApiAgentFixRunsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsReadResponse =
@@ -58126,11 +58471,11 @@ export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseDefault = {
 
 export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseSuccess =
   simulateApiAgentFixRunsCandidatesMakeDefaultResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseError =
   simulateApiAgentFixRunsCandidatesMakeDefaultResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsCandidatesMakeDefaultResponse =
@@ -58177,11 +58522,11 @@ export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault = {
 
 export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseSuccess =
   simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseError =
   simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse =
@@ -58224,11 +58569,11 @@ export type simulateApiAgentFixRunsCandidatesPullRequestResponseDefault = {
 
 export type simulateApiAgentFixRunsCandidatesPullRequestResponseSuccess =
   simulateApiAgentFixRunsCandidatesPullRequestResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsCandidatesPullRequestResponseError =
   simulateApiAgentFixRunsCandidatesPullRequestResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsCandidatesPullRequestResponse =
@@ -58275,11 +58620,11 @@ export type simulateApiAgentFixRunsRetryResponseDefault = {
 
 export type simulateApiAgentFixRunsRetryResponseSuccess =
   simulateApiAgentFixRunsRetryResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsRetryResponseError =
   simulateApiAgentFixRunsRetryResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsRetryResponse =
@@ -58322,11 +58667,11 @@ export type simulateApiAgentFixRunsStopResponseDefault = {
 
 export type simulateApiAgentFixRunsStopResponseSuccess =
   simulateApiAgentFixRunsStopResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentFixRunsStopResponseError =
   simulateApiAgentFixRunsStopResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentFixRunsStopResponse =
@@ -58379,14 +58724,14 @@ export type simulateApiAgentPromptOptimiserListResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserListResponseSuccess =
   simulateApiAgentPromptOptimiserListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserListResponseError = (
   | simulateApiAgentPromptOptimiserListResponse400
   | simulateApiAgentPromptOptimiserListResponse500
   | simulateApiAgentPromptOptimiserListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserListResponse =
@@ -58453,14 +58798,14 @@ export type simulateApiAgentPromptOptimiserCreateResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserCreateResponseSuccess =
   simulateApiAgentPromptOptimiserCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserCreateResponseError = (
   | simulateApiAgentPromptOptimiserCreateResponse400
   | simulateApiAgentPromptOptimiserCreateResponse500
   | simulateApiAgentPromptOptimiserCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserCreateResponse =
@@ -58516,7 +58861,7 @@ export type simulateApiAgentPromptOptimiserReadResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserReadResponseSuccess =
   simulateApiAgentPromptOptimiserReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserReadResponseError = (
   | simulateApiAgentPromptOptimiserReadResponse400
@@ -58524,7 +58869,7 @@ export type simulateApiAgentPromptOptimiserReadResponseError = (
   | simulateApiAgentPromptOptimiserReadResponse500
   | simulateApiAgentPromptOptimiserReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserReadResponse =
@@ -58578,7 +58923,7 @@ export type simulateApiAgentPromptOptimiserUpdateResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserUpdateResponseSuccess =
   simulateApiAgentPromptOptimiserUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserUpdateResponseError = (
   | simulateApiAgentPromptOptimiserUpdateResponse400
@@ -58586,7 +58931,7 @@ export type simulateApiAgentPromptOptimiserUpdateResponseError = (
   | simulateApiAgentPromptOptimiserUpdateResponse500
   | simulateApiAgentPromptOptimiserUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserUpdateResponse =
@@ -58643,7 +58988,7 @@ export type simulateApiAgentPromptOptimiserPartialUpdateResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserPartialUpdateResponseSuccess =
   simulateApiAgentPromptOptimiserPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserPartialUpdateResponseError = (
   | simulateApiAgentPromptOptimiserPartialUpdateResponse400
@@ -58651,7 +58996,7 @@ export type simulateApiAgentPromptOptimiserPartialUpdateResponseError = (
   | simulateApiAgentPromptOptimiserPartialUpdateResponse500
   | simulateApiAgentPromptOptimiserPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserPartialUpdateResponse =
@@ -58705,14 +59050,14 @@ export type simulateApiAgentPromptOptimiserDeleteResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserDeleteResponseSuccess =
   simulateApiAgentPromptOptimiserDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserDeleteResponseError = (
   | simulateApiAgentPromptOptimiserDeleteResponse404
   | simulateApiAgentPromptOptimiserDeleteResponse500
   | simulateApiAgentPromptOptimiserDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserDeleteResponse =
@@ -58766,7 +59111,7 @@ export type simulateApiAgentPromptOptimiserGraphResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserGraphResponseSuccess =
   simulateApiAgentPromptOptimiserGraphResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserGraphResponseError = (
   | simulateApiAgentPromptOptimiserGraphResponse400
@@ -58774,7 +59119,7 @@ export type simulateApiAgentPromptOptimiserGraphResponseError = (
   | simulateApiAgentPromptOptimiserGraphResponse500
   | simulateApiAgentPromptOptimiserGraphResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserGraphResponse =
@@ -58828,7 +59173,7 @@ export type simulateApiAgentPromptOptimiserStepsResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserStepsResponseSuccess =
   simulateApiAgentPromptOptimiserStepsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserStepsResponseError = (
   | simulateApiAgentPromptOptimiserStepsResponse400
@@ -58836,7 +59181,7 @@ export type simulateApiAgentPromptOptimiserStepsResponseError = (
   | simulateApiAgentPromptOptimiserStepsResponse500
   | simulateApiAgentPromptOptimiserStepsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserStepsResponse =
@@ -58891,7 +59236,7 @@ export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseDefault 
 
 export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseSuccess =
   simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseError =
   (
@@ -58900,7 +59245,7 @@ export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseError =
     | simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse500
     | simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse =
@@ -58958,7 +59303,7 @@ export type simulateApiAgentPromptOptimiserTrialTrialPromptResponseDefault = {
 
 export type simulateApiAgentPromptOptimiserTrialTrialPromptResponseSuccess =
   simulateApiAgentPromptOptimiserTrialTrialPromptResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserTrialTrialPromptResponseError = (
   | simulateApiAgentPromptOptimiserTrialTrialPromptResponse400
@@ -58966,7 +59311,7 @@ export type simulateApiAgentPromptOptimiserTrialTrialPromptResponseError = (
   | simulateApiAgentPromptOptimiserTrialTrialPromptResponse500
   | simulateApiAgentPromptOptimiserTrialTrialPromptResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse =
@@ -59025,7 +59370,7 @@ export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponseDefault =
 
 export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponseSuccess =
   simulateApiAgentPromptOptimiserTrialTrialScenariosResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponseError = (
   | simulateApiAgentPromptOptimiserTrialTrialScenariosResponse400
@@ -59033,7 +59378,7 @@ export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponseError = (
   | simulateApiAgentPromptOptimiserTrialTrialScenariosResponse500
   | simulateApiAgentPromptOptimiserTrialTrialScenariosResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse =
@@ -59092,7 +59437,7 @@ export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseDefault =
 
 export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseSuccess =
   simulateApiAlkSimulateCallExecutionsRecordingUploadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseError = (
   | simulateApiAlkSimulateCallExecutionsRecordingUploadResponse400
@@ -59100,7 +59445,7 @@ export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseError = (
   | simulateApiAlkSimulateCallExecutionsRecordingUploadResponse500
   | simulateApiAlkSimulateCallExecutionsRecordingUploadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse =
@@ -59196,7 +59541,7 @@ export type simulateApiAlkSimulateCallExecutionsResultResponseDefault = {
 
 export type simulateApiAlkSimulateCallExecutionsResultResponseSuccess =
   simulateApiAlkSimulateCallExecutionsResultResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAlkSimulateCallExecutionsResultResponseError = (
   | simulateApiAlkSimulateCallExecutionsResultResponse400
@@ -59204,7 +59549,7 @@ export type simulateApiAlkSimulateCallExecutionsResultResponseError = (
   | simulateApiAlkSimulateCallExecutionsResultResponse500
   | simulateApiAlkSimulateCallExecutionsResultResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAlkSimulateCallExecutionsResultResponse =
@@ -59266,7 +59611,7 @@ export type simulateApiAlkSimulateCallExecutionsStatusResponseDefault = {
 
 export type simulateApiAlkSimulateCallExecutionsStatusResponseSuccess =
   simulateApiAlkSimulateCallExecutionsStatusResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAlkSimulateCallExecutionsStatusResponseError = (
   | simulateApiAlkSimulateCallExecutionsStatusResponse400
@@ -59274,7 +59619,7 @@ export type simulateApiAlkSimulateCallExecutionsStatusResponseError = (
   | simulateApiAlkSimulateCallExecutionsStatusResponse500
   | simulateApiAlkSimulateCallExecutionsStatusResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAlkSimulateCallExecutionsStatusResponse =
@@ -59336,7 +59681,7 @@ export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseDefault = {
 
 export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseSuccess =
   simulateApiAlkSimulateRunTestsProvisionRunTestResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseError = (
   | simulateApiAlkSimulateRunTestsProvisionRunTestResponse400
@@ -59344,7 +59689,7 @@ export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseError = (
   | simulateApiAlkSimulateRunTestsProvisionRunTestResponse500
   | simulateApiAlkSimulateRunTestsProvisionRunTestResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse =
@@ -59402,7 +59747,7 @@ export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseDefault = {
 
 export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseSuccess =
   simulateApiAlkSimulateRunTestsStartTestExecutionResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseError = (
   | simulateApiAlkSimulateRunTestsStartTestExecutionResponse400
@@ -59410,7 +59755,7 @@ export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseError = (
   | simulateApiAlkSimulateRunTestsStartTestExecutionResponse500
   | simulateApiAlkSimulateRunTestsStartTestExecutionResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse =
@@ -59472,7 +59817,7 @@ export type simulateApiAlkSimulateTestExecutionsBatchResponseDefault = {
 
 export type simulateApiAlkSimulateTestExecutionsBatchResponseSuccess =
   simulateApiAlkSimulateTestExecutionsBatchResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiAlkSimulateTestExecutionsBatchResponseError = (
   | simulateApiAlkSimulateTestExecutionsBatchResponse400
@@ -59480,7 +59825,7 @@ export type simulateApiAlkSimulateTestExecutionsBatchResponseError = (
   | simulateApiAlkSimulateTestExecutionsBatchResponse500
   | simulateApiAlkSimulateTestExecutionsBatchResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiAlkSimulateTestExecutionsBatchResponse =
@@ -59537,14 +59882,14 @@ export type simulateApiCallExecutionsListResponseDefault = {
 
 export type simulateApiCallExecutionsListResponseSuccess =
   simulateApiCallExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiCallExecutionsListResponseError = (
   | simulateApiCallExecutionsListResponse404
   | simulateApiCallExecutionsListResponse500
   | simulateApiCallExecutionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiCallExecutionsListResponse =
@@ -59607,11 +59952,11 @@ export type simulateApiHarnessEnvironmentsListResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsListResponseSuccess =
   simulateApiHarnessEnvironmentsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsListResponseError =
   simulateApiHarnessEnvironmentsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsListResponse =
@@ -59677,11 +60022,11 @@ export type simulateApiHarnessEnvironmentsReadResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsReadResponseSuccess =
   simulateApiHarnessEnvironmentsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsReadResponseError =
   simulateApiHarnessEnvironmentsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsReadResponse =
@@ -59694,7 +60039,8 @@ export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
 
 /**
  * Same shape whichever door built it. A section the pipeline has not reached
-yet is null, so the client renders "building" rather than an empty pane.
+yet is null, so the client renders "building" rather than an empty pane. A
+coding agent's read leaves out the held-back cases.
  * @summary One environment: overview, contract, world, scenarios, evaluations, settings.
  */
 export const simulateApiHarnessEnvironmentsRead = async (
@@ -59722,11 +60068,11 @@ export type simulateApiHarnessEnvironmentsPartialUpdateResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess =
   simulateApiHarnessEnvironmentsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsPartialUpdateResponseError =
   simulateApiHarnessEnvironmentsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsPartialUpdateResponse =
@@ -59773,11 +60119,11 @@ export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
   simulateApiHarnessEnvironmentsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDeleteResponseError =
   simulateApiHarnessEnvironmentsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDeleteResponse =
@@ -59821,11 +60167,11 @@ export type simulateApiHarnessEnvironmentsCompareResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsCompareResponseSuccess =
   simulateApiHarnessEnvironmentsCompareResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsCompareResponseError =
   simulateApiHarnessEnvironmentsCompareResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsCompareResponse =
@@ -59886,11 +60232,11 @@ export type simulateApiHarnessEnvironmentsDraftsResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsDraftsResponseSuccess =
   simulateApiHarnessEnvironmentsDraftsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDraftsResponseError =
   simulateApiHarnessEnvironmentsDraftsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDraftsResponse =
@@ -59929,11 +60275,11 @@ export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess =
   simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError =
   simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
@@ -59978,11 +60324,11 @@ export type simulateApiHarnessEnvironmentsDiscardDraftResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsDiscardDraftResponseSuccess =
   simulateApiHarnessEnvironmentsDiscardDraftResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsDiscardDraftResponseError =
   simulateApiHarnessEnvironmentsDiscardDraftResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsDiscardDraftResponse =
@@ -60025,11 +60371,11 @@ export type simulateApiHarnessEnvironmentsAddEvaluationResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsAddEvaluationResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsAddEvaluationResponseError =
   simulateApiHarnessEnvironmentsAddEvaluationResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsAddEvaluationResponse =
@@ -60078,11 +60424,11 @@ export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsRespons
 
 export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseSuccess =
   simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseError =
   simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse =
@@ -60131,11 +60477,11 @@ export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespon
 
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError =
   simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse =
@@ -60180,11 +60526,11 @@ export type simulateApiHarnessEnvironmentsEditEvaluationResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsEditEvaluationResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseError =
   simulateApiHarnessEnvironmentsEditEvaluationResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponse =
@@ -60230,11 +60576,11 @@ export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError =
   simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse =
@@ -60283,11 +60629,11 @@ export type simulateApiHarnessEnvironmentsNudgesResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsNudgesResponseSuccess =
   simulateApiHarnessEnvironmentsNudgesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsNudgesResponseError =
   simulateApiHarnessEnvironmentsNudgesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsNudgesResponse =
@@ -60346,11 +60692,11 @@ export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseSuccess =
   simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseError =
   simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse =
@@ -60396,11 +60742,11 @@ export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseSuccess =
   simulateApiHarnessEnvironmentsNudgesStopNudgeResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseError =
   simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse =
@@ -60446,11 +60792,11 @@ export type simulateApiHarnessEnvironmentsRunPlanResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsRunPlanResponseSuccess =
   simulateApiHarnessEnvironmentsRunPlanResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsRunPlanResponseError =
   simulateApiHarnessEnvironmentsRunPlanResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsRunPlanResponse =
@@ -60510,11 +60856,11 @@ export type simulateApiHarnessEnvironmentsRunResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsRunResponseSuccess =
   simulateApiHarnessEnvironmentsRunResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsRunResponseError =
   simulateApiHarnessEnvironmentsRunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsRunResponse =
@@ -60557,11 +60903,11 @@ export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault =
 
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError =
   simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse =
@@ -60609,11 +60955,11 @@ export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseD
 
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseSuccess =
   simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseError =
   simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse =
@@ -60650,6 +60996,101 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
     );
   };
 
+export type simulateApiHarnessEnvironmentsVerifyResponse202 = {
+  data: HarnessVerifyCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyResponseSuccess =
+  simulateApiHarnessEnvironmentsVerifyResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVerifyResponseError =
+  simulateApiHarnessEnvironmentsVerifyResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsVerifyResponse =
+  | simulateApiHarnessEnvironmentsVerifyResponseSuccess
+  | simulateApiHarnessEnvironmentsVerifyResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVerifyUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/verify/`;
+};
+
+/**
+ * Verify an agent version on the held-back cases, in a run no user read shows.
+Its live or completed verify is final: asking again returns it. After one that
+failed or was canceled, asking again starts a new one.
+ */
+export const simulateApiHarnessEnvironmentsVerify = async (
+  id: string,
+  harnessVerifyCreateApi: HarnessVerifyCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVerifyResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVerifyResponse>(
+    getSimulateApiHarnessEnvironmentsVerifyUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessVerifyCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponse200 = {
+  data: HarnessVerifyResultApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseSuccess =
+  simulateApiHarnessEnvironmentsVerifyDetailResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseError =
+  simulateApiHarnessEnvironmentsVerifyDetailResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponse =
+  | simulateApiHarnessEnvironmentsVerifyDetailResponseSuccess
+  | simulateApiHarnessEnvironmentsVerifyDetailResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVerifyDetailUrl = (
+  id: string,
+  verifyId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/verify/${verifyId}/`;
+};
+
+/**
+ * How the verified version did on the held-back cases, as counts only.
+ */
+export const simulateApiHarnessEnvironmentsVerifyDetail = async (
+  id: string,
+  verifyId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVerifyDetailResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVerifyDetailResponse>(
+    getSimulateApiHarnessEnvironmentsVerifyDetailUrl(id, verifyId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsVersionsResponse200 = {
   data: HarnessVersionsApi;
   status: 200;
@@ -60662,11 +61103,11 @@ export type simulateApiHarnessEnvironmentsVersionsResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsVersionsResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsResponseError =
   simulateApiHarnessEnvironmentsVersionsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsResponse =
@@ -60707,11 +61148,11 @@ export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefa
 
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseError =
   simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse =
@@ -60726,7 +61167,8 @@ export const getSimulateApiHarnessEnvironmentsVersionsCreateAgentVersionUrl = (
 
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
-checked next, then made this environment's default.
+checked next, then made this environment's default unless make_default is
+false. A coding agent key pushes only an upload, never made the default.
  */
 export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersion = async (
   id: string,
@@ -60758,11 +61200,11 @@ export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespon
 
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseError =
   simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse =
@@ -60813,11 +61255,11 @@ export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse
 
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseError =
   simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse =
@@ -60868,11 +61310,11 @@ export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseDefau
 
 export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseError =
   simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse =
@@ -60887,7 +61329,8 @@ export const getSimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersUrl = (
 };
 
 /**
- * The scenarios in one suite version, by number.
+ * The scenarios in one suite version, by number; a coding agent's read leaves
+out the held-back cases.
  */
 export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
   id: string,
@@ -60918,11 +61361,11 @@ export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError =
   simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
@@ -60975,11 +61418,11 @@ export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponseDefault = {
 
 export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsVersionDiffResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponseError =
   simulateApiHarnessEnvironmentsVersionsVersionDiffResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponse =
@@ -61047,11 +61490,11 @@ export type simulateApiHarnessJobsListResponseDefault = {
 
 export type simulateApiHarnessJobsListResponseSuccess =
   simulateApiHarnessJobsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsListResponseError =
   simulateApiHarnessJobsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsListResponse =
@@ -61092,11 +61535,11 @@ export type simulateApiHarnessJobsCreateResponseDefault = {
 
 export type simulateApiHarnessJobsCreateResponseSuccess =
   simulateApiHarnessJobsCreateResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsCreateResponseError =
   simulateApiHarnessJobsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsCreateResponse =
@@ -61140,11 +61583,11 @@ export type simulateApiHarnessJobsHealthResponseDefault = {
 
 export type simulateApiHarnessJobsHealthResponseSuccess =
   simulateApiHarnessJobsHealthResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsHealthResponseError =
   simulateApiHarnessJobsHealthResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsHealthResponse =
@@ -61185,11 +61628,11 @@ export type simulateApiHarnessJobsPreflightResponseDefault = {
 
 export type simulateApiHarnessJobsPreflightResponseSuccess =
   simulateApiHarnessJobsPreflightResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsPreflightResponseError =
   simulateApiHarnessJobsPreflightResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsPreflightResponse =
@@ -61233,11 +61676,11 @@ export type simulateApiHarnessJobsSecretFileUploadResponseDefault = {
 
 export type simulateApiHarnessJobsSecretFileUploadResponseSuccess =
   simulateApiHarnessJobsSecretFileUploadResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsSecretFileUploadResponseError =
   simulateApiHarnessJobsSecretFileUploadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsSecretFileUploadResponse =
@@ -61293,11 +61736,11 @@ export type simulateApiHarnessJobsSecretValuesResponseDefault = {
 
 export type simulateApiHarnessJobsSecretValuesResponseSuccess =
   simulateApiHarnessJobsSecretValuesResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsSecretValuesResponseError =
   simulateApiHarnessJobsSecretValuesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsSecretValuesResponse =
@@ -61340,11 +61783,11 @@ export type simulateApiHarnessJobsSourceUploadResponseDefault = {
 
 export type simulateApiHarnessJobsSourceUploadResponseSuccess =
   simulateApiHarnessJobsSourceUploadResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsSourceUploadResponseError =
   simulateApiHarnessJobsSourceUploadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsSourceUploadResponse =
@@ -61398,11 +61841,11 @@ export type simulateApiHarnessJobsReadResponseDefault = {
 
 export type simulateApiHarnessJobsReadResponseSuccess =
   simulateApiHarnessJobsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsReadResponseError =
   simulateApiHarnessJobsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsReadResponse =
@@ -61414,10 +61857,11 @@ export const getSimulateApiHarnessJobsReadUrl = (id: string) => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * One harness job. A coding agent key reads its own run narrowly, outside
+this schema: only `status` (its failure as domain, stage, code and a fixed
+message), `receipts`, `consumption`, `platform`, and `job` with its ids and
+five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
+`job.source`, which name every case of the suite.
  */
 export const simulateApiHarnessJobsRead = async (
   id: string,
@@ -61444,11 +61888,11 @@ export type simulateApiHarnessJobsAdjustResponseDefault = {
 
 export type simulateApiHarnessJobsAdjustResponseSuccess =
   simulateApiHarnessJobsAdjustResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsAdjustResponseError =
   simulateApiHarnessJobsAdjustResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsAdjustResponse =
@@ -61493,11 +61937,11 @@ export type simulateApiHarnessJobsCancelResponseDefault = {
 
 export type simulateApiHarnessJobsCancelResponseSuccess =
   simulateApiHarnessJobsCancelResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsCancelResponseError =
   simulateApiHarnessJobsCancelResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsCancelResponse =
@@ -61548,14 +61992,14 @@ export type simulateApiHarnessJobsConversationConversationMessageResponseDefault
 
 export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess =
   simulateApiHarnessJobsConversationConversationMessageResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsConversationConversationMessageResponseError =
   (
     | simulateApiHarnessJobsConversationConversationMessageResponse409
     | simulateApiHarnessJobsConversationConversationMessageResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsConversationConversationMessageResponse =
@@ -61602,11 +62046,11 @@ export type simulateApiHarnessJobsExtendResponseDefault = {
 
 export type simulateApiHarnessJobsExtendResponseSuccess =
   simulateApiHarnessJobsExtendResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsExtendResponseError =
   simulateApiHarnessJobsExtendResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsExtendResponse =
@@ -61651,11 +62095,11 @@ export type simulateApiHarnessJobsRunsResponseDefault = {
 
 export type simulateApiHarnessJobsRunsResponseSuccess =
   simulateApiHarnessJobsRunsResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsRunsResponseError =
   simulateApiHarnessJobsRunsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsRunsResponse =
@@ -61700,11 +62144,11 @@ export type simulateApiHarnessJobsScenariosResponseDefault = {
 
 export type simulateApiHarnessJobsScenariosResponseSuccess =
   simulateApiHarnessJobsScenariosResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsScenariosResponseError =
   simulateApiHarnessJobsScenariosResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsScenariosResponse =
@@ -61746,11 +62190,11 @@ export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
   simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
   simulateApiHarnessJobsScenariosAmendScenariosResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponse =
@@ -61797,11 +62241,11 @@ export type simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault = {
 
 export type simulateApiHarnessJobsScenariosScenarioCoverageResponseSuccess =
   simulateApiHarnessJobsScenariosScenarioCoverageResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsScenariosScenarioCoverageResponseError =
   simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessJobsScenariosScenarioCoverageResponse =
@@ -61846,11 +62290,11 @@ export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponseDefault =
 
 export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponseSuccess =
   simulateApiHarnessAttemptsArtifactsArtifactManifestResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponseError =
   simulateApiHarnessAttemptsArtifactsArtifactManifestResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessAttemptsArtifactsArtifactManifestResponse =
@@ -61898,11 +62342,11 @@ export type simulateApiHarnessAttemptsArtifactUploadResponseSuccess = (
   | simulateApiHarnessAttemptsArtifactUploadResponse200
   | simulateApiHarnessAttemptsArtifactUploadResponse201
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type simulateApiHarnessAttemptsArtifactUploadResponseError =
   simulateApiHarnessAttemptsArtifactUploadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessAttemptsArtifactUploadResponse =
@@ -61945,11 +62389,11 @@ export type simulateApiHarnessAttemptsEventsResponseDefault = {
 
 export type simulateApiHarnessAttemptsEventsResponseSuccess =
   simulateApiHarnessAttemptsEventsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAttemptsEventsResponseError =
   simulateApiHarnessAttemptsEventsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessAttemptsEventsResponse =
@@ -61988,11 +62432,11 @@ export type simulateApiHarnessAttemptsIngressResponseDefault = {
 
 export type simulateApiHarnessAttemptsIngressResponseSuccess =
   simulateApiHarnessAttemptsIngressResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAttemptsIngressResponseError =
   simulateApiHarnessAttemptsIngressResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessAttemptsIngressResponse =
@@ -62036,11 +62480,11 @@ export type simulateApiHarnessAttemptsResultsResponseDefault = {
 
 export type simulateApiHarnessAttemptsResultsResponseSuccess =
   simulateApiHarnessAttemptsResultsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAttemptsResultsResponseError =
   simulateApiHarnessAttemptsResultsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessAttemptsResultsResponse =
@@ -62079,11 +62523,11 @@ export type simulateApiHarnessAttemptsScenariosResponseDefault = {
 
 export type simulateApiHarnessAttemptsScenariosResponseSuccess =
   simulateApiHarnessAttemptsScenariosResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAttemptsScenariosResponseError =
   simulateApiHarnessAttemptsScenariosResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessAttemptsScenariosResponse =
@@ -62127,13 +62571,13 @@ export type simulateApiHarnessAttemptsUsageResponseDefault = {
 
 export type simulateApiHarnessAttemptsUsageResponseSuccess =
   simulateApiHarnessAttemptsUsageResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessAttemptsUsageResponseError = (
   | simulateApiHarnessAttemptsUsageResponse402
   | simulateApiHarnessAttemptsUsageResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiHarnessAttemptsUsageResponse =
@@ -62172,11 +62616,11 @@ export type simulateApiHarnessConversationsAdjustResponseDefault = {
 
 export type simulateApiHarnessConversationsAdjustResponseSuccess =
   simulateApiHarnessConversationsAdjustResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsAdjustResponseError =
   simulateApiHarnessConversationsAdjustResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsAdjustResponse =
@@ -62215,11 +62659,11 @@ export type simulateApiHarnessConversationsCommandsResponseDefault = {
 
 export type simulateApiHarnessConversationsCommandsResponseSuccess =
   simulateApiHarnessConversationsCommandsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsCommandsResponseError =
   simulateApiHarnessConversationsCommandsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsCommandsResponse =
@@ -62275,11 +62719,11 @@ export type simulateApiHarnessConversationsEventsResponseDefault = {
 
 export type simulateApiHarnessConversationsEventsResponseSuccess =
   simulateApiHarnessConversationsEventsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsEventsResponseError =
   simulateApiHarnessConversationsEventsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsEventsResponse =
@@ -62318,11 +62762,11 @@ export type simulateApiHarnessConversationsOverviewResponseDefault = {
 
 export type simulateApiHarnessConversationsOverviewResponseSuccess =
   simulateApiHarnessConversationsOverviewResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsOverviewResponseError =
   simulateApiHarnessConversationsOverviewResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsOverviewResponse =
@@ -62361,11 +62805,11 @@ export type simulateApiHarnessConversationsPublishResponseDefault = {
 
 export type simulateApiHarnessConversationsPublishResponseSuccess =
   simulateApiHarnessConversationsPublishResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsPublishResponseError =
   simulateApiHarnessConversationsPublishResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsPublishResponse =
@@ -62404,11 +62848,11 @@ export type simulateApiHarnessConversationsRerunResponseDefault = {
 
 export type simulateApiHarnessConversationsRerunResponseSuccess =
   simulateApiHarnessConversationsRerunResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsRerunResponseError =
   simulateApiHarnessConversationsRerunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsRerunResponse =
@@ -62447,11 +62891,11 @@ export type simulateApiHarnessConversationsRunStatusResponseDefault = {
 
 export type simulateApiHarnessConversationsRunStatusResponseSuccess =
   simulateApiHarnessConversationsRunStatusResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsRunStatusResponseError =
   simulateApiHarnessConversationsRunStatusResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsRunStatusResponse =
@@ -62487,11 +62931,11 @@ export type simulateApiHarnessConversationsRunsResponseDefault = {
 
 export type simulateApiHarnessConversationsRunsResponseSuccess =
   simulateApiHarnessConversationsRunsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsRunsResponseError =
   simulateApiHarnessConversationsRunsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsRunsResponse =
@@ -62530,11 +62974,11 @@ export type simulateApiHarnessConversationsRunsStartRunResponseDefault = {
 
 export type simulateApiHarnessConversationsRunsStartRunResponseSuccess =
   simulateApiHarnessConversationsRunsStartRunResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsRunsStartRunResponseError =
   simulateApiHarnessConversationsRunsStartRunResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsRunsStartRunResponse =
@@ -62575,11 +63019,11 @@ export type simulateApiHarnessConversationsScenariosResponseDefault = {
 
 export type simulateApiHarnessConversationsScenariosResponseSuccess =
   simulateApiHarnessConversationsScenariosResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsScenariosResponseError =
   simulateApiHarnessConversationsScenariosResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsScenariosResponse =
@@ -62618,11 +63062,11 @@ export type simulateApiHarnessConversationsSessionStoreResponseDefault = {
 
 export type simulateApiHarnessConversationsSessionStoreResponseSuccess =
   simulateApiHarnessConversationsSessionStoreResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsSessionStoreResponseError =
   simulateApiHarnessConversationsSessionStoreResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsSessionStoreResponse =
@@ -62680,11 +63124,11 @@ export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreRespons
 
 export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseSuccess =
   simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseError =
   simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse =
@@ -62726,11 +63170,11 @@ export type simulateApiHarnessConversationsWorkspaceResponseDefault = {
 
 export type simulateApiHarnessConversationsWorkspaceResponseSuccess =
   simulateApiHarnessConversationsWorkspaceResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessConversationsWorkspaceResponseError =
   simulateApiHarnessConversationsWorkspaceResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessConversationsWorkspaceResponse =
@@ -62771,13 +63215,13 @@ export type simulateApiHarnessGithubWebhookCreateResponseDefault = {
 
 export type simulateApiHarnessGithubWebhookCreateResponseSuccess =
   simulateApiHarnessGithubWebhookCreateResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessGithubWebhookCreateResponseError = (
   | simulateApiHarnessGithubWebhookCreateResponse429
   | simulateApiHarnessGithubWebhookCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiHarnessGithubWebhookCreateResponse =
@@ -62815,11 +63259,11 @@ export type simulateApiHarnessIngressReadResponseDefault = {
 
 export type simulateApiHarnessIngressReadResponseSuccess =
   simulateApiHarnessIngressReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessIngressReadResponseError =
   simulateApiHarnessIngressReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessIngressReadResponse =
@@ -62869,11 +63313,11 @@ export type simulateApiHarnessIngressCreateResponseSuccess = (
   | simulateApiHarnessIngressCreateResponse200
   | simulateApiHarnessIngressCreateResponse201
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type simulateApiHarnessIngressCreateResponseError =
   simulateApiHarnessIngressCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessIngressCreateResponse =
@@ -62926,11 +63370,11 @@ export type simulateApiHarnessIngressUpdateResponseSuccess = (
   | simulateApiHarnessIngressUpdateResponse200
   | simulateApiHarnessIngressUpdateResponse201
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type simulateApiHarnessIngressUpdateResponseError =
   simulateApiHarnessIngressUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessIngressUpdateResponse =
@@ -62983,11 +63427,11 @@ export type simulateApiHarnessIngressPartialUpdateResponseSuccess = (
   | simulateApiHarnessIngressPartialUpdateResponse200
   | simulateApiHarnessIngressPartialUpdateResponse201
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type simulateApiHarnessIngressPartialUpdateResponseError =
   simulateApiHarnessIngressPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessIngressPartialUpdateResponse =
@@ -63033,11 +63477,11 @@ export type simulateApiHarnessIngressDeleteResponseDefault = {
 
 export type simulateApiHarnessIngressDeleteResponseSuccess =
   simulateApiHarnessIngressDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessIngressDeleteResponseError =
   simulateApiHarnessIngressDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateApiHarnessIngressDeleteResponse =
@@ -63085,13 +63529,13 @@ export type simulateApiLivekitCallConfigReadResponseDefault = {
 
 export type simulateApiLivekitCallConfigReadResponseSuccess =
   simulateApiLivekitCallConfigReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitCallConfigReadResponseError = (
   | simulateApiLivekitCallConfigReadResponse404
   | simulateApiLivekitCallConfigReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitCallConfigReadResponse =
@@ -63140,14 +63584,14 @@ export type simulateApiLivekitCallExecutionPartialUpdateResponseDefault = {
 
 export type simulateApiLivekitCallExecutionPartialUpdateResponseSuccess =
   simulateApiLivekitCallExecutionPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitCallExecutionPartialUpdateResponseError = (
   | simulateApiLivekitCallExecutionPartialUpdateResponse400
   | simulateApiLivekitCallExecutionPartialUpdateResponse404
   | simulateApiLivekitCallExecutionPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitCallExecutionPartialUpdateResponse =
@@ -63206,7 +63650,7 @@ export type simulateApiLivekitListenerTokenReadResponseDefault = {
 
 export type simulateApiLivekitListenerTokenReadResponseSuccess =
   simulateApiLivekitListenerTokenReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitListenerTokenReadResponseError = (
   | simulateApiLivekitListenerTokenReadResponse400
@@ -63214,7 +63658,7 @@ export type simulateApiLivekitListenerTokenReadResponseError = (
   | simulateApiLivekitListenerTokenReadResponse500
   | simulateApiLivekitListenerTokenReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitListenerTokenReadResponse =
@@ -63263,13 +63707,13 @@ export type simulateApiLivekitPhoneResolutionReadResponseDefault = {
 
 export type simulateApiLivekitPhoneResolutionReadResponseSuccess =
   simulateApiLivekitPhoneResolutionReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitPhoneResolutionReadResponseError = (
   | simulateApiLivekitPhoneResolutionReadResponse404
   | simulateApiLivekitPhoneResolutionReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitPhoneResolutionReadResponse =
@@ -63320,14 +63764,14 @@ export type simulateApiLivekitTemporalSignalCreateResponseDefault = {
 
 export type simulateApiLivekitTemporalSignalCreateResponseSuccess =
   simulateApiLivekitTemporalSignalCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitTemporalSignalCreateResponseError = (
   | simulateApiLivekitTemporalSignalCreateResponse400
   | simulateApiLivekitTemporalSignalCreateResponse502
   | simulateApiLivekitTemporalSignalCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitTemporalSignalCreateResponse =
@@ -63378,14 +63822,14 @@ export type simulateApiLivekitTranscriptsCreateResponseDefault = {
 
 export type simulateApiLivekitTranscriptsCreateResponseSuccess =
   simulateApiLivekitTranscriptsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitTranscriptsCreateResponseError = (
   | simulateApiLivekitTranscriptsCreateResponse400
   | simulateApiLivekitTranscriptsCreateResponse404
   | simulateApiLivekitTranscriptsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitTranscriptsCreateResponse =
@@ -63432,13 +63876,13 @@ export type simulateApiLivekitValidateCredentialsCreateResponseDefault = {
 
 export type simulateApiLivekitValidateCredentialsCreateResponseSuccess =
   simulateApiLivekitValidateCredentialsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitValidateCredentialsCreateResponseError = (
   | simulateApiLivekitValidateCredentialsCreateResponse400
   | simulateApiLivekitValidateCredentialsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitValidateCredentialsCreateResponse =
@@ -63489,13 +63933,13 @@ export type simulateApiLivekitWebhookCreateResponseDefault = {
 
 export type simulateApiLivekitWebhookCreateResponseSuccess =
   simulateApiLivekitWebhookCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiLivekitWebhookCreateResponseError = (
   | simulateApiLivekitWebhookCreateResponse401
   | simulateApiLivekitWebhookCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiLivekitWebhookCreateResponse =
@@ -63550,14 +63994,14 @@ export type simulateApiPersonasListResponseDefault = {
 
 export type simulateApiPersonasListResponseSuccess =
   simulateApiPersonasListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasListResponseError = (
   | simulateApiPersonasListResponse400
   | simulateApiPersonasListResponse500
   | simulateApiPersonasListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasListResponse =
@@ -63624,14 +64068,14 @@ export type simulateApiPersonasCreateResponseDefault = {
 
 export type simulateApiPersonasCreateResponseSuccess =
   simulateApiPersonasCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasCreateResponseError = (
   | simulateApiPersonasCreateResponse400
   | simulateApiPersonasCreateResponse500
   | simulateApiPersonasCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasCreateResponse =
@@ -63677,13 +64121,13 @@ export type simulateApiPersonasDuplicateCreateResponseDefault = {
 
 export type simulateApiPersonasDuplicateCreateResponseSuccess =
   simulateApiPersonasDuplicateCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasDuplicateCreateResponseError = (
   | simulateApiPersonasDuplicateCreateResponse400
   | simulateApiPersonasDuplicateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasDuplicateCreateResponse =
@@ -63730,13 +64174,13 @@ export type simulateApiPersonasFieldOptionsResponseDefault = {
 
 export type simulateApiPersonasFieldOptionsResponseSuccess =
   simulateApiPersonasFieldOptionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasFieldOptionsResponseError = (
   | simulateApiPersonasFieldOptionsResponse500
   | simulateApiPersonasFieldOptionsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasFieldOptionsResponse =
@@ -63798,13 +64242,13 @@ export type simulateApiPersonasSystemPersonasResponseDefault = {
 
 export type simulateApiPersonasSystemPersonasResponseSuccess =
   simulateApiPersonasSystemPersonasResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasSystemPersonasResponseError = (
   | simulateApiPersonasSystemPersonasResponse500
   | simulateApiPersonasSystemPersonasResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasSystemPersonasResponse =
@@ -63871,14 +64315,14 @@ export type simulateApiPersonasWorkspacePersonasResponseDefault = {
 
 export type simulateApiPersonasWorkspacePersonasResponseSuccess =
   simulateApiPersonasWorkspacePersonasResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasWorkspacePersonasResponseError = (
   | simulateApiPersonasWorkspacePersonasResponse400
   | simulateApiPersonasWorkspacePersonasResponse500
   | simulateApiPersonasWorkspacePersonasResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasWorkspacePersonasResponse =
@@ -63945,14 +64389,14 @@ export type simulateApiPersonasReadResponseDefault = {
 
 export type simulateApiPersonasReadResponseSuccess =
   simulateApiPersonasReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasReadResponseError = (
   | simulateApiPersonasReadResponse404
   | simulateApiPersonasReadResponse500
   | simulateApiPersonasReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasReadResponse =
@@ -64011,7 +64455,7 @@ export type simulateApiPersonasUpdateResponseDefault = {
 
 export type simulateApiPersonasUpdateResponseSuccess =
   simulateApiPersonasUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasUpdateResponseError = (
   | simulateApiPersonasUpdateResponse400
@@ -64020,7 +64464,7 @@ export type simulateApiPersonasUpdateResponseError = (
   | simulateApiPersonasUpdateResponse500
   | simulateApiPersonasUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasUpdateResponse =
@@ -64082,7 +64526,7 @@ export type simulateApiPersonasPartialUpdateResponseDefault = {
 
 export type simulateApiPersonasPartialUpdateResponseSuccess =
   simulateApiPersonasPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasPartialUpdateResponseError = (
   | simulateApiPersonasPartialUpdateResponse400
@@ -64091,7 +64535,7 @@ export type simulateApiPersonasPartialUpdateResponseError = (
   | simulateApiPersonasPartialUpdateResponse500
   | simulateApiPersonasPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasPartialUpdateResponse =
@@ -64148,7 +64592,7 @@ export type simulateApiPersonasDeleteResponseDefault = {
 
 export type simulateApiPersonasDeleteResponseSuccess =
   simulateApiPersonasDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasDeleteResponseError = (
   | simulateApiPersonasDeleteResponse403
@@ -64156,7 +64600,7 @@ export type simulateApiPersonasDeleteResponseError = (
   | simulateApiPersonasDeleteResponse500
   | simulateApiPersonasDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasDeleteResponse =
@@ -64210,7 +64654,7 @@ export type simulateApiPersonasDuplicateResponseDefault = {
 
 export type simulateApiPersonasDuplicateResponseSuccess =
   simulateApiPersonasDuplicateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiPersonasDuplicateResponseError = (
   | simulateApiPersonasDuplicateResponse400
@@ -64218,7 +64662,7 @@ export type simulateApiPersonasDuplicateResponseError = (
   | simulateApiPersonasDuplicateResponse500
   | simulateApiPersonasDuplicateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiPersonasDuplicateResponse =
@@ -64275,7 +64719,7 @@ export type simulateApiRunTestsListResponseDefault = {
 
 export type simulateApiRunTestsListResponseSuccess =
   simulateApiRunTestsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiRunTestsListResponseError = (
   | simulateApiRunTestsListResponse404
@@ -64283,7 +64727,7 @@ export type simulateApiRunTestsListResponseError = (
   | simulateApiRunTestsListResponse503
   | simulateApiRunTestsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiRunTestsListResponse =
@@ -64355,14 +64799,14 @@ export type simulateApiTestExecutionsListResponseDefault = {
 
 export type simulateApiTestExecutionsListResponseSuccess =
   simulateApiTestExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateApiTestExecutionsListResponseError = (
   | simulateApiTestExecutionsListResponse404
   | simulateApiTestExecutionsListResponse500
   | simulateApiTestExecutionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateApiTestExecutionsListResponse =
@@ -64434,14 +64878,14 @@ export type simulateCallExecutionsReadResponseDefault = {
 
 export type simulateCallExecutionsReadResponseSuccess =
   simulateCallExecutionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsReadResponseError = (
   | simulateCallExecutionsReadResponse404
   | simulateCallExecutionsReadResponse500
   | simulateCallExecutionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsReadResponse =
@@ -64495,7 +64939,7 @@ export type simulateCallExecutionsPartialUpdateResponseDefault = {
 
 export type simulateCallExecutionsPartialUpdateResponseSuccess =
   simulateCallExecutionsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsPartialUpdateResponseError = (
   | simulateCallExecutionsPartialUpdateResponse400
@@ -64503,7 +64947,7 @@ export type simulateCallExecutionsPartialUpdateResponseError = (
   | simulateCallExecutionsPartialUpdateResponse500
   | simulateCallExecutionsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsPartialUpdateResponse =
@@ -64557,14 +65001,14 @@ export type simulateCallExecutionsBranchAnalysisListResponseDefault = {
 
 export type simulateCallExecutionsBranchAnalysisListResponseSuccess =
   simulateCallExecutionsBranchAnalysisListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsBranchAnalysisListResponseError = (
   | simulateCallExecutionsBranchAnalysisListResponse404
   | simulateCallExecutionsBranchAnalysisListResponse500
   | simulateCallExecutionsBranchAnalysisListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsBranchAnalysisListResponse =
@@ -64615,14 +65059,14 @@ export type simulateCallExecutionsBranchAnalysisCreateResponseDefault = {
 
 export type simulateCallExecutionsBranchAnalysisCreateResponseSuccess =
   simulateCallExecutionsBranchAnalysisCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsBranchAnalysisCreateResponseError = (
   | simulateCallExecutionsBranchAnalysisCreateResponse404
   | simulateCallExecutionsBranchAnalysisCreateResponse500
   | simulateCallExecutionsBranchAnalysisCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsBranchAnalysisCreateResponse =
@@ -64676,14 +65120,14 @@ export type simulateCallExecutionsChatSendMessageCreateResponseDefault = {
 
 export type simulateCallExecutionsChatSendMessageCreateResponseSuccess =
   simulateCallExecutionsChatSendMessageCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsChatSendMessageCreateResponseError = (
   | simulateCallExecutionsChatSendMessageCreateResponse400
   | simulateCallExecutionsChatSendMessageCreateResponse500
   | simulateCallExecutionsChatSendMessageCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsChatSendMessageCreateResponse =
@@ -64737,14 +65181,14 @@ export type simulateCallExecutionsDeleteDeleteResponseDefault = {
 
 export type simulateCallExecutionsDeleteDeleteResponseSuccess =
   simulateCallExecutionsDeleteDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsDeleteDeleteResponseError = (
   | simulateCallExecutionsDeleteDeleteResponse404
   | simulateCallExecutionsDeleteDeleteResponse500
   | simulateCallExecutionsDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsDeleteDeleteResponse =
@@ -64795,14 +65239,14 @@ export type simulateCallExecutionsErrorLocalizerTasksListResponseDefault = {
 
 export type simulateCallExecutionsErrorLocalizerTasksListResponseSuccess =
   simulateCallExecutionsErrorLocalizerTasksListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsErrorLocalizerTasksListResponseError = (
   | simulateCallExecutionsErrorLocalizerTasksListResponse404
   | simulateCallExecutionsErrorLocalizerTasksListResponse500
   | simulateCallExecutionsErrorLocalizerTasksListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsErrorLocalizerTasksListResponse =
@@ -64853,14 +65297,14 @@ export type simulateCallExecutionsLogsListResponseDefault = {
 
 export type simulateCallExecutionsLogsListResponseSuccess =
   simulateCallExecutionsLogsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsLogsListResponseError = (
   | simulateCallExecutionsLogsListResponse404
   | simulateCallExecutionsLogsListResponse500
   | simulateCallExecutionsLogsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsLogsListResponse =
@@ -64911,14 +65355,14 @@ export type simulateCallExecutionsSessionComparisonListResponseDefault = {
 
 export type simulateCallExecutionsSessionComparisonListResponseSuccess =
   simulateCallExecutionsSessionComparisonListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsSessionComparisonListResponseError = (
   | simulateCallExecutionsSessionComparisonListResponse400
   | simulateCallExecutionsSessionComparisonListResponse500
   | simulateCallExecutionsSessionComparisonListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsSessionComparisonListResponse =
@@ -64969,14 +65413,14 @@ export type simulateCallExecutionsTranscriptsListResponseDefault = {
 
 export type simulateCallExecutionsTranscriptsListResponseSuccess =
   simulateCallExecutionsTranscriptsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateCallExecutionsTranscriptsListResponseError = (
   | simulateCallExecutionsTranscriptsListResponse404
   | simulateCallExecutionsTranscriptsListResponse500
   | simulateCallExecutionsTranscriptsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateCallExecutionsTranscriptsListResponse =
@@ -65032,7 +65476,7 @@ export type simulateExportReadResponseDefault = {
 
 export type simulateExportReadResponseSuccess =
   simulateExportReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateExportReadResponseError = (
   | simulateExportReadResponse400
@@ -65040,7 +65484,7 @@ export type simulateExportReadResponseError = (
   | simulateExportReadResponse500
   | simulateExportReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateExportReadResponse =
@@ -65113,14 +65557,14 @@ export type simulatePromptSimulationsScenariosListResponseDefault = {
 
 export type simulatePromptSimulationsScenariosListResponseSuccess =
   simulatePromptSimulationsScenariosListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulatePromptSimulationsScenariosListResponseError = (
   | simulatePromptSimulationsScenariosListResponse404
   | simulatePromptSimulationsScenariosListResponse500
   | simulatePromptSimulationsScenariosListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulatePromptSimulationsScenariosListResponse =
@@ -65182,7 +65626,7 @@ export type simulatePromptTemplatesSimulationsListResponseDefault = {
 
 export type simulatePromptTemplatesSimulationsListResponseSuccess =
   simulatePromptTemplatesSimulationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulatePromptTemplatesSimulationsListResponseError = (
   | simulatePromptTemplatesSimulationsListResponse400
@@ -65191,7 +65635,7 @@ export type simulatePromptTemplatesSimulationsListResponseError = (
   | simulatePromptTemplatesSimulationsListResponse503
   | simulatePromptTemplatesSimulationsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulatePromptTemplatesSimulationsListResponse =
@@ -65269,7 +65713,7 @@ export type simulatePromptTemplatesSimulationsCreateResponseDefault = {
 
 export type simulatePromptTemplatesSimulationsCreateResponseSuccess =
   simulatePromptTemplatesSimulationsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulatePromptTemplatesSimulationsCreateResponseError = (
   | simulatePromptTemplatesSimulationsCreateResponse400
@@ -65277,7 +65721,7 @@ export type simulatePromptTemplatesSimulationsCreateResponseError = (
   | simulatePromptTemplatesSimulationsCreateResponse500
   | simulatePromptTemplatesSimulationsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulatePromptTemplatesSimulationsCreateResponse =
@@ -65344,7 +65788,7 @@ export type simulatePromptTemplatesSimulationsReadResponseDefault = {
 
 export type simulatePromptTemplatesSimulationsReadResponseSuccess =
   simulatePromptTemplatesSimulationsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulatePromptTemplatesSimulationsReadResponseError = (
   | simulatePromptTemplatesSimulationsReadResponse404
@@ -65352,7 +65796,7 @@ export type simulatePromptTemplatesSimulationsReadResponseError = (
   | simulatePromptTemplatesSimulationsReadResponse503
   | simulatePromptTemplatesSimulationsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulatePromptTemplatesSimulationsReadResponse =
@@ -65410,7 +65854,7 @@ export type simulatePromptTemplatesSimulationsPartialUpdateResponseDefault = {
 
 export type simulatePromptTemplatesSimulationsPartialUpdateResponseSuccess =
   simulatePromptTemplatesSimulationsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulatePromptTemplatesSimulationsPartialUpdateResponseError = (
   | simulatePromptTemplatesSimulationsPartialUpdateResponse400
@@ -65418,7 +65862,7 @@ export type simulatePromptTemplatesSimulationsPartialUpdateResponseError = (
   | simulatePromptTemplatesSimulationsPartialUpdateResponse500
   | simulatePromptTemplatesSimulationsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulatePromptTemplatesSimulationsPartialUpdateResponse =
@@ -65477,14 +65921,14 @@ export type simulatePromptTemplatesSimulationsDeleteResponseDefault = {
 
 export type simulatePromptTemplatesSimulationsDeleteResponseSuccess =
   simulatePromptTemplatesSimulationsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulatePromptTemplatesSimulationsDeleteResponseError = (
   | simulatePromptTemplatesSimulationsDeleteResponse404
   | simulatePromptTemplatesSimulationsDeleteResponse500
   | simulatePromptTemplatesSimulationsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulatePromptTemplatesSimulationsDeleteResponse =
@@ -65542,7 +65986,7 @@ export type simulatePromptTemplatesSimulationsExecuteCreateResponseDefault = {
 
 export type simulatePromptTemplatesSimulationsExecuteCreateResponseSuccess =
   simulatePromptTemplatesSimulationsExecuteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulatePromptTemplatesSimulationsExecuteCreateResponseError = (
   | simulatePromptTemplatesSimulationsExecuteCreateResponse400
@@ -65550,7 +65994,7 @@ export type simulatePromptTemplatesSimulationsExecuteCreateResponseError = (
   | simulatePromptTemplatesSimulationsExecuteCreateResponse500
   | simulatePromptTemplatesSimulationsExecuteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulatePromptTemplatesSimulationsExecuteCreateResponse =
@@ -65612,14 +66056,14 @@ export type simulateRunTestsListResponseDefault = {
 
 export type simulateRunTestsListResponseSuccess =
   simulateRunTestsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsListResponseError = (
   | simulateRunTestsListResponse500
   | simulateRunTestsListResponse503
   | simulateRunTestsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsListResponse =
@@ -65695,14 +66139,14 @@ export type simulateRunTestsActiveListResponseDefault = {
 
 export type simulateRunTestsActiveListResponseSuccess =
   simulateRunTestsActiveListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsActiveListResponseError = (
   | simulateRunTestsActiveListResponse404
   | simulateRunTestsActiveListResponse500
   | simulateRunTestsActiveListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsActiveListResponse =
@@ -65755,7 +66199,7 @@ export type simulateRunTestsCreateCreateResponseDefault = {
 
 export type simulateRunTestsCreateCreateResponseSuccess =
   simulateRunTestsCreateCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsCreateCreateResponseError = (
   | simulateRunTestsCreateCreateResponse400
@@ -65763,7 +66207,7 @@ export type simulateRunTestsCreateCreateResponseError = (
   | simulateRunTestsCreateCreateResponse500
   | simulateRunTestsCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsCreateCreateResponse =
@@ -65814,14 +66258,14 @@ export type simulateRunTestsGetIdByNameReadResponseDefault = {
 
 export type simulateRunTestsGetIdByNameReadResponseSuccess =
   simulateRunTestsGetIdByNameReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsGetIdByNameReadResponseError = (
   | simulateRunTestsGetIdByNameReadResponse400
   | simulateRunTestsGetIdByNameReadResponse500
   | simulateRunTestsGetIdByNameReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsGetIdByNameReadResponse =
@@ -65875,7 +66319,7 @@ export type simulateRunTestsReadResponseDefault = {
 
 export type simulateRunTestsReadResponseSuccess =
   simulateRunTestsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsReadResponseError = (
   | simulateRunTestsReadResponse404
@@ -65883,7 +66327,7 @@ export type simulateRunTestsReadResponseError = (
   | simulateRunTestsReadResponse503
   | simulateRunTestsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsReadResponse =
@@ -65937,7 +66381,7 @@ export type simulateRunTestsPartialUpdateResponseDefault = {
 
 export type simulateRunTestsPartialUpdateResponseSuccess =
   simulateRunTestsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsPartialUpdateResponseError = (
   | simulateRunTestsPartialUpdateResponse400
@@ -65945,7 +66389,7 @@ export type simulateRunTestsPartialUpdateResponseError = (
   | simulateRunTestsPartialUpdateResponse500
   | simulateRunTestsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsPartialUpdateResponse =
@@ -65997,14 +66441,14 @@ export type simulateRunTestsDeleteResponseDefault = {
 
 export type simulateRunTestsDeleteResponseSuccess =
   simulateRunTestsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsDeleteResponseError = (
   | simulateRunTestsDeleteResponse404
   | simulateRunTestsDeleteResponse500
   | simulateRunTestsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsDeleteResponse =
@@ -66053,14 +66497,14 @@ export type simulateRunTestsAnalyticsListResponseDefault = {
 
 export type simulateRunTestsAnalyticsListResponseSuccess =
   simulateRunTestsAnalyticsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsAnalyticsListResponseError = (
   | simulateRunTestsAnalyticsListResponse404
   | simulateRunTestsAnalyticsListResponse500
   | simulateRunTestsAnalyticsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsAnalyticsListResponse =
@@ -66109,14 +66553,14 @@ export type simulateRunTestsCallExecutionsListResponseDefault = {
 
 export type simulateRunTestsCallExecutionsListResponseSuccess =
   simulateRunTestsCallExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsCallExecutionsListResponseError = (
   | simulateRunTestsCallExecutionsListResponse404
   | simulateRunTestsCallExecutionsListResponse500
   | simulateRunTestsCallExecutionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsCallExecutionsListResponse =
@@ -66175,7 +66619,7 @@ export type simulateRunTestsChatExecuteCreateResponseDefault = {
 
 export type simulateRunTestsChatExecuteCreateResponseSuccess =
   simulateRunTestsChatExecuteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsChatExecuteCreateResponseError = (
   | simulateRunTestsChatExecuteCreateResponse400
@@ -66183,7 +66627,7 @@ export type simulateRunTestsChatExecuteCreateResponseError = (
   | simulateRunTestsChatExecuteCreateResponse500
   | simulateRunTestsChatExecuteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsChatExecuteCreateResponse =
@@ -66240,7 +66684,7 @@ export type simulateRunTestsComponentsPartialUpdateResponseDefault = {
 
 export type simulateRunTestsComponentsPartialUpdateResponseSuccess =
   simulateRunTestsComponentsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsComponentsPartialUpdateResponseError = (
   | simulateRunTestsComponentsPartialUpdateResponse400
@@ -66248,7 +66692,7 @@ export type simulateRunTestsComponentsPartialUpdateResponseError = (
   | simulateRunTestsComponentsPartialUpdateResponse500
   | simulateRunTestsComponentsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsComponentsPartialUpdateResponse =
@@ -66307,7 +66751,7 @@ export type simulateRunTestsDeleteTestExecutionsCreateResponseDefault = {
 
 export type simulateRunTestsDeleteTestExecutionsCreateResponseSuccess =
   simulateRunTestsDeleteTestExecutionsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsDeleteTestExecutionsCreateResponseError = (
   | simulateRunTestsDeleteTestExecutionsCreateResponse400
@@ -66315,7 +66759,7 @@ export type simulateRunTestsDeleteTestExecutionsCreateResponseError = (
   | simulateRunTestsDeleteTestExecutionsCreateResponse500
   | simulateRunTestsDeleteTestExecutionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsDeleteTestExecutionsCreateResponse =
@@ -66374,7 +66818,7 @@ export type simulateRunTestsDeleteDeleteResponseDefault = {
 
 export type simulateRunTestsDeleteDeleteResponseSuccess =
   simulateRunTestsDeleteDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsDeleteDeleteResponseError = (
   | simulateRunTestsDeleteDeleteResponse400
@@ -66382,7 +66826,7 @@ export type simulateRunTestsDeleteDeleteResponseError = (
   | simulateRunTestsDeleteDeleteResponse500
   | simulateRunTestsDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsDeleteDeleteResponse =
@@ -66441,7 +66885,7 @@ export type simulateRunTestsEvalConfigsCreateResponseDefault = {
 
 export type simulateRunTestsEvalConfigsCreateResponseSuccess =
   simulateRunTestsEvalConfigsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsEvalConfigsCreateResponseError = (
   | simulateRunTestsEvalConfigsCreateResponse400
@@ -66450,7 +66894,7 @@ export type simulateRunTestsEvalConfigsCreateResponseError = (
   | simulateRunTestsEvalConfigsCreateResponse500
   | simulateRunTestsEvalConfigsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsEvalConfigsCreateResponse =
@@ -66513,7 +66957,7 @@ export type simulateRunTestsEvalConfigsDeleteResponseDefault = {
 
 export type simulateRunTestsEvalConfigsDeleteResponseSuccess =
   simulateRunTestsEvalConfigsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsEvalConfigsDeleteResponseError = (
   | simulateRunTestsEvalConfigsDeleteResponse400
@@ -66522,7 +66966,7 @@ export type simulateRunTestsEvalConfigsDeleteResponseError = (
   | simulateRunTestsEvalConfigsDeleteResponse500
   | simulateRunTestsEvalConfigsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsEvalConfigsDeleteResponse =
@@ -66576,14 +67020,14 @@ export type simulateRunTestsEvalConfigsGetStructureListResponseDefault = {
 
 export type simulateRunTestsEvalConfigsGetStructureListResponseSuccess =
   simulateRunTestsEvalConfigsGetStructureListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsEvalConfigsGetStructureListResponseError = (
   | simulateRunTestsEvalConfigsGetStructureListResponse404
   | simulateRunTestsEvalConfigsGetStructureListResponse500
   | simulateRunTestsEvalConfigsGetStructureListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsEvalConfigsGetStructureListResponse =
@@ -66646,7 +67090,7 @@ export type simulateRunTestsEvalConfigsUpdateCreateResponseDefault = {
 
 export type simulateRunTestsEvalConfigsUpdateCreateResponseSuccess =
   simulateRunTestsEvalConfigsUpdateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsEvalConfigsUpdateCreateResponseError = (
   | simulateRunTestsEvalConfigsUpdateCreateResponse400
@@ -66655,7 +67099,7 @@ export type simulateRunTestsEvalConfigsUpdateCreateResponseError = (
   | simulateRunTestsEvalConfigsUpdateCreateResponse500
   | simulateRunTestsEvalConfigsUpdateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsEvalConfigsUpdateCreateResponse =
@@ -66722,7 +67166,7 @@ export type simulateRunTestsEvalSummaryComparisonListResponseDefault = {
 
 export type simulateRunTestsEvalSummaryComparisonListResponseSuccess =
   simulateRunTestsEvalSummaryComparisonListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsEvalSummaryComparisonListResponseError = (
   | simulateRunTestsEvalSummaryComparisonListResponse400
@@ -66731,7 +67175,7 @@ export type simulateRunTestsEvalSummaryComparisonListResponseError = (
   | simulateRunTestsEvalSummaryComparisonListResponse500
   | simulateRunTestsEvalSummaryComparisonListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsEvalSummaryComparisonListResponse =
@@ -66806,7 +67250,7 @@ export type simulateRunTestsEvalSummaryListResponseDefault = {
 
 export type simulateRunTestsEvalSummaryListResponseSuccess =
   simulateRunTestsEvalSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsEvalSummaryListResponseError = (
   | simulateRunTestsEvalSummaryListResponse401
@@ -66814,7 +67258,7 @@ export type simulateRunTestsEvalSummaryListResponseError = (
   | simulateRunTestsEvalSummaryListResponse500
   | simulateRunTestsEvalSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsEvalSummaryListResponse =
@@ -66889,7 +67333,7 @@ export type simulateRunTestsExecuteCreateResponseDefault = {
 
 export type simulateRunTestsExecuteCreateResponseSuccess =
   simulateRunTestsExecuteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsExecuteCreateResponseError = (
   | simulateRunTestsExecuteCreateResponse400
@@ -66897,7 +67341,7 @@ export type simulateRunTestsExecuteCreateResponseError = (
   | simulateRunTestsExecuteCreateResponse500
   | simulateRunTestsExecuteCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsExecuteCreateResponse =
@@ -66949,14 +67393,14 @@ export type simulateRunTestsExecutionsListResponseDefault = {
 
 export type simulateRunTestsExecutionsListResponseSuccess =
   simulateRunTestsExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsExecutionsListResponseError = (
   | simulateRunTestsExecutionsListResponse404
   | simulateRunTestsExecutionsListResponse500
   | simulateRunTestsExecutionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsExecutionsListResponse =
@@ -67022,7 +67466,7 @@ export type simulateRunTestsPreviewExecutionsListResponseDefault = {
 
 export type simulateRunTestsPreviewExecutionsListResponseSuccess =
   simulateRunTestsPreviewExecutionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsPreviewExecutionsListResponseError = (
   | simulateRunTestsPreviewExecutionsListResponse400
@@ -67031,7 +67475,7 @@ export type simulateRunTestsPreviewExecutionsListResponseError = (
   | simulateRunTestsPreviewExecutionsListResponse503
   | simulateRunTestsPreviewExecutionsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsPreviewExecutionsListResponse =
@@ -67102,7 +67546,7 @@ export type simulateRunTestsRerunTestExecutionsCreateResponseDefault = {
 
 export type simulateRunTestsRerunTestExecutionsCreateResponseSuccess =
   simulateRunTestsRerunTestExecutionsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsRerunTestExecutionsCreateResponseError = (
   | simulateRunTestsRerunTestExecutionsCreateResponse400
@@ -67110,7 +67554,7 @@ export type simulateRunTestsRerunTestExecutionsCreateResponseError = (
   | simulateRunTestsRerunTestExecutionsCreateResponse500
   | simulateRunTestsRerunTestExecutionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsRerunTestExecutionsCreateResponse =
@@ -67180,7 +67624,7 @@ export type simulateRunTestsRunNewEvalsCreateResponseDefault = {
 
 export type simulateRunTestsRunNewEvalsCreateResponseSuccess =
   simulateRunTestsRunNewEvalsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsRunNewEvalsCreateResponseError = (
   | simulateRunTestsRunNewEvalsCreateResponse400
@@ -67190,7 +67634,7 @@ export type simulateRunTestsRunNewEvalsCreateResponseError = (
   | simulateRunTestsRunNewEvalsCreateResponse500
   | simulateRunTestsRunNewEvalsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsRunNewEvalsCreateResponse =
@@ -67243,14 +67687,14 @@ export type simulateRunTestsScenariosListResponseDefault = {
 
 export type simulateRunTestsScenariosListResponseSuccess =
   simulateRunTestsScenariosListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsScenariosListResponseError = (
   | simulateRunTestsScenariosListResponse404
   | simulateRunTestsScenariosListResponse500
   | simulateRunTestsScenariosListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsScenariosListResponse =
@@ -67303,14 +67747,14 @@ export type simulateRunTestsSdkCodeListResponseDefault = {
 
 export type simulateRunTestsSdkCodeListResponseSuccess =
   simulateRunTestsSdkCodeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsSdkCodeListResponseError = (
   | simulateRunTestsSdkCodeListResponse400
   | simulateRunTestsSdkCodeListResponse500
   | simulateRunTestsSdkCodeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsSdkCodeListResponse =
@@ -67359,14 +67803,14 @@ export type simulateRunTestsStatusListResponseDefault = {
 
 export type simulateRunTestsStatusListResponseSuccess =
   simulateRunTestsStatusListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateRunTestsStatusListResponseError = (
   | simulateRunTestsStatusListResponse404
   | simulateRunTestsStatusListResponse500
   | simulateRunTestsStatusListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateRunTestsStatusListResponse =
@@ -67415,14 +67859,14 @@ export type simulateScenariosListResponseDefault = {
 
 export type simulateScenariosListResponseSuccess =
   simulateScenariosListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosListResponseError = (
   | simulateScenariosListResponse404
   | simulateScenariosListResponse500
   | simulateScenariosListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosListResponse =
@@ -67490,14 +67934,14 @@ export type simulateScenariosCreateCreateResponseDefault = {
 
 export type simulateScenariosCreateCreateResponseSuccess =
   simulateScenariosCreateCreateResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosCreateCreateResponseError = (
   | simulateScenariosCreateCreateResponse400
   | simulateScenariosCreateCreateResponse500
   | simulateScenariosCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosCreateCreateResponse =
@@ -67549,14 +67993,14 @@ export type simulateScenariosGetColumnsListResponseDefault = {
 
 export type simulateScenariosGetColumnsListResponseSuccess =
   simulateScenariosGetColumnsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosGetColumnsListResponseError = (
   | simulateScenariosGetColumnsListResponse404
   | simulateScenariosGetColumnsListResponse500
   | simulateScenariosGetColumnsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosGetColumnsListResponse =
@@ -67624,14 +68068,14 @@ export type simulateScenariosReadResponseDefault = {
 
 export type simulateScenariosReadResponseSuccess =
   simulateScenariosReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosReadResponseError = (
   | simulateScenariosReadResponse404
   | simulateScenariosReadResponse500
   | simulateScenariosReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosReadResponse =
@@ -67686,7 +68130,7 @@ export type simulateScenariosAddColumnsCreateResponseDefault = {
 
 export type simulateScenariosAddColumnsCreateResponseSuccess =
   simulateScenariosAddColumnsCreateResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosAddColumnsCreateResponseError = (
   | simulateScenariosAddColumnsCreateResponse400
@@ -67694,7 +68138,7 @@ export type simulateScenariosAddColumnsCreateResponseError = (
   | simulateScenariosAddColumnsCreateResponse500
   | simulateScenariosAddColumnsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosAddColumnsCreateResponse =
@@ -67752,7 +68196,7 @@ export type simulateScenariosAddRowsCreateResponseDefault = {
 
 export type simulateScenariosAddRowsCreateResponseSuccess =
   simulateScenariosAddRowsCreateResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosAddRowsCreateResponseError = (
   | simulateScenariosAddRowsCreateResponse400
@@ -67760,7 +68204,7 @@ export type simulateScenariosAddRowsCreateResponseError = (
   | simulateScenariosAddRowsCreateResponse500
   | simulateScenariosAddRowsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosAddRowsCreateResponse =
@@ -67813,14 +68257,14 @@ export type simulateScenariosDeleteDeleteResponseDefault = {
 
 export type simulateScenariosDeleteDeleteResponseSuccess =
   simulateScenariosDeleteDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosDeleteDeleteResponseError = (
   | simulateScenariosDeleteDeleteResponse404
   | simulateScenariosDeleteDeleteResponse500
   | simulateScenariosDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosDeleteDeleteResponse =
@@ -67875,7 +68319,7 @@ export type simulateScenariosEditUpdateResponseDefault = {
 
 export type simulateScenariosEditUpdateResponseSuccess =
   simulateScenariosEditUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosEditUpdateResponseError = (
   | simulateScenariosEditUpdateResponse400
@@ -67883,7 +68327,7 @@ export type simulateScenariosEditUpdateResponseError = (
   | simulateScenariosEditUpdateResponse500
   | simulateScenariosEditUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosEditUpdateResponse =
@@ -67941,7 +68385,7 @@ export type simulateScenariosPromptsUpdateResponseDefault = {
 
 export type simulateScenariosPromptsUpdateResponseSuccess =
   simulateScenariosPromptsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateScenariosPromptsUpdateResponseError = (
   | simulateScenariosPromptsUpdateResponse400
@@ -67949,7 +68393,7 @@ export type simulateScenariosPromptsUpdateResponseError = (
   | simulateScenariosPromptsUpdateResponse500
   | simulateScenariosPromptsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateScenariosPromptsUpdateResponse =
@@ -68002,14 +68446,14 @@ export type simulateSimulatorAgentsListResponseDefault = {
 
 export type simulateSimulatorAgentsListResponseSuccess =
   simulateSimulatorAgentsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateSimulatorAgentsListResponseError = (
   | simulateSimulatorAgentsListResponse400
   | simulateSimulatorAgentsListResponse500
   | simulateSimulatorAgentsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateSimulatorAgentsListResponse =
@@ -68052,13 +68496,13 @@ export type simulateSimulatorAgentsCreateCreateResponseDefault = {
 
 export type simulateSimulatorAgentsCreateCreateResponseSuccess =
   simulateSimulatorAgentsCreateCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateSimulatorAgentsCreateCreateResponseError = (
   | simulateSimulatorAgentsCreateCreateResponse400
   | simulateSimulatorAgentsCreateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateSimulatorAgentsCreateCreateResponse =
@@ -68109,14 +68553,14 @@ export type simulateSimulatorAgentsReadResponseDefault = {
 
 export type simulateSimulatorAgentsReadResponseSuccess =
   simulateSimulatorAgentsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateSimulatorAgentsReadResponseError = (
   | simulateSimulatorAgentsReadResponse404
   | simulateSimulatorAgentsReadResponse500
   | simulateSimulatorAgentsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateSimulatorAgentsReadResponse =
@@ -68165,14 +68609,14 @@ export type simulateSimulatorAgentsDeleteDeleteResponseDefault = {
 
 export type simulateSimulatorAgentsDeleteDeleteResponseSuccess =
   simulateSimulatorAgentsDeleteDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateSimulatorAgentsDeleteDeleteResponseError = (
   | simulateSimulatorAgentsDeleteDeleteResponse404
   | simulateSimulatorAgentsDeleteDeleteResponse500
   | simulateSimulatorAgentsDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateSimulatorAgentsDeleteDeleteResponse =
@@ -68216,13 +68660,13 @@ export type simulateSimulatorAgentsEditUpdateResponseDefault = {
 
 export type simulateSimulatorAgentsEditUpdateResponseSuccess =
   simulateSimulatorAgentsEditUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateSimulatorAgentsEditUpdateResponseError = (
   | simulateSimulatorAgentsEditUpdateResponse400
   | simulateSimulatorAgentsEditUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateSimulatorAgentsEditUpdateResponse =
@@ -68274,14 +68718,14 @@ export type simulateTestExecutionsReadResponseDefault = {
 
 export type simulateTestExecutionsReadResponseSuccess =
   simulateTestExecutionsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsReadResponseError = (
   | simulateTestExecutionsReadResponse404
   | simulateTestExecutionsReadResponse500
   | simulateTestExecutionsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsReadResponse =
@@ -68356,14 +68800,14 @@ export type simulateTestExecutionsAnalyticsListResponseDefault = {
 
 export type simulateTestExecutionsAnalyticsListResponseSuccess =
   simulateTestExecutionsAnalyticsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsAnalyticsListResponseError = (
   | simulateTestExecutionsAnalyticsListResponse404
   | simulateTestExecutionsAnalyticsListResponse500
   | simulateTestExecutionsAnalyticsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsAnalyticsListResponse =
@@ -68424,7 +68868,7 @@ export type simulateTestExecutionsCancelCreateResponseDefault = {
 
 export type simulateTestExecutionsCancelCreateResponseSuccess =
   simulateTestExecutionsCancelCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsCancelCreateResponseError = (
   | simulateTestExecutionsCancelCreateResponse400
@@ -68433,7 +68877,7 @@ export type simulateTestExecutionsCancelCreateResponseError = (
   | simulateTestExecutionsCancelCreateResponse500
   | simulateTestExecutionsCancelCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsCancelCreateResponse =
@@ -68488,14 +68932,14 @@ export type simulateTestExecutionsChatCallExecutionsBatchCreateResponseDefault =
 
 export type simulateTestExecutionsChatCallExecutionsBatchCreateResponseSuccess =
   simulateTestExecutionsChatCallExecutionsBatchCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsChatCallExecutionsBatchCreateResponseError = (
   | simulateTestExecutionsChatCallExecutionsBatchCreateResponse400
   | simulateTestExecutionsChatCallExecutionsBatchCreateResponse500
   | simulateTestExecutionsChatCallExecutionsBatchCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsChatCallExecutionsBatchCreateResponse =
@@ -68563,7 +69007,7 @@ export type simulateTestExecutionsColumnOrderUpdateResponseDefault = {
 
 export type simulateTestExecutionsColumnOrderUpdateResponseSuccess =
   simulateTestExecutionsColumnOrderUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsColumnOrderUpdateResponseError = (
   | simulateTestExecutionsColumnOrderUpdateResponse400
@@ -68571,7 +69015,7 @@ export type simulateTestExecutionsColumnOrderUpdateResponseError = (
   | simulateTestExecutionsColumnOrderUpdateResponse500
   | simulateTestExecutionsColumnOrderUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsColumnOrderUpdateResponse =
@@ -68620,13 +69064,13 @@ export type simulateTestExecutionDebugAnalysisRetrieveResponseDefault = {
 
 export type simulateTestExecutionDebugAnalysisRetrieveResponseSuccess =
   simulateTestExecutionDebugAnalysisRetrieveResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionDebugAnalysisRetrieveResponseError = (
   | simulateTestExecutionDebugAnalysisRetrieveResponse404
   | simulateTestExecutionDebugAnalysisRetrieveResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionDebugAnalysisRetrieveResponse =
@@ -68677,14 +69121,14 @@ export type simulateTestExecutionDebugAnalysisCreateResponseDefault = {
 
 export type simulateTestExecutionDebugAnalysisCreateResponseSuccess =
   simulateTestExecutionDebugAnalysisCreateResponse202 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionDebugAnalysisCreateResponseError = (
   | simulateTestExecutionDebugAnalysisCreateResponse404
   | simulateTestExecutionDebugAnalysisCreateResponse409
   | simulateTestExecutionDebugAnalysisCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionDebugAnalysisCreateResponse =
@@ -68743,7 +69187,7 @@ export type simulateTestExecutionsDeleteDeleteResponseDefault = {
 
 export type simulateTestExecutionsDeleteDeleteResponseSuccess =
   simulateTestExecutionsDeleteDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsDeleteDeleteResponseError = (
   | simulateTestExecutionsDeleteDeleteResponse400
@@ -68751,7 +69195,7 @@ export type simulateTestExecutionsDeleteDeleteResponseError = (
   | simulateTestExecutionsDeleteDeleteResponse500
   | simulateTestExecutionsDeleteDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsDeleteDeleteResponse =
@@ -68802,14 +69246,14 @@ export type simulateTestExecutionsEvalExplanationSummaryListResponseDefault = {
 
 export type simulateTestExecutionsEvalExplanationSummaryListResponseSuccess =
   simulateTestExecutionsEvalExplanationSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsEvalExplanationSummaryListResponseError = (
   | simulateTestExecutionsEvalExplanationSummaryListResponse404
   | simulateTestExecutionsEvalExplanationSummaryListResponse500
   | simulateTestExecutionsEvalExplanationSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsEvalExplanationSummaryListResponse =
@@ -68865,7 +69309,7 @@ export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseDef
 
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseSuccess =
   simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseError =
   (
@@ -68873,7 +69317,7 @@ export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseErr
     | simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse500
     | simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse =
@@ -68930,14 +69374,14 @@ export type simulateTestExecutionsKpisListResponseDefault = {
 
 export type simulateTestExecutionsKpisListResponseSuccess =
   simulateTestExecutionsKpisListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsKpisListResponseError = (
   | simulateTestExecutionsKpisListResponse404
   | simulateTestExecutionsKpisListResponse500
   | simulateTestExecutionsKpisListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsKpisListResponse =
@@ -68988,14 +69432,14 @@ export type simulateTestExecutionsOptimiserAnalysisListResponseDefault = {
 
 export type simulateTestExecutionsOptimiserAnalysisListResponseSuccess =
   simulateTestExecutionsOptimiserAnalysisListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsOptimiserAnalysisListResponseError = (
   | simulateTestExecutionsOptimiserAnalysisListResponse404
   | simulateTestExecutionsOptimiserAnalysisListResponse500
   | simulateTestExecutionsOptimiserAnalysisListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsOptimiserAnalysisListResponse =
@@ -69053,7 +69497,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault 
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseSuccess =
   simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseError =
   (
@@ -69062,7 +69506,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseError =
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse =
@@ -69116,14 +69560,14 @@ export type simulateTestExecutionsPerformanceSummaryListResponseDefault = {
 
 export type simulateTestExecutionsPerformanceSummaryListResponseSuccess =
   simulateTestExecutionsPerformanceSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsPerformanceSummaryListResponseError = (
   | simulateTestExecutionsPerformanceSummaryListResponse404
   | simulateTestExecutionsPerformanceSummaryListResponse500
   | simulateTestExecutionsPerformanceSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsPerformanceSummaryListResponse =
@@ -69184,7 +69628,7 @@ export type simulateTestExecutionsPreviewCallsListResponseDefault = {
 
 export type simulateTestExecutionsPreviewCallsListResponseSuccess =
   simulateTestExecutionsPreviewCallsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsPreviewCallsListResponseError = (
   | simulateTestExecutionsPreviewCallsListResponse400
@@ -69193,7 +69637,7 @@ export type simulateTestExecutionsPreviewCallsListResponseError = (
   | simulateTestExecutionsPreviewCallsListResponse503
   | simulateTestExecutionsPreviewCallsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsPreviewCallsListResponse =
@@ -69281,7 +69725,7 @@ export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
   | simulateTestExecutionsRerunCallsCreateResponse200
   | simulateTestExecutionsRerunCallsCreateResponse202
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type simulateTestExecutionsRerunCallsCreateResponseError = (
   | simulateTestExecutionsRerunCallsCreateResponse400
@@ -69291,7 +69735,7 @@ export type simulateTestExecutionsRerunCallsCreateResponseError = (
   | simulateTestExecutionsRerunCallsCreateResponse503
   | simulateTestExecutionsRerunCallsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsRerunCallsCreateResponse =
@@ -69345,14 +69789,14 @@ export type simulateTestExecutionsTranscriptsListResponseDefault = {
 
 export type simulateTestExecutionsTranscriptsListResponseSuccess =
   simulateTestExecutionsTranscriptsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateTestExecutionsTranscriptsListResponseError = (
   | simulateTestExecutionsTranscriptsListResponse404
   | simulateTestExecutionsTranscriptsListResponse500
   | simulateTestExecutionsTranscriptsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateTestExecutionsTranscriptsListResponse =
@@ -69393,11 +69837,11 @@ export type simulateV3CallExecutionDetailResponseDefault = {
 
 export type simulateV3CallExecutionDetailResponseSuccess =
   simulateV3CallExecutionDetailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateV3CallExecutionDetailResponseError =
   simulateV3CallExecutionDetailResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateV3CallExecutionDetailResponse =
@@ -69435,11 +69879,11 @@ export type simulateV3TestExecutionAnalyticsResponseDefault = {
 
 export type simulateV3TestExecutionAnalyticsResponseSuccess =
   simulateV3TestExecutionAnalyticsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateV3TestExecutionAnalyticsResponseError =
   simulateV3TestExecutionAnalyticsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateV3TestExecutionAnalyticsResponse =
@@ -69477,11 +69921,11 @@ export type simulateV3TestExecutionCallsResponseDefault = {
 
 export type simulateV3TestExecutionCallsResponseSuccess =
   simulateV3TestExecutionCallsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateV3TestExecutionCallsResponseError =
   simulateV3TestExecutionCallsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateV3TestExecutionCallsResponse =
@@ -69537,11 +69981,11 @@ export type simulateV3TestExecutionExportResponseDefault = {
 
 export type simulateV3TestExecutionExportResponseSuccess =
   simulateV3TestExecutionExportResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateV3TestExecutionExportResponseError =
   simulateV3TestExecutionExportResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateV3TestExecutionExportResponse =
@@ -69582,11 +70026,11 @@ export type simulateV3TestExecutionReliabilityResponseDefault = {
 
 export type simulateV3TestExecutionReliabilityResponseSuccess =
   simulateV3TestExecutionReliabilityResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateV3TestExecutionReliabilityResponseError =
   simulateV3TestExecutionReliabilityResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type simulateV3TestExecutionReliabilityResponse =
@@ -69632,13 +70076,13 @@ export type simulateV3TestExecutionTracesResponseDefault = {
 
 export type simulateV3TestExecutionTracesResponseSuccess =
   simulateV3TestExecutionTracesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type simulateV3TestExecutionTracesResponseError = (
   | simulateV3TestExecutionTracesResponse503
   | simulateV3TestExecutionTracesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type simulateV3TestExecutionTracesResponse =
@@ -69694,11 +70138,11 @@ export type telemetryHeartbeatCreateResponseDefault = {
 
 export type telemetryHeartbeatCreateResponseSuccess =
   telemetryHeartbeatCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type telemetryHeartbeatCreateResponseError =
   telemetryHeartbeatCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type telemetryHeartbeatCreateResponse =
@@ -69736,11 +70180,11 @@ export type telemetryRegisterCreateResponseDefault = {
 
 export type telemetryRegisterCreateResponseSuccess =
   telemetryRegisterCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type telemetryRegisterCreateResponseError =
   telemetryRegisterCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type telemetryRegisterCreateResponse =
@@ -69777,10 +70221,10 @@ export type tracerAlertsListResponseDefault = {
 };
 
 export type tracerAlertsListResponseSuccess = tracerAlertsListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerAlertsListResponseError = tracerAlertsListResponseDefault & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerAlertsListResponse =
@@ -69829,11 +70273,11 @@ export type tracerAlertsCreateResponseDefault = {
 
 export type tracerAlertsCreateResponseSuccess =
   tracerAlertsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerAlertsCreateResponseError =
   tracerAlertsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerAlertsCreateResponse =
@@ -69868,11 +70312,11 @@ export type tracerAlertsErrorFeedTestCreateResponseDefault = {
 
 export type tracerAlertsErrorFeedTestCreateResponseSuccess =
   tracerAlertsErrorFeedTestCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerAlertsErrorFeedTestCreateResponseError =
   tracerAlertsErrorFeedTestCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerAlertsErrorFeedTestCreateResponse =
@@ -69911,11 +70355,11 @@ export type tracerAlertsOptionsListResponseDefault = {
 
 export type tracerAlertsOptionsListResponseSuccess =
   tracerAlertsOptionsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerAlertsOptionsListResponseError =
   tracerAlertsOptionsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerAlertsOptionsListResponse =
@@ -69968,10 +70412,10 @@ export type tracerAlertsReadResponseDefault = {
 };
 
 export type tracerAlertsReadResponseSuccess = tracerAlertsReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerAlertsReadResponseError = tracerAlertsReadResponseDefault & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerAlertsReadResponse =
@@ -70008,11 +70452,11 @@ export type tracerAlertsPartialUpdateResponseDefault = {
 
 export type tracerAlertsPartialUpdateResponseSuccess =
   tracerAlertsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerAlertsPartialUpdateResponseError =
   tracerAlertsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerAlertsPartialUpdateResponse =
@@ -70055,11 +70499,11 @@ export type tracerAlertsDeleteResponseDefault = {
 
 export type tracerAlertsDeleteResponseSuccess =
   tracerAlertsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerAlertsDeleteResponseError =
   tracerAlertsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerAlertsDeleteResponse =
@@ -70106,14 +70550,14 @@ export type tracerBulkAnnotationCreateResponseDefault = {
 
 export type tracerBulkAnnotationCreateResponseSuccess =
   tracerBulkAnnotationCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerBulkAnnotationCreateResponseError = (
   | tracerBulkAnnotationCreateResponse400
   | tracerBulkAnnotationCreateResponse500
   | tracerBulkAnnotationCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerBulkAnnotationCreateResponse =
@@ -70166,7 +70610,7 @@ export type tracerChartsFetchGraphResponseDefault = {
 
 export type tracerChartsFetchGraphResponseSuccess =
   tracerChartsFetchGraphResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerChartsFetchGraphResponseError = (
   | tracerChartsFetchGraphResponse400
@@ -70174,7 +70618,7 @@ export type tracerChartsFetchGraphResponseError = (
   | tracerChartsFetchGraphResponse503
   | tracerChartsFetchGraphResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerChartsFetchGraphResponse =
@@ -70243,11 +70687,11 @@ export type tracerCustomEvalConfigListResponseDefault = {
 
 export type tracerCustomEvalConfigListResponseSuccess =
   tracerCustomEvalConfigListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigListResponseError =
   tracerCustomEvalConfigListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigListResponse =
@@ -70301,11 +70745,11 @@ export type tracerCustomEvalConfigCreateResponseDefault = {
 
 export type tracerCustomEvalConfigCreateResponseSuccess =
   tracerCustomEvalConfigCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigCreateResponseError =
   tracerCustomEvalConfigCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigCreateResponse =
@@ -70343,11 +70787,11 @@ export type tracerCustomEvalConfigCheckExistsResponseDefault = {
 
 export type tracerCustomEvalConfigCheckExistsResponseSuccess =
   tracerCustomEvalConfigCheckExistsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigCheckExistsResponseError =
   tracerCustomEvalConfigCheckExistsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigCheckExistsResponse =
@@ -70385,11 +70829,11 @@ export type tracerCustomEvalConfigGetCustomEvalByNameResponseDefault = {
 
 export type tracerCustomEvalConfigGetCustomEvalByNameResponseSuccess =
   tracerCustomEvalConfigGetCustomEvalByNameResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigGetCustomEvalByNameResponseError =
   tracerCustomEvalConfigGetCustomEvalByNameResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigGetCustomEvalByNameResponse =
@@ -70427,11 +70871,11 @@ export type tracerCustomEvalConfigListCustomEvalConfigsResponseDefault = {
 
 export type tracerCustomEvalConfigListCustomEvalConfigsResponseSuccess =
   tracerCustomEvalConfigListCustomEvalConfigsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigListCustomEvalConfigsResponseError =
   tracerCustomEvalConfigListCustomEvalConfigsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigListCustomEvalConfigsResponse =
@@ -70488,11 +70932,11 @@ export type tracerCustomEvalConfigRunEvaluationResponseDefault = {
 
 export type tracerCustomEvalConfigRunEvaluationResponseSuccess =
   tracerCustomEvalConfigRunEvaluationResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigRunEvaluationResponseError =
   tracerCustomEvalConfigRunEvaluationResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigRunEvaluationResponse =
@@ -70530,11 +70974,11 @@ export type tracerCustomEvalConfigReadResponseDefault = {
 
 export type tracerCustomEvalConfigReadResponseSuccess =
   tracerCustomEvalConfigReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigReadResponseError =
   tracerCustomEvalConfigReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigReadResponse =
@@ -70570,11 +71014,11 @@ export type tracerCustomEvalConfigUpdateResponseDefault = {
 
 export type tracerCustomEvalConfigUpdateResponseSuccess =
   tracerCustomEvalConfigUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigUpdateResponseError =
   tracerCustomEvalConfigUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigUpdateResponse =
@@ -70613,11 +71057,11 @@ export type tracerCustomEvalConfigPartialUpdateResponseDefault = {
 
 export type tracerCustomEvalConfigPartialUpdateResponseSuccess =
   tracerCustomEvalConfigPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigPartialUpdateResponseError =
   tracerCustomEvalConfigPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigPartialUpdateResponse =
@@ -70656,11 +71100,11 @@ export type tracerCustomEvalConfigDeleteResponseDefault = {
 
 export type tracerCustomEvalConfigDeleteResponseSuccess =
   tracerCustomEvalConfigDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerCustomEvalConfigDeleteResponseError =
   tracerCustomEvalConfigDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerCustomEvalConfigDeleteResponse =
@@ -70696,11 +71140,11 @@ export type tracerDashboardListResponseDefault = {
 
 export type tracerDashboardListResponseSuccess =
   tracerDashboardListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardListResponseError =
   tracerDashboardListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardListResponse =
@@ -70732,11 +71176,11 @@ export type tracerDashboardCreateResponseDefault = {
 
 export type tracerDashboardCreateResponseSuccess =
   tracerDashboardCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardCreateResponseError =
   tracerDashboardCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardCreateResponse =
@@ -70794,7 +71238,7 @@ export type tracerDashboardFilterValuesResponseDefault = {
 
 export type tracerDashboardFilterValuesResponseSuccess =
   tracerDashboardFilterValuesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardFilterValuesResponseError = (
   | tracerDashboardFilterValuesResponse400
@@ -70803,7 +71247,7 @@ export type tracerDashboardFilterValuesResponseError = (
   | tracerDashboardFilterValuesResponse503
   | tracerDashboardFilterValuesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDashboardFilterValuesResponse =
@@ -70880,7 +71324,7 @@ export type tracerDashboardFilterValuesCreateResponseDefault = {
 
 export type tracerDashboardFilterValuesCreateResponseSuccess =
   tracerDashboardFilterValuesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardFilterValuesCreateResponseError = (
   | tracerDashboardFilterValuesCreateResponse400
@@ -70889,7 +71333,7 @@ export type tracerDashboardFilterValuesCreateResponseError = (
   | tracerDashboardFilterValuesCreateResponse503
   | tracerDashboardFilterValuesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDashboardFilterValuesCreateResponse =
@@ -70945,7 +71389,7 @@ export type tracerDashboardMetricsResponseDefault = {
 
 export type tracerDashboardMetricsResponseSuccess =
   tracerDashboardMetricsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardMetricsResponseError = (
   | tracerDashboardMetricsResponse400
@@ -70953,7 +71397,7 @@ export type tracerDashboardMetricsResponseError = (
   | tracerDashboardMetricsResponse503
   | tracerDashboardMetricsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDashboardMetricsResponse =
@@ -71027,7 +71471,7 @@ export type tracerDashboardMetricsCreateResponseDefault = {
 
 export type tracerDashboardMetricsCreateResponseSuccess =
   tracerDashboardMetricsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardMetricsCreateResponseError = (
   | tracerDashboardMetricsCreateResponse400
@@ -71035,7 +71479,7 @@ export type tracerDashboardMetricsCreateResponseError = (
   | tracerDashboardMetricsCreateResponse503
   | tracerDashboardMetricsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDashboardMetricsCreateResponse =
@@ -71093,7 +71537,7 @@ export type tracerDashboardQueryResponseDefault = {
 
 export type tracerDashboardQueryResponseSuccess =
   tracerDashboardQueryResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardQueryResponseError = (
   | tracerDashboardQueryResponse400
@@ -71101,7 +71545,7 @@ export type tracerDashboardQueryResponseError = (
   | tracerDashboardQueryResponse503
   | tracerDashboardQueryResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDashboardQueryResponse =
@@ -71167,11 +71611,11 @@ export type tracerDashboardSimulationAgentsResponseDefault = {
 
 export type tracerDashboardSimulationAgentsResponseSuccess =
   tracerDashboardSimulationAgentsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardSimulationAgentsResponseError =
   tracerDashboardSimulationAgentsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardSimulationAgentsResponse =
@@ -71209,11 +71653,11 @@ export type tracerDashboardWidgetsListResponseDefault = {
 
 export type tracerDashboardWidgetsListResponseSuccess =
   tracerDashboardWidgetsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsListResponseError =
   tracerDashboardWidgetsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsListResponse =
@@ -71269,11 +71713,11 @@ export type tracerDashboardWidgetsCreateResponseDefault = {
 
 export type tracerDashboardWidgetsCreateResponseSuccess =
   tracerDashboardWidgetsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsCreateResponseError =
   tracerDashboardWidgetsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsCreateResponse =
@@ -71327,7 +71771,7 @@ export type tracerDashboardWidgetsPreviewQueryResponseDefault = {
 
 export type tracerDashboardWidgetsPreviewQueryResponseSuccess =
   tracerDashboardWidgetsPreviewQueryResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsPreviewQueryResponseError = (
   | tracerDashboardWidgetsPreviewQueryResponse400
@@ -71335,7 +71779,7 @@ export type tracerDashboardWidgetsPreviewQueryResponseError = (
   | tracerDashboardWidgetsPreviewQueryResponse503
   | tracerDashboardWidgetsPreviewQueryResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDashboardWidgetsPreviewQueryResponse =
@@ -71397,11 +71841,11 @@ export type tracerDashboardWidgetsReorderResponseDefault = {
 
 export type tracerDashboardWidgetsReorderResponseSuccess =
   tracerDashboardWidgetsReorderResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsReorderResponseError =
   tracerDashboardWidgetsReorderResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsReorderResponse =
@@ -71443,11 +71887,11 @@ export type tracerDashboardWidgetsReadResponseDefault = {
 
 export type tracerDashboardWidgetsReadResponseSuccess =
   tracerDashboardWidgetsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsReadResponseError =
   tracerDashboardWidgetsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsReadResponse =
@@ -71487,11 +71931,11 @@ export type tracerDashboardWidgetsUpdateResponseDefault = {
 
 export type tracerDashboardWidgetsUpdateResponseSuccess =
   tracerDashboardWidgetsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsUpdateResponseError =
   tracerDashboardWidgetsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsUpdateResponse =
@@ -71534,11 +71978,11 @@ export type tracerDashboardWidgetsPartialUpdateResponseDefault = {
 
 export type tracerDashboardWidgetsPartialUpdateResponseSuccess =
   tracerDashboardWidgetsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsPartialUpdateResponseError =
   tracerDashboardWidgetsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsPartialUpdateResponse =
@@ -71581,11 +72025,11 @@ export type tracerDashboardWidgetsDeleteResponseDefault = {
 
 export type tracerDashboardWidgetsDeleteResponseSuccess =
   tracerDashboardWidgetsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsDeleteResponseError =
   tracerDashboardWidgetsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsDeleteResponse =
@@ -71625,11 +72069,11 @@ export type tracerDashboardWidgetsDuplicateWidgetResponseDefault = {
 
 export type tracerDashboardWidgetsDuplicateWidgetResponseSuccess =
   tracerDashboardWidgetsDuplicateWidgetResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsDuplicateWidgetResponseError =
   tracerDashboardWidgetsDuplicateWidgetResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardWidgetsDuplicateWidgetResponse =
@@ -71690,7 +72134,7 @@ export type tracerDashboardWidgetsExecuteQueryResponseDefault = {
 
 export type tracerDashboardWidgetsExecuteQueryResponseSuccess =
   tracerDashboardWidgetsExecuteQueryResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardWidgetsExecuteQueryResponseError = (
   | tracerDashboardWidgetsExecuteQueryResponse400
@@ -71698,7 +72142,7 @@ export type tracerDashboardWidgetsExecuteQueryResponseError = (
   | tracerDashboardWidgetsExecuteQueryResponse503
   | tracerDashboardWidgetsExecuteQueryResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDashboardWidgetsExecuteQueryResponse =
@@ -71762,11 +72206,11 @@ export type tracerDashboardReadResponseDefault = {
 
 export type tracerDashboardReadResponseSuccess =
   tracerDashboardReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardReadResponseError =
   tracerDashboardReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardReadResponse =
@@ -71802,11 +72246,11 @@ export type tracerDashboardUpdateResponseDefault = {
 
 export type tracerDashboardUpdateResponseSuccess =
   tracerDashboardUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardUpdateResponseError =
   tracerDashboardUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardUpdateResponse =
@@ -71845,11 +72289,11 @@ export type tracerDashboardPartialUpdateResponseDefault = {
 
 export type tracerDashboardPartialUpdateResponseSuccess =
   tracerDashboardPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardPartialUpdateResponseError =
   tracerDashboardPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardPartialUpdateResponse =
@@ -71888,11 +72332,11 @@ export type tracerDashboardDeleteResponseDefault = {
 
 export type tracerDashboardDeleteResponseSuccess =
   tracerDashboardDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDashboardDeleteResponseError =
   tracerDashboardDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDashboardDeleteResponse =
@@ -71927,11 +72371,11 @@ export type tracerDatasetListResponseDefault = {
 };
 
 export type tracerDatasetListResponseSuccess = tracerDatasetListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerDatasetListResponseError =
   tracerDatasetListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDatasetListResponse =
@@ -71983,11 +72427,11 @@ export type tracerDatasetCreateResponseDefault = {
 
 export type tracerDatasetCreateResponseSuccess =
   tracerDatasetCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDatasetCreateResponseError =
   tracerDatasetCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDatasetCreateResponse =
@@ -72022,11 +72466,11 @@ export type tracerDatasetAddToExistingDatasetResponseDefault = {
 
 export type tracerDatasetAddToExistingDatasetResponseSuccess =
   tracerDatasetAddToExistingDatasetResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDatasetAddToExistingDatasetResponseError =
   tracerDatasetAddToExistingDatasetResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDatasetAddToExistingDatasetResponse =
@@ -72069,13 +72513,13 @@ export type tracerDatasetAddToNewDatasetResponseDefault = {
 
 export type tracerDatasetAddToNewDatasetResponseSuccess =
   tracerDatasetAddToNewDatasetResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDatasetAddToNewDatasetResponseError = (
   | tracerDatasetAddToNewDatasetResponse503
   | tracerDatasetAddToNewDatasetResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerDatasetAddToNewDatasetResponse =
@@ -72112,11 +72556,11 @@ export type tracerDatasetReadResponseDefault = {
 };
 
 export type tracerDatasetReadResponseSuccess = tracerDatasetReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerDatasetReadResponseError =
   tracerDatasetReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDatasetReadResponse =
@@ -72149,11 +72593,11 @@ export type tracerDatasetUpdateResponseDefault = {
 
 export type tracerDatasetUpdateResponseSuccess =
   tracerDatasetUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDatasetUpdateResponseError =
   tracerDatasetUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDatasetUpdateResponse =
@@ -72192,11 +72636,11 @@ export type tracerDatasetPartialUpdateResponseDefault = {
 
 export type tracerDatasetPartialUpdateResponseSuccess =
   tracerDatasetPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDatasetPartialUpdateResponseError =
   tracerDatasetPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDatasetPartialUpdateResponse =
@@ -72235,11 +72679,11 @@ export type tracerDatasetDeleteResponseDefault = {
 
 export type tracerDatasetDeleteResponseSuccess =
   tracerDatasetDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerDatasetDeleteResponseError =
   tracerDatasetDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerDatasetDeleteResponse =
@@ -72290,7 +72734,7 @@ export type tracerEvalTaskListResponseDefault = {
 
 export type tracerEvalTaskListResponseSuccess =
   tracerEvalTaskListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskListResponseError = (
   | tracerEvalTaskListResponse400
@@ -72298,7 +72742,7 @@ export type tracerEvalTaskListResponseError = (
   | tracerEvalTaskListResponse503
   | tracerEvalTaskListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskListResponse =
@@ -72363,14 +72807,14 @@ export type tracerEvalTaskCreateResponseDefault = {
 
 export type tracerEvalTaskCreateResponseSuccess =
   tracerEvalTaskCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskCreateResponseError = (
   | tracerEvalTaskCreateResponse400
   | tracerEvalTaskCreateResponse500
   | tracerEvalTaskCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskCreateResponse =
@@ -72397,7 +72841,7 @@ export const tracerEvalTaskCreate = async (
 };
 
 export type tracerEvalTaskGetEvalDetailsResponse200 = {
-  data: TracerEvalTaskGetEvalDetails200;
+  data: EvalTaskDetailsResponseApi;
   status: 200;
 };
 
@@ -72433,7 +72877,7 @@ export type tracerEvalTaskGetEvalDetailsResponseDefault = {
 
 export type tracerEvalTaskGetEvalDetailsResponseSuccess =
   tracerEvalTaskGetEvalDetailsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskGetEvalDetailsResponseError = (
   | tracerEvalTaskGetEvalDetailsResponse400
@@ -72443,7 +72887,7 @@ export type tracerEvalTaskGetEvalDetailsResponseError = (
   | tracerEvalTaskGetEvalDetailsResponse503
   | tracerEvalTaskGetEvalDetailsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskGetEvalDetailsResponse =
@@ -72451,7 +72895,7 @@ export type tracerEvalTaskGetEvalDetailsResponse =
   | tracerEvalTaskGetEvalDetailsResponseError;
 
 export const getTracerEvalTaskGetEvalDetailsUrl = (
-  params?: TracerEvalTaskGetEvalDetailsParams,
+  params: TracerEvalTaskGetEvalDetailsParams,
 ) => {
   const normalizedParams = new URLSearchParams();
 
@@ -72473,7 +72917,7 @@ export const getTracerEvalTaskGetEvalDetailsUrl = (
 };
 
 export const tracerEvalTaskGetEvalDetails = async (
-  params?: TracerEvalTaskGetEvalDetailsParams,
+  params: TracerEvalTaskGetEvalDetailsParams,
   options?: RequestInit,
 ): Promise<tracerEvalTaskGetEvalDetailsResponse> => {
   return apiMutator<tracerEvalTaskGetEvalDetailsResponse>(
@@ -72517,7 +72961,7 @@ export type tracerEvalTaskGetEvalTaskLogsResponseDefault = {
 
 export type tracerEvalTaskGetEvalTaskLogsResponseSuccess =
   tracerEvalTaskGetEvalTaskLogsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskGetEvalTaskLogsResponseError = (
   | tracerEvalTaskGetEvalTaskLogsResponse400
@@ -72526,7 +72970,7 @@ export type tracerEvalTaskGetEvalTaskLogsResponseError = (
   | tracerEvalTaskGetEvalTaskLogsResponse503
   | tracerEvalTaskGetEvalTaskLogsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskGetEvalTaskLogsResponse =
@@ -72600,7 +73044,7 @@ export type tracerEvalTaskGetUsageResponseDefault = {
 
 export type tracerEvalTaskGetUsageResponseSuccess =
   tracerEvalTaskGetUsageResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskGetUsageResponseError = (
   | tracerEvalTaskGetUsageResponse400
@@ -72609,7 +73053,7 @@ export type tracerEvalTaskGetUsageResponseError = (
   | tracerEvalTaskGetUsageResponse503
   | tracerEvalTaskGetUsageResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskGetUsageResponse =
@@ -72683,7 +73127,7 @@ export type tracerEvalTaskListEvalTasksResponseDefault = {
 
 export type tracerEvalTaskListEvalTasksResponseSuccess =
   tracerEvalTaskListEvalTasksResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskListEvalTasksResponseError = (
   | tracerEvalTaskListEvalTasksResponse400
@@ -72692,7 +73136,7 @@ export type tracerEvalTaskListEvalTasksResponseError = (
   | tracerEvalTaskListEvalTasksResponse503
   | tracerEvalTaskListEvalTasksResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskListEvalTasksResponse =
@@ -72769,7 +73213,7 @@ export type tracerEvalTaskListEvalTasksWithProjectNameResponseDefault = {
 
 export type tracerEvalTaskListEvalTasksWithProjectNameResponseSuccess =
   tracerEvalTaskListEvalTasksWithProjectNameResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskListEvalTasksWithProjectNameResponseError = (
   | tracerEvalTaskListEvalTasksWithProjectNameResponse400
@@ -72778,7 +73222,7 @@ export type tracerEvalTaskListEvalTasksWithProjectNameResponseError = (
   | tracerEvalTaskListEvalTasksWithProjectNameResponse503
   | tracerEvalTaskListEvalTasksWithProjectNameResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskListEvalTasksWithProjectNameResponse =
@@ -72845,14 +73289,14 @@ export type tracerEvalTaskMarkEvalTasksDeletedResponseDefault = {
 
 export type tracerEvalTaskMarkEvalTasksDeletedResponseSuccess =
   tracerEvalTaskMarkEvalTasksDeletedResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskMarkEvalTasksDeletedResponseError = (
   | tracerEvalTaskMarkEvalTasksDeletedResponse400
   | tracerEvalTaskMarkEvalTasksDeletedResponse500
   | tracerEvalTaskMarkEvalTasksDeletedResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskMarkEvalTasksDeletedResponse =
@@ -72900,14 +73344,14 @@ export type tracerEvalTaskPauseEvalTaskResponseDefault = {
 
 export type tracerEvalTaskPauseEvalTaskResponseSuccess =
   tracerEvalTaskPauseEvalTaskResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskPauseEvalTaskResponseError = (
   | tracerEvalTaskPauseEvalTaskResponse400
   | tracerEvalTaskPauseEvalTaskResponse500
   | tracerEvalTaskPauseEvalTaskResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskPauseEvalTaskResponse =
@@ -72952,6 +73396,171 @@ export const tracerEvalTaskPauseEvalTask = async (
   );
 };
 
+export type tracerEvalTaskSamplingAuditResponse200 = {
+  data: SamplingAuditResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingAuditResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingAuditResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerEvalTaskSamplingAuditResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerEvalTaskSamplingAuditResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingAuditResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerEvalTaskSamplingAuditResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingAuditResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 429 | 500 | 503>;
+};
+
+export type tracerEvalTaskSamplingAuditResponseSuccess =
+  tracerEvalTaskSamplingAuditResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerEvalTaskSamplingAuditResponseError = (
+  | tracerEvalTaskSamplingAuditResponse400
+  | tracerEvalTaskSamplingAuditResponse404
+  | tracerEvalTaskSamplingAuditResponse409
+  | tracerEvalTaskSamplingAuditResponse429
+  | tracerEvalTaskSamplingAuditResponse500
+  | tracerEvalTaskSamplingAuditResponse503
+  | tracerEvalTaskSamplingAuditResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerEvalTaskSamplingAuditResponse =
+  | tracerEvalTaskSamplingAuditResponseSuccess
+  | tracerEvalTaskSamplingAuditResponseError;
+
+export const getTracerEvalTaskSamplingAuditUrl = (
+  params: TracerEvalTaskSamplingAuditParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/eval-task/sampling_audit/?${stringifiedParams}`
+    : `/tracer/eval-task/sampling_audit/`;
+};
+
+/**
+ * Per-stratum design, realized sample, weights, Kish and balance.
+ */
+export const tracerEvalTaskSamplingAudit = async (
+  params: TracerEvalTaskSamplingAuditParams,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingAuditResponse> => {
+  return apiMutator<tracerEvalTaskSamplingAuditResponse>(
+    getTracerEvalTaskSamplingAuditUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerEvalTaskSamplingPreviewResponse200 = {
+  data: SamplingPreviewResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 500 | 503>;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseSuccess =
+  tracerEvalTaskSamplingPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerEvalTaskSamplingPreviewResponseError = (
+  | tracerEvalTaskSamplingPreviewResponse400
+  | tracerEvalTaskSamplingPreviewResponse429
+  | tracerEvalTaskSamplingPreviewResponse500
+  | tracerEvalTaskSamplingPreviewResponse503
+  | tracerEvalTaskSamplingPreviewResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse =
+  | tracerEvalTaskSamplingPreviewResponseSuccess
+  | tracerEvalTaskSamplingPreviewResponseError;
+
+export const getTracerEvalTaskSamplingPreviewUrl = () => {
+  return `/tracer/eval-task/sampling_preview/`;
+};
+
+export const tracerEvalTaskSamplingPreview = async (
+  samplingPreviewRequestApi: SamplingPreviewRequestApi,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingPreviewResponse> => {
+  return apiMutator<tracerEvalTaskSamplingPreviewResponse>(
+    getTracerEvalTaskSamplingPreviewUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(samplingPreviewRequestApi),
+    },
+  );
+};
+
 export type tracerEvalTaskUnpauseEvalTaskResponse200 = {
   data: EvalTaskMessageResponseApi;
   status: 200;
@@ -72974,14 +73583,14 @@ export type tracerEvalTaskUnpauseEvalTaskResponseDefault = {
 
 export type tracerEvalTaskUnpauseEvalTaskResponseSuccess =
   tracerEvalTaskUnpauseEvalTaskResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskUnpauseEvalTaskResponseError = (
   | tracerEvalTaskUnpauseEvalTaskResponse400
   | tracerEvalTaskUnpauseEvalTaskResponse500
   | tracerEvalTaskUnpauseEvalTaskResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskUnpauseEvalTaskResponse =
@@ -73048,14 +73657,14 @@ export type tracerEvalTaskUpdateEvalTaskResponseDefault = {
 
 export type tracerEvalTaskUpdateEvalTaskResponseSuccess =
   tracerEvalTaskUpdateEvalTaskResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskUpdateEvalTaskResponseError = (
   | tracerEvalTaskUpdateEvalTaskResponse400
   | tracerEvalTaskUpdateEvalTaskResponse500
   | tracerEvalTaskUpdateEvalTaskResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskUpdateEvalTaskResponse =
@@ -73113,7 +73722,7 @@ export type tracerEvalTaskReadResponseDefault = {
 
 export type tracerEvalTaskReadResponseSuccess =
   tracerEvalTaskReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskReadResponseError = (
   | tracerEvalTaskReadResponse400
@@ -73121,7 +73730,7 @@ export type tracerEvalTaskReadResponseError = (
   | tracerEvalTaskReadResponse503
   | tracerEvalTaskReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerEvalTaskReadResponse =
@@ -73157,11 +73766,11 @@ export type tracerEvalTaskUpdateResponseDefault = {
 
 export type tracerEvalTaskUpdateResponseSuccess =
   tracerEvalTaskUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskUpdateResponseError =
   tracerEvalTaskUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerEvalTaskUpdateResponse =
@@ -73200,11 +73809,11 @@ export type tracerEvalTaskPartialUpdateResponseDefault = {
 
 export type tracerEvalTaskPartialUpdateResponseSuccess =
   tracerEvalTaskPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskPartialUpdateResponseError =
   tracerEvalTaskPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerEvalTaskPartialUpdateResponse =
@@ -73243,11 +73852,11 @@ export type tracerEvalTaskDeleteResponseDefault = {
 
 export type tracerEvalTaskDeleteResponseSuccess =
   tracerEvalTaskDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerEvalTaskDeleteResponseError =
   tracerEvalTaskDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerEvalTaskDeleteResponse =
@@ -73303,7 +73912,7 @@ export type tracerFeedIntegrationsLinearTeamsListResponseDefault = {
 
 export type tracerFeedIntegrationsLinearTeamsListResponseSuccess =
   tracerFeedIntegrationsLinearTeamsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIntegrationsLinearTeamsListResponseError = (
   | tracerFeedIntegrationsLinearTeamsListResponse400
@@ -73312,7 +73921,7 @@ export type tracerFeedIntegrationsLinearTeamsListResponseError = (
   | tracerFeedIntegrationsLinearTeamsListResponse500
   | tracerFeedIntegrationsLinearTeamsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIntegrationsLinearTeamsListResponse =
@@ -73372,7 +73981,7 @@ export type tracerFeedIssuesListResponseDefault = {
 
 export type tracerFeedIssuesListResponseSuccess =
   tracerFeedIssuesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesListResponseError = (
   | tracerFeedIssuesListResponse400
@@ -73381,7 +73990,7 @@ export type tracerFeedIssuesListResponseError = (
   | tracerFeedIssuesListResponse500
   | tracerFeedIssuesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesListResponse =
@@ -73458,7 +74067,7 @@ export type tracerFeedIssuesStatsListResponseDefault = {
 
 export type tracerFeedIssuesStatsListResponseSuccess =
   tracerFeedIssuesStatsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesStatsListResponseError = (
   | tracerFeedIssuesStatsListResponse400
@@ -73467,7 +74076,7 @@ export type tracerFeedIssuesStatsListResponseError = (
   | tracerFeedIssuesStatsListResponse500
   | tracerFeedIssuesStatsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesStatsListResponse =
@@ -73544,7 +74153,7 @@ export type tracerFeedIssuesReadResponseDefault = {
 
 export type tracerFeedIssuesReadResponseSuccess =
   tracerFeedIssuesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesReadResponseError = (
   | tracerFeedIssuesReadResponse400
@@ -73553,7 +74162,7 @@ export type tracerFeedIssuesReadResponseError = (
   | tracerFeedIssuesReadResponse500
   | tracerFeedIssuesReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesReadResponse =
@@ -73632,7 +74241,7 @@ export type tracerFeedIssuesPartialUpdateResponseDefault = {
 
 export type tracerFeedIssuesPartialUpdateResponseSuccess =
   tracerFeedIssuesPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesPartialUpdateResponseError = (
   | tracerFeedIssuesPartialUpdateResponse400
@@ -73641,7 +74250,7 @@ export type tracerFeedIssuesPartialUpdateResponseError = (
   | tracerFeedIssuesPartialUpdateResponse500
   | tracerFeedIssuesPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesPartialUpdateResponse =
@@ -73703,7 +74312,7 @@ export type tracerFeedIssuesCreateLinearIssueCreateResponseDefault = {
 
 export type tracerFeedIssuesCreateLinearIssueCreateResponseSuccess =
   tracerFeedIssuesCreateLinearIssueCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesCreateLinearIssueCreateResponseError = (
   | tracerFeedIssuesCreateLinearIssueCreateResponse400
@@ -73712,7 +74321,7 @@ export type tracerFeedIssuesCreateLinearIssueCreateResponseError = (
   | tracerFeedIssuesCreateLinearIssueCreateResponse500
   | tracerFeedIssuesCreateLinearIssueCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesCreateLinearIssueCreateResponse =
@@ -73776,7 +74385,7 @@ export type tracerFeedIssuesDeepAnalysisCreateResponseDefault = {
 
 export type tracerFeedIssuesDeepAnalysisCreateResponseSuccess =
   tracerFeedIssuesDeepAnalysisCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesDeepAnalysisCreateResponseError = (
   | tracerFeedIssuesDeepAnalysisCreateResponse400
@@ -73785,7 +74394,7 @@ export type tracerFeedIssuesDeepAnalysisCreateResponseError = (
   | tracerFeedIssuesDeepAnalysisCreateResponse500
   | tracerFeedIssuesDeepAnalysisCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesDeepAnalysisCreateResponse =
@@ -73847,7 +74456,7 @@ export type tracerFeedIssuesOverviewListResponseDefault = {
 
 export type tracerFeedIssuesOverviewListResponseSuccess =
   tracerFeedIssuesOverviewListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesOverviewListResponseError = (
   | tracerFeedIssuesOverviewListResponse400
@@ -73856,7 +74465,7 @@ export type tracerFeedIssuesOverviewListResponseError = (
   | tracerFeedIssuesOverviewListResponse500
   | tracerFeedIssuesOverviewListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesOverviewListResponse =
@@ -73935,7 +74544,7 @@ export type tracerFeedIssuesRedirectListResponseDefault = {
 
 export type tracerFeedIssuesRedirectListResponseSuccess =
   tracerFeedIssuesRedirectListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesRedirectListResponseError = (
   | tracerFeedIssuesRedirectListResponse400
@@ -73944,7 +74553,7 @@ export type tracerFeedIssuesRedirectListResponseError = (
   | tracerFeedIssuesRedirectListResponse500
   | tracerFeedIssuesRedirectListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesRedirectListResponse =
@@ -74023,7 +74632,7 @@ export type tracerFeedIssuesRootCauseListResponseDefault = {
 
 export type tracerFeedIssuesRootCauseListResponseSuccess =
   tracerFeedIssuesRootCauseListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesRootCauseListResponseError = (
   | tracerFeedIssuesRootCauseListResponse400
@@ -74032,7 +74641,7 @@ export type tracerFeedIssuesRootCauseListResponseError = (
   | tracerFeedIssuesRootCauseListResponse500
   | tracerFeedIssuesRootCauseListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesRootCauseListResponse =
@@ -74115,7 +74724,7 @@ export type tracerFeedIssuesSidebarListResponseDefault = {
 
 export type tracerFeedIssuesSidebarListResponseSuccess =
   tracerFeedIssuesSidebarListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesSidebarListResponseError = (
   | tracerFeedIssuesSidebarListResponse400
@@ -74124,7 +74733,7 @@ export type tracerFeedIssuesSidebarListResponseError = (
   | tracerFeedIssuesSidebarListResponse500
   | tracerFeedIssuesSidebarListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesSidebarListResponse =
@@ -74207,7 +74816,7 @@ export type tracerFeedIssuesTracesListResponseDefault = {
 
 export type tracerFeedIssuesTracesListResponseSuccess =
   tracerFeedIssuesTracesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesTracesListResponseError = (
   | tracerFeedIssuesTracesListResponse400
@@ -74216,7 +74825,7 @@ export type tracerFeedIssuesTracesListResponseError = (
   | tracerFeedIssuesTracesListResponse500
   | tracerFeedIssuesTracesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesTracesListResponse =
@@ -74295,7 +74904,7 @@ export type tracerFeedIssuesTrendsListResponseDefault = {
 
 export type tracerFeedIssuesTrendsListResponseSuccess =
   tracerFeedIssuesTrendsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerFeedIssuesTrendsListResponseError = (
   | tracerFeedIssuesTrendsListResponse400
@@ -74304,7 +74913,7 @@ export type tracerFeedIssuesTrendsListResponseError = (
   | tracerFeedIssuesTrendsListResponse500
   | tracerFeedIssuesTrendsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerFeedIssuesTrendsListResponse =
@@ -74378,7 +74987,7 @@ export type tracerGetAnnotationLabelsListResponseDefault = {
 
 export type tracerGetAnnotationLabelsListResponseSuccess =
   tracerGetAnnotationLabelsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerGetAnnotationLabelsListResponseError = (
   | tracerGetAnnotationLabelsListResponse400
@@ -74386,7 +74995,7 @@ export type tracerGetAnnotationLabelsListResponseError = (
   | tracerGetAnnotationLabelsListResponse500
   | tracerGetAnnotationLabelsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerGetAnnotationLabelsListResponse =
@@ -74460,7 +75069,7 @@ export type tracerImagineAnalysisListResponseDefault = {
 
 export type tracerImagineAnalysisListResponseSuccess =
   tracerImagineAnalysisListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerImagineAnalysisListResponseError = (
   | tracerImagineAnalysisListResponse400
@@ -74469,7 +75078,7 @@ export type tracerImagineAnalysisListResponseError = (
   | tracerImagineAnalysisListResponse500
   | tracerImagineAnalysisListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerImagineAnalysisListResponse =
@@ -74546,7 +75155,7 @@ export type tracerImagineAnalysisCreateResponseDefault = {
 
 export type tracerImagineAnalysisCreateResponseSuccess =
   tracerImagineAnalysisCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerImagineAnalysisCreateResponseError = (
   | tracerImagineAnalysisCreateResponse400
@@ -74555,7 +75164,7 @@ export type tracerImagineAnalysisCreateResponseError = (
   | tracerImagineAnalysisCreateResponse500
   | tracerImagineAnalysisCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerImagineAnalysisCreateResponse =
@@ -74584,6 +75193,2076 @@ export const tracerImagineAnalysisCreate = async (
   );
 };
 
+export type tracerInsightsConfigsListResponse200 = {
+  data: InsightConfigListResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsConfigsListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsConfigsListResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsConfigsListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsConfigsListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsConfigsListResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsConfigsListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsConfigsListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsConfigsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsConfigsListResponseSuccess =
+  tracerInsightsConfigsListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsConfigsListResponseError = (
+  | tracerInsightsConfigsListResponse400
+  | tracerInsightsConfigsListResponse402
+  | tracerInsightsConfigsListResponse403
+  | tracerInsightsConfigsListResponse404
+  | tracerInsightsConfigsListResponse429
+  | tracerInsightsConfigsListResponse500
+  | tracerInsightsConfigsListResponse503
+  | tracerInsightsConfigsListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsConfigsListResponse =
+  | tracerInsightsConfigsListResponseSuccess
+  | tracerInsightsConfigsListResponseError;
+
+export const getTracerInsightsConfigsListUrl = (
+  params: TracerInsightsConfigsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/insights/configs/?${stringifiedParams}`
+    : `/tracer/insights/configs/`;
+};
+
+/**
+ * Saved Insights reports of a project, newest first, with their latest run.
+ */
+export const tracerInsightsConfigsList = async (
+  params: TracerInsightsConfigsListParams,
+  options?: RequestInit,
+): Promise<tracerInsightsConfigsListResponse> => {
+  return apiMutator<tracerInsightsConfigsListResponse>(
+    getTracerInsightsConfigsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInsightsConfigsReadResponse200 = {
+  data: InsightConfigResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsConfigsReadResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsConfigsReadResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsConfigsReadResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsConfigsReadResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsConfigsReadResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsConfigsReadResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsConfigsReadResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsConfigsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsConfigsReadResponseSuccess =
+  tracerInsightsConfigsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsConfigsReadResponseError = (
+  | tracerInsightsConfigsReadResponse400
+  | tracerInsightsConfigsReadResponse402
+  | tracerInsightsConfigsReadResponse403
+  | tracerInsightsConfigsReadResponse404
+  | tracerInsightsConfigsReadResponse429
+  | tracerInsightsConfigsReadResponse500
+  | tracerInsightsConfigsReadResponse503
+  | tracerInsightsConfigsReadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsConfigsReadResponse =
+  | tracerInsightsConfigsReadResponseSuccess
+  | tracerInsightsConfigsReadResponseError;
+
+export const getTracerInsightsConfigsReadUrl = (configId: string) => {
+  return `/tracer/insights/configs/${configId}/`;
+};
+
+/**
+ * One saved report with every run, for the trend chart and run pager.
+ */
+export const tracerInsightsConfigsRead = async (
+  configId: string,
+  options?: RequestInit,
+): Promise<tracerInsightsConfigsReadResponse> => {
+  return apiMutator<tracerInsightsConfigsReadResponse>(
+    getTracerInsightsConfigsReadUrl(configId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse200 = {
+  data: InsightConfigResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponseSuccess =
+  tracerInsightsConfigsPartialUpdateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsConfigsPartialUpdateResponseError = (
+  | tracerInsightsConfigsPartialUpdateResponse400
+  | tracerInsightsConfigsPartialUpdateResponse402
+  | tracerInsightsConfigsPartialUpdateResponse403
+  | tracerInsightsConfigsPartialUpdateResponse404
+  | tracerInsightsConfigsPartialUpdateResponse429
+  | tracerInsightsConfigsPartialUpdateResponse500
+  | tracerInsightsConfigsPartialUpdateResponse503
+  | tracerInsightsConfigsPartialUpdateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsConfigsPartialUpdateResponse =
+  | tracerInsightsConfigsPartialUpdateResponseSuccess
+  | tracerInsightsConfigsPartialUpdateResponseError;
+
+export const getTracerInsightsConfigsPartialUpdateUrl = (configId: string) => {
+  return `/tracer/insights/configs/${configId}/`;
+};
+
+/**
+ * Edit a report's setup, or forget its saved categories so the next
+run discovers afresh. Changing the question or lens changes what the
+categories mean, so it resets them too. Applies from the next run.
+ */
+export const tracerInsightsConfigsPartialUpdate = async (
+  configId: string,
+  insightConfigPatchApi: InsightConfigPatchApi,
+  options?: RequestInit,
+): Promise<tracerInsightsConfigsPartialUpdateResponse> => {
+  return apiMutator<tracerInsightsConfigsPartialUpdateResponse>(
+    getTracerInsightsConfigsPartialUpdateUrl(configId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(insightConfigPatchApi),
+    },
+  );
+};
+
+export type tracerInsightsConfigsDeleteResponse200 = {
+  data: InsightConfigResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsConfigsDeleteResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsConfigsDeleteResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsConfigsDeleteResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsConfigsDeleteResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsConfigsDeleteResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsConfigsDeleteResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsConfigsDeleteResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsConfigsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsConfigsDeleteResponseSuccess =
+  tracerInsightsConfigsDeleteResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsConfigsDeleteResponseError = (
+  | tracerInsightsConfigsDeleteResponse400
+  | tracerInsightsConfigsDeleteResponse402
+  | tracerInsightsConfigsDeleteResponse403
+  | tracerInsightsConfigsDeleteResponse404
+  | tracerInsightsConfigsDeleteResponse429
+  | tracerInsightsConfigsDeleteResponse500
+  | tracerInsightsConfigsDeleteResponse503
+  | tracerInsightsConfigsDeleteResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsConfigsDeleteResponse =
+  | tracerInsightsConfigsDeleteResponseSuccess
+  | tracerInsightsConfigsDeleteResponseError;
+
+export const getTracerInsightsConfigsDeleteUrl = (configId: string) => {
+  return `/tracer/insights/configs/${configId}/`;
+};
+
+/**
+ * Delete a saved report and hide its runs.
+ */
+export const tracerInsightsConfigsDelete = async (
+  configId: string,
+  options?: RequestInit,
+): Promise<tracerInsightsConfigsDeleteResponse> => {
+  return apiMutator<tracerInsightsConfigsDeleteResponse>(
+    getTracerInsightsConfigsDeleteUrl(configId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type tracerInsightsDraftCreateResponse200 = {
+  data: InsightDraftResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsDraftCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsDraftCreateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsDraftCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsDraftCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsDraftCreateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsDraftCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsDraftCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsDraftCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsDraftCreateResponseSuccess =
+  tracerInsightsDraftCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsDraftCreateResponseError = (
+  | tracerInsightsDraftCreateResponse400
+  | tracerInsightsDraftCreateResponse402
+  | tracerInsightsDraftCreateResponse403
+  | tracerInsightsDraftCreateResponse404
+  | tracerInsightsDraftCreateResponse429
+  | tracerInsightsDraftCreateResponse500
+  | tracerInsightsDraftCreateResponse503
+  | tracerInsightsDraftCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsDraftCreateResponse =
+  | tracerInsightsDraftCreateResponseSuccess
+  | tracerInsightsDraftCreateResponseError;
+
+export const getTracerInsightsDraftCreateUrl = () => {
+  return `/tracer/insights/draft/`;
+};
+
+/**
+ * Read a few real units and draft a report setup for the team's goal.
+ */
+export const tracerInsightsDraftCreate = async (
+  insightDraftApi: InsightDraftApi,
+  options?: RequestInit,
+): Promise<tracerInsightsDraftCreateResponse> => {
+  return apiMutator<tracerInsightsDraftCreateResponse>(
+    getTracerInsightsDraftCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(insightDraftApi),
+    },
+  );
+};
+
+export type tracerInsightsEstimateCreateResponse200 = {
+  data: InsightEstimateResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsEstimateCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsEstimateCreateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsEstimateCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsEstimateCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsEstimateCreateResponse422 = {
+  data: ApiErrorResponseApi;
+  status: 422;
+};
+
+export type tracerInsightsEstimateCreateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsEstimateCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsEstimateCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsEstimateCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 422 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsEstimateCreateResponseSuccess =
+  tracerInsightsEstimateCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsEstimateCreateResponseError = (
+  | tracerInsightsEstimateCreateResponse400
+  | tracerInsightsEstimateCreateResponse402
+  | tracerInsightsEstimateCreateResponse403
+  | tracerInsightsEstimateCreateResponse404
+  | tracerInsightsEstimateCreateResponse422
+  | tracerInsightsEstimateCreateResponse429
+  | tracerInsightsEstimateCreateResponse500
+  | tracerInsightsEstimateCreateResponse503
+  | tracerInsightsEstimateCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsEstimateCreateResponse =
+  | tracerInsightsEstimateCreateResponseSuccess
+  | tracerInsightsEstimateCreateResponseError;
+
+export const getTracerInsightsEstimateCreateUrl = () => {
+  return `/tracer/insights/estimate/`;
+};
+
+/**
+ * How many units a scope holds, and how many a report on it reads.
+Rows handed over by id are only sized: they have no window to count.
+ */
+export const tracerInsightsEstimateCreate = async (
+  insightEstimateRequestApi: InsightEstimateRequestApi,
+  options?: RequestInit,
+): Promise<tracerInsightsEstimateCreateResponse> => {
+  return apiMutator<tracerInsightsEstimateCreateResponse>(
+    getTracerInsightsEstimateCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(insightEstimateRequestApi),
+    },
+  );
+};
+
+export type tracerInsightsPreviewCreateResponse200 = {
+  data: InsightPreviewResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsPreviewCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsPreviewCreateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsPreviewCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsPreviewCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsPreviewCreateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsPreviewCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsPreviewCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsPreviewCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsPreviewCreateResponseSuccess =
+  tracerInsightsPreviewCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsPreviewCreateResponseError = (
+  | tracerInsightsPreviewCreateResponse400
+  | tracerInsightsPreviewCreateResponse402
+  | tracerInsightsPreviewCreateResponse403
+  | tracerInsightsPreviewCreateResponse404
+  | tracerInsightsPreviewCreateResponse429
+  | tracerInsightsPreviewCreateResponse500
+  | tracerInsightsPreviewCreateResponse503
+  | tracerInsightsPreviewCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsPreviewCreateResponse =
+  | tracerInsightsPreviewCreateResponseSuccess
+  | tracerInsightsPreviewCreateResponseError;
+
+export const getTracerInsightsPreviewCreateUrl = () => {
+  return `/tracer/insights/preview/`;
+};
+
+/**
+ * Show what the report will read from up to three units before running it.
+ */
+export const tracerInsightsPreviewCreate = async (
+  insightPreviewApi: InsightPreviewApi,
+  options?: RequestInit,
+): Promise<tracerInsightsPreviewCreateResponse> => {
+  return apiMutator<tracerInsightsPreviewCreateResponse>(
+    getTracerInsightsPreviewCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(insightPreviewApi),
+    },
+  );
+};
+
+export type tracerInsightsRunsCreateResponse200 = {
+  data: InsightRunCreatedResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsRunsCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsCreateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsCreateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsCreateResponseSuccess =
+  tracerInsightsRunsCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsRunsCreateResponseError = (
+  | tracerInsightsRunsCreateResponse400
+  | tracerInsightsRunsCreateResponse402
+  | tracerInsightsRunsCreateResponse403
+  | tracerInsightsRunsCreateResponse404
+  | tracerInsightsRunsCreateResponse429
+  | tracerInsightsRunsCreateResponse500
+  | tracerInsightsRunsCreateResponse503
+  | tracerInsightsRunsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsRunsCreateResponse =
+  | tracerInsightsRunsCreateResponseSuccess
+  | tracerInsightsRunsCreateResponseError;
+
+export const getTracerInsightsRunsCreateUrl = () => {
+  return `/tracer/insights/runs/`;
+};
+
+/**
+ * Start a report run over a sample of its scope (or the rows handed
+over); creates the report when new.
+ */
+export const tracerInsightsRunsCreate = async (
+  insightRunCreateApi: InsightRunCreateApi,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsCreateResponse> => {
+  return apiMutator<tracerInsightsRunsCreateResponse>(
+    getTracerInsightsRunsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(insightRunCreateApi),
+    },
+  );
+};
+
+export type tracerInsightsRunsReadResponse200 = {
+  data: InsightRunResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsRunsReadResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsReadResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsReadResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsReadResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsReadResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsReadResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsReadResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsReadResponseSuccess =
+  tracerInsightsRunsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsRunsReadResponseError = (
+  | tracerInsightsRunsReadResponse400
+  | tracerInsightsRunsReadResponse402
+  | tracerInsightsRunsReadResponse403
+  | tracerInsightsRunsReadResponse404
+  | tracerInsightsRunsReadResponse429
+  | tracerInsightsRunsReadResponse500
+  | tracerInsightsRunsReadResponse503
+  | tracerInsightsRunsReadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsRunsReadResponse =
+  | tracerInsightsRunsReadResponseSuccess
+  | tracerInsightsRunsReadResponseError;
+
+export const getTracerInsightsRunsReadUrl = (runId: string) => {
+  return `/tracer/insights/runs/${runId}/`;
+};
+
+/**
+ * A run's progress while it works, and its full report once complete.
+ */
+export const tracerInsightsRunsRead = async (
+  runId: string,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsReadResponse> => {
+  return apiMutator<tracerInsightsRunsReadResponse>(
+    getTracerInsightsRunsReadUrl(runId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInsightsRunsAskCreateResponse200 = {
+  data: InsightAskResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsRunsAskCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsAskCreateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsAskCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsAskCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsAskCreateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsAskCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsAskCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsAskCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsAskCreateResponseSuccess =
+  tracerInsightsRunsAskCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsRunsAskCreateResponseError = (
+  | tracerInsightsRunsAskCreateResponse400
+  | tracerInsightsRunsAskCreateResponse402
+  | tracerInsightsRunsAskCreateResponse403
+  | tracerInsightsRunsAskCreateResponse404
+  | tracerInsightsRunsAskCreateResponse429
+  | tracerInsightsRunsAskCreateResponse500
+  | tracerInsightsRunsAskCreateResponse503
+  | tracerInsightsRunsAskCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsRunsAskCreateResponse =
+  | tracerInsightsRunsAskCreateResponseSuccess
+  | tracerInsightsRunsAskCreateResponseError;
+
+export const getTracerInsightsRunsAskCreateUrl = (runId: string) => {
+  return `/tracer/insights/runs/${runId}/ask/`;
+};
+
+/**
+ * Answer a follow-up question about a completed report, citing its examples.
+ */
+export const tracerInsightsRunsAskCreate = async (
+  runId: string,
+  insightAskApi: InsightAskApi,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsAskCreateResponse> => {
+  return apiMutator<tracerInsightsRunsAskCreateResponse>(
+    getTracerInsightsRunsAskCreateUrl(runId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(insightAskApi),
+    },
+  );
+};
+
+export type tracerInsightsRunsMediaListResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type tracerInsightsRunsMediaListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsMediaListResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsMediaListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsMediaListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsMediaListResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsMediaListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsMediaListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsMediaListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsMediaListResponseSuccess =
+  tracerInsightsRunsMediaListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsRunsMediaListResponseError = (
+  | tracerInsightsRunsMediaListResponse400
+  | tracerInsightsRunsMediaListResponse402
+  | tracerInsightsRunsMediaListResponse403
+  | tracerInsightsRunsMediaListResponse404
+  | tracerInsightsRunsMediaListResponse429
+  | tracerInsightsRunsMediaListResponse500
+  | tracerInsightsRunsMediaListResponse503
+  | tracerInsightsRunsMediaListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsRunsMediaListResponse =
+  | tracerInsightsRunsMediaListResponseSuccess
+  | tracerInsightsRunsMediaListResponseError;
+
+export const getTracerInsightsRunsMediaListUrl = (
+  runId: string,
+  params: TracerInsightsRunsMediaListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/insights/runs/${runId}/media/?${stringifiedParams}`
+    : `/tracer/insights/runs/${runId}/media/`;
+};
+
+/**
+ * An image an analysed unit's evidence cites, as the agent viewed it
+(at most 1,568 px on its longest side and 5 MiB), for the example
+panel. Only a unit of this organization's run that the report kept,
+and only media its evidence names.
+ */
+export const tracerInsightsRunsMediaList = async (
+  runId: string,
+  params: TracerInsightsRunsMediaListParams,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsMediaListResponse> => {
+  return apiMutator<tracerInsightsRunsMediaListResponse>(
+    getTracerInsightsRunsMediaListUrl(runId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInsightsRunsStopCreateResponse200 = {
+  data: InsightRunStopResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsRunsStopCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsStopCreateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsStopCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsStopCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsStopCreateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsStopCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsStopCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsStopCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsStopCreateResponseSuccess =
+  tracerInsightsRunsStopCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsRunsStopCreateResponseError = (
+  | tracerInsightsRunsStopCreateResponse400
+  | tracerInsightsRunsStopCreateResponse402
+  | tracerInsightsRunsStopCreateResponse403
+  | tracerInsightsRunsStopCreateResponse404
+  | tracerInsightsRunsStopCreateResponse429
+  | tracerInsightsRunsStopCreateResponse500
+  | tracerInsightsRunsStopCreateResponse503
+  | tracerInsightsRunsStopCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsRunsStopCreateResponse =
+  | tracerInsightsRunsStopCreateResponseSuccess
+  | tracerInsightsRunsStopCreateResponseError;
+
+export const getTracerInsightsRunsStopCreateUrl = (runId: string) => {
+  return `/tracer/insights/runs/${runId}/stop/`;
+};
+
+/**
+ * Stop a run in flight: it reads nothing more and isn't written. The
+work finished before the stop is charged, and its counts are final:
+what calls under way read is dropped. Stopping it again answers the
+same.
+ */
+export const tracerInsightsRunsStopCreate = async (
+  runId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsStopCreateResponse> => {
+  return apiMutator<tracerInsightsRunsStopCreateResponse>(
+    getTracerInsightsRunsStopCreateUrl(runId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type tracerInsightsRunsUnitsListResponse200 = {
+  data: InsightUnitsResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsRunsUnitsListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsUnitsListResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsUnitsListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsUnitsListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsUnitsListResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsUnitsListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsUnitsListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsUnitsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsUnitsListResponseSuccess =
+  tracerInsightsRunsUnitsListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInsightsRunsUnitsListResponseError = (
+  | tracerInsightsRunsUnitsListResponse400
+  | tracerInsightsRunsUnitsListResponse402
+  | tracerInsightsRunsUnitsListResponse403
+  | tracerInsightsRunsUnitsListResponse404
+  | tracerInsightsRunsUnitsListResponse429
+  | tracerInsightsRunsUnitsListResponse500
+  | tracerInsightsRunsUnitsListResponse503
+  | tracerInsightsRunsUnitsListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInsightsRunsUnitsListResponse =
+  | tracerInsightsRunsUnitsListResponseSuccess
+  | tracerInsightsRunsUnitsListResponseError;
+
+export const getTracerInsightsRunsUnitsListUrl = (
+  runId: string,
+  params?: TracerInsightsRunsUnitsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/insights/runs/${runId}/units/?${stringifiedParams}`
+    : `/tracer/insights/runs/${runId}/units/`;
+};
+
+/**
+ * Analysed units of a run, optionally one category's, oldest first.
+ */
+export const tracerInsightsRunsUnitsList = async (
+  runId: string,
+  params?: TracerInsightsRunsUnitsListParams,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsUnitsListResponse> => {
+  return apiMutator<tracerInsightsRunsUnitsListResponse>(
+    getTracerInsightsRunsUnitsListUrl(runId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInstantEvalControlCreateResponse200 = {
+  data: InstantEvalControlResponseApi;
+  status: 200;
+};
+
+export type tracerInstantEvalControlCreateResponse400 = {
+  data: InstantEvalBadRequestApi;
+  status: 400;
+};
+
+export type tracerInstantEvalControlCreateResponse402 = {
+  data: InstantEvalLimitErrorApi;
+  status: 402;
+};
+
+export type tracerInstantEvalControlCreateResponse403 = {
+  data: InstantEvalLimitErrorApi;
+  status: 403;
+};
+
+export type tracerInstantEvalControlCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalControlCreateResponse409 = {
+  data: InstantEvalLimitErrorApi;
+  status: 409;
+};
+
+export type tracerInstantEvalControlCreateResponse422 = {
+  data: ApiErrorResponseApi;
+  status: 422;
+};
+
+export type tracerInstantEvalControlCreateResponse429 = {
+  data: InstantEvalLimitErrorApi;
+  status: 429;
+};
+
+export type tracerInstantEvalControlCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalControlCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalControlCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 422 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInstantEvalControlCreateResponseSuccess =
+  tracerInstantEvalControlCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalControlCreateResponseError = (
+  | tracerInstantEvalControlCreateResponse400
+  | tracerInstantEvalControlCreateResponse402
+  | tracerInstantEvalControlCreateResponse403
+  | tracerInstantEvalControlCreateResponse404
+  | tracerInstantEvalControlCreateResponse409
+  | tracerInstantEvalControlCreateResponse422
+  | tracerInstantEvalControlCreateResponse429
+  | tracerInstantEvalControlCreateResponse500
+  | tracerInstantEvalControlCreateResponse503
+  | tracerInstantEvalControlCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalControlCreateResponse =
+  | tracerInstantEvalControlCreateResponseSuccess
+  | tracerInstantEvalControlCreateResponseError;
+
+export const getTracerInstantEvalControlCreateUrl = () => {
+  return `/tracer/instant-eval/control/`;
+};
+
+/**
+ * Pause, resume or cancel a run, retry the rows Jev failed on, or
+read more of a sample. Resuming, retrying and reading more count
+against the organization's runs in flight.
+ */
+export const tracerInstantEvalControlCreate = async (
+  instantEvalControlRequestApi: InstantEvalControlRequestApi,
+  options?: RequestInit,
+): Promise<tracerInstantEvalControlCreateResponse> => {
+  return apiMutator<tracerInstantEvalControlCreateResponse>(
+    getTracerInstantEvalControlCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(instantEvalControlRequestApi),
+    },
+  );
+};
+
+export type tracerInstantEvalEstimateCreateResponse200 = {
+  data: InstantEvalEstimateResponseApi;
+  status: 200;
+};
+
+export type tracerInstantEvalEstimateCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInstantEvalEstimateCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInstantEvalEstimateCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalEstimateCreateResponse422 = {
+  data: ApiErrorResponseApi;
+  status: 422;
+};
+
+export type tracerInstantEvalEstimateCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalEstimateCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalEstimateCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 422 | 500 | 503>;
+};
+
+export type tracerInstantEvalEstimateCreateResponseSuccess =
+  tracerInstantEvalEstimateCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalEstimateCreateResponseError = (
+  | tracerInstantEvalEstimateCreateResponse400
+  | tracerInstantEvalEstimateCreateResponse403
+  | tracerInstantEvalEstimateCreateResponse404
+  | tracerInstantEvalEstimateCreateResponse422
+  | tracerInstantEvalEstimateCreateResponse500
+  | tracerInstantEvalEstimateCreateResponse503
+  | tracerInstantEvalEstimateCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalEstimateCreateResponse =
+  | tracerInstantEvalEstimateCreateResponseSuccess
+  | tracerInstantEvalEstimateCreateResponseError;
+
+export const getTracerInstantEvalEstimateCreateUrl = () => {
+  return `/tracer/instant-eval/estimate/`;
+};
+
+/**
+ * How many rows a view holds, and what a sample or all of it costs.
+ */
+export const tracerInstantEvalEstimateCreate = async (
+  instantEvalEstimateRequestApi: InstantEvalEstimateRequestApi,
+  options?: RequestInit,
+): Promise<tracerInstantEvalEstimateCreateResponse> => {
+  return apiMutator<tracerInstantEvalEstimateCreateResponse>(
+    getTracerInstantEvalEstimateCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(instantEvalEstimateRequestApi),
+    },
+  );
+};
+
+export type tracerInstantEvalExportListResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type tracerInstantEvalExportListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInstantEvalExportListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInstantEvalExportListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalExportListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalExportListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalExportListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500 | 503>;
+};
+
+export type tracerInstantEvalExportListResponseSuccess =
+  tracerInstantEvalExportListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalExportListResponseError = (
+  | tracerInstantEvalExportListResponse400
+  | tracerInstantEvalExportListResponse403
+  | tracerInstantEvalExportListResponse404
+  | tracerInstantEvalExportListResponse500
+  | tracerInstantEvalExportListResponse503
+  | tracerInstantEvalExportListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalExportListResponse =
+  | tracerInstantEvalExportListResponseSuccess
+  | tracerInstantEvalExportListResponseError;
+
+export const getTracerInstantEvalExportListUrl = (
+  params: TracerInstantEvalExportListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/instant-eval/export/?${stringifiedParams}`
+    : `/tracer/instant-eval/export/`;
+};
+
+/**
+ * Every row the filter selects, with each question's answer,
+confidence and explanation, streamed as CSV. A user question writes
+a line per user (their rolled-up answers and the sessions behind
+them), or with ``sessions`` a line per session of those users.
+ */
+export const tracerInstantEvalExportList = async (
+  params: TracerInstantEvalExportListParams,
+  options?: RequestInit,
+): Promise<tracerInstantEvalExportListResponse> => {
+  return apiMutator<tracerInstantEvalExportListResponse>(
+    getTracerInstantEvalExportListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInstantEvalExportCreateResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type tracerInstantEvalExportCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInstantEvalExportCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInstantEvalExportCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalExportCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalExportCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalExportCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500 | 503>;
+};
+
+export type tracerInstantEvalExportCreateResponseSuccess =
+  tracerInstantEvalExportCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalExportCreateResponseError = (
+  | tracerInstantEvalExportCreateResponse400
+  | tracerInstantEvalExportCreateResponse403
+  | tracerInstantEvalExportCreateResponse404
+  | tracerInstantEvalExportCreateResponse500
+  | tracerInstantEvalExportCreateResponse503
+  | tracerInstantEvalExportCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalExportCreateResponse =
+  | tracerInstantEvalExportCreateResponseSuccess
+  | tracerInstantEvalExportCreateResponseError;
+
+export const getTracerInstantEvalExportCreateUrl = () => {
+  return `/tracer/instant-eval/export/`;
+};
+
+/**
+ * Every row the filter selects, with each question's answer,
+confidence and explanation, streamed as CSV. A user question writes
+a line per user (their rolled-up answers and the sessions behind
+them), or with ``sessions`` a line per session of those users.
+ */
+export const tracerInstantEvalExportCreate = async (
+  instantEvalExportQueryApi: InstantEvalExportQueryApi,
+  options?: RequestInit,
+): Promise<tracerInstantEvalExportCreateResponse> => {
+  return apiMutator<tracerInstantEvalExportCreateResponse>(
+    getTracerInstantEvalExportCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(instantEvalExportQueryApi),
+    },
+  );
+};
+
+export type tracerInstantEvalRowsListResponse200 = {
+  data: InstantEvalRowsResponseApi;
+  status: 200;
+};
+
+export type tracerInstantEvalRowsListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInstantEvalRowsListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInstantEvalRowsListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalRowsListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalRowsListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalRowsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500 | 503>;
+};
+
+export type tracerInstantEvalRowsListResponseSuccess =
+  tracerInstantEvalRowsListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalRowsListResponseError = (
+  | tracerInstantEvalRowsListResponse400
+  | tracerInstantEvalRowsListResponse403
+  | tracerInstantEvalRowsListResponse404
+  | tracerInstantEvalRowsListResponse500
+  | tracerInstantEvalRowsListResponse503
+  | tracerInstantEvalRowsListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalRowsListResponse =
+  | tracerInstantEvalRowsListResponseSuccess
+  | tracerInstantEvalRowsListResponseError;
+
+export const getTracerInstantEvalRowsListUrl = (
+  params: TracerInstantEvalRowsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/instant-eval/rows/?${stringifiedParams}`
+    : `/tracer/instant-eval/rows/`;
+};
+
+/**
+ * One page of a run's rows with their answers, filtered by what the
+charts select: an answer, a time range, a group, unsure answers or text.
+ */
+export const tracerInstantEvalRowsList = async (
+  params: TracerInstantEvalRowsListParams,
+  options?: RequestInit,
+): Promise<tracerInstantEvalRowsListResponse> => {
+  return apiMutator<tracerInstantEvalRowsListResponse>(
+    getTracerInstantEvalRowsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInstantEvalRowsCreateResponse200 = {
+  data: InstantEvalRowsResponseApi;
+  status: 200;
+};
+
+export type tracerInstantEvalRowsCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInstantEvalRowsCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInstantEvalRowsCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalRowsCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalRowsCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalRowsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500 | 503>;
+};
+
+export type tracerInstantEvalRowsCreateResponseSuccess =
+  tracerInstantEvalRowsCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalRowsCreateResponseError = (
+  | tracerInstantEvalRowsCreateResponse400
+  | tracerInstantEvalRowsCreateResponse403
+  | tracerInstantEvalRowsCreateResponse404
+  | tracerInstantEvalRowsCreateResponse500
+  | tracerInstantEvalRowsCreateResponse503
+  | tracerInstantEvalRowsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalRowsCreateResponse =
+  | tracerInstantEvalRowsCreateResponseSuccess
+  | tracerInstantEvalRowsCreateResponseError;
+
+export const getTracerInstantEvalRowsCreateUrl = () => {
+  return `/tracer/instant-eval/rows/`;
+};
+
+/**
+ * One page of a run's rows with their answers, filtered by what the
+charts select: an answer, a time range, a group, unsure answers or text.
+ */
+export const tracerInstantEvalRowsCreate = async (
+  instantEvalRowsQueryApi: InstantEvalRowsQueryApi,
+  options?: RequestInit,
+): Promise<tracerInstantEvalRowsCreateResponse> => {
+  return apiMutator<tracerInstantEvalRowsCreateResponse>(
+    getTracerInstantEvalRowsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(instantEvalRowsQueryApi),
+    },
+  );
+};
+
+export type tracerInstantEvalRunsListResponse200 = {
+  data: InstantEvalRunsResponseApi;
+  status: 200;
+};
+
+export type tracerInstantEvalRunsListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInstantEvalRunsListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInstantEvalRunsListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalRunsListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalRunsListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500 | 503>;
+};
+
+export type tracerInstantEvalRunsListResponseSuccess =
+  tracerInstantEvalRunsListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalRunsListResponseError = (
+  | tracerInstantEvalRunsListResponse400
+  | tracerInstantEvalRunsListResponse403
+  | tracerInstantEvalRunsListResponse404
+  | tracerInstantEvalRunsListResponse500
+  | tracerInstantEvalRunsListResponse503
+  | tracerInstantEvalRunsListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalRunsListResponse =
+  | tracerInstantEvalRunsListResponseSuccess
+  | tracerInstantEvalRunsListResponseError;
+
+export const getTracerInstantEvalRunsListUrl = (
+  params: TracerInstantEvalRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/instant-eval/runs/?${stringifiedParams}`
+    : `/tracer/instant-eval/runs/`;
+};
+
+/**
+ * Past Instant eval runs of a project, newest first, with their answer split.
+ */
+export const tracerInstantEvalRunsList = async (
+  params: TracerInstantEvalRunsListParams,
+  options?: RequestInit,
+): Promise<tracerInstantEvalRunsListResponse> => {
+  return apiMutator<tracerInstantEvalRunsListResponse>(
+    getTracerInstantEvalRunsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerInstantEvalStartCreateResponse200 = {
+  data: InstantEvalStartResponseApi;
+  status: 200;
+};
+
+export type tracerInstantEvalStartCreateResponse400 = {
+  data: InstantEvalBadRequestApi;
+  status: 400;
+};
+
+export type tracerInstantEvalStartCreateResponse402 = {
+  data: InstantEvalLimitErrorApi;
+  status: 402;
+};
+
+export type tracerInstantEvalStartCreateResponse403 = {
+  data: InstantEvalLimitErrorApi;
+  status: 403;
+};
+
+export type tracerInstantEvalStartCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalStartCreateResponse409 = {
+  data: InstantEvalLimitErrorApi;
+  status: 409;
+};
+
+export type tracerInstantEvalStartCreateResponse422 = {
+  data: ApiErrorResponseApi;
+  status: 422;
+};
+
+export type tracerInstantEvalStartCreateResponse429 = {
+  data: InstantEvalLimitErrorApi;
+  status: 429;
+};
+
+export type tracerInstantEvalStartCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalStartCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalStartCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 422 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInstantEvalStartCreateResponseSuccess =
+  tracerInstantEvalStartCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalStartCreateResponseError = (
+  | tracerInstantEvalStartCreateResponse400
+  | tracerInstantEvalStartCreateResponse402
+  | tracerInstantEvalStartCreateResponse403
+  | tracerInstantEvalStartCreateResponse404
+  | tracerInstantEvalStartCreateResponse409
+  | tracerInstantEvalStartCreateResponse422
+  | tracerInstantEvalStartCreateResponse429
+  | tracerInstantEvalStartCreateResponse500
+  | tracerInstantEvalStartCreateResponse503
+  | tracerInstantEvalStartCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalStartCreateResponse =
+  | tracerInstantEvalStartCreateResponseSuccess
+  | tracerInstantEvalStartCreateResponseError;
+
+export const getTracerInstantEvalStartCreateUrl = () => {
+  return `/tracer/instant-eval/start/`;
+};
+
+/**
+ * Start a run: the server resolves the view's rows (or reads the rows
+handed over), enforces the size and concurrency limits, and starts the
+eval task. The rows are picked by the task's first step.
+ */
+export const tracerInstantEvalStartCreate = async (
+  instantEvalStartRequestApi: InstantEvalStartRequestApi,
+  options?: RequestInit,
+): Promise<tracerInstantEvalStartCreateResponse> => {
+  return apiMutator<tracerInstantEvalStartCreateResponse>(
+    getTracerInstantEvalStartCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(instantEvalStartRequestApi),
+    },
+  );
+};
+
+export type tracerInstantEvalSummaryListResponse200 = {
+  data: InstantEvalSummaryResponseApi;
+  status: 200;
+};
+
+export type tracerInstantEvalSummaryListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInstantEvalSummaryListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInstantEvalSummaryListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInstantEvalSummaryListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInstantEvalSummaryListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInstantEvalSummaryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500 | 503>;
+};
+
+export type tracerInstantEvalSummaryListResponseSuccess =
+  tracerInstantEvalSummaryListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerInstantEvalSummaryListResponseError = (
+  | tracerInstantEvalSummaryListResponse400
+  | tracerInstantEvalSummaryListResponse403
+  | tracerInstantEvalSummaryListResponse404
+  | tracerInstantEvalSummaryListResponse500
+  | tracerInstantEvalSummaryListResponse503
+  | tracerInstantEvalSummaryListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerInstantEvalSummaryListResponse =
+  | tracerInstantEvalSummaryListResponseSuccess
+  | tracerInstantEvalSummaryListResponseError;
+
+export const getTracerInstantEvalSummaryListUrl = (
+  params: TracerInstantEvalSummaryListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/instant-eval/summary/?${stringifiedParams}`
+    : `/tracer/instant-eval/summary/`;
+};
+
+/**
+ * Everything the Ask page's charts draw for one run, as counts:
+progress, answer totals, a timeline in the viewer's time zone, and the
+counts per day, hour, user, model, turns and error.
+ */
+export const tracerInstantEvalSummaryList = async (
+  params: TracerInstantEvalSummaryListParams,
+  options?: RequestInit,
+): Promise<tracerInstantEvalSummaryListResponse> => {
+  return apiMutator<tracerInstantEvalSummaryListResponse>(
+    getTracerInstantEvalSummaryListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponse200 = {
   data: UpdateInvestigationAttemptResponseApi;
   status: 200;
@@ -74606,14 +77285,14 @@ export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponseDefault = {
 
 export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponseSuccess =
   tracerInternalErrorFeedV2AttemptsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponseError = (
   | tracerInternalErrorFeedV2AttemptsPartialUpdateResponse404
   | tracerInternalErrorFeedV2AttemptsPartialUpdateResponse409
   | tracerInternalErrorFeedV2AttemptsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponse =
@@ -74662,14 +77341,14 @@ export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseD
 
 export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseSuccess =
   tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseError =
   (
     | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse409
     | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse =
@@ -74721,14 +77400,14 @@ export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseDef
 
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseSuccess =
   tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseError =
   (
     | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse409
     | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse =
@@ -74769,11 +77448,11 @@ export type tracerInternalErrorFeedV2ClaimsCreateResponseDefault = {
 
 export type tracerInternalErrorFeedV2ClaimsCreateResponseSuccess =
   tracerInternalErrorFeedV2ClaimsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2ClaimsCreateResponseError =
   tracerInternalErrorFeedV2ClaimsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2ClaimsCreateResponse =
@@ -74831,7 +77510,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponseDefaul
 
 export type tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponseSuccess =
   tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponseError =
   (
@@ -74840,7 +77519,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponseError 
     | tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponse409
     | tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponse =
@@ -74901,7 +77580,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponseDef
 
 export type tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponseSuccess =
   tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponseError =
   (
@@ -74910,7 +77589,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponseErr
     | tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponse409
     | tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponse =
@@ -74971,7 +77650,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponseDefaul
 
 export type tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponseError =
   (
@@ -74980,7 +77659,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponseError 
     | tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponse409
     | tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponse =
@@ -75041,7 +77720,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponseDefaul
 
 export type tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponseError =
   (
@@ -75050,7 +77729,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponseError 
     | tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponse409
     | tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponse =
@@ -75107,7 +77786,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponseDefault
 
 export type tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponseError =
   (
@@ -75116,7 +77795,7 @@ export type tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponseError =
     | tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponse409
     | tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponse =
@@ -75172,7 +77851,7 @@ export type tracerInternalErrorFeedV2GroupingClaimsCreateResponseDefault = {
 
 export type tracerInternalErrorFeedV2GroupingClaimsCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingClaimsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingClaimsCreateResponseError = (
   | tracerInternalErrorFeedV2GroupingClaimsCreateResponse400
@@ -75180,7 +77859,7 @@ export type tracerInternalErrorFeedV2GroupingClaimsCreateResponseError = (
   | tracerInternalErrorFeedV2GroupingClaimsCreateResponse409
   | tracerInternalErrorFeedV2GroupingClaimsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerInternalErrorFeedV2GroupingClaimsCreateResponse =
@@ -75238,7 +77917,7 @@ export type tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateRespons
 
 export type tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponseSuccess =
   tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponseError =
   (
@@ -75247,7 +77926,7 @@ export type tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateRespons
     | tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponse409
     | tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponse =
@@ -75311,7 +77990,7 @@ export type tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateRespon
 
 export type tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponseError =
   (
@@ -75320,7 +77999,7 @@ export type tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateRespon
     | tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponse409
     | tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponse =
@@ -75380,7 +78059,7 @@ export type tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponseDefault 
 
 export type tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponseError =
   (
@@ -75389,7 +78068,7 @@ export type tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponseError =
     | tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponse409
     | tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponse =
@@ -75443,7 +78122,7 @@ export type tracerInternalErrorFeedV2GroupingOutboxCreateResponseDefault = {
 
 export type tracerInternalErrorFeedV2GroupingOutboxCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingOutboxCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingOutboxCreateResponseError = (
   | tracerInternalErrorFeedV2GroupingOutboxCreateResponse400
@@ -75451,7 +78130,7 @@ export type tracerInternalErrorFeedV2GroupingOutboxCreateResponseError = (
   | tracerInternalErrorFeedV2GroupingOutboxCreateResponse409
   | tracerInternalErrorFeedV2GroupingOutboxCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerInternalErrorFeedV2GroupingOutboxCreateResponse =
@@ -75504,7 +78183,7 @@ export type tracerInternalErrorFeedV2GroupingOutboxAckCreateResponseDefault = {
 
 export type tracerInternalErrorFeedV2GroupingOutboxAckCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingOutboxAckCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingOutboxAckCreateResponseError = (
   | tracerInternalErrorFeedV2GroupingOutboxAckCreateResponse400
@@ -75512,7 +78191,7 @@ export type tracerInternalErrorFeedV2GroupingOutboxAckCreateResponseError = (
   | tracerInternalErrorFeedV2GroupingOutboxAckCreateResponse409
   | tracerInternalErrorFeedV2GroupingOutboxAckCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerInternalErrorFeedV2GroupingOutboxAckCreateResponse =
@@ -75573,7 +78252,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateRespon
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseSuccess =
   tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseError =
   (
@@ -75582,7 +78261,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateRespon
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse409
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse =
@@ -75646,7 +78325,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateRespon
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseError =
   (
@@ -75655,7 +78334,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateRespon
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse409
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse =
@@ -75719,7 +78398,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateRespon
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseError =
   (
@@ -75728,7 +78407,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateRespon
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse409
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse =
@@ -75792,7 +78471,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateRespons
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseError =
   (
@@ -75801,7 +78480,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateRespons
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse409
     | tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse =
@@ -75861,7 +78540,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseDefault
 
 export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseSuccess =
   tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseError =
   (
@@ -75870,7 +78549,7 @@ export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseError =
     | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse409
     | tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponseDefault
   ) & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse =
@@ -75919,14 +78598,14 @@ export type tracerInternalErrorFeedV2NotificationsCreateResponseDefault = {
 
 export type tracerInternalErrorFeedV2NotificationsCreateResponseSuccess =
   tracerInternalErrorFeedV2NotificationsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2NotificationsCreateResponseError = (
   | tracerInternalErrorFeedV2NotificationsCreateResponse404
   | tracerInternalErrorFeedV2NotificationsCreateResponse409
   | tracerInternalErrorFeedV2NotificationsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerInternalErrorFeedV2NotificationsCreateResponse =
@@ -75974,14 +78653,14 @@ export type tracerInternalErrorFeedV2ReportsCreateResponseDefault = {
 
 export type tracerInternalErrorFeedV2ReportsCreateResponseSuccess =
   tracerInternalErrorFeedV2ReportsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2ReportsCreateResponseError = (
   | tracerInternalErrorFeedV2ReportsCreateResponse404
   | tracerInternalErrorFeedV2ReportsCreateResponse409
   | tracerInternalErrorFeedV2ReportsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerInternalErrorFeedV2ReportsCreateResponse =
@@ -76019,11 +78698,11 @@ export type tracerObservabilityProviderListResponseDefault = {
 
 export type tracerObservabilityProviderListResponseSuccess =
   tracerObservabilityProviderListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderListResponseError =
   tracerObservabilityProviderListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservabilityProviderListResponse =
@@ -76080,11 +78759,11 @@ export type tracerObservabilityProviderCreateResponseDefault = {
 
 export type tracerObservabilityProviderCreateResponseSuccess =
   tracerObservabilityProviderCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderCreateResponseError =
   tracerObservabilityProviderCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservabilityProviderCreateResponse =
@@ -76130,13 +78809,13 @@ export type tracerObservabilityProviderVerifyApiKeyResponseDefault = {
 
 export type tracerObservabilityProviderVerifyApiKeyResponseSuccess =
   tracerObservabilityProviderVerifyApiKeyResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderVerifyApiKeyResponseError = (
   | tracerObservabilityProviderVerifyApiKeyResponse400
   | tracerObservabilityProviderVerifyApiKeyResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservabilityProviderVerifyApiKeyResponse =
@@ -76182,13 +78861,13 @@ export type tracerObservabilityProviderVerifyAssistantIdResponseDefault = {
 
 export type tracerObservabilityProviderVerifyAssistantIdResponseSuccess =
   tracerObservabilityProviderVerifyAssistantIdResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderVerifyAssistantIdResponseError = (
   | tracerObservabilityProviderVerifyAssistantIdResponse400
   | tracerObservabilityProviderVerifyAssistantIdResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservabilityProviderVerifyAssistantIdResponse =
@@ -76229,11 +78908,11 @@ export type tracerObservabilityProviderReadResponseDefault = {
 
 export type tracerObservabilityProviderReadResponseSuccess =
   tracerObservabilityProviderReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderReadResponseError =
   tracerObservabilityProviderReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservabilityProviderReadResponse =
@@ -76272,11 +78951,11 @@ export type tracerObservabilityProviderUpdateResponseDefault = {
 
 export type tracerObservabilityProviderUpdateResponseSuccess =
   tracerObservabilityProviderUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderUpdateResponseError =
   tracerObservabilityProviderUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservabilityProviderUpdateResponse =
@@ -76318,11 +78997,11 @@ export type tracerObservabilityProviderPartialUpdateResponseDefault = {
 
 export type tracerObservabilityProviderPartialUpdateResponseSuccess =
   tracerObservabilityProviderPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderPartialUpdateResponseError =
   tracerObservabilityProviderPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservabilityProviderPartialUpdateResponse =
@@ -76364,11 +79043,11 @@ export type tracerObservabilityProviderDeleteResponseDefault = {
 
 export type tracerObservabilityProviderDeleteResponseSuccess =
   tracerObservabilityProviderDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservabilityProviderDeleteResponseError =
   tracerObservabilityProviderDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservabilityProviderDeleteResponse =
@@ -76407,11 +79086,11 @@ export type tracerObservationSpanListResponseDefault = {
 
 export type tracerObservationSpanListResponseSuccess =
   tracerObservationSpanListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanListResponseError =
   tracerObservationSpanListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanListResponse =
@@ -76465,11 +79144,11 @@ export type tracerObservationSpanCreateResponseDefault = {
 
 export type tracerObservationSpanCreateResponseSuccess =
   tracerObservationSpanCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanCreateResponseError =
   tracerObservationSpanCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanCreateResponse =
@@ -76507,11 +79186,11 @@ export type tracerObservationSpanAddAnnotationsResponseDefault = {
 
 export type tracerObservationSpanAddAnnotationsResponseSuccess =
   tracerObservationSpanAddAnnotationsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanAddAnnotationsResponseError =
   tracerObservationSpanAddAnnotationsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanAddAnnotationsResponse =
@@ -76549,11 +79228,11 @@ export type tracerObservationSpanBulkCreateResponseDefault = {
 
 export type tracerObservationSpanBulkCreateResponseSuccess =
   tracerObservationSpanBulkCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanBulkCreateResponseError =
   tracerObservationSpanBulkCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanBulkCreateResponse =
@@ -76591,11 +79270,11 @@ export type tracerObservationSpanCreateOtelSpanResponseDefault = {
 
 export type tracerObservationSpanCreateOtelSpanResponseSuccess =
   tracerObservationSpanCreateOtelSpanResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanCreateOtelSpanResponseError =
   tracerObservationSpanCreateOtelSpanResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanCreateOtelSpanResponse =
@@ -76633,11 +79312,11 @@ export type tracerObservationSpanDeleteAnnotationLabelResponseDefault = {
 
 export type tracerObservationSpanDeleteAnnotationLabelResponseSuccess =
   tracerObservationSpanDeleteAnnotationLabelResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanDeleteAnnotationLabelResponseError =
   tracerObservationSpanDeleteAnnotationLabelResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanDeleteAnnotationLabelResponse =
@@ -76692,7 +79371,7 @@ export type tracerObservationSpanGetEvalAttributesListResponseDefault = {
 
 export type tracerObservationSpanGetEvalAttributesListResponseSuccess =
   tracerObservationSpanGetEvalAttributesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetEvalAttributesListResponseError = (
   | tracerObservationSpanGetEvalAttributesListResponse400
@@ -76701,7 +79380,7 @@ export type tracerObservationSpanGetEvalAttributesListResponseError = (
   | tracerObservationSpanGetEvalAttributesListResponse503
   | tracerObservationSpanGetEvalAttributesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanGetEvalAttributesListResponse =
@@ -76777,7 +79456,7 @@ export type tracerObservationSpanGetEvaluationDetailsResponseDefault = {
 
 export type tracerObservationSpanGetEvaluationDetailsResponseSuccess =
   tracerObservationSpanGetEvaluationDetailsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetEvaluationDetailsResponseError = (
   | tracerObservationSpanGetEvaluationDetailsResponse400
@@ -76785,7 +79464,7 @@ export type tracerObservationSpanGetEvaluationDetailsResponseError = (
   | tracerObservationSpanGetEvaluationDetailsResponse503
   | tracerObservationSpanGetEvaluationDetailsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanGetEvaluationDetailsResponse =
@@ -76854,7 +79533,7 @@ export type tracerObservationSpanGetGraphMethodsResponseDefault = {
 
 export type tracerObservationSpanGetGraphMethodsResponseSuccess =
   tracerObservationSpanGetGraphMethodsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetGraphMethodsResponseError = (
   | tracerObservationSpanGetGraphMethodsResponse400
@@ -76862,7 +79541,7 @@ export type tracerObservationSpanGetGraphMethodsResponseError = (
   | tracerObservationSpanGetGraphMethodsResponse503
   | tracerObservationSpanGetGraphMethodsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanGetGraphMethodsResponse =
@@ -76922,11 +79601,11 @@ export type tracerObservationSpanGetObservationSpanFieldsResponseDefault = {
 
 export type tracerObservationSpanGetObservationSpanFieldsResponseSuccess =
   tracerObservationSpanGetObservationSpanFieldsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetObservationSpanFieldsResponseError =
   tracerObservationSpanGetObservationSpanFieldsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanGetObservationSpanFieldsResponse =
@@ -77000,7 +79679,7 @@ export type tracerObservationSpanGetSpanAttributesListResponseDefault = {
 
 export type tracerObservationSpanGetSpanAttributesListResponseSuccess =
   tracerObservationSpanGetSpanAttributesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetSpanAttributesListResponseError = (
   | tracerObservationSpanGetSpanAttributesListResponse400
@@ -77009,7 +79688,7 @@ export type tracerObservationSpanGetSpanAttributesListResponseError = (
   | tracerObservationSpanGetSpanAttributesListResponse503
   | tracerObservationSpanGetSpanAttributesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanGetSpanAttributesListResponse =
@@ -77083,7 +79762,7 @@ export type tracerObservationSpanGetSpansExportDataResponseDefault = {
 
 export type tracerObservationSpanGetSpansExportDataResponseSuccess =
   tracerObservationSpanGetSpansExportDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetSpansExportDataResponseError = (
   | tracerObservationSpanGetSpansExportDataResponse400
@@ -77091,7 +79770,7 @@ export type tracerObservationSpanGetSpansExportDataResponseError = (
   | tracerObservationSpanGetSpansExportDataResponse503
   | tracerObservationSpanGetSpansExportDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanGetSpansExportDataResponse =
@@ -77145,11 +79824,11 @@ export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseDefault = {
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseSuccess =
   tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseError =
   tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseResponse =
@@ -77209,11 +79888,11 @@ export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseDefau
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseSuccess =
   tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseError =
   tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsBaseCreateResponse =
@@ -77257,11 +79936,11 @@ export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseDefault 
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseSuccess =
   tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseError =
   tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveResponse =
@@ -77321,11 +80000,11 @@ export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseDe
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseSuccess =
   tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseError =
   tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanGetTraceIdByIndexSpansAsObserveCreateResponse =
@@ -77390,7 +80069,7 @@ export type tracerObservationSpanListSpansResponseDefault = {
 
 export type tracerObservationSpanListSpansResponseSuccess =
   tracerObservationSpanListSpansResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanListSpansResponseError = (
   | tracerObservationSpanListSpansResponse400
@@ -77399,7 +80078,7 @@ export type tracerObservationSpanListSpansResponseError = (
   | tracerObservationSpanListSpansResponse503
   | tracerObservationSpanListSpansResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanListSpansResponse =
@@ -77476,7 +80155,7 @@ export type tracerObservationSpanListSpansCreateResponseDefault = {
 
 export type tracerObservationSpanListSpansCreateResponseSuccess =
   tracerObservationSpanListSpansCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanListSpansCreateResponseError = (
   | tracerObservationSpanListSpansCreateResponse400
@@ -77485,7 +80164,7 @@ export type tracerObservationSpanListSpansCreateResponseError = (
   | tracerObservationSpanListSpansCreateResponse503
   | tracerObservationSpanListSpansCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanListSpansCreateResponse =
@@ -77546,7 +80225,7 @@ export type tracerObservationSpanListSpansObserveResponseDefault = {
 
 export type tracerObservationSpanListSpansObserveResponseSuccess =
   tracerObservationSpanListSpansObserveResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanListSpansObserveResponseError = (
   | tracerObservationSpanListSpansObserveResponse400
@@ -77555,7 +80234,7 @@ export type tracerObservationSpanListSpansObserveResponseError = (
   | tracerObservationSpanListSpansObserveResponse503
   | tracerObservationSpanListSpansObserveResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanListSpansObserveResponse =
@@ -77629,7 +80308,7 @@ export type tracerObservationSpanListSpansObserveCreateResponseDefault = {
 
 export type tracerObservationSpanListSpansObserveCreateResponseSuccess =
   tracerObservationSpanListSpansObserveCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanListSpansObserveCreateResponseError = (
   | tracerObservationSpanListSpansObserveCreateResponse400
@@ -77638,7 +80317,7 @@ export type tracerObservationSpanListSpansObserveCreateResponseError = (
   | tracerObservationSpanListSpansObserveCreateResponse503
   | tracerObservationSpanListSpansObserveCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanListSpansObserveCreateResponse =
@@ -77676,11 +80355,11 @@ export type tracerObservationSpanRetrieveLoadingResponseDefault = {
 
 export type tracerObservationSpanRetrieveLoadingResponseSuccess =
   tracerObservationSpanRetrieveLoadingResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanRetrieveLoadingResponseError =
   tracerObservationSpanRetrieveLoadingResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanRetrieveLoadingResponse =
@@ -77734,11 +80413,11 @@ export type tracerObservationSpanRootSpansResponseDefault = {
 
 export type tracerObservationSpanRootSpansResponseSuccess =
   tracerObservationSpanRootSpansResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanRootSpansResponseError =
   tracerObservationSpanRootSpansResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanRootSpansResponse =
@@ -77800,11 +80479,11 @@ export type tracerObservationSpanSubmitFeedbackResponseDefault = {
 
 export type tracerObservationSpanSubmitFeedbackResponseSuccess =
   tracerObservationSpanSubmitFeedbackResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanSubmitFeedbackResponseError =
   tracerObservationSpanSubmitFeedbackResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanSubmitFeedbackResponse =
@@ -77842,11 +80521,11 @@ export type tracerObservationSpanSubmitFeedbackActionTypeResponseDefault = {
 
 export type tracerObservationSpanSubmitFeedbackActionTypeResponseSuccess =
   tracerObservationSpanSubmitFeedbackActionTypeResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanSubmitFeedbackActionTypeResponseError =
   tracerObservationSpanSubmitFeedbackActionTypeResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanSubmitFeedbackActionTypeResponse =
@@ -77884,11 +80563,11 @@ export type tracerObservationSpanUpdateTagsResponseDefault = {
 
 export type tracerObservationSpanUpdateTagsResponseSuccess =
   tracerObservationSpanUpdateTagsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanUpdateTagsResponseError =
   tracerObservationSpanUpdateTagsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanUpdateTagsResponse =
@@ -77954,7 +80633,7 @@ export type tracerObservationSpanReadResponseDefault = {
 
 export type tracerObservationSpanReadResponseSuccess =
   tracerObservationSpanReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanReadResponseError = (
   | tracerObservationSpanReadResponse400
@@ -77964,7 +80643,7 @@ export type tracerObservationSpanReadResponseError = (
   | tracerObservationSpanReadResponse503
   | tracerObservationSpanReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerObservationSpanReadResponse =
@@ -78020,11 +80699,11 @@ export type tracerObservationSpanUpdateResponseDefault = {
 
 export type tracerObservationSpanUpdateResponseSuccess =
   tracerObservationSpanUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanUpdateResponseError =
   tracerObservationSpanUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanUpdateResponse =
@@ -78063,11 +80742,11 @@ export type tracerObservationSpanPartialUpdateResponseDefault = {
 
 export type tracerObservationSpanPartialUpdateResponseSuccess =
   tracerObservationSpanPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanPartialUpdateResponseError =
   tracerObservationSpanPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanPartialUpdateResponse =
@@ -78106,11 +80785,11 @@ export type tracerObservationSpanDeleteResponseDefault = {
 
 export type tracerObservationSpanDeleteResponseSuccess =
   tracerObservationSpanDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerObservationSpanDeleteResponseError =
   tracerObservationSpanDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerObservationSpanDeleteResponse =
@@ -78146,11 +80825,11 @@ export type tracerProjectVersionListResponseDefault = {
 
 export type tracerProjectVersionListResponseSuccess =
   tracerProjectVersionListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionListResponseError =
   tracerProjectVersionListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionListResponse =
@@ -78204,11 +80883,11 @@ export type tracerProjectVersionCreateResponseDefault = {
 
 export type tracerProjectVersionCreateResponseSuccess =
   tracerProjectVersionCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionCreateResponseError =
   tracerProjectVersionCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionCreateResponse =
@@ -78249,11 +80928,11 @@ export type tracerProjectVersionAddAnnotationsResponseDefault = {
 
 export type tracerProjectVersionAddAnnotationsResponseSuccess =
   tracerProjectVersionAddAnnotationsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionAddAnnotationsResponseError =
   tracerProjectVersionAddAnnotationsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionAddAnnotationsResponse =
@@ -78291,11 +80970,11 @@ export type tracerProjectVersionDeleteRunsResponseDefault = {
 
 export type tracerProjectVersionDeleteRunsResponseSuccess =
   tracerProjectVersionDeleteRunsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionDeleteRunsResponseError =
   tracerProjectVersionDeleteRunsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionDeleteRunsResponse =
@@ -78333,11 +81012,11 @@ export type tracerProjectVersionGetExportDataResponseDefault = {
 
 export type tracerProjectVersionGetExportDataResponseSuccess =
   tracerProjectVersionGetExportDataResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionGetExportDataResponseError =
   tracerProjectVersionGetExportDataResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionGetExportDataResponse =
@@ -78375,11 +81054,11 @@ export type tracerProjectVersionGetProjectVersionIdsResponseDefault = {
 
 export type tracerProjectVersionGetProjectVersionIdsResponseSuccess =
   tracerProjectVersionGetProjectVersionIdsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionGetProjectVersionIdsResponseError =
   tracerProjectVersionGetProjectVersionIdsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionGetProjectVersionIdsResponse =
@@ -78433,11 +81112,11 @@ export type tracerProjectVersionGetRunInsightsResponseDefault = {
 
 export type tracerProjectVersionGetRunInsightsResponseSuccess =
   tracerProjectVersionGetRunInsightsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionGetRunInsightsResponseError =
   tracerProjectVersionGetRunInsightsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionGetRunInsightsResponse =
@@ -78491,11 +81170,11 @@ export type tracerProjectVersionListRunsResponseDefault = {
 
 export type tracerProjectVersionListRunsResponseSuccess =
   tracerProjectVersionListRunsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionListRunsResponseError =
   tracerProjectVersionListRunsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionListRunsResponse =
@@ -78552,11 +81231,11 @@ export type tracerProjectVersionProjectVersionWinnerResponseDefault = {
 
 export type tracerProjectVersionProjectVersionWinnerResponseSuccess =
   tracerProjectVersionProjectVersionWinnerResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionProjectVersionWinnerResponseError =
   tracerProjectVersionProjectVersionWinnerResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionProjectVersionWinnerResponse =
@@ -78594,11 +81273,11 @@ export type tracerProjectVersionUpdateProjectVersionConfigResponseDefault = {
 
 export type tracerProjectVersionUpdateProjectVersionConfigResponseSuccess =
   tracerProjectVersionUpdateProjectVersionConfigResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionUpdateProjectVersionConfigResponseError =
   tracerProjectVersionUpdateProjectVersionConfigResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionUpdateProjectVersionConfigResponse =
@@ -78636,11 +81315,11 @@ export type tracerProjectVersionReadResponseDefault = {
 
 export type tracerProjectVersionReadResponseSuccess =
   tracerProjectVersionReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionReadResponseError =
   tracerProjectVersionReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionReadResponse =
@@ -78676,11 +81355,11 @@ export type tracerProjectVersionUpdateResponseDefault = {
 
 export type tracerProjectVersionUpdateResponseSuccess =
   tracerProjectVersionUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionUpdateResponseError =
   tracerProjectVersionUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionUpdateResponse =
@@ -78719,11 +81398,11 @@ export type tracerProjectVersionPartialUpdateResponseDefault = {
 
 export type tracerProjectVersionPartialUpdateResponseSuccess =
   tracerProjectVersionPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionPartialUpdateResponseError =
   tracerProjectVersionPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionPartialUpdateResponse =
@@ -78762,11 +81441,11 @@ export type tracerProjectVersionDeleteResponseDefault = {
 
 export type tracerProjectVersionDeleteResponseSuccess =
   tracerProjectVersionDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectVersionDeleteResponseError =
   tracerProjectVersionDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectVersionDeleteResponse =
@@ -78801,11 +81480,11 @@ export type tracerProjectListResponseDefault = {
 };
 
 export type tracerProjectListResponseSuccess = tracerProjectListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerProjectListResponseError =
   tracerProjectListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectListResponse =
@@ -78860,11 +81539,11 @@ export type tracerProjectCreateResponseDefault = {
 
 export type tracerProjectCreateResponseSuccess =
   tracerProjectCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectCreateResponseError =
   tracerProjectCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectCreateResponse =
@@ -78902,11 +81581,11 @@ export type tracerProjectFetchSystemMetricsResponseDefault = {
 
 export type tracerProjectFetchSystemMetricsResponseSuccess =
   tracerProjectFetchSystemMetricsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectFetchSystemMetricsResponseError =
   tracerProjectFetchSystemMetricsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectFetchSystemMetricsResponse =
@@ -78975,7 +81654,7 @@ export type tracerProjectGetGraphDataResponseDefault = {
 
 export type tracerProjectGetGraphDataResponseSuccess =
   tracerProjectGetGraphDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectGetGraphDataResponseError = (
   | tracerProjectGetGraphDataResponse400
@@ -78983,7 +81662,7 @@ export type tracerProjectGetGraphDataResponseError = (
   | tracerProjectGetGraphDataResponse503
   | tracerProjectGetGraphDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerProjectGetGraphDataResponse =
@@ -79052,7 +81731,7 @@ export type tracerProjectGetUserGraphDataResponseDefault = {
 
 export type tracerProjectGetUserGraphDataResponseSuccess =
   tracerProjectGetUserGraphDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectGetUserGraphDataResponseError = (
   | tracerProjectGetUserGraphDataResponse400
@@ -79060,7 +81739,7 @@ export type tracerProjectGetUserGraphDataResponseError = (
   | tracerProjectGetUserGraphDataResponse503
   | tracerProjectGetUserGraphDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerProjectGetUserGraphDataResponse =
@@ -79117,11 +81796,11 @@ export type tracerProjectGetUserMetricsResponseDefault = {
 
 export type tracerProjectGetUserMetricsResponseSuccess =
   tracerProjectGetUserMetricsResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectGetUserMetricsResponseError =
   tracerProjectGetUserMetricsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectGetUserMetricsResponse =
@@ -79174,7 +81853,7 @@ export type tracerProjectGetUsersAggregateGraphDataResponseDefault = {
 
 export type tracerProjectGetUsersAggregateGraphDataResponseSuccess =
   tracerProjectGetUsersAggregateGraphDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectGetUsersAggregateGraphDataResponseError = (
   | tracerProjectGetUsersAggregateGraphDataResponse400
@@ -79182,7 +81861,7 @@ export type tracerProjectGetUsersAggregateGraphDataResponseError = (
   | tracerProjectGetUsersAggregateGraphDataResponse503
   | tracerProjectGetUsersAggregateGraphDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerProjectGetUsersAggregateGraphDataResponse =
@@ -79244,11 +81923,11 @@ export type tracerProjectListProjectIdsResponseDefault = {
 
 export type tracerProjectListProjectIdsResponseSuccess =
   tracerProjectListProjectIdsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectListProjectIdsResponseError =
   tracerProjectListProjectIdsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectListProjectIdsResponse =
@@ -79305,11 +81984,11 @@ export type tracerProjectListProjectsResponseDefault = {
 
 export type tracerProjectListProjectsResponseSuccess =
   tracerProjectListProjectsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectListProjectsResponseError =
   tracerProjectListProjectsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectListProjectsResponse =
@@ -79368,11 +82047,11 @@ export type tracerProjectProjectSdkCodeResponseDefault = {
 
 export type tracerProjectProjectSdkCodeResponseSuccess =
   tracerProjectProjectSdkCodeResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectProjectSdkCodeResponseError =
   tracerProjectProjectSdkCodeResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectProjectSdkCodeResponse =
@@ -79426,11 +82105,11 @@ export type tracerProjectUpdateProjectConfigResponseDefault = {
 
 export type tracerProjectUpdateProjectConfigResponseSuccess =
   tracerProjectUpdateProjectConfigResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectUpdateProjectConfigResponseError =
   tracerProjectUpdateProjectConfigResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectUpdateProjectConfigResponse =
@@ -79457,7 +82136,7 @@ export const tracerProjectUpdateProjectConfig = async (
 };
 
 export type tracerProjectUpdateProjectNameResponse201 = {
-  data: ProjectApi;
+  data: ProjectNameUpdateApi;
   status: 201;
 };
 
@@ -79468,11 +82147,11 @@ export type tracerProjectUpdateProjectNameResponseDefault = {
 
 export type tracerProjectUpdateProjectNameResponseSuccess =
   tracerProjectUpdateProjectNameResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectUpdateProjectNameResponseError =
   tracerProjectUpdateProjectNameResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectUpdateProjectNameResponse =
@@ -79484,7 +82163,7 @@ export const getTracerProjectUpdateProjectNameUrl = () => {
 };
 
 export const tracerProjectUpdateProjectName = async (
-  projectApi: NonReadonly<ProjectApi>,
+  projectNameUpdateApi: ProjectNameUpdateApi,
   options?: RequestInit,
 ): Promise<tracerProjectUpdateProjectNameResponse> => {
   return apiMutator<tracerProjectUpdateProjectNameResponse>(
@@ -79493,7 +82172,7 @@ export const tracerProjectUpdateProjectName = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(projectApi),
+      body: JSON.stringify(projectNameUpdateApi),
     },
   );
 };
@@ -79510,11 +82189,11 @@ export type tracerProjectUpdateProjectSessionConfigResponseDefault = {
 
 export type tracerProjectUpdateProjectSessionConfigResponseSuccess =
   tracerProjectUpdateProjectSessionConfigResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectUpdateProjectSessionConfigResponseError =
   tracerProjectUpdateProjectSessionConfigResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectUpdateProjectSessionConfigResponse =
@@ -79551,11 +82230,11 @@ export type tracerProjectReadResponseDefault = {
 };
 
 export type tracerProjectReadResponseSuccess = tracerProjectReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerProjectReadResponseError =
   tracerProjectReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectReadResponse =
@@ -79591,11 +82270,11 @@ export type tracerProjectUpdateResponseDefault = {
 
 export type tracerProjectUpdateResponseSuccess =
   tracerProjectUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectUpdateResponseError =
   tracerProjectUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectUpdateResponse =
@@ -79634,11 +82313,11 @@ export type tracerProjectPartialUpdateResponseDefault = {
 
 export type tracerProjectPartialUpdateResponseSuccess =
   tracerProjectPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectPartialUpdateResponseError =
   tracerProjectPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectPartialUpdateResponse =
@@ -79677,11 +82356,11 @@ export type tracerProjectDeleteResponseDefault = {
 
 export type tracerProjectDeleteResponseSuccess =
   tracerProjectDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectDeleteResponseError =
   tracerProjectDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectDeleteResponse =
@@ -79717,11 +82396,11 @@ export type tracerProjectUpdateTagsResponseDefault = {
 
 export type tracerProjectUpdateTagsResponseSuccess =
   tracerProjectUpdateTagsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerProjectUpdateTagsResponseError =
   tracerProjectUpdateTagsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerProjectUpdateTagsResponse =
@@ -79763,11 +82442,11 @@ export type tracerReplaySessionListResponseDefault = {
 
 export type tracerReplaySessionListResponseSuccess =
   tracerReplaySessionListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerReplaySessionListResponseError =
   tracerReplaySessionListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerReplaySessionListResponse =
@@ -79809,11 +82488,11 @@ export type tracerReplaySessionCreateResponseDefault = {
 
 export type tracerReplaySessionCreateResponseSuccess =
   tracerReplaySessionCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerReplaySessionCreateResponseError =
   tracerReplaySessionCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerReplaySessionCreateResponse =
@@ -79859,11 +82538,11 @@ export type tracerReplaySessionGetEvalConfigsResponseDefault = {
 
 export type tracerReplaySessionGetEvalConfigsResponseSuccess =
   tracerReplaySessionGetEvalConfigsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerReplaySessionGetEvalConfigsResponseError =
   tracerReplaySessionGetEvalConfigsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerReplaySessionGetEvalConfigsResponse =
@@ -79903,11 +82582,11 @@ export type tracerReplaySessionReadResponseDefault = {
 
 export type tracerReplaySessionReadResponseSuccess =
   tracerReplaySessionReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerReplaySessionReadResponseError =
   tracerReplaySessionReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerReplaySessionReadResponse =
@@ -79948,11 +82627,11 @@ export type tracerReplaySessionGenerateScenarioResponseDefault = {
 
 export type tracerReplaySessionGenerateScenarioResponseSuccess =
   tracerReplaySessionGenerateScenarioResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerReplaySessionGenerateScenarioResponseError =
   tracerReplaySessionGenerateScenarioResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerReplaySessionGenerateScenarioResponse =
@@ -79996,6 +82675,312 @@ export const tracerReplaySessionGenerateScenario = async (
   );
 };
 
+export type tracerSavedSqlQueryListResponse200 = {
+  data: SQLSavedListApi;
+  status: 200;
+};
+
+export type tracerSavedSqlQueryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSavedSqlQueryListResponseSuccess =
+  tracerSavedSqlQueryListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryListResponseError =
+  tracerSavedSqlQueryListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryListResponse =
+  | tracerSavedSqlQueryListResponseSuccess
+  | tracerSavedSqlQueryListResponseError;
+
+export const getTracerSavedSqlQueryListUrl = (
+  params: TracerSavedSqlQueryListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-sql-query/?${stringifiedParams}`
+    : `/tracer/saved-sql-query/`;
+};
+
+export const tracerSavedSqlQueryList = async (
+  params: TracerSavedSqlQueryListParams,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryListResponse> => {
+  return apiMutator<tracerSavedSqlQueryListResponse>(
+    getTracerSavedSqlQueryListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSavedSqlQueryCreateResponse201 = {
+  data: SQLSavedApi;
+  status: 201;
+};
+
+export type tracerSavedSqlQueryCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerSavedSqlQueryCreateResponseSuccess =
+  tracerSavedSqlQueryCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryCreateResponseError =
+  tracerSavedSqlQueryCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryCreateResponse =
+  | tracerSavedSqlQueryCreateResponseSuccess
+  | tracerSavedSqlQueryCreateResponseError;
+
+export const getTracerSavedSqlQueryCreateUrl = () => {
+  return `/tracer/saved-sql-query/`;
+};
+
+export const tracerSavedSqlQueryCreate = async (
+  sQLSaveApi: SQLSaveApi,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryCreateResponse> => {
+  return apiMutator<tracerSavedSqlQueryCreateResponse>(
+    getTracerSavedSqlQueryCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLSaveApi),
+    },
+  );
+};
+
+export type tracerSavedSqlQueryReadResponse200 = {
+  data: SQLSavedApi;
+  status: 200;
+};
+
+export type tracerSavedSqlQueryReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSavedSqlQueryReadResponseSuccess =
+  tracerSavedSqlQueryReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryReadResponseError =
+  tracerSavedSqlQueryReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryReadResponse =
+  | tracerSavedSqlQueryReadResponseSuccess
+  | tracerSavedSqlQueryReadResponseError;
+
+export const getTracerSavedSqlQueryReadUrl = (
+  id: string,
+  params: TracerSavedSqlQueryReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-sql-query/${id}/?${stringifiedParams}`
+    : `/tracer/saved-sql-query/${id}/`;
+};
+
+export const tracerSavedSqlQueryRead = async (
+  id: string,
+  params: TracerSavedSqlQueryReadParams,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryReadResponse> => {
+  return apiMutator<tracerSavedSqlQueryReadResponse>(
+    getTracerSavedSqlQueryReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSavedSqlQueryPartialUpdateResponse200 = {
+  data: SQLSavedApi;
+  status: 200;
+};
+
+export type tracerSavedSqlQueryPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSavedSqlQueryPartialUpdateResponseSuccess =
+  tracerSavedSqlQueryPartialUpdateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryPartialUpdateResponseError =
+  tracerSavedSqlQueryPartialUpdateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryPartialUpdateResponse =
+  | tracerSavedSqlQueryPartialUpdateResponseSuccess
+  | tracerSavedSqlQueryPartialUpdateResponseError;
+
+export const getTracerSavedSqlQueryPartialUpdateUrl = (id: string) => {
+  return `/tracer/saved-sql-query/${id}/`;
+};
+
+export const tracerSavedSqlQueryPartialUpdate = async (
+  id: string,
+  sQLSaveApi: SQLSaveApi,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryPartialUpdateResponse> => {
+  return apiMutator<tracerSavedSqlQueryPartialUpdateResponse>(
+    getTracerSavedSqlQueryPartialUpdateUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLSaveApi),
+    },
+  );
+};
+
+export type tracerSavedSqlQueryDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type tracerSavedSqlQueryDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type tracerSavedSqlQueryDeleteResponseSuccess =
+  tracerSavedSqlQueryDeleteResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryDeleteResponseError =
+  tracerSavedSqlQueryDeleteResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryDeleteResponse =
+  | tracerSavedSqlQueryDeleteResponseSuccess
+  | tracerSavedSqlQueryDeleteResponseError;
+
+export const getTracerSavedSqlQueryDeleteUrl = (
+  id: string,
+  params: TracerSavedSqlQueryDeleteParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/saved-sql-query/${id}/?${stringifiedParams}`
+    : `/tracer/saved-sql-query/${id}/`;
+};
+
+export const tracerSavedSqlQueryDelete = async (
+  id: string,
+  params: TracerSavedSqlQueryDeleteParams,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryDeleteResponse> => {
+  return apiMutator<tracerSavedSqlQueryDeleteResponse>(
+    getTracerSavedSqlQueryDeleteUrl(id, params),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type tracerSavedSqlQueryAddWidgetResponse201 = {
+  data: SQLWidgetResponseApi;
+  status: 201;
+};
+
+export type tracerSavedSqlQueryAddWidgetResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerSavedSqlQueryAddWidgetResponseSuccess =
+  tracerSavedSqlQueryAddWidgetResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSavedSqlQueryAddWidgetResponseError =
+  tracerSavedSqlQueryAddWidgetResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSavedSqlQueryAddWidgetResponse =
+  | tracerSavedSqlQueryAddWidgetResponseSuccess
+  | tracerSavedSqlQueryAddWidgetResponseError;
+
+export const getTracerSavedSqlQueryAddWidgetUrl = (id: string) => {
+  return `/tracer/saved-sql-query/${id}/add-widget/`;
+};
+
+export const tracerSavedSqlQueryAddWidget = async (
+  id: string,
+  sQLWidgetApi: SQLWidgetApi,
+  options?: RequestInit,
+): Promise<tracerSavedSqlQueryAddWidgetResponse> => {
+  return apiMutator<tracerSavedSqlQueryAddWidgetResponse>(
+    getTracerSavedSqlQueryAddWidgetUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLWidgetApi),
+    },
+  );
+};
+
 export type tracerSavedViewsListResponse200 = {
   data: SavedViewListResponseApi;
   status: 200;
@@ -80008,11 +82993,11 @@ export type tracerSavedViewsListResponseDefault = {
 
 export type tracerSavedViewsListResponseSuccess =
   tracerSavedViewsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsListResponseError =
   tracerSavedViewsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsListResponse =
@@ -80066,11 +83051,11 @@ export type tracerSavedViewsCreateResponseDefault = {
 
 export type tracerSavedViewsCreateResponseSuccess =
   tracerSavedViewsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsCreateResponseError =
   tracerSavedViewsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsCreateResponse =
@@ -80108,11 +83093,11 @@ export type tracerSavedViewsReorderResponseDefault = {
 
 export type tracerSavedViewsReorderResponseSuccess =
   tracerSavedViewsReorderResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsReorderResponseError =
   tracerSavedViewsReorderResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsReorderResponse =
@@ -80150,11 +83135,11 @@ export type tracerSavedViewsReadResponseDefault = {
 
 export type tracerSavedViewsReadResponseSuccess =
   tracerSavedViewsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsReadResponseError =
   tracerSavedViewsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsReadResponse =
@@ -80190,11 +83175,11 @@ export type tracerSavedViewsUpdateResponseDefault = {
 
 export type tracerSavedViewsUpdateResponseSuccess =
   tracerSavedViewsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsUpdateResponseError =
   tracerSavedViewsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsUpdateResponse =
@@ -80233,11 +83218,11 @@ export type tracerSavedViewsPartialUpdateResponseDefault = {
 
 export type tracerSavedViewsPartialUpdateResponseSuccess =
   tracerSavedViewsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsPartialUpdateResponseError =
   tracerSavedViewsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsPartialUpdateResponse =
@@ -80276,11 +83261,11 @@ export type tracerSavedViewsDeleteResponseDefault = {
 
 export type tracerSavedViewsDeleteResponseSuccess =
   tracerSavedViewsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsDeleteResponseError =
   tracerSavedViewsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsDeleteResponse =
@@ -80316,11 +83301,11 @@ export type tracerSavedViewsDuplicateResponseDefault = {
 
 export type tracerSavedViewsDuplicateResponseSuccess =
   tracerSavedViewsDuplicateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSavedViewsDuplicateResponseError =
   tracerSavedViewsDuplicateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSavedViewsDuplicateResponse =
@@ -80359,11 +83344,11 @@ export type tracerSharedLinksListResponseDefault = {
 
 export type tracerSharedLinksListResponseSuccess =
   tracerSharedLinksListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksListResponseError =
   tracerSharedLinksListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksListResponse =
@@ -80420,11 +83405,11 @@ export type tracerSharedLinksCreateResponseDefault = {
 
 export type tracerSharedLinksCreateResponseSuccess =
   tracerSharedLinksCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksCreateResponseError =
   tracerSharedLinksCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksCreateResponse =
@@ -80465,11 +83450,11 @@ export type tracerSharedLinksReadResponseDefault = {
 
 export type tracerSharedLinksReadResponseSuccess =
   tracerSharedLinksReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksReadResponseError =
   tracerSharedLinksReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksReadResponse =
@@ -80508,11 +83493,11 @@ export type tracerSharedLinksUpdateResponseDefault = {
 
 export type tracerSharedLinksUpdateResponseSuccess =
   tracerSharedLinksUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksUpdateResponseError =
   tracerSharedLinksUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksUpdateResponse =
@@ -80554,11 +83539,11 @@ export type tracerSharedLinksPartialUpdateResponseDefault = {
 
 export type tracerSharedLinksPartialUpdateResponseSuccess =
   tracerSharedLinksPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksPartialUpdateResponseError =
   tracerSharedLinksPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksPartialUpdateResponse =
@@ -80600,11 +83585,11 @@ export type tracerSharedLinksDeleteResponseDefault = {
 
 export type tracerSharedLinksDeleteResponseSuccess =
   tracerSharedLinksDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksDeleteResponseError =
   tracerSharedLinksDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksDeleteResponse =
@@ -80643,11 +83628,11 @@ export type tracerSharedLinksAddAccessResponseDefault = {
 
 export type tracerSharedLinksAddAccessResponseSuccess =
   tracerSharedLinksAddAccessResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksAddAccessResponseError =
   tracerSharedLinksAddAccessResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksAddAccessResponse =
@@ -80689,11 +83674,11 @@ export type tracerSharedLinksRemoveAccessResponseDefault = {
 
 export type tracerSharedLinksRemoveAccessResponseSuccess =
   tracerSharedLinksRemoveAccessResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedLinksRemoveAccessResponseError =
   tracerSharedLinksRemoveAccessResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerSharedLinksRemoveAccessResponse =
@@ -80755,7 +83740,7 @@ export type tracerSharedReadResponseDefault = {
 };
 
 export type tracerSharedReadResponseSuccess = tracerSharedReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerSharedReadResponseError = (
   | tracerSharedReadResponse401
@@ -80764,7 +83749,7 @@ export type tracerSharedReadResponseError = (
   | tracerSharedReadResponse410
   | tracerSharedReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerSharedReadResponse =
@@ -80822,7 +83807,7 @@ export type tracerSharedSidebarListResponseDefault = {
 
 export type tracerSharedSidebarListResponseSuccess =
   tracerSharedSidebarListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedSidebarListResponseError = (
   | tracerSharedSidebarListResponse401
@@ -80831,7 +83816,7 @@ export type tracerSharedSidebarListResponseError = (
   | tracerSharedSidebarListResponse410
   | tracerSharedSidebarListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerSharedSidebarListResponse =
@@ -80912,7 +83897,7 @@ export type tracerSharedTracesReadResponseDefault = {
 
 export type tracerSharedTracesReadResponseSuccess =
   tracerSharedTracesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerSharedTracesReadResponseError = (
   | tracerSharedTracesReadResponse401
@@ -80921,7 +83906,7 @@ export type tracerSharedTracesReadResponseError = (
   | tracerSharedTracesReadResponse410
   | tracerSharedTracesReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerSharedTracesReadResponse =
@@ -80953,6 +83938,448 @@ export const tracerSharedTracesRead = async (
   );
 };
 
+export type tracerSqlQueryListResponse200 = {
+  data: SQLHistoryApi;
+  status: 200;
+};
+
+export type tracerSqlQueryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryListResponseSuccess =
+  tracerSqlQueryListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryListResponseError =
+  tracerSqlQueryListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryListResponse =
+  | tracerSqlQueryListResponseSuccess
+  | tracerSqlQueryListResponseError;
+
+export const getTracerSqlQueryListUrl = (params: TracerSqlQueryListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/?${stringifiedParams}`
+    : `/tracer/sql-query/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryList = async (
+  params: TracerSqlQueryListParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryListResponse> => {
+  return apiMutator<tracerSqlQueryListResponse>(
+    getTracerSqlQueryListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryCatalogResponse200 = {
+  data: SQLCatalogApi;
+  status: 200;
+};
+
+export type tracerSqlQueryCatalogResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryCatalogResponseSuccess =
+  tracerSqlQueryCatalogResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryCatalogResponseError =
+  tracerSqlQueryCatalogResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryCatalogResponse =
+  | tracerSqlQueryCatalogResponseSuccess
+  | tracerSqlQueryCatalogResponseError;
+
+export const getTracerSqlQueryCatalogUrl = (
+  params: TracerSqlQueryCatalogParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/catalog/?${stringifiedParams}`
+    : `/tracer/sql-query/catalog/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryCatalog = async (
+  params: TracerSqlQueryCatalogParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryCatalogResponse> => {
+  return apiMutator<tracerSqlQueryCatalogResponse>(
+    getTracerSqlQueryCatalogUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryEstimateResponse200 = {
+  data: SQLEstimateApi;
+  status: 200;
+};
+
+export type tracerSqlQueryEstimateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryEstimateResponseSuccess =
+  tracerSqlQueryEstimateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryEstimateResponseError =
+  tracerSqlQueryEstimateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryEstimateResponse =
+  | tracerSqlQueryEstimateResponseSuccess
+  | tracerSqlQueryEstimateResponseError;
+
+export const getTracerSqlQueryEstimateUrl = () => {
+  return `/tracer/sql-query/estimate/`;
+};
+
+/**
+ * Advisory index estimate of a query; never admits or blocks a run.
+ */
+export const tracerSqlQueryEstimate = async (
+  sQLQueryInputApi: SQLQueryInputApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryEstimateResponse> => {
+  return apiMutator<tracerSqlQueryEstimateResponse>(
+    getTracerSqlQueryEstimateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLQueryInputApi),
+    },
+  );
+};
+
+export type tracerSqlQueryRunSavedResponse202 = {
+  data: SQLExecutionApi;
+  status: 202;
+};
+
+export type tracerSqlQueryRunSavedResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type tracerSqlQueryRunSavedResponseSuccess =
+  tracerSqlQueryRunSavedResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryRunSavedResponseError =
+  tracerSqlQueryRunSavedResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryRunSavedResponse =
+  | tracerSqlQueryRunSavedResponseSuccess
+  | tracerSqlQueryRunSavedResponseError;
+
+export const getTracerSqlQueryRunSavedUrl = () => {
+  return `/tracer/sql-query/run-saved/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryRunSaved = async (
+  sQLRunSavedApi: SQLRunSavedApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryRunSavedResponse> => {
+  return apiMutator<tracerSqlQueryRunSavedResponse>(
+    getTracerSqlQueryRunSavedUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLRunSavedApi),
+    },
+  );
+};
+
+export type tracerSqlQueryRunResponse202 = {
+  data: SQLExecutionApi;
+  status: 202;
+};
+
+export type tracerSqlQueryRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type tracerSqlQueryRunResponseSuccess = tracerSqlQueryRunResponse202 & {
+  headers: ApiResponseHeaders;
+};
+export type tracerSqlQueryRunResponseError =
+  tracerSqlQueryRunResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryRunResponse =
+  | tracerSqlQueryRunResponseSuccess
+  | tracerSqlQueryRunResponseError;
+
+export const getTracerSqlQueryRunUrl = () => {
+  return `/tracer/sql-query/run/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryRun = async (
+  sQLRunApi: SQLRunApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryRunResponse> => {
+  return apiMutator<tracerSqlQueryRunResponse>(getTracerSqlQueryRunUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(sQLRunApi),
+  });
+};
+
+export type tracerSqlQueryReadResponse200 = {
+  data: SQLExecutionApi;
+  status: 200;
+};
+
+export type tracerSqlQueryReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryReadResponseSuccess =
+  tracerSqlQueryReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryReadResponseError =
+  tracerSqlQueryReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryReadResponse =
+  | tracerSqlQueryReadResponseSuccess
+  | tracerSqlQueryReadResponseError;
+
+export const getTracerSqlQueryReadUrl = (
+  id: string,
+  params: TracerSqlQueryReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/${id}/?${stringifiedParams}`
+    : `/tracer/sql-query/${id}/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryRead = async (
+  id: string,
+  params: TracerSqlQueryReadParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryReadResponse> => {
+  return apiMutator<tracerSqlQueryReadResponse>(
+    getTracerSqlQueryReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryCancelResponse200 = {
+  data: SQLExecutionApi;
+  status: 200;
+};
+
+export type tracerSqlQueryCancelResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryCancelResponseSuccess =
+  tracerSqlQueryCancelResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryCancelResponseError =
+  tracerSqlQueryCancelResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerSqlQueryCancelResponse =
+  | tracerSqlQueryCancelResponseSuccess
+  | tracerSqlQueryCancelResponseError;
+
+export const getTracerSqlQueryCancelUrl = (id: string) => {
+  return `/tracer/sql-query/${id}/cancel/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryCancel = async (
+  id: string,
+  sQLProjectApi: SQLProjectApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryCancelResponse> => {
+  return apiMutator<tracerSqlQueryCancelResponse>(
+    getTracerSqlQueryCancelUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLProjectApi),
+    },
+  );
+};
+
+export type tracerSqlQueryDownloadResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type tracerSqlQueryDownloadResponse409 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 409;
+};
+
+export type tracerSqlQueryDownloadResponse410 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 410;
+};
+
+export type tracerSqlQueryDownloadResponse503 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 503;
+};
+
+export type tracerSqlQueryDownloadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 409 | 410 | 503>;
+};
+
+export type tracerSqlQueryDownloadResponseSuccess =
+  tracerSqlQueryDownloadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerSqlQueryDownloadResponseError = (
+  | tracerSqlQueryDownloadResponse409
+  | tracerSqlQueryDownloadResponse410
+  | tracerSqlQueryDownloadResponse503
+  | tracerSqlQueryDownloadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerSqlQueryDownloadResponse =
+  | tracerSqlQueryDownloadResponseSuccess
+  | tracerSqlQueryDownloadResponseError;
+
+export const getTracerSqlQueryDownloadUrl = (
+  id: string,
+  params: TracerSqlQueryDownloadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/sql-query/${id}/download/?${stringifiedParams}`
+    : `/tracer/sql-query/${id}/download/`;
+};
+
+/**
+ * Read-only scans; creating a personal execution record grants no write access.
+ */
+export const tracerSqlQueryDownload = async (
+  id: string,
+  params: TracerSqlQueryDownloadParams,
+  options?: RequestInit,
+): Promise<tracerSqlQueryDownloadResponse> => {
+  return apiMutator<tracerSqlQueryDownloadResponse>(
+    getTracerSqlQueryDownloadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerTraceAnnotationGetAnnotationValuesResponse200 = {
   data: GetTraceAnnotationValuesResponseApi;
   status: 200;
@@ -80975,14 +84402,14 @@ export type tracerTraceAnnotationGetAnnotationValuesResponseDefault = {
 
 export type tracerTraceAnnotationGetAnnotationValuesResponseSuccess =
   tracerTraceAnnotationGetAnnotationValuesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceAnnotationGetAnnotationValuesResponseError = (
   | tracerTraceAnnotationGetAnnotationValuesResponse400
   | tracerTraceAnnotationGetAnnotationValuesResponse500
   | tracerTraceAnnotationGetAnnotationValuesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceAnnotationGetAnnotationValuesResponse =
@@ -81056,7 +84483,7 @@ export type tracerTraceErrorAnalysisReadResponseDefault = {
 
 export type tracerTraceErrorAnalysisReadResponseSuccess =
   tracerTraceErrorAnalysisReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceErrorAnalysisReadResponseError = (
   | tracerTraceErrorAnalysisReadResponse400
@@ -81065,7 +84492,7 @@ export type tracerTraceErrorAnalysisReadResponseError = (
   | tracerTraceErrorAnalysisReadResponse500
   | tracerTraceErrorAnalysisReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceErrorAnalysisReadResponse =
@@ -81125,7 +84552,7 @@ export type tracerTraceErrorTaskReadResponseDefault = {
 
 export type tracerTraceErrorTaskReadResponseSuccess =
   tracerTraceErrorTaskReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceErrorTaskReadResponseError = (
   | tracerTraceErrorTaskReadResponse400
@@ -81134,7 +84561,7 @@ export type tracerTraceErrorTaskReadResponseError = (
   | tracerTraceErrorTaskReadResponse500
   | tracerTraceErrorTaskReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceErrorTaskReadResponse =
@@ -81194,7 +84621,7 @@ export type tracerTraceErrorTaskCreateResponseDefault = {
 
 export type tracerTraceErrorTaskCreateResponseSuccess =
   tracerTraceErrorTaskCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceErrorTaskCreateResponseError = (
   | tracerTraceErrorTaskCreateResponse400
@@ -81203,7 +84630,7 @@ export type tracerTraceErrorTaskCreateResponseError = (
   | tracerTraceErrorTaskCreateResponse500
   | tracerTraceErrorTaskCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceErrorTaskCreateResponse =
@@ -81251,11 +84678,11 @@ export type tracerTraceSessionListResponseDefault = {
 
 export type tracerTraceSessionListResponseSuccess =
   tracerTraceSessionListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionListResponseError =
   tracerTraceSessionListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceSessionListResponse =
@@ -81309,11 +84736,11 @@ export type tracerTraceSessionCreateResponseDefault = {
 
 export type tracerTraceSessionCreateResponseSuccess =
   tracerTraceSessionCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionCreateResponseError =
   tracerTraceSessionCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceSessionCreateResponse =
@@ -81366,7 +84793,7 @@ export type tracerTraceSessionGetSessionFilterValuesResponseDefault = {
 
 export type tracerTraceSessionGetSessionFilterValuesResponseSuccess =
   tracerTraceSessionGetSessionFilterValuesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionGetSessionFilterValuesResponseError = (
   | tracerTraceSessionGetSessionFilterValuesResponse400
@@ -81374,7 +84801,7 @@ export type tracerTraceSessionGetSessionFilterValuesResponseError = (
   | tracerTraceSessionGetSessionFilterValuesResponse503
   | tracerTraceSessionGetSessionFilterValuesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceSessionGetSessionFilterValuesResponse =
@@ -81455,7 +84882,7 @@ export type tracerTraceSessionGetSessionGraphDataResponseDefault = {
 
 export type tracerTraceSessionGetSessionGraphDataResponseSuccess =
   tracerTraceSessionGetSessionGraphDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionGetSessionGraphDataResponseError = (
   | tracerTraceSessionGetSessionGraphDataResponse400
@@ -81463,7 +84890,7 @@ export type tracerTraceSessionGetSessionGraphDataResponseError = (
   | tracerTraceSessionGetSessionGraphDataResponse503
   | tracerTraceSessionGetSessionGraphDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceSessionGetSessionGraphDataResponse =
@@ -81545,7 +84972,7 @@ export type tracerTraceSessionGetTraceSessionExportDataResponseDefault = {
 
 export type tracerTraceSessionGetTraceSessionExportDataResponseSuccess =
   tracerTraceSessionGetTraceSessionExportDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionGetTraceSessionExportDataResponseError = (
   | tracerTraceSessionGetTraceSessionExportDataResponse400
@@ -81553,7 +84980,7 @@ export type tracerTraceSessionGetTraceSessionExportDataResponseError = (
   | tracerTraceSessionGetTraceSessionExportDataResponse503
   | tracerTraceSessionGetTraceSessionExportDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceSessionGetTraceSessionExportDataResponse =
@@ -81630,7 +85057,7 @@ export type tracerTraceSessionListSessionsResponseDefault = {
 
 export type tracerTraceSessionListSessionsResponseSuccess =
   tracerTraceSessionListSessionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionListSessionsResponseError = (
   | tracerTraceSessionListSessionsResponse400
@@ -81639,7 +85066,7 @@ export type tracerTraceSessionListSessionsResponseError = (
   | tracerTraceSessionListSessionsResponse503
   | tracerTraceSessionListSessionsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceSessionListSessionsResponse =
@@ -81716,7 +85143,7 @@ export type tracerTraceSessionListSessionsCreateResponseDefault = {
 
 export type tracerTraceSessionListSessionsCreateResponseSuccess =
   tracerTraceSessionListSessionsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionListSessionsCreateResponseError = (
   | tracerTraceSessionListSessionsCreateResponse400
@@ -81725,7 +85152,7 @@ export type tracerTraceSessionListSessionsCreateResponseError = (
   | tracerTraceSessionListSessionsCreateResponse503
   | tracerTraceSessionListSessionsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceSessionListSessionsCreateResponse =
@@ -81766,11 +85193,11 @@ export type tracerTraceSessionReadResponseDefault = {
 
 export type tracerTraceSessionReadResponseSuccess =
   tracerTraceSessionReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionReadResponseError =
   tracerTraceSessionReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceSessionReadResponse =
@@ -81806,11 +85233,11 @@ export type tracerTraceSessionUpdateResponseDefault = {
 
 export type tracerTraceSessionUpdateResponseSuccess =
   tracerTraceSessionUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionUpdateResponseError =
   tracerTraceSessionUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceSessionUpdateResponse =
@@ -81849,11 +85276,11 @@ export type tracerTraceSessionPartialUpdateResponseDefault = {
 
 export type tracerTraceSessionPartialUpdateResponseSuccess =
   tracerTraceSessionPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionPartialUpdateResponseError =
   tracerTraceSessionPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceSessionPartialUpdateResponse =
@@ -81892,11 +85319,11 @@ export type tracerTraceSessionDeleteResponseDefault = {
 
 export type tracerTraceSessionDeleteResponseSuccess =
   tracerTraceSessionDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionDeleteResponseError =
   tracerTraceSessionDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceSessionDeleteResponse =
@@ -81932,11 +85359,11 @@ export type tracerTraceSessionEvalLogsResponseDefault = {
 
 export type tracerTraceSessionEvalLogsResponseSuccess =
   tracerTraceSessionEvalLogsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionEvalLogsResponseError =
   tracerTraceSessionEvalLogsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceSessionEvalLogsResponse =
@@ -81987,13 +85414,13 @@ export type tracerTraceSessionQueryResponseDefault = {
 
 export type tracerTraceSessionQueryResponseSuccess =
   tracerTraceSessionQueryResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionQueryResponseError = (
   | tracerTraceSessionQueryResponse400
   | tracerTraceSessionQueryResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceSessionQueryResponse =
@@ -82057,13 +85484,13 @@ export type tracerTraceSessionQueryCreateResponseDefault = {
 
 export type tracerTraceSessionQueryCreateResponseSuccess =
   tracerTraceSessionQueryCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceSessionQueryCreateResponseError = (
   | tracerTraceSessionQueryCreateResponse400
   | tracerTraceSessionQueryCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceSessionQueryCreateResponse =
@@ -82104,10 +85531,10 @@ export type tracerTraceListResponseDefault = {
 };
 
 export type tracerTraceListResponseSuccess = tracerTraceListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerTraceListResponseError = tracerTraceListResponseDefault & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceListResponse =
@@ -82155,11 +85582,11 @@ export type tracerTraceCreateResponseDefault = {
 };
 
 export type tracerTraceCreateResponseSuccess = tracerTraceCreateResponse201 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerTraceCreateResponseError =
   tracerTraceCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceCreateResponse =
@@ -82209,7 +85636,7 @@ export type tracerTraceAgentGraphResponseDefault = {
 
 export type tracerTraceAgentGraphResponseSuccess =
   tracerTraceAgentGraphResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceAgentGraphResponseError = (
   | tracerTraceAgentGraphResponse400
@@ -82217,7 +85644,7 @@ export type tracerTraceAgentGraphResponseError = (
   | tracerTraceAgentGraphResponse503
   | tracerTraceAgentGraphResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceAgentGraphResponse =
@@ -82291,7 +85718,7 @@ export type tracerTraceAgentGraphCreateResponseDefault = {
 
 export type tracerTraceAgentGraphCreateResponseSuccess =
   tracerTraceAgentGraphCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceAgentGraphCreateResponseError = (
   | tracerTraceAgentGraphCreateResponse400
@@ -82299,7 +85726,7 @@ export type tracerTraceAgentGraphCreateResponseError = (
   | tracerTraceAgentGraphCreateResponse503
   | tracerTraceAgentGraphCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceAgentGraphCreateResponse =
@@ -82342,11 +85769,11 @@ export type tracerTraceBulkCreateResponseDefault = {
 
 export type tracerTraceBulkCreateResponseSuccess =
   tracerTraceBulkCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceBulkCreateResponseError =
   tracerTraceBulkCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceBulkCreateResponse =
@@ -82384,11 +85811,11 @@ export type tracerTraceCompareTracesResponseDefault = {
 
 export type tracerTraceCompareTracesResponseSuccess =
   tracerTraceCompareTracesResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceCompareTracesResponseError =
   tracerTraceCompareTracesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceCompareTracesResponse =
@@ -82444,7 +85871,7 @@ export type tracerTraceGetEvalNamesResponseDefault = {
 
 export type tracerTraceGetEvalNamesResponseSuccess =
   tracerTraceGetEvalNamesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetEvalNamesResponseError = (
   | tracerTraceGetEvalNamesResponse400
@@ -82452,7 +85879,7 @@ export type tracerTraceGetEvalNamesResponseError = (
   | tracerTraceGetEvalNamesResponse503
   | tracerTraceGetEvalNamesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceGetEvalNamesResponse =
@@ -82524,7 +85951,7 @@ export type tracerTraceGetGraphMethodsResponseDefault = {
 
 export type tracerTraceGetGraphMethodsResponseSuccess =
   tracerTraceGetGraphMethodsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetGraphMethodsResponseError = (
   | tracerTraceGetGraphMethodsResponse400
@@ -82532,7 +85959,7 @@ export type tracerTraceGetGraphMethodsResponseError = (
   | tracerTraceGetGraphMethodsResponse503
   | tracerTraceGetGraphMethodsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceGetGraphMethodsResponse =
@@ -82592,11 +86019,11 @@ export type tracerTraceGetPropertiesResponseDefault = {
 
 export type tracerTraceGetPropertiesResponseSuccess =
   tracerTraceGetPropertiesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetPropertiesResponseError =
   tracerTraceGetPropertiesResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceGetPropertiesResponse =
@@ -82649,7 +86076,7 @@ export type tracerTraceGetTraceExportDataResponseDefault = {
 
 export type tracerTraceGetTraceExportDataResponseSuccess =
   tracerTraceGetTraceExportDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetTraceExportDataResponseError = (
   | tracerTraceGetTraceExportDataResponse400
@@ -82657,7 +86084,7 @@ export type tracerTraceGetTraceExportDataResponseError = (
   | tracerTraceGetTraceExportDataResponse503
   | tracerTraceGetTraceExportDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceGetTraceExportDataResponse =
@@ -82714,11 +86141,11 @@ export type tracerTraceGetTraceIdByIndexResponseDefault = {
 
 export type tracerTraceGetTraceIdByIndexResponseSuccess =
   tracerTraceGetTraceIdByIndexResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetTraceIdByIndexResponseError =
   tracerTraceGetTraceIdByIndexResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceGetTraceIdByIndexResponse =
@@ -82775,11 +86202,11 @@ export type tracerTraceGetTraceIdByIndexCreateResponseDefault = {
 
 export type tracerTraceGetTraceIdByIndexCreateResponseSuccess =
   tracerTraceGetTraceIdByIndexCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetTraceIdByIndexCreateResponseError =
   tracerTraceGetTraceIdByIndexCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceGetTraceIdByIndexCreateResponse =
@@ -82820,11 +86247,11 @@ export type tracerTraceGetTraceIdByIndexObserveResponseDefault = {
 
 export type tracerTraceGetTraceIdByIndexObserveResponseSuccess =
   tracerTraceGetTraceIdByIndexObserveResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetTraceIdByIndexObserveResponseError =
   tracerTraceGetTraceIdByIndexObserveResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceGetTraceIdByIndexObserveResponse =
@@ -82881,11 +86308,11 @@ export type tracerTraceGetTraceIdByIndexObserveCreateResponseDefault = {
 
 export type tracerTraceGetTraceIdByIndexObserveCreateResponseSuccess =
   tracerTraceGetTraceIdByIndexObserveCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceGetTraceIdByIndexObserveCreateResponseError =
   tracerTraceGetTraceIdByIndexObserveCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceGetTraceIdByIndexObserveCreateResponse =
@@ -82946,7 +86373,7 @@ export type tracerTraceListTracesResponseDefault = {
 
 export type tracerTraceListTracesResponseSuccess =
   tracerTraceListTracesResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceListTracesResponseError = (
   | tracerTraceListTracesResponse400
@@ -82955,7 +86382,7 @@ export type tracerTraceListTracesResponseError = (
   | tracerTraceListTracesResponse503
   | tracerTraceListTracesResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceListTracesResponse =
@@ -83032,7 +86459,7 @@ export type tracerTraceListTracesCreateResponseDefault = {
 
 export type tracerTraceListTracesCreateResponseSuccess =
   tracerTraceListTracesCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceListTracesCreateResponseError = (
   | tracerTraceListTracesCreateResponse400
@@ -83041,7 +86468,7 @@ export type tracerTraceListTracesCreateResponseError = (
   | tracerTraceListTracesCreateResponse503
   | tracerTraceListTracesCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceListTracesCreateResponse =
@@ -83102,7 +86529,7 @@ export type tracerTraceListTracesOfSessionResponseDefault = {
 
 export type tracerTraceListTracesOfSessionResponseSuccess =
   tracerTraceListTracesOfSessionResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceListTracesOfSessionResponseError = (
   | tracerTraceListTracesOfSessionResponse400
@@ -83111,7 +86538,7 @@ export type tracerTraceListTracesOfSessionResponseError = (
   | tracerTraceListTracesOfSessionResponse503
   | tracerTraceListTracesOfSessionResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceListTracesOfSessionResponse =
@@ -83188,7 +86615,7 @@ export type tracerTraceListTracesOfSessionCreateResponseDefault = {
 
 export type tracerTraceListTracesOfSessionCreateResponseSuccess =
   tracerTraceListTracesOfSessionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceListTracesOfSessionCreateResponseError = (
   | tracerTraceListTracesOfSessionCreateResponse400
@@ -83197,7 +86624,7 @@ export type tracerTraceListTracesOfSessionCreateResponseError = (
   | tracerTraceListTracesOfSessionCreateResponse503
   | tracerTraceListTracesOfSessionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceListTracesOfSessionCreateResponse =
@@ -83263,7 +86690,7 @@ export type tracerTraceListVoiceCallsResponseDefault = {
 
 export type tracerTraceListVoiceCallsResponseSuccess =
   tracerTraceListVoiceCallsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceListVoiceCallsResponseError = (
   | tracerTraceListVoiceCallsResponse400
@@ -83273,7 +86700,7 @@ export type tracerTraceListVoiceCallsResponseError = (
   | tracerTraceListVoiceCallsResponse503
   | tracerTraceListVoiceCallsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceListVoiceCallsResponse =
@@ -83361,7 +86788,7 @@ export type tracerTraceListVoiceCallsCreateResponseDefault = {
 
 export type tracerTraceListVoiceCallsCreateResponseSuccess =
   tracerTraceListVoiceCallsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceListVoiceCallsCreateResponseError = (
   | tracerTraceListVoiceCallsCreateResponse400
@@ -83371,7 +86798,7 @@ export type tracerTraceListVoiceCallsCreateResponseError = (
   | tracerTraceListVoiceCallsCreateResponse503
   | tracerTraceListVoiceCallsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceListVoiceCallsCreateResponse =
@@ -83421,6 +86848,11 @@ export type tracerTraceVoiceCallDetailResponse404 = {
   status: 404;
 };
 
+export type tracerTraceVoiceCallDetailResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
 export type tracerTraceVoiceCallDetailResponse500 = {
   data: ApiErrorResponseApi;
   status: 500;
@@ -83433,21 +86865,22 @@ export type tracerTraceVoiceCallDetailResponse503 = {
 
 export type tracerTraceVoiceCallDetailResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500 | 503>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type tracerTraceVoiceCallDetailResponseSuccess =
   tracerTraceVoiceCallDetailResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceVoiceCallDetailResponseError = (
   | tracerTraceVoiceCallDetailResponse400
   | tracerTraceVoiceCallDetailResponse404
+  | tracerTraceVoiceCallDetailResponse409
   | tracerTraceVoiceCallDetailResponse500
   | tracerTraceVoiceCallDetailResponse503
   | tracerTraceVoiceCallDetailResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceVoiceCallDetailResponse =
@@ -83524,7 +86957,7 @@ export type tracerTraceReadResponseDefault = {
 };
 
 export type tracerTraceReadResponseSuccess = tracerTraceReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerTraceReadResponseError = (
   | tracerTraceReadResponse400
@@ -83532,7 +86965,7 @@ export type tracerTraceReadResponseError = (
   | tracerTraceReadResponse503
   | tracerTraceReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerTraceReadResponse =
@@ -83595,11 +87028,11 @@ export type tracerTraceUpdateResponseDefault = {
 };
 
 export type tracerTraceUpdateResponseSuccess = tracerTraceUpdateResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerTraceUpdateResponseError =
   tracerTraceUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceUpdateResponse =
@@ -83635,11 +87068,11 @@ export type tracerTracePartialUpdateResponseDefault = {
 
 export type tracerTracePartialUpdateResponseSuccess =
   tracerTracePartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTracePartialUpdateResponseError =
   tracerTracePartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTracePartialUpdateResponse =
@@ -83677,11 +87110,11 @@ export type tracerTraceDeleteResponseDefault = {
 };
 
 export type tracerTraceDeleteResponseSuccess = tracerTraceDeleteResponse204 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerTraceDeleteResponseError =
   tracerTraceDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceDeleteResponse =
@@ -83714,11 +87147,11 @@ export type tracerTraceUpdateTagsResponseDefault = {
 
 export type tracerTraceUpdateTagsResponseSuccess =
   tracerTraceUpdateTagsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerTraceUpdateTagsResponseError =
   tracerTraceUpdateTagsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerTraceUpdateTagsResponse =
@@ -83760,11 +87193,11 @@ export type tracerUserAlertLogsListResponseDefault = {
 
 export type tracerUserAlertLogsListResponseSuccess =
   tracerUserAlertLogsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsListResponseError =
   tracerUserAlertLogsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertLogsListResponse =
@@ -83828,14 +87261,14 @@ export type tracerUserAlertLogsCreateResponseDefault = {
 
 export type tracerUserAlertLogsCreateResponseSuccess =
   tracerUserAlertLogsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsCreateResponseError = (
   | tracerUserAlertLogsCreateResponse400
   | tracerUserAlertLogsCreateResponse404
   | tracerUserAlertLogsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertLogsCreateResponse =
@@ -83873,11 +87306,11 @@ export type tracerUserAlertLogsListAllResponseDefault = {
 
 export type tracerUserAlertLogsListAllResponseSuccess =
   tracerUserAlertLogsListAllResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsListAllResponseError =
   tracerUserAlertLogsListAllResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertLogsListAllResponse =
@@ -83936,13 +87369,13 @@ export type tracerUserAlertLogsMarkAsResolvedResponseDefault = {
 
 export type tracerUserAlertLogsMarkAsResolvedResponseSuccess =
   tracerUserAlertLogsMarkAsResolvedResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsMarkAsResolvedResponseError = (
   | tracerUserAlertLogsMarkAsResolvedResponse400
   | tracerUserAlertLogsMarkAsResolvedResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertLogsMarkAsResolvedResponse =
@@ -83980,11 +87413,11 @@ export type tracerUserAlertLogsReadResponseDefault = {
 
 export type tracerUserAlertLogsReadResponseSuccess =
   tracerUserAlertLogsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsReadResponseError =
   tracerUserAlertLogsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertLogsReadResponse =
@@ -84030,14 +87463,14 @@ export type tracerUserAlertLogsUpdateResponseDefault = {
 
 export type tracerUserAlertLogsUpdateResponseSuccess =
   tracerUserAlertLogsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsUpdateResponseError = (
   | tracerUserAlertLogsUpdateResponse400
   | tracerUserAlertLogsUpdateResponse404
   | tracerUserAlertLogsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertLogsUpdateResponse =
@@ -84086,14 +87519,14 @@ export type tracerUserAlertLogsPartialUpdateResponseDefault = {
 
 export type tracerUserAlertLogsPartialUpdateResponseSuccess =
   tracerUserAlertLogsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsPartialUpdateResponseError = (
   | tracerUserAlertLogsPartialUpdateResponse400
   | tracerUserAlertLogsPartialUpdateResponse404
   | tracerUserAlertLogsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertLogsPartialUpdateResponse =
@@ -84132,11 +87565,11 @@ export type tracerUserAlertLogsDeleteResponseDefault = {
 
 export type tracerUserAlertLogsDeleteResponseSuccess =
   tracerUserAlertLogsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsDeleteResponseError =
   tracerUserAlertLogsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertLogsDeleteResponse =
@@ -84172,11 +87605,11 @@ export type tracerUserAlertLogsListForAlertResponseDefault = {
 
 export type tracerUserAlertLogsListForAlertResponseSuccess =
   tracerUserAlertLogsListForAlertResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertLogsListForAlertResponseError =
   tracerUserAlertLogsListForAlertResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertLogsListForAlertResponse =
@@ -84212,11 +87645,11 @@ export type tracerUserAlertsListResponseDefault = {
 
 export type tracerUserAlertsListResponseSuccess =
   tracerUserAlertsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsListResponseError =
   tracerUserAlertsListResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsListResponse =
@@ -84277,11 +87710,11 @@ export type tracerUserAlertsCreateResponseDefault = {
 
 export type tracerUserAlertsCreateResponseSuccess =
   tracerUserAlertsCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsCreateResponseError =
   tracerUserAlertsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsCreateResponse =
@@ -84319,11 +87752,11 @@ export type tracerUserAlertsBulkMuteResponseDefault = {
 
 export type tracerUserAlertsBulkMuteResponseSuccess =
   tracerUserAlertsBulkMuteResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsBulkMuteResponseError =
   tracerUserAlertsBulkMuteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsBulkMuteResponse =
@@ -84376,7 +87809,7 @@ export type tracerUserAlertsDuplicateResponseDefault = {
 
 export type tracerUserAlertsDuplicateResponseSuccess =
   tracerUserAlertsDuplicateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsDuplicateResponseError = (
   | tracerUserAlertsDuplicateResponse400
@@ -84384,7 +87817,7 @@ export type tracerUserAlertsDuplicateResponseError = (
   | tracerUserAlertsDuplicateResponse500
   | tracerUserAlertsDuplicateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertsDuplicateResponse =
@@ -84427,13 +87860,13 @@ export type tracerUserAlertsListMonitorsResponseDefault = {
 
 export type tracerUserAlertsListMonitorsResponseSuccess =
   tracerUserAlertsListMonitorsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsListMonitorsResponseError = (
   | tracerUserAlertsListMonitorsResponse400
   | tracerUserAlertsListMonitorsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertsListMonitorsResponse =
@@ -84502,7 +87935,7 @@ export type tracerUserAlertsMetricOptionsResponseDefault = {
 
 export type tracerUserAlertsMetricOptionsResponseSuccess =
   tracerUserAlertsMetricOptionsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsMetricOptionsResponseError = (
   | tracerUserAlertsMetricOptionsResponse400
@@ -84510,7 +87943,7 @@ export type tracerUserAlertsMetricOptionsResponseError = (
   | tracerUserAlertsMetricOptionsResponse500
   | tracerUserAlertsMetricOptionsResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertsMetricOptionsResponse =
@@ -84574,14 +88007,14 @@ export type tracerUserAlertsPreviewGraphResponseDefault = {
 
 export type tracerUserAlertsPreviewGraphResponseSuccess =
   tracerUserAlertsPreviewGraphResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsPreviewGraphResponseError = (
   | tracerUserAlertsPreviewGraphResponse400
   | tracerUserAlertsPreviewGraphResponse503
   | tracerUserAlertsPreviewGraphResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertsPreviewGraphResponse =
@@ -84623,11 +88056,11 @@ export type tracerUserAlertsReadResponseDefault = {
 
 export type tracerUserAlertsReadResponseSuccess =
   tracerUserAlertsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsReadResponseError =
   tracerUserAlertsReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsReadResponse =
@@ -84663,11 +88096,11 @@ export type tracerUserAlertsUpdateResponseDefault = {
 
 export type tracerUserAlertsUpdateResponseSuccess =
   tracerUserAlertsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsUpdateResponseError =
   tracerUserAlertsUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsUpdateResponse =
@@ -84706,11 +88139,11 @@ export type tracerUserAlertsPartialUpdateResponseDefault = {
 
 export type tracerUserAlertsPartialUpdateResponseSuccess =
   tracerUserAlertsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsPartialUpdateResponseError =
   tracerUserAlertsPartialUpdateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsPartialUpdateResponse =
@@ -84749,11 +88182,11 @@ export type tracerUserAlertsDeleteResponseDefault = {
 
 export type tracerUserAlertsDeleteResponseSuccess =
   tracerUserAlertsDeleteResponse204 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsDeleteResponseError =
   tracerUserAlertsDeleteResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsDeleteResponse =
@@ -84789,11 +88222,11 @@ export type tracerUserAlertsMonitorDetailsResponseDefault = {
 
 export type tracerUserAlertsMonitorDetailsResponseSuccess =
   tracerUserAlertsMonitorDetailsResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsMonitorDetailsResponseError =
   tracerUserAlertsMonitorDetailsResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type tracerUserAlertsMonitorDetailsResponse =
@@ -84844,7 +88277,7 @@ export type tracerUserAlertsGraphDataResponseDefault = {
 
 export type tracerUserAlertsGraphDataResponseSuccess =
   tracerUserAlertsGraphDataResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUserAlertsGraphDataResponseError = (
   | tracerUserAlertsGraphDataResponse400
@@ -84852,7 +88285,7 @@ export type tracerUserAlertsGraphDataResponseError = (
   | tracerUserAlertsGraphDataResponse503
   | tracerUserAlertsGraphDataResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUserAlertsGraphDataResponse =
@@ -84912,7 +88345,7 @@ export type tracerUsersListResponseDefault = {
 };
 
 export type tracerUsersListResponseSuccess = tracerUsersListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerUsersListResponseError = (
   | tracerUsersListResponse400
@@ -84921,7 +88354,7 @@ export type tracerUsersListResponseError = (
   | tracerUsersListResponse503
   | tracerUsersListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUsersListResponse =
@@ -84992,7 +88425,7 @@ export type tracerUsersCreateResponseDefault = {
 };
 
 export type tracerUsersCreateResponseSuccess = tracerUsersCreateResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type tracerUsersCreateResponseError = (
   | tracerUsersCreateResponse400
@@ -85001,7 +88434,7 @@ export type tracerUsersCreateResponseError = (
   | tracerUsersCreateResponse503
   | tracerUsersCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUsersCreateResponse =
@@ -85049,14 +88482,14 @@ export type tracerUsersGetCodeExampleListResponseDefault = {
 
 export type tracerUsersGetCodeExampleListResponseSuccess =
   tracerUsersGetCodeExampleListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerUsersGetCodeExampleListResponseError = (
   | tracerUsersGetCodeExampleListResponse400
   | tracerUsersGetCodeExampleListResponse500
   | tracerUsersGetCodeExampleListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerUsersGetCodeExampleListResponse =
@@ -85096,13 +88529,13 @@ export type tracerV1HealthListResponseDefault = {
 
 export type tracerV1HealthListResponseSuccess =
   tracerV1HealthListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type tracerV1HealthListResponseError = (
   | tracerV1HealthListResponse500
   | tracerV1HealthListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type tracerV1HealthListResponse =
@@ -85167,7 +88600,7 @@ export type usageAdminCustomPlanListResponseDefault = {
 
 export type usageAdminCustomPlanListResponseSuccess =
   usageAdminCustomPlanListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminCustomPlanListResponseError = (
   | usageAdminCustomPlanListResponse400
@@ -85178,7 +88611,7 @@ export type usageAdminCustomPlanListResponseError = (
   | usageAdminCustomPlanListResponse500
   | usageAdminCustomPlanListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminCustomPlanListResponse =
@@ -85265,7 +88698,7 @@ export type usageAdminCustomPlanCreateResponseDefault = {
 
 export type usageAdminCustomPlanCreateResponseSuccess =
   usageAdminCustomPlanCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminCustomPlanCreateResponseError = (
   | usageAdminCustomPlanCreateResponse400
@@ -85276,7 +88709,7 @@ export type usageAdminCustomPlanCreateResponseError = (
   | usageAdminCustomPlanCreateResponse500
   | usageAdminCustomPlanCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminCustomPlanCreateResponse =
@@ -85359,7 +88792,7 @@ export type usageAdminCustomPlanUpdateResponseDefault = {
 
 export type usageAdminCustomPlanUpdateResponseSuccess =
   usageAdminCustomPlanUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminCustomPlanUpdateResponseError = (
   | usageAdminCustomPlanUpdateResponse400
@@ -85370,7 +88803,7 @@ export type usageAdminCustomPlanUpdateResponseError = (
   | usageAdminCustomPlanUpdateResponse500
   | usageAdminCustomPlanUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminCustomPlanUpdateResponse =
@@ -85441,7 +88874,7 @@ export type usageAdminEntitlementsListResponseDefault = {
 
 export type usageAdminEntitlementsListResponseSuccess =
   usageAdminEntitlementsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminEntitlementsListResponseError = (
   | usageAdminEntitlementsListResponse400
@@ -85452,7 +88885,7 @@ export type usageAdminEntitlementsListResponseError = (
   | usageAdminEntitlementsListResponse500
   | usageAdminEntitlementsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminEntitlementsListResponse =
@@ -85539,7 +88972,7 @@ export type usageAdminEntitlementsCreateResponseDefault = {
 
 export type usageAdminEntitlementsCreateResponseSuccess =
   usageAdminEntitlementsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminEntitlementsCreateResponseError = (
   | usageAdminEntitlementsCreateResponse400
@@ -85550,7 +88983,7 @@ export type usageAdminEntitlementsCreateResponseError = (
   | usageAdminEntitlementsCreateResponse500
   | usageAdminEntitlementsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminEntitlementsCreateResponse =
@@ -85621,7 +89054,7 @@ export type usageAdminEntitlementsDeleteResponseDefault = {
 
 export type usageAdminEntitlementsDeleteResponseSuccess =
   usageAdminEntitlementsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminEntitlementsDeleteResponseError = (
   | usageAdminEntitlementsDeleteResponse400
@@ -85632,7 +89065,7 @@ export type usageAdminEntitlementsDeleteResponseError = (
   | usageAdminEntitlementsDeleteResponse500
   | usageAdminEntitlementsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminEntitlementsDeleteResponse =
@@ -85719,7 +89152,7 @@ export type usageAdminInvoiceGenerateCreateResponseDefault = {
 
 export type usageAdminInvoiceGenerateCreateResponseSuccess =
   usageAdminInvoiceGenerateCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminInvoiceGenerateCreateResponseError = (
   | usageAdminInvoiceGenerateCreateResponse400
@@ -85730,7 +89163,7 @@ export type usageAdminInvoiceGenerateCreateResponseError = (
   | usageAdminInvoiceGenerateCreateResponse500
   | usageAdminInvoiceGenerateCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminInvoiceGenerateCreateResponse =
@@ -85801,7 +89234,7 @@ export type usageAdminInvoicePreviewCreateResponseDefault = {
 
 export type usageAdminInvoicePreviewCreateResponseSuccess =
   usageAdminInvoicePreviewCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminInvoicePreviewCreateResponseError = (
   | usageAdminInvoicePreviewCreateResponse400
@@ -85812,7 +89245,7 @@ export type usageAdminInvoicePreviewCreateResponseError = (
   | usageAdminInvoicePreviewCreateResponse500
   | usageAdminInvoicePreviewCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminInvoicePreviewCreateResponse =
@@ -85886,7 +89319,7 @@ export type usageAdminPricingListResponseDefault = {
 
 export type usageAdminPricingListResponseSuccess =
   usageAdminPricingListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminPricingListResponseError = (
   | usageAdminPricingListResponse400
@@ -85897,7 +89330,7 @@ export type usageAdminPricingListResponseError = (
   | usageAdminPricingListResponse500
   | usageAdminPricingListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminPricingListResponse =
@@ -85984,7 +89417,7 @@ export type usageAdminPricingCreateResponseDefault = {
 
 export type usageAdminPricingCreateResponseSuccess =
   usageAdminPricingCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminPricingCreateResponseError = (
   | usageAdminPricingCreateResponse400
@@ -85995,7 +89428,7 @@ export type usageAdminPricingCreateResponseError = (
   | usageAdminPricingCreateResponse500
   | usageAdminPricingCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminPricingCreateResponse =
@@ -86066,7 +89499,7 @@ export type usageAdminPricingDeleteResponseDefault = {
 
 export type usageAdminPricingDeleteResponseSuccess =
   usageAdminPricingDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageAdminPricingDeleteResponseError = (
   | usageAdminPricingDeleteResponse400
@@ -86077,7 +89510,7 @@ export type usageAdminPricingDeleteResponseError = (
   | usageAdminPricingDeleteResponse500
   | usageAdminPricingDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageAdminPricingDeleteResponse =
@@ -86164,7 +89597,7 @@ export type usageApiCallCountListResponseDefault = {
 
 export type usageApiCallCountListResponseSuccess =
   usageApiCallCountListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageApiCallCountListResponseError = (
   | usageApiCallCountListResponse400
@@ -86175,7 +89608,7 @@ export type usageApiCallCountListResponseError = (
   | usageApiCallCountListResponse500
   | usageApiCallCountListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageApiCallCountListResponse =
@@ -86259,7 +89692,7 @@ export type usageApiCallTypeListResponseDefault = {
 
 export type usageApiCallTypeListResponseSuccess =
   usageApiCallTypeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageApiCallTypeListResponseError = (
   | usageApiCallTypeListResponse400
@@ -86270,7 +89703,7 @@ export type usageApiCallTypeListResponseError = (
   | usageApiCallTypeListResponse500
   | usageApiCallTypeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageApiCallTypeListResponse =
@@ -86335,7 +89768,7 @@ export type usageCancelSubscriptionCreateResponseDefault = {
 
 export type usageCancelSubscriptionCreateResponseSuccess =
   usageCancelSubscriptionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageCancelSubscriptionCreateResponseError = (
   | usageCancelSubscriptionCreateResponse400
@@ -86346,7 +89779,7 @@ export type usageCancelSubscriptionCreateResponseError = (
   | usageCancelSubscriptionCreateResponse500
   | usageCancelSubscriptionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageCancelSubscriptionCreateResponse =
@@ -86414,7 +89847,7 @@ export type usageCreateAutoRechargeSessionCreateResponseDefault = {
 
 export type usageCreateAutoRechargeSessionCreateResponseSuccess =
   usageCreateAutoRechargeSessionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageCreateAutoRechargeSessionCreateResponseError = (
   | usageCreateAutoRechargeSessionCreateResponse400
@@ -86425,7 +89858,7 @@ export type usageCreateAutoRechargeSessionCreateResponseError = (
   | usageCreateAutoRechargeSessionCreateResponse500
   | usageCreateAutoRechargeSessionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageCreateAutoRechargeSessionCreateResponse =
@@ -86493,7 +89926,7 @@ export type usageCreateBillingPortalSessionCreateResponseDefault = {
 
 export type usageCreateBillingPortalSessionCreateResponseSuccess =
   usageCreateBillingPortalSessionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageCreateBillingPortalSessionCreateResponseError = (
   | usageCreateBillingPortalSessionCreateResponse400
@@ -86504,7 +89937,7 @@ export type usageCreateBillingPortalSessionCreateResponseError = (
   | usageCreateBillingPortalSessionCreateResponse500
   | usageCreateBillingPortalSessionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageCreateBillingPortalSessionCreateResponse =
@@ -86572,7 +90005,7 @@ export type usageCreateCheckoutSessionCreateResponseDefault = {
 
 export type usageCreateCheckoutSessionCreateResponseSuccess =
   usageCreateCheckoutSessionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageCreateCheckoutSessionCreateResponseError = (
   | usageCreateCheckoutSessionCreateResponse400
@@ -86583,7 +90016,7 @@ export type usageCreateCheckoutSessionCreateResponseError = (
   | usageCreateCheckoutSessionCreateResponse500
   | usageCreateCheckoutSessionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageCreateCheckoutSessionCreateResponse =
@@ -86651,7 +90084,7 @@ export type usageCreateCustomPaymentCheckoutSessionCreateResponseDefault = {
 
 export type usageCreateCustomPaymentCheckoutSessionCreateResponseSuccess =
   usageCreateCustomPaymentCheckoutSessionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageCreateCustomPaymentCheckoutSessionCreateResponseError = (
   | usageCreateCustomPaymentCheckoutSessionCreateResponse400
@@ -86662,7 +90095,7 @@ export type usageCreateCustomPaymentCheckoutSessionCreateResponseError = (
   | usageCreateCustomPaymentCheckoutSessionCreateResponse500
   | usageCreateCustomPaymentCheckoutSessionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageCreateCustomPaymentCheckoutSessionCreateResponse =
@@ -86730,7 +90163,7 @@ export type usageDownloadInvoiceCreateResponseDefault = {
 
 export type usageDownloadInvoiceCreateResponseSuccess =
   usageDownloadInvoiceCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageDownloadInvoiceCreateResponseError = (
   | usageDownloadInvoiceCreateResponse400
@@ -86741,7 +90174,7 @@ export type usageDownloadInvoiceCreateResponseError = (
   | usageDownloadInvoiceCreateResponse500
   | usageDownloadInvoiceCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageDownloadInvoiceCreateResponse =
@@ -86809,7 +90242,7 @@ export type usageGetAutoReloadSettingsListResponseDefault = {
 
 export type usageGetAutoReloadSettingsListResponseSuccess =
   usageGetAutoReloadSettingsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageGetAutoReloadSettingsListResponseError = (
   | usageGetAutoReloadSettingsListResponse400
@@ -86820,7 +90253,7 @@ export type usageGetAutoReloadSettingsListResponseError = (
   | usageGetAutoReloadSettingsListResponse500
   | usageGetAutoReloadSettingsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageGetAutoReloadSettingsListResponse =
@@ -86885,7 +90318,7 @@ export type usageGetBillingDetailsListResponseDefault = {
 
 export type usageGetBillingDetailsListResponseSuccess =
   usageGetBillingDetailsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageGetBillingDetailsListResponseError = (
   | usageGetBillingDetailsListResponse400
@@ -86896,7 +90329,7 @@ export type usageGetBillingDetailsListResponseError = (
   | usageGetBillingDetailsListResponse500
   | usageGetBillingDetailsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageGetBillingDetailsListResponse =
@@ -86961,7 +90394,7 @@ export type usageGetCustomerInvoicesListResponseDefault = {
 
 export type usageGetCustomerInvoicesListResponseSuccess =
   usageGetCustomerInvoicesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageGetCustomerInvoicesListResponseError = (
   | usageGetCustomerInvoicesListResponse400
@@ -86972,7 +90405,7 @@ export type usageGetCustomerInvoicesListResponseError = (
   | usageGetCustomerInvoicesListResponse500
   | usageGetCustomerInvoicesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageGetCustomerInvoicesListResponse =
@@ -87037,7 +90470,7 @@ export type usageGetLastFourDigitsListResponseDefault = {
 
 export type usageGetLastFourDigitsListResponseSuccess =
   usageGetLastFourDigitsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageGetLastFourDigitsListResponseError = (
   | usageGetLastFourDigitsListResponse400
@@ -87048,7 +90481,7 @@ export type usageGetLastFourDigitsListResponseError = (
   | usageGetLastFourDigitsListResponse500
   | usageGetLastFourDigitsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageGetLastFourDigitsListResponse =
@@ -87113,7 +90546,7 @@ export type usageGetWalletBalanceListResponseDefault = {
 
 export type usageGetWalletBalanceListResponseSuccess =
   usageGetWalletBalanceListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageGetWalletBalanceListResponseError = (
   | usageGetWalletBalanceListResponse400
@@ -87124,7 +90557,7 @@ export type usageGetWalletBalanceListResponseError = (
   | usageGetWalletBalanceListResponse500
   | usageGetWalletBalanceListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageGetWalletBalanceListResponse =
@@ -87189,7 +90622,7 @@ export type usageGetLatestPricesListResponseDefault = {
 
 export type usageGetLatestPricesListResponseSuccess =
   usageGetLatestPricesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageGetLatestPricesListResponseError = (
   | usageGetLatestPricesListResponse400
@@ -87200,7 +90633,7 @@ export type usageGetLatestPricesListResponseError = (
   | usageGetLatestPricesListResponse500
   | usageGetLatestPricesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageGetLatestPricesListResponse =
@@ -87265,7 +90698,7 @@ export type usageOrganizationBillingListResponseDefault = {
 
 export type usageOrganizationBillingListResponseSuccess =
   usageOrganizationBillingListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationBillingListResponseError = (
   | usageOrganizationBillingListResponse400
@@ -87276,7 +90709,7 @@ export type usageOrganizationBillingListResponseError = (
   | usageOrganizationBillingListResponse500
   | usageOrganizationBillingListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationBillingListResponse =
@@ -87341,7 +90774,7 @@ export type usageOrganizationBillingPartialUpdateResponseDefault = {
 
 export type usageOrganizationBillingPartialUpdateResponseSuccess =
   usageOrganizationBillingPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationBillingPartialUpdateResponseError = (
   | usageOrganizationBillingPartialUpdateResponse400
@@ -87352,7 +90785,7 @@ export type usageOrganizationBillingPartialUpdateResponseError = (
   | usageOrganizationBillingPartialUpdateResponse500
   | usageOrganizationBillingPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationBillingPartialUpdateResponse =
@@ -87423,7 +90856,7 @@ export type usageOrganizationBillingReadResponseDefault = {
 
 export type usageOrganizationBillingReadResponseSuccess =
   usageOrganizationBillingReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationBillingReadResponseError = (
   | usageOrganizationBillingReadResponse400
@@ -87434,7 +90867,7 @@ export type usageOrganizationBillingReadResponseError = (
   | usageOrganizationBillingReadResponse500
   | usageOrganizationBillingReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationBillingReadResponse =
@@ -87500,7 +90933,7 @@ export type usageOrganizationFilterListResponseDefault = {
 
 export type usageOrganizationFilterListResponseSuccess =
   usageOrganizationFilterListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationFilterListResponseError = (
   | usageOrganizationFilterListResponse400
@@ -87511,7 +90944,7 @@ export type usageOrganizationFilterListResponseError = (
   | usageOrganizationFilterListResponse500
   | usageOrganizationFilterListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationFilterListResponse =
@@ -87576,7 +91009,7 @@ export type usageOrganizationSubscriptionListResponseDefault = {
 
 export type usageOrganizationSubscriptionListResponseSuccess =
   usageOrganizationSubscriptionListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationSubscriptionListResponseError = (
   | usageOrganizationSubscriptionListResponse400
@@ -87587,7 +91020,7 @@ export type usageOrganizationSubscriptionListResponseError = (
   | usageOrganizationSubscriptionListResponse500
   | usageOrganizationSubscriptionListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationSubscriptionListResponse =
@@ -87652,7 +91085,7 @@ export type usageOrganizationSubscriptionCreateResponseDefault = {
 
 export type usageOrganizationSubscriptionCreateResponseSuccess =
   usageOrganizationSubscriptionCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationSubscriptionCreateResponseError = (
   | usageOrganizationSubscriptionCreateResponse400
@@ -87663,7 +91096,7 @@ export type usageOrganizationSubscriptionCreateResponseError = (
   | usageOrganizationSubscriptionCreateResponse500
   | usageOrganizationSubscriptionCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationSubscriptionCreateResponse =
@@ -87734,7 +91167,7 @@ export type usageOrganizationSubscriptionPartialUpdateResponseDefault = {
 
 export type usageOrganizationSubscriptionPartialUpdateResponseSuccess =
   usageOrganizationSubscriptionPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationSubscriptionPartialUpdateResponseError = (
   | usageOrganizationSubscriptionPartialUpdateResponse400
@@ -87745,7 +91178,7 @@ export type usageOrganizationSubscriptionPartialUpdateResponseError = (
   | usageOrganizationSubscriptionPartialUpdateResponse500
   | usageOrganizationSubscriptionPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationSubscriptionPartialUpdateResponse =
@@ -87818,7 +91251,7 @@ export type usageOrganizationSubscriptionDeleteResponseDefault = {
 
 export type usageOrganizationSubscriptionDeleteResponseSuccess =
   usageOrganizationSubscriptionDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationSubscriptionDeleteResponseError = (
   | usageOrganizationSubscriptionDeleteResponse400
@@ -87829,7 +91262,7 @@ export type usageOrganizationSubscriptionDeleteResponseError = (
   | usageOrganizationSubscriptionDeleteResponse500
   | usageOrganizationSubscriptionDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationSubscriptionDeleteResponse =
@@ -87897,7 +91330,7 @@ export type usageOrganizationSubscriptionReadResponseDefault = {
 
 export type usageOrganizationSubscriptionReadResponseSuccess =
   usageOrganizationSubscriptionReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationSubscriptionReadResponseError = (
   | usageOrganizationSubscriptionReadResponse400
@@ -87908,7 +91341,7 @@ export type usageOrganizationSubscriptionReadResponseError = (
   | usageOrganizationSubscriptionReadResponse500
   | usageOrganizationSubscriptionReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationSubscriptionReadResponse =
@@ -87976,7 +91409,7 @@ export type usageOrganizationsListResponseDefault = {
 
 export type usageOrganizationsListResponseSuccess =
   usageOrganizationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageOrganizationsListResponseError = (
   | usageOrganizationsListResponse400
@@ -87987,7 +91420,7 @@ export type usageOrganizationsListResponseError = (
   | usageOrganizationsListResponse500
   | usageOrganizationsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageOrganizationsListResponse =
@@ -88052,7 +91485,7 @@ export type usagePricingCardDetailsCreateResponseDefault = {
 
 export type usagePricingCardDetailsCreateResponseSuccess =
   usagePricingCardDetailsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usagePricingCardDetailsCreateResponseError = (
   | usagePricingCardDetailsCreateResponse400
@@ -88063,7 +91496,7 @@ export type usagePricingCardDetailsCreateResponseError = (
   | usagePricingCardDetailsCreateResponse500
   | usagePricingCardDetailsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usagePricingCardDetailsCreateResponse =
@@ -88130,7 +91563,7 @@ export type usagePricingListResponseDefault = {
 };
 
 export type usagePricingListResponseSuccess = usagePricingListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type usagePricingListResponseError = (
   | usagePricingListResponse400
@@ -88141,7 +91574,7 @@ export type usagePricingListResponseError = (
   | usagePricingListResponse500
   | usagePricingListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usagePricingListResponse =
@@ -88203,7 +91636,7 @@ export type usagePricingCreateResponseDefault = {
 
 export type usagePricingCreateResponseSuccess =
   usagePricingCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usagePricingCreateResponseError = (
   | usagePricingCreateResponse400
@@ -88214,7 +91647,7 @@ export type usagePricingCreateResponseError = (
   | usagePricingCreateResponse500
   | usagePricingCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usagePricingCreateResponse =
@@ -88283,7 +91716,7 @@ export type usagePricingPartialUpdateResponseDefault = {
 
 export type usagePricingPartialUpdateResponseSuccess =
   usagePricingPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usagePricingPartialUpdateResponseError = (
   | usagePricingPartialUpdateResponse400
@@ -88294,7 +91727,7 @@ export type usagePricingPartialUpdateResponseError = (
   | usagePricingPartialUpdateResponse500
   | usagePricingPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usagePricingPartialUpdateResponse =
@@ -88363,7 +91796,7 @@ export type usagePricingDeleteResponseDefault = {
 
 export type usagePricingDeleteResponseSuccess =
   usagePricingDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usagePricingDeleteResponseError = (
   | usagePricingDeleteResponse400
@@ -88374,7 +91807,7 @@ export type usagePricingDeleteResponseError = (
   | usagePricingDeleteResponse500
   | usagePricingDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usagePricingDeleteResponse =
@@ -88439,7 +91872,7 @@ export type usagePricingReadResponseDefault = {
 };
 
 export type usagePricingReadResponseSuccess = usagePricingReadResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type usagePricingReadResponseError = (
   | usagePricingReadResponse400
@@ -88450,7 +91883,7 @@ export type usagePricingReadResponseError = (
   | usagePricingReadResponse500
   | usagePricingReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usagePricingReadResponse =
@@ -88516,7 +91949,7 @@ export type usageRateLimitsListResponseDefault = {
 
 export type usageRateLimitsListResponseSuccess =
   usageRateLimitsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageRateLimitsListResponseError = (
   | usageRateLimitsListResponse400
@@ -88527,7 +91960,7 @@ export type usageRateLimitsListResponseError = (
   | usageRateLimitsListResponse500
   | usageRateLimitsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageRateLimitsListResponse =
@@ -88589,7 +92022,7 @@ export type usageRateLimitsCreateResponseDefault = {
 
 export type usageRateLimitsCreateResponseSuccess =
   usageRateLimitsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageRateLimitsCreateResponseError = (
   | usageRateLimitsCreateResponse400
@@ -88600,7 +92033,7 @@ export type usageRateLimitsCreateResponseError = (
   | usageRateLimitsCreateResponse500
   | usageRateLimitsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageRateLimitsCreateResponse =
@@ -88669,7 +92102,7 @@ export type usageRateLimitsPartialUpdateResponseDefault = {
 
 export type usageRateLimitsPartialUpdateResponseSuccess =
   usageRateLimitsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageRateLimitsPartialUpdateResponseError = (
   | usageRateLimitsPartialUpdateResponse400
@@ -88680,7 +92113,7 @@ export type usageRateLimitsPartialUpdateResponseError = (
   | usageRateLimitsPartialUpdateResponse500
   | usageRateLimitsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageRateLimitsPartialUpdateResponse =
@@ -88749,7 +92182,7 @@ export type usageRateLimitsDeleteResponseDefault = {
 
 export type usageRateLimitsDeleteResponseSuccess =
   usageRateLimitsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageRateLimitsDeleteResponseError = (
   | usageRateLimitsDeleteResponse400
@@ -88760,7 +92193,7 @@ export type usageRateLimitsDeleteResponseError = (
   | usageRateLimitsDeleteResponse500
   | usageRateLimitsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageRateLimitsDeleteResponse =
@@ -88826,7 +92259,7 @@ export type usageRateLimitsReadResponseDefault = {
 
 export type usageRateLimitsReadResponseSuccess =
   usageRateLimitsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageRateLimitsReadResponseError = (
   | usageRateLimitsReadResponse400
@@ -88837,7 +92270,7 @@ export type usageRateLimitsReadResponseError = (
   | usageRateLimitsReadResponse500
   | usageRateLimitsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageRateLimitsReadResponse =
@@ -88903,7 +92336,7 @@ export type usageResourceLimitsListResponseDefault = {
 
 export type usageResourceLimitsListResponseSuccess =
   usageResourceLimitsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageResourceLimitsListResponseError = (
   | usageResourceLimitsListResponse400
@@ -88914,7 +92347,7 @@ export type usageResourceLimitsListResponseError = (
   | usageResourceLimitsListResponse500
   | usageResourceLimitsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageResourceLimitsListResponse =
@@ -88979,7 +92412,7 @@ export type usageResourceLimitsCreateResponseDefault = {
 
 export type usageResourceLimitsCreateResponseSuccess =
   usageResourceLimitsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageResourceLimitsCreateResponseError = (
   | usageResourceLimitsCreateResponse400
@@ -88990,7 +92423,7 @@ export type usageResourceLimitsCreateResponseError = (
   | usageResourceLimitsCreateResponse500
   | usageResourceLimitsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageResourceLimitsCreateResponse =
@@ -89059,7 +92492,7 @@ export type usageResourceLimitsPartialUpdateResponseDefault = {
 
 export type usageResourceLimitsPartialUpdateResponseSuccess =
   usageResourceLimitsPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageResourceLimitsPartialUpdateResponseError = (
   | usageResourceLimitsPartialUpdateResponse400
@@ -89070,7 +92503,7 @@ export type usageResourceLimitsPartialUpdateResponseError = (
   | usageResourceLimitsPartialUpdateResponse500
   | usageResourceLimitsPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageResourceLimitsPartialUpdateResponse =
@@ -89141,7 +92574,7 @@ export type usageResourceLimitsDeleteResponseDefault = {
 
 export type usageResourceLimitsDeleteResponseSuccess =
   usageResourceLimitsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageResourceLimitsDeleteResponseError = (
   | usageResourceLimitsDeleteResponse400
@@ -89152,7 +92585,7 @@ export type usageResourceLimitsDeleteResponseError = (
   | usageResourceLimitsDeleteResponse500
   | usageResourceLimitsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageResourceLimitsDeleteResponse =
@@ -89218,7 +92651,7 @@ export type usageResourceLimitsReadResponseDefault = {
 
 export type usageResourceLimitsReadResponseSuccess =
   usageResourceLimitsReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageResourceLimitsReadResponseError = (
   | usageResourceLimitsReadResponse400
@@ -89229,7 +92662,7 @@ export type usageResourceLimitsReadResponseError = (
   | usageResourceLimitsReadResponse500
   | usageResourceLimitsReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageResourceLimitsReadResponse =
@@ -89295,7 +92728,7 @@ export type usageResourceTypeListResponseDefault = {
 
 export type usageResourceTypeListResponseSuccess =
   usageResourceTypeListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageResourceTypeListResponseError = (
   | usageResourceTypeListResponse400
@@ -89306,7 +92739,7 @@ export type usageResourceTypeListResponseError = (
   | usageResourceTypeListResponse500
   | usageResourceTypeListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageResourceTypeListResponse =
@@ -89371,7 +92804,7 @@ export type usageSubscriptionPlansListResponseDefault = {
 
 export type usageSubscriptionPlansListResponseSuccess =
   usageSubscriptionPlansListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageSubscriptionPlansListResponseError = (
   | usageSubscriptionPlansListResponse400
@@ -89382,7 +92815,7 @@ export type usageSubscriptionPlansListResponseError = (
   | usageSubscriptionPlansListResponse500
   | usageSubscriptionPlansListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageSubscriptionPlansListResponse =
@@ -89447,7 +92880,7 @@ export type usageSubscriptionStatusListResponseDefault = {
 
 export type usageSubscriptionStatusListResponseSuccess =
   usageSubscriptionStatusListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageSubscriptionStatusListResponseError = (
   | usageSubscriptionStatusListResponse400
@@ -89458,7 +92891,7 @@ export type usageSubscriptionStatusListResponseError = (
   | usageSubscriptionStatusListResponse500
   | usageSubscriptionStatusListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageSubscriptionStatusListResponse =
@@ -89523,7 +92956,7 @@ export type usageSubscriptionTierListResponseDefault = {
 
 export type usageSubscriptionTierListResponseSuccess =
   usageSubscriptionTierListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageSubscriptionTierListResponseError = (
   | usageSubscriptionTierListResponse400
@@ -89534,7 +92967,7 @@ export type usageSubscriptionTierListResponseError = (
   | usageSubscriptionTierListResponse500
   | usageSubscriptionTierListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageSubscriptionTierListResponse =
@@ -89599,7 +93032,7 @@ export type usageSubscriptionTierCreateResponseDefault = {
 
 export type usageSubscriptionTierCreateResponseSuccess =
   usageSubscriptionTierCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageSubscriptionTierCreateResponseError = (
   | usageSubscriptionTierCreateResponse400
@@ -89610,7 +93043,7 @@ export type usageSubscriptionTierCreateResponseError = (
   | usageSubscriptionTierCreateResponse500
   | usageSubscriptionTierCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageSubscriptionTierCreateResponse =
@@ -89679,7 +93112,7 @@ export type usageSubscriptionTierPartialUpdateResponseDefault = {
 
 export type usageSubscriptionTierPartialUpdateResponseSuccess =
   usageSubscriptionTierPartialUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageSubscriptionTierPartialUpdateResponseError = (
   | usageSubscriptionTierPartialUpdateResponse400
@@ -89690,7 +93123,7 @@ export type usageSubscriptionTierPartialUpdateResponseError = (
   | usageSubscriptionTierPartialUpdateResponse500
   | usageSubscriptionTierPartialUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageSubscriptionTierPartialUpdateResponse =
@@ -89761,7 +93194,7 @@ export type usageSubscriptionTierDeleteResponseDefault = {
 
 export type usageSubscriptionTierDeleteResponseSuccess =
   usageSubscriptionTierDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageSubscriptionTierDeleteResponseError = (
   | usageSubscriptionTierDeleteResponse400
@@ -89772,7 +93205,7 @@ export type usageSubscriptionTierDeleteResponseError = (
   | usageSubscriptionTierDeleteResponse500
   | usageSubscriptionTierDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageSubscriptionTierDeleteResponse =
@@ -89838,7 +93271,7 @@ export type usageSubscriptionTierReadResponseDefault = {
 
 export type usageSubscriptionTierReadResponseSuccess =
   usageSubscriptionTierReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageSubscriptionTierReadResponseError = (
   | usageSubscriptionTierReadResponse400
@@ -89849,7 +93282,7 @@ export type usageSubscriptionTierReadResponseError = (
   | usageSubscriptionTierReadResponse500
   | usageSubscriptionTierReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageSubscriptionTierReadResponse =
@@ -89915,7 +93348,7 @@ export type usageUpdateAutoReloadSettingsCreateResponseDefault = {
 
 export type usageUpdateAutoReloadSettingsCreateResponseSuccess =
   usageUpdateAutoReloadSettingsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageUpdateAutoReloadSettingsCreateResponseError = (
   | usageUpdateAutoReloadSettingsCreateResponse400
@@ -89926,7 +93359,7 @@ export type usageUpdateAutoReloadSettingsCreateResponseError = (
   | usageUpdateAutoReloadSettingsCreateResponse500
   | usageUpdateAutoReloadSettingsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageUpdateAutoReloadSettingsCreateResponse =
@@ -89937,6 +93370,12 @@ export const getUsageUpdateAutoReloadSettingsCreateUrl = () => {
   return `/usage/update-auto-reload-settings/`;
 };
 
+/**
+ * Owner/Admin only. Enabling needs a positive cap and consent, recorded
+on the Stripe customer against the current default card. Saving never
+charges; ``autoreload_charge_now`` asks for one capped reload now.
+Disabling clears the consent.
+ */
 export const usageUpdateAutoReloadSettingsCreate = async (
   autoReloadSettingsRequestApi: AutoReloadSettingsRequestApi,
   options?: RequestInit,
@@ -89994,7 +93433,7 @@ export type usageUpdateBillingDetailsCreateResponseDefault = {
 
 export type usageUpdateBillingDetailsCreateResponseSuccess =
   usageUpdateBillingDetailsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageUpdateBillingDetailsCreateResponseError = (
   | usageUpdateBillingDetailsCreateResponse400
@@ -90005,7 +93444,7 @@ export type usageUpdateBillingDetailsCreateResponseError = (
   | usageUpdateBillingDetailsCreateResponse500
   | usageUpdateBillingDetailsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageUpdateBillingDetailsCreateResponse =
@@ -90073,7 +93512,7 @@ export type usageUsageSummaryListResponseDefault = {
 
 export type usageUsageSummaryListResponseSuccess =
   usageUsageSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageUsageSummaryListResponseError = (
   | usageUsageSummaryListResponse400
@@ -90084,7 +93523,7 @@ export type usageUsageSummaryListResponseError = (
   | usageUsageSummaryListResponse500
   | usageUsageSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageUsageSummaryListResponse =
@@ -90168,7 +93607,7 @@ export type usageV2AddAddonCreateResponseDefault = {
 
 export type usageV2AddAddonCreateResponseSuccess =
   usageV2AddAddonCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2AddAddonCreateResponseError = (
   | usageV2AddAddonCreateResponse400
@@ -90179,7 +93618,7 @@ export type usageV2AddAddonCreateResponseError = (
   | usageV2AddAddonCreateResponse500
   | usageV2AddAddonCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2AddAddonCreateResponse =
@@ -90250,7 +93689,7 @@ export type usageV2AddAddonUpdateResponseDefault = {
 
 export type usageV2AddAddonUpdateResponseSuccess =
   usageV2AddAddonUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2AddAddonUpdateResponseError = (
   | usageV2AddAddonUpdateResponse400
@@ -90261,7 +93700,7 @@ export type usageV2AddAddonUpdateResponseError = (
   | usageV2AddAddonUpdateResponse500
   | usageV2AddAddonUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2AddAddonUpdateResponse =
@@ -90332,7 +93771,7 @@ export type usageV2AddAddonDeleteResponseDefault = {
 
 export type usageV2AddAddonDeleteResponseSuccess =
   usageV2AddAddonDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2AddAddonDeleteResponseError = (
   | usageV2AddAddonDeleteResponse400
@@ -90343,7 +93782,7 @@ export type usageV2AddAddonDeleteResponseError = (
   | usageV2AddAddonDeleteResponse500
   | usageV2AddAddonDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2AddAddonDeleteResponse =
@@ -90411,7 +93850,7 @@ export type usageV2AddonCreateResponseDefault = {
 
 export type usageV2AddonCreateResponseSuccess =
   usageV2AddonCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2AddonCreateResponseError = (
   | usageV2AddonCreateResponse400
@@ -90422,7 +93861,7 @@ export type usageV2AddonCreateResponseError = (
   | usageV2AddonCreateResponse500
   | usageV2AddonCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2AddonCreateResponse =
@@ -90490,7 +93929,7 @@ export type usageV2AddonUpdateResponseDefault = {
 
 export type usageV2AddonUpdateResponseSuccess =
   usageV2AddonUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2AddonUpdateResponseError = (
   | usageV2AddonUpdateResponse400
@@ -90501,7 +93940,7 @@ export type usageV2AddonUpdateResponseError = (
   | usageV2AddonUpdateResponse500
   | usageV2AddonUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2AddonUpdateResponse =
@@ -90569,7 +94008,7 @@ export type usageV2AddonDeleteResponseDefault = {
 
 export type usageV2AddonDeleteResponseSuccess =
   usageV2AddonDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2AddonDeleteResponseError = (
   | usageV2AddonDeleteResponse400
@@ -90580,7 +94019,7 @@ export type usageV2AddonDeleteResponseError = (
   | usageV2AddonDeleteResponse500
   | usageV2AddonDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2AddonDeleteResponse =
@@ -90645,7 +94084,7 @@ export type usageV2BillingOverviewListResponseDefault = {
 
 export type usageV2BillingOverviewListResponseSuccess =
   usageV2BillingOverviewListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2BillingOverviewListResponseError = (
   | usageV2BillingOverviewListResponse400
@@ -90656,7 +94095,7 @@ export type usageV2BillingOverviewListResponseError = (
   | usageV2BillingOverviewListResponse500
   | usageV2BillingOverviewListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2BillingOverviewListResponse =
@@ -90725,7 +94164,7 @@ export type usageV2BudgetsListResponseDefault = {
 
 export type usageV2BudgetsListResponseSuccess =
   usageV2BudgetsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2BudgetsListResponseError = (
   | usageV2BudgetsListResponse400
@@ -90736,7 +94175,7 @@ export type usageV2BudgetsListResponseError = (
   | usageV2BudgetsListResponse500
   | usageV2BudgetsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2BudgetsListResponse =
@@ -90801,7 +94240,7 @@ export type usageV2BudgetsCreateResponseDefault = {
 
 export type usageV2BudgetsCreateResponseSuccess =
   usageV2BudgetsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2BudgetsCreateResponseError = (
   | usageV2BudgetsCreateResponse400
@@ -90812,7 +94251,7 @@ export type usageV2BudgetsCreateResponseError = (
   | usageV2BudgetsCreateResponse500
   | usageV2BudgetsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2BudgetsCreateResponse =
@@ -90883,7 +94322,7 @@ export type usageV2BudgetsUpdateResponseDefault = {
 
 export type usageV2BudgetsUpdateResponseSuccess =
   usageV2BudgetsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2BudgetsUpdateResponseError = (
   | usageV2BudgetsUpdateResponse400
@@ -90894,7 +94333,7 @@ export type usageV2BudgetsUpdateResponseError = (
   | usageV2BudgetsUpdateResponse500
   | usageV2BudgetsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2BudgetsUpdateResponse =
@@ -90966,7 +94405,7 @@ export type usageV2BudgetsDeleteResponseDefault = {
 
 export type usageV2BudgetsDeleteResponseSuccess =
   usageV2BudgetsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2BudgetsDeleteResponseError = (
   | usageV2BudgetsDeleteResponse400
@@ -90977,7 +94416,7 @@ export type usageV2BudgetsDeleteResponseError = (
   | usageV2BudgetsDeleteResponse500
   | usageV2BudgetsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2BudgetsDeleteResponse =
@@ -91049,7 +94488,7 @@ export type usageV2DowngradeToFreeCreateResponseDefault = {
 
 export type usageV2DowngradeToFreeCreateResponseSuccess =
   usageV2DowngradeToFreeCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2DowngradeToFreeCreateResponseError = (
   | usageV2DowngradeToFreeCreateResponse400
@@ -91060,7 +94499,7 @@ export type usageV2DowngradeToFreeCreateResponseError = (
   | usageV2DowngradeToFreeCreateResponse500
   | usageV2DowngradeToFreeCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2DowngradeToFreeCreateResponse =
@@ -91133,7 +94572,7 @@ export type usageV2InvoicesListResponseDefault = {
 
 export type usageV2InvoicesListResponseSuccess =
   usageV2InvoicesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2InvoicesListResponseError = (
   | usageV2InvoicesListResponse400
@@ -91144,7 +94583,7 @@ export type usageV2InvoicesListResponseError = (
   | usageV2InvoicesListResponse500
   | usageV2InvoicesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2InvoicesListResponse =
@@ -91209,7 +94648,7 @@ export type usageV2InvoicesReadResponseDefault = {
 
 export type usageV2InvoicesReadResponseSuccess =
   usageV2InvoicesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2InvoicesReadResponseError = (
   | usageV2InvoicesReadResponse400
@@ -91220,7 +94659,7 @@ export type usageV2InvoicesReadResponseError = (
   | usageV2InvoicesReadResponse500
   | usageV2InvoicesReadResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2InvoicesReadResponse =
@@ -91289,7 +94728,7 @@ export type usageV2NotificationsListResponseDefault = {
 
 export type usageV2NotificationsListResponseSuccess =
   usageV2NotificationsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2NotificationsListResponseError = (
   | usageV2NotificationsListResponse400
@@ -91300,7 +94739,7 @@ export type usageV2NotificationsListResponseError = (
   | usageV2NotificationsListResponse500
   | usageV2NotificationsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2NotificationsListResponse =
@@ -91369,7 +94808,7 @@ export type usageV2PaymentMethodsListResponseDefault = {
 
 export type usageV2PaymentMethodsListResponseSuccess =
   usageV2PaymentMethodsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsListResponseError = (
   | usageV2PaymentMethodsListResponse400
@@ -91380,7 +94819,7 @@ export type usageV2PaymentMethodsListResponseError = (
   | usageV2PaymentMethodsListResponse500
   | usageV2PaymentMethodsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsListResponse =
@@ -91448,7 +94887,7 @@ export type usageV2PaymentMethodsCreateResponseDefault = {
 
 export type usageV2PaymentMethodsCreateResponseSuccess =
   usageV2PaymentMethodsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsCreateResponseError = (
   | usageV2PaymentMethodsCreateResponse400
@@ -91459,7 +94898,7 @@ export type usageV2PaymentMethodsCreateResponseError = (
   | usageV2PaymentMethodsCreateResponse500
   | usageV2PaymentMethodsCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsCreateResponse =
@@ -91531,7 +94970,7 @@ export type usageV2PaymentMethodsUpdateResponseDefault = {
 
 export type usageV2PaymentMethodsUpdateResponseSuccess =
   usageV2PaymentMethodsUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsUpdateResponseError = (
   | usageV2PaymentMethodsUpdateResponse400
@@ -91542,7 +94981,7 @@ export type usageV2PaymentMethodsUpdateResponseError = (
   | usageV2PaymentMethodsUpdateResponse500
   | usageV2PaymentMethodsUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsUpdateResponse =
@@ -91617,7 +95056,7 @@ export type usageV2PaymentMethodsSetupIntentListResponseDefault = {
 
 export type usageV2PaymentMethodsSetupIntentListResponseSuccess =
   usageV2PaymentMethodsSetupIntentListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsSetupIntentListResponseError = (
   | usageV2PaymentMethodsSetupIntentListResponse400
@@ -91628,7 +95067,7 @@ export type usageV2PaymentMethodsSetupIntentListResponseError = (
   | usageV2PaymentMethodsSetupIntentListResponse500
   | usageV2PaymentMethodsSetupIntentListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsSetupIntentListResponse =
@@ -91696,7 +95135,7 @@ export type usageV2PaymentMethodsSetupIntentCreateResponseDefault = {
 
 export type usageV2PaymentMethodsSetupIntentCreateResponseSuccess =
   usageV2PaymentMethodsSetupIntentCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsSetupIntentCreateResponseError = (
   | usageV2PaymentMethodsSetupIntentCreateResponse400
@@ -91707,7 +95146,7 @@ export type usageV2PaymentMethodsSetupIntentCreateResponseError = (
   | usageV2PaymentMethodsSetupIntentCreateResponse500
   | usageV2PaymentMethodsSetupIntentCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsSetupIntentCreateResponse =
@@ -91778,7 +95217,7 @@ export type usageV2PaymentMethodsSetupIntentUpdateResponseDefault = {
 
 export type usageV2PaymentMethodsSetupIntentUpdateResponseSuccess =
   usageV2PaymentMethodsSetupIntentUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsSetupIntentUpdateResponseError = (
   | usageV2PaymentMethodsSetupIntentUpdateResponse400
@@ -91789,7 +95228,7 @@ export type usageV2PaymentMethodsSetupIntentUpdateResponseError = (
   | usageV2PaymentMethodsSetupIntentUpdateResponse500
   | usageV2PaymentMethodsSetupIntentUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsSetupIntentUpdateResponse =
@@ -91864,7 +95303,7 @@ export type usageV2PaymentMethodsDeleteResponseDefault = {
 
 export type usageV2PaymentMethodsDeleteResponseSuccess =
   usageV2PaymentMethodsDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsDeleteResponseError = (
   | usageV2PaymentMethodsDeleteResponse400
@@ -91875,7 +95314,7 @@ export type usageV2PaymentMethodsDeleteResponseError = (
   | usageV2PaymentMethodsDeleteResponse500
   | usageV2PaymentMethodsDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsDeleteResponse =
@@ -91944,7 +95383,7 @@ export type usageV2PaymentMethodsDefaultCreateResponseDefault = {
 
 export type usageV2PaymentMethodsDefaultCreateResponseSuccess =
   usageV2PaymentMethodsDefaultCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsDefaultCreateResponseError = (
   | usageV2PaymentMethodsDefaultCreateResponse400
@@ -91955,7 +95394,7 @@ export type usageV2PaymentMethodsDefaultCreateResponseError = (
   | usageV2PaymentMethodsDefaultCreateResponse500
   | usageV2PaymentMethodsDefaultCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsDefaultCreateResponse =
@@ -92027,7 +95466,7 @@ export type usageV2PaymentMethodsDefaultDeleteResponseDefault = {
 
 export type usageV2PaymentMethodsDefaultDeleteResponseSuccess =
   usageV2PaymentMethodsDefaultDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PaymentMethodsDefaultDeleteResponseError = (
   | usageV2PaymentMethodsDefaultDeleteResponse400
@@ -92038,7 +95477,7 @@ export type usageV2PaymentMethodsDefaultDeleteResponseError = (
   | usageV2PaymentMethodsDefaultDeleteResponse500
   | usageV2PaymentMethodsDefaultDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PaymentMethodsDefaultDeleteResponse =
@@ -92107,7 +95546,7 @@ export type usageV2PlansAndAddonsListResponseDefault = {
 
 export type usageV2PlansAndAddonsListResponseSuccess =
   usageV2PlansAndAddonsListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2PlansAndAddonsListResponseError = (
   | usageV2PlansAndAddonsListResponse400
@@ -92118,7 +95557,7 @@ export type usageV2PlansAndAddonsListResponseError = (
   | usageV2PlansAndAddonsListResponse500
   | usageV2PlansAndAddonsListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2PlansAndAddonsListResponse =
@@ -92187,7 +95626,7 @@ export type usageV2ReinstateAddonCreateResponseDefault = {
 
 export type usageV2ReinstateAddonCreateResponseSuccess =
   usageV2ReinstateAddonCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2ReinstateAddonCreateResponseError = (
   | usageV2ReinstateAddonCreateResponse400
@@ -92198,7 +95637,7 @@ export type usageV2ReinstateAddonCreateResponseError = (
   | usageV2ReinstateAddonCreateResponse500
   | usageV2ReinstateAddonCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2ReinstateAddonCreateResponse =
@@ -92269,7 +95708,7 @@ export type usageV2ReinstateAddonUpdateResponseDefault = {
 
 export type usageV2ReinstateAddonUpdateResponseSuccess =
   usageV2ReinstateAddonUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2ReinstateAddonUpdateResponseError = (
   | usageV2ReinstateAddonUpdateResponse400
@@ -92280,7 +95719,7 @@ export type usageV2ReinstateAddonUpdateResponseError = (
   | usageV2ReinstateAddonUpdateResponse500
   | usageV2ReinstateAddonUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2ReinstateAddonUpdateResponse =
@@ -92351,7 +95790,7 @@ export type usageV2ReinstateAddonDeleteResponseDefault = {
 
 export type usageV2ReinstateAddonDeleteResponseSuccess =
   usageV2ReinstateAddonDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2ReinstateAddonDeleteResponseError = (
   | usageV2ReinstateAddonDeleteResponse400
@@ -92362,7 +95801,7 @@ export type usageV2ReinstateAddonDeleteResponseError = (
   | usageV2ReinstateAddonDeleteResponse500
   | usageV2ReinstateAddonDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2ReinstateAddonDeleteResponse =
@@ -92430,7 +95869,7 @@ export type usageV2RemoveAddonCreateResponseDefault = {
 
 export type usageV2RemoveAddonCreateResponseSuccess =
   usageV2RemoveAddonCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2RemoveAddonCreateResponseError = (
   | usageV2RemoveAddonCreateResponse400
@@ -92441,7 +95880,7 @@ export type usageV2RemoveAddonCreateResponseError = (
   | usageV2RemoveAddonCreateResponse500
   | usageV2RemoveAddonCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2RemoveAddonCreateResponse =
@@ -92512,7 +95951,7 @@ export type usageV2RemoveAddonUpdateResponseDefault = {
 
 export type usageV2RemoveAddonUpdateResponseSuccess =
   usageV2RemoveAddonUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2RemoveAddonUpdateResponseError = (
   | usageV2RemoveAddonUpdateResponse400
@@ -92523,7 +95962,7 @@ export type usageV2RemoveAddonUpdateResponseError = (
   | usageV2RemoveAddonUpdateResponse500
   | usageV2RemoveAddonUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2RemoveAddonUpdateResponse =
@@ -92594,7 +96033,7 @@ export type usageV2RemoveAddonDeleteResponseDefault = {
 
 export type usageV2RemoveAddonDeleteResponseSuccess =
   usageV2RemoveAddonDeleteResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2RemoveAddonDeleteResponseError = (
   | usageV2RemoveAddonDeleteResponse400
@@ -92605,7 +96044,7 @@ export type usageV2RemoveAddonDeleteResponseError = (
   | usageV2RemoveAddonDeleteResponse500
   | usageV2RemoveAddonDeleteResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2RemoveAddonDeleteResponse =
@@ -92673,7 +96112,7 @@ export type usageV2StripeWebhookCreateResponseDefault = {
 
 export type usageV2StripeWebhookCreateResponseSuccess =
   usageV2StripeWebhookCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2StripeWebhookCreateResponseError = (
   | usageV2StripeWebhookCreateResponse400
@@ -92684,7 +96123,7 @@ export type usageV2StripeWebhookCreateResponseError = (
   | usageV2StripeWebhookCreateResponse500
   | usageV2StripeWebhookCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2StripeWebhookCreateResponse =
@@ -92757,7 +96196,7 @@ export type usageV2UpgradeToPaygCreateResponseDefault = {
 
 export type usageV2UpgradeToPaygCreateResponseSuccess =
   usageV2UpgradeToPaygCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2UpgradeToPaygCreateResponseError = (
   | usageV2UpgradeToPaygCreateResponse400
@@ -92768,7 +96207,7 @@ export type usageV2UpgradeToPaygCreateResponseError = (
   | usageV2UpgradeToPaygCreateResponse500
   | usageV2UpgradeToPaygCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2UpgradeToPaygCreateResponse =
@@ -92839,7 +96278,7 @@ export type usageV2UpgradeToPaygUpdateResponseDefault = {
 
 export type usageV2UpgradeToPaygUpdateResponseSuccess =
   usageV2UpgradeToPaygUpdateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2UpgradeToPaygUpdateResponseError = (
   | usageV2UpgradeToPaygUpdateResponse400
@@ -92850,7 +96289,7 @@ export type usageV2UpgradeToPaygUpdateResponseError = (
   | usageV2UpgradeToPaygUpdateResponse500
   | usageV2UpgradeToPaygUpdateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2UpgradeToPaygUpdateResponse =
@@ -92921,7 +96360,7 @@ export type usageV2UsageOverviewListResponseDefault = {
 
 export type usageV2UsageOverviewListResponseSuccess =
   usageV2UsageOverviewListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2UsageOverviewListResponseError = (
   | usageV2UsageOverviewListResponse400
@@ -92932,7 +96371,7 @@ export type usageV2UsageOverviewListResponseError = (
   | usageV2UsageOverviewListResponse500
   | usageV2UsageOverviewListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2UsageOverviewListResponse =
@@ -93025,7 +96464,7 @@ export type usageV2UsageTimeSeriesListResponseDefault = {
 
 export type usageV2UsageTimeSeriesListResponseSuccess =
   usageV2UsageTimeSeriesListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2UsageTimeSeriesListResponseError = (
   | usageV2UsageTimeSeriesListResponse400
@@ -93036,7 +96475,7 @@ export type usageV2UsageTimeSeriesListResponseError = (
   | usageV2UsageTimeSeriesListResponse500
   | usageV2UsageTimeSeriesListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2UsageTimeSeriesListResponse =
@@ -93127,7 +96566,7 @@ export type usageV2UsageWorkspaceBreakdownListResponseDefault = {
 
 export type usageV2UsageWorkspaceBreakdownListResponseSuccess =
   usageV2UsageWorkspaceBreakdownListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageV2UsageWorkspaceBreakdownListResponseError = (
   | usageV2UsageWorkspaceBreakdownListResponse400
@@ -93138,7 +96577,7 @@ export type usageV2UsageWorkspaceBreakdownListResponseError = (
   | usageV2UsageWorkspaceBreakdownListResponse500
   | usageV2UsageWorkspaceBreakdownListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageV2UsageWorkspaceBreakdownListResponse =
@@ -93229,7 +96668,7 @@ export type usageWebhookCreateResponseDefault = {
 
 export type usageWebhookCreateResponseSuccess =
   usageWebhookCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageWebhookCreateResponseError = (
   | usageWebhookCreateResponse400
@@ -93240,7 +96679,7 @@ export type usageWebhookCreateResponseError = (
   | usageWebhookCreateResponse500
   | usageWebhookCreateResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageWebhookCreateResponse =
@@ -93310,7 +96749,7 @@ export type usageWorkspaceEvalSummaryListResponseDefault = {
 
 export type usageWorkspaceEvalSummaryListResponseSuccess =
   usageWorkspaceEvalSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageWorkspaceEvalSummaryListResponseError = (
   | usageWorkspaceEvalSummaryListResponse400
@@ -93321,7 +96760,7 @@ export type usageWorkspaceEvalSummaryListResponseError = (
   | usageWorkspaceEvalSummaryListResponse500
   | usageWorkspaceEvalSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageWorkspaceEvalSummaryListResponse =
@@ -93405,7 +96844,7 @@ export type usageWorkspaceUsageSummaryListResponseDefault = {
 
 export type usageWorkspaceUsageSummaryListResponseSuccess =
   usageWorkspaceUsageSummaryListResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type usageWorkspaceUsageSummaryListResponseError = (
   | usageWorkspaceUsageSummaryListResponse400
@@ -93416,7 +96855,7 @@ export type usageWorkspaceUsageSummaryListResponseError = (
   | usageWorkspaceUsageSummaryListResponse500
   | usageWorkspaceUsageSummaryListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type usageWorkspaceUsageSummaryListResponse =
@@ -93470,11 +96909,11 @@ export type v1EnterpriseHeartbeatsCreateResponseDefault = {
 
 export type v1EnterpriseHeartbeatsCreateResponseSuccess =
   v1EnterpriseHeartbeatsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type v1EnterpriseHeartbeatsCreateResponseError =
   v1EnterpriseHeartbeatsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type v1EnterpriseHeartbeatsCreateResponse =
@@ -93516,13 +96955,13 @@ export type v1HealthListResponseDefault = {
 };
 
 export type v1HealthListResponseSuccess = v1HealthListResponse200 & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 export type v1HealthListResponseError = (
   | v1HealthListResponse500
   | v1HealthListResponseDefault
 ) & {
-  headers: Headers;
+  headers: ApiResponseHeaders;
 };
 
 export type v1HealthListResponse =
@@ -93557,11 +96996,11 @@ export type v1InternalLicensesCreateResponseDefault = {
 
 export type v1InternalLicensesCreateResponseSuccess =
   v1InternalLicensesCreateResponse201 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type v1InternalLicensesCreateResponseError =
   v1InternalLicensesCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type v1InternalLicensesCreateResponse =
@@ -93599,11 +97038,11 @@ export type v1InternalLicensesReadResponseDefault = {
 
 export type v1InternalLicensesReadResponseSuccess =
   v1InternalLicensesReadResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type v1InternalLicensesReadResponseError =
   v1InternalLicensesReadResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type v1InternalLicensesReadResponse =
@@ -93639,11 +97078,11 @@ export type v1InternalLicensesApproveCreateResponseDefault = {
 
 export type v1InternalLicensesApproveCreateResponseSuccess =
   v1InternalLicensesApproveCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type v1InternalLicensesApproveCreateResponseError =
   v1InternalLicensesApproveCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type v1InternalLicensesApproveCreateResponse =
@@ -93682,11 +97121,11 @@ export type v1InternalLicensesIssueCreateResponseDefault = {
 
 export type v1InternalLicensesIssueCreateResponseSuccess =
   v1InternalLicensesIssueCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type v1InternalLicensesIssueCreateResponseError =
   v1InternalLicensesIssueCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type v1InternalLicensesIssueCreateResponse =
@@ -93725,11 +97164,11 @@ export type v1InternalLicensesStatusCreateResponseDefault = {
 
 export type v1InternalLicensesStatusCreateResponseSuccess =
   v1InternalLicensesStatusCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type v1InternalLicensesStatusCreateResponseError =
   v1InternalLicensesStatusCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type v1InternalLicensesStatusCreateResponse =
@@ -93768,11 +97207,11 @@ export type v1SelfHostedActivationsCreateResponseDefault = {
 
 export type v1SelfHostedActivationsCreateResponseSuccess =
   v1SelfHostedActivationsCreateResponse200 & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 export type v1SelfHostedActivationsCreateResponseError =
   v1SelfHostedActivationsCreateResponseDefault & {
-    headers: Headers;
+    headers: ApiResponseHeaders;
   };
 
 export type v1SelfHostedActivationsCreateResponse =

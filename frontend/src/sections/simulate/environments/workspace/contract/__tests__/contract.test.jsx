@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
 
 // A voice environment with two tools, two hard rules and a seeded table —

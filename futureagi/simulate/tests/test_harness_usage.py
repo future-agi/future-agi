@@ -105,7 +105,7 @@ def _report(records):
     }
 
 
-def _receipt(attempt, *, failure_domain="simulator"):
+def _receipt(attempt, *, failure_domain="simulator", started=True):
     registration = attempt.job.scenario_registrations.get()
     return HostedHarnessReceipt.objects.create(
         job=attempt.job,
@@ -115,7 +115,7 @@ def _receipt(attempt, *, failure_domain="simulator"):
         status="errored",
         digest="sha256:" + "0" * 64,
         body={
-            "call": {"duration_ms": 15000},
+            "call": {"duration_ms": 15000} if started else None,
             "failure": {"domain": failure_domain, "code": "run_failed"},
         },
     )
@@ -498,6 +498,36 @@ def test_simulator_failure_remains_billable_as_measured_usage(
     assert {(event.event_type, float(event.amount)) for event in events} == {
         ("voice_call", 0.25)
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_a_call_that_never_started_is_not_billed_whatever_the_domain(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(
+            attempt,
+            _report(
+                [
+                    _record(
+                        "voice_call",
+                        amount=0.25,
+                        outcome="failed",
+                        failure_domain="simulator",
+                    )
+                ]
+            ),
+        )
+    # The simulator's setup broke before the call started: billable domain, no call.
+    _receipt(attempt, failure_domain="simulator", started=False)
+
+    harness_usage.replay_harness_usage(attempt)
+
+    assert events == []
 
 
 @pytest.mark.django_db

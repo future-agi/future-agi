@@ -186,13 +186,13 @@ base(
           .locator(".ag-row")
           .filter({ hasText: TRACE_A.slice(0, 8) })
           .click();
-        await expect(page.getByText(/Trace ID/).first()).toBeVisible({
-          timeout: UI_READY,
-        });
+        // The grid already has a "Trace ID" header. Wait for detail-response
+        // content before inspecting the request recorded by its route handler.
+        await expect(
+          page.getByText("support_agent").first(),
+          "selected shared trace spans are rendered",
+        ).toBeVisible({ timeout: UI_READY });
         expect(traceRequests).toEqual([TRACE_A]);
-        await expect(page.getByText("support_agent").first()).toBeVisible({
-          timeout: UI_READY,
-        });
       },
       { timeout: UI_READY },
     );

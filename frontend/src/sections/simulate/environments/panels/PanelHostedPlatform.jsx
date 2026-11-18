@@ -143,7 +143,7 @@ export default function PanelHostedPlatform() {
   });
 
   return (
-    <Stack spacing={1.75} sx={{ p: 2.5 }}>
+    <Stack spacing={1.5} sx={{ p: 1.5 }}>
       <Box>
         <Label>Agent type</Label>
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
@@ -172,7 +172,7 @@ export default function PanelHostedPlatform() {
                 key={p.id}
                 /* "Others" has no brand logo — render its Solar icon instead. */
                 icon={p.isOther ? p.icon : undefined}
-                logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
+                logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} />}
                 /* Wordmark logos already spell the name — don't repeat it. */
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 comingSoon={p.comingSoon}

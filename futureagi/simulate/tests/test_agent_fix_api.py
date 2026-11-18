@@ -8,6 +8,7 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import quote
 from uuid import uuid4, uuid5
 
 import httpx
@@ -25,10 +26,16 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models import TestExecution as Execution
-from simulate.pydantic_schemas.agent_fix import Surface
+from simulate.pydantic_schemas.agent_fix import MAX_MINUTES_MAX, EngineBrief, Surface
+from simulate.selectors.agent_fix import (
+    LOST_MODELS_SKIPPED_FOR,
+    default_max_minutes,
+    engine_brief,
+)
 from simulate.services import agent_fix_engine as engine
+from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
-from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.agent_fix_runs import close_fix_run, retry_fix_run
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_row,
@@ -51,6 +58,7 @@ from simulate.tests.test_agent_fix_services import (
     _executions,
     _fix_run,
     _receipt,
+    _receipts,
     _run,
     _runtime,
     _tree,
@@ -178,6 +186,32 @@ class TestEngineAuthentication:
 
         assert response.status_code == 200, response.content
         assert response.json()["fix_run_id"] == str(fix_run.id)
+
+    def test_the_brief_round_trips_with_the_records_the_engine_reads(
+        self, api_client, source_run
+    ):
+        _receipts(
+            source_run, {KEYS[0]: {"refunded": False}, KEYS[1]: {"refunded": True}}
+        )
+        fix_run = _armed(_fix_run(source_run))
+
+        body = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert EngineBrief.model_validate(body) == engine_brief(fix_run)
+        # Every field the engine's toRecord() reads from a check record.
+        assert [set(one) for one in body["source_failures"]] == [
+            {
+                "scenario_key",
+                "trial",
+                "status",
+                "error",
+                "sub_goals",
+                "reasons",
+                "transcript",
+                "failure",
+                "duration_s",
+            }
+        ]
 
     @pytest.mark.parametrize(
         ("sent", "code"),
@@ -862,9 +896,36 @@ class TestUserApi:
             "budget_credits_max": 50000,
             "max_minutes_max": 1440,
             "scenarios_min": 1,
+            "cases_min": 1,
+            "variations_per_case": 3,
+            "verified_cases_min": 6,
             "scenarios_max": 200,
         }
         assert options["blocked"] is None
+        assert options["variations_blocked"] is None
+
+    @pytest.mark.parametrize(
+        ("cases", "minutes"),
+        [(12, 180), (30, 180), (60, 300), (400, MAX_MINUTES_MAX)],
+    )
+    def test_the_default_time_limit_grows_with_the_suite(self, cases, minutes):
+        assert default_max_minutes(cases) == minutes
+
+    def test_a_launch_without_a_time_limit_gets_the_suggested_one(
+        self, auth_client, source_run
+    ):
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        body = _launch_body(source_run)
+        del body["max_minutes"]
+
+        response = auth_client.post(f"{BASE}/", body, format="json")
+
+        assert response.status_code == 201, response.content
+        assert response.json()["request"]["max_minutes"] == 180
+        assert options["defaults"]["max_minutes"] == 180
 
     def test_launch_options_say_what_would_refuse_the_launch(
         self, auth_client, environment, source_run
@@ -1241,11 +1302,29 @@ class TestUserApi:
         )
         return SimpleNamespace(bare=bare, commit=commit)
 
-    def _ship(self, auth_client, fix_run, candidate, replies, **body):
-        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn."""
+    def _ship(
+        self, auth_client, fix_run, candidate, replies, *, head=None, tag=None, **body
+    ):
+        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn.
+        A branch's head and a tag's commit are the fix's commit unless ``head`` or ``tag``
+        says otherwise; the repository's default branch is main."""
         calls = []
+        source = HostedHarnessJob.no_workspace_objects.get(id=fix_run.source_run_id)
+        commit = (source.payload.get("source") or {}).get("commit_sha")
+        reads = {
+            "/git/ref/heads/": {"object": {"sha": head or commit}},
+            "/commits/": {"sha": tag or commit},
+        }
 
         def answer(method, url, **kwargs):
+            if method == "GET":
+                found = next(
+                    (body for part, body in reads.items() if part in url), None
+                )
+                if found is None and url.endswith("/repos/acme/agent"):
+                    found = {"default_branch": "main"}
+                if found is not None:
+                    return SimpleNamespace(status_code=200, json=lambda: found, text="")
             calls.append((method, url, kwargs))
             status, body = replies.pop(0)
             return SimpleNamespace(
@@ -1838,6 +1917,99 @@ class TestUserApi:
         override = self._override(auth_client, fix_run)
         assert (override["reason"], override["by"]["id"]) == (self.REASON, str(user.id))
 
+    def test_an_uploaded_fix_is_not_shipped_over_a_default_that_moved_even_on_a_reason(
+        self, auth_client, environment, source_run
+    ):
+        fix_run, candidate = self._vetoed(source_run, "archive")
+        # Another fix from the same run shipped first.
+        _, shipped = self._proven(source_run, "archive")
+        auth_client.post(
+            f"{BASE}/{shipped.fix_run_id}/candidates/{shipped.id}/make-default/",
+            {},
+            format="json",
+        )
+
+        response = auth_client.post(
+            f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",
+            {"override_reason": self.REASON},
+            format="json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            409,
+            "fix_base_moved",
+        )
+        environment.refresh_from_db()
+        assert environment.agent_version_id == shipped.agent_version_id
+        assert self._override(auth_client, fix_run)["reason"] == ""
+
+    def _pin(self, source_run, ref):
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=source_run.agent_version_id
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            source={**runtime.source, "ref": ref}
+        )
+
+    @pytest.mark.parametrize("pin", ["refs/tags/v1", "commit"])
+    def test_a_github_agent_pinned_to_a_tag_or_commit_ships_while_main_moves(
+        self, auth_client, source_run, github, pin
+    ):
+        self._pin(source_run, github.commit if pin == "commit" else pin)
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(201, {"html_url": self.PULL})],
+            head="f" * 40,
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["base"] == "main"
+
+    def test_a_github_agent_pinned_to_a_tag_that_moved_is_not_shipped(
+        self, auth_client, source_run, github
+    ):
+        self._pin(source_run, "refs/tags/v1")
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [], tag="e" * 40)
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            409,
+            "fix_base_moved",
+            [],
+        )
+        assert "v1 @ eeeeeee" in response.json()["message"]
+
+    @pytest.mark.parametrize("reason", ["", "the regression is a flaky check"])
+    def test_a_github_fix_is_not_shipped_when_its_branch_moved(
+        self, auth_client, source_run, github, reason
+    ):
+        fix_run, candidate = (
+            self._vetoed(source_run, "github")
+            if reason
+            else self._proven(source_run, "github")
+        )
+        body = {"override_reason": reason} if reason else {}
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], head="f" * 40, **body
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            409,
+            "fix_base_moved",
+            [],
+        )
+        assert f"main @ {github.commit[:7]}" in response.json()["message"]
+        assert "main @ fffffff" in response.json()["message"]
+        # Nothing was pushed, and no reason was recorded.
+        assert _git(github.bare, "for-each-ref", "refs/heads/futureagi") == ""
+        assert self._override(auth_client, fix_run)["reason"] == ""
+
 
 @pytest.mark.parametrize(
     "held_back, limited", [(0, True), (3, True), (4, False), (6, False)]
@@ -2039,6 +2211,24 @@ class TestCheckRunsStayOutOfTheUsersRuns:
         assert _execution_payload(latest, {})["ordinal"] == 2
         assert run_summaries([latest])[latest.id]["run_number"] == 2
 
+    def test_the_run_page_names_a_check_runs_fix(self, auth_client, runs):
+        HostedHarnessJob.no_workspace_objects.filter(id=runs.check.id).update(
+            fix_label="c2-target"
+        )
+
+        def execution_of(run):
+            response = auth_client.get(
+                f"/simulate/v3/test-executions/{run.test_execution_id}/calls/"
+            )
+            assert response.status_code == 200, response.content
+            return response.json()["execution"]
+
+        assert execution_of(runs.check)["fix_run"] == {
+            "id": str(runs.check.fix_run_id),
+            "label": "c2-target",
+        }
+        assert execution_of(runs.latest)["fix_run"] is None
+
     def test_the_run_preview(self, auth_client, environment, runs):
         with (
             patch(
@@ -2124,3 +2314,189 @@ def _revision_state(**kwargs):
     uncommitted rows can sit past the snapshot's xmax, so their visibility means nothing."""
     _parent_visible, physical_count, _all_visible = _read_revision_state(**kwargs)
     return True, physical_count, True
+
+
+def _lost_ago(fix_run, ago):
+    """Move every loss the fix noted back by ``ago``; returns the new loss time."""
+    fix_run.refresh_from_db()
+    lost_at = (timezone.now() - ago).isoformat()
+    notes = fix_run.engine_notes
+    notes["lost_models"] = dict.fromkeys(notes["lost_models"], lost_at)
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(engine_notes=notes)
+    return lost_at
+
+
+class TestEngineMemory:
+    """What a fix keeps from its engines' reports across launches. It lives in the fix's
+    engine notes: ``report`` stays the engine's final report, null until it comes."""
+
+    def _report(self, api_client, fix_run, **body):
+        response = _engine(
+            api_client,
+            "post",
+            fix_run,
+            "report/",
+            data={"stage": "Search", **body},
+            format="json",
+        )
+        assert response.status_code == 200, response.content
+
+    def test_the_user_reads_a_running_fix_that_keeps_engine_notes(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(
+            api_client, fix_run, lost_models=["deepseek/flash"], last_error="hung"
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/")
+        listed = auth_client.get(
+            f"{BASE}/", {"environment_id": str(source_run.environment_id)}
+        )
+
+        assert read.status_code == 200, read.content
+        assert read.json()["report"] is None
+        assert listed.status_code == 200, listed.content
+
+    def test_the_report_stays_null_until_the_final_report(self, api_client, source_run):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(
+            api_client, fix_run, lost_models=["deepseek/flash"], last_error="hung"
+        )
+        fix_run.refresh_from_db()
+        assert fix_run.report is None
+
+        self._report(
+            api_client, fix_run, ending="no_improvement", summary="nothing held up"
+        )
+
+        fix_run.refresh_from_db()
+        assert fix_run.report == {
+            "stage": "Search",
+            "ending": "no_improvement",
+            "summary": "nothing held up",
+            "failure": None,
+            "winner_candidate_id": None,
+        }
+        assert list(fix_run.engine_notes["lost_models"]) == ["deepseek/flash"]
+        assert fix_run.engine_notes["last_error"] == "hung"
+
+    def test_a_relaunch_s_brief_names_every_model_an_earlier_launch_lost(
+        self, api_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(api_client, fix_run, lost_models=["deepseek/flash"])
+        # The next launch gets a new token and loses another model.
+        _armed(fix_run)
+        self._report(api_client, fix_run, lost_models=["luna/coder", "deepseek/flash"])
+        self._report(api_client, fix_run)
+
+        brief = _engine(api_client, "get", fix_run, "brief/").json()
+
+        # A set to the engine; the notes are jsonb, which keeps no key order.
+        assert sorted(brief["lost_models"]) == ["deepseek/flash", "luna/coder"]
+        fix_run.refresh_from_db()
+        assert sorted(fix_run.engine_notes["lost_models"]) == [
+            "deepseek/flash",
+            "luna/coder",
+        ]
+
+    def test_a_model_named_again_keeps_the_time_it_was_lost(
+        self, api_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(api_client, fix_run, lost_models=["deepseek/flash"])
+        lost_at = _lost_ago(fix_run, LOST_MODELS_SKIPPED_FOR + timedelta(minutes=1))
+        # The engine names its brief's models in every report, long after the loss.
+        self._report(api_client, fix_run, lost_models=["deepseek/flash"])
+
+        brief = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert brief["lost_models"] == []
+        fix_run.refresh_from_db()
+        assert fix_run.engine_notes["lost_models"] == {"deepseek/flash": lost_at}
+
+    def test_a_first_launch_s_brief_has_no_lost_models(self, api_client, source_run):
+        fix_run = _armed(_fix_run(source_run))
+
+        brief = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert brief["lost_models"] == []
+
+    def test_the_last_error_is_kept_cut_to_500_characters(self, api_client, source_run):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(api_client, fix_run, last_error="first")
+        self._report(api_client, fix_run, last_error="x" * 600)
+        self._report(api_client, fix_run, last_error=None)
+
+        fix_run.refresh_from_db()
+        assert fix_run.engine_notes == {"lost_models": {}, "last_error": "x" * 500}
+
+    def _retry_of_a_fix_that_lost_a_model(
+        self, api_client, source_run, user, *, lost_ago
+    ):
+        failed = _armed(_fix_run(source_run))
+        self._report(
+            api_client,
+            failed,
+            lost_models=["deepseek/flash"],
+            last_error="the coder's model never answered",
+        )
+        close_fix_run(
+            failed.id,
+            AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        _lost_ago(failed, lost_ago)
+        retried = retry_fix_run(
+            AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+        )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=AgentFixRun.State.RUNNING
+        )
+        brief = _engine(api_client, "get", _armed(retried), "brief/").json()
+        retried.refresh_from_db()
+        return retried, brief
+
+    def test_a_retry_s_first_brief_names_what_a_recent_failed_fix_lost(
+        self, api_client, source_run, user, temporal
+    ):
+        retried, brief = self._retry_of_a_fix_that_lost_a_model(
+            api_client,
+            source_run,
+            user,
+            lost_ago=LOST_MODELS_SKIPPED_FOR - timedelta(minutes=1),
+        )
+
+        assert brief["lost_models"] == ["deepseek/flash"]
+        # The failed fix's error is its own: the retry's failure must not name it.
+        assert retried.report is None
+        assert list(retried.engine_notes["lost_models"]) == ["deepseek/flash"]
+        assert retried.engine_notes["last_error"] is None
+
+    def test_a_retry_skips_no_model_lost_long_before_the_fix_failed(
+        self, api_client, source_run, user, temporal
+    ):
+        retried, brief = self._retry_of_a_fix_that_lost_a_model(
+            api_client,
+            source_run,
+            user,
+            lost_ago=LOST_MODELS_SKIPPED_FOR + timedelta(minutes=1),
+        )
+
+        assert brief["lost_models"] == []
+        assert retried.engine_notes is None
+
+
+@pytest.mark.parametrize("branch", ["feat/a#b", "fix/50%-off", "release?v2"])
+def test_a_branch_head_is_read_with_the_branch_name_quoted(branch):
+    with patch.object(agent_fix_github, "_api") as api:
+        api.return_value.json.return_value = {"object": {"sha": "a" * 40}}
+        head = agent_fix_github._ref_head(
+            "acme/agent", f"refs/heads/{branch}", branch, "token"
+        )
+
+    assert head == "a" * 40
+    (method, path, token), _ = api.call_args
+    assert path == f"/repos/acme/agent/git/ref/heads/{quote(branch, safe='/')}"
+    assert "#" not in path and "?" not in path

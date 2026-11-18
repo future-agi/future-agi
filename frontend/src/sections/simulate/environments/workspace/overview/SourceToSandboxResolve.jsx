@@ -1,8 +1,8 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Chip } from "@mui/material";
+import { Box, Stack, Typography, Button, Radio } from "@mui/material";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { MAP_COPY } from "./sourceToSandbox.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -11,29 +11,13 @@ const MONO = "ui-monospace, Menlo, monospace";
 // not derive on its own.
 export function NeedsAnswerLabel() {
   return (
-    <Stack direction="row" alignItems="center" spacing={0.75}>
-      <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "primary.main" }} />
-      <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", color: "primary.main" }}>
-        {MAP_COPY.needsAnswer}
-      </Typography>
-    </Stack>
+    <StatusBadge status="needs_input" label={MAP_COPY.needsAnswer} variant="dot" />
   );
 }
 
 // The badge a row carries once the reader has confirmed its effect.
 export function ConfirmedChip() {
-  return (
-    <Chip
-      size="small"
-      label={MAP_COPY.confirmed}
-      sx={{
-        height: 18, borderRadius: 0.75,
-        "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: "fontWeightBold", letterSpacing: 0.2 },
-        color: "primary.main",
-        bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.18 : 0.1),
-      }}
-    />
-  );
+  return <StatusBadge status="confirmed" role="success" label={MAP_COPY.confirmed} size="sm" dot={false} />;
 }
 
 // Flat inline resolver anchored to the row it belongs to: the question, why the
@@ -45,17 +29,17 @@ export function InlineResolve({ toolName, onPick }) {
 
   return (
     <Box sx={{ maxWidth: 560 }}>
-      <Stack direction="row" alignItems="baseline" spacing={0.75}>
-        <Iconify icon="solar:question-circle-linear" width={14} sx={{ color: "primary.main", position: "relative", top: 2 }} />
-        <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+      <Stack direction="row" alignItems="baseline" spacing={1}>
+        <Iconify icon="solar:question-circle-linear" width={14} sx={{ color: "text.subtitle", position: "relative", top: 2 }} />
+        <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
           Does <Box component="span" sx={{ fontFamily: MONO }}>{toolName}</Box> change data?
         </Typography>
       </Stack>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25, ml: 2.5 }}>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25, ml: 3 }}>
         {MAP_COPY.resolve.why}
       </Typography>
 
-      <Stack direction="row" spacing={1} sx={{ mt: 1.25, ml: 2.5 }}>
+      <Stack direction="row" spacing={1} sx={{ mt: 1.5, ml: 3 }}>
         {options.map((o) => {
           const selected = pick === o.id;
           return (
@@ -66,29 +50,20 @@ export function InlineResolve({ toolName, onPick }) {
               onClick={() => setPick(o.id)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setPick(o.id); }}
               sx={{
-                flex: 1, borderRadius: 1, px: 1.25, py: 0.875,
+                flex: 1, borderRadius: 1, px: 1.5, py: 1,
                 border: "1px solid",
-                borderColor: selected ? "primary.main" : "divider",
-                bgcolor: (t) => (selected
-                  ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.14 : 0.06)
-                  : "background.paper"),
+                borderColor: selected ? "text.secondary" : "divider",
+                bgcolor: selected ? "action.selected" : "transparent",
                 cursor: "pointer",
                 display: "flex", alignItems: "center", gap: 1,
                 transition: "border-color 120ms, background-color 120ms",
-                "&:hover": { borderColor: selected ? "primary.main" : "text.disabled" },
+                "&:hover": { borderColor: selected ? "text.secondary" : "text.disabled" },
               }}
             >
-              <Box sx={{
-                width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
-                border: "1.5px solid",
-                borderColor: selected ? "primary.main" : "text.disabled",
-                display: "grid", placeItems: "center",
-              }}>
-                {selected && <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "primary.main" }} />}
-              </Box>
+              <Radio size="small" checked={selected} tabIndex={-1} readOnly sx={{ p: 0 }} />
               <Box flex={1} minWidth={0}>
                 <Stack direction="row" alignItems="baseline" spacing={0.5}>
-                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>{o.label}</Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>{o.label}</Typography>
                   {o.suggested && (
                     <Typography sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}>
                       suggested
@@ -104,23 +79,18 @@ export function InlineResolve({ toolName, onPick }) {
         })}
       </Stack>
 
-      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mt: 1.25, ml: 2.5 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1.5, ml: 3 }}>
         <Button
           size="small"
           variant="contained"
           onClick={() => onPick?.(pick)}
-          sx={{ typography: "s2", fontWeight: "fontWeightBold", px: 1.5, py: 0.5, minHeight: 0 }}
         >
           {MAP_COPY.resolve.confirm(picked.label)}
         </Button>
         <Button
           size="small"
           variant="text"
-          sx={{
-            typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.subtitle",
-            px: 1, py: 0.5, minHeight: 0,
-            "&:hover": { bgcolor: "transparent", color: "text.primary" },
-          }}
+          color="inherit"
         >
           {MAP_COPY.resolve.secondary}
         </Button>

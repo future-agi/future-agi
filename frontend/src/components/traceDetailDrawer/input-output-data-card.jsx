@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useMemo, useState } from "react";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
 } from "src/sections/develop-detail/AccordianElements";
-import { Box, Tab, Tabs, Typography, IconButton } from "@mui/material";
+import { Box, Tab, Typography, IconButton } from "@mui/material";
 import { ShowComponent } from "src/components/show";
 import Markdown from "react-markdown";
 import { JsonView, allExpanded, defaultStyles } from "react-json-view-lite";
@@ -85,35 +86,13 @@ const InputOutputDataCard = ({ value, column }) => {
               }}
               size="small"
             >
-              <Iconify icon="tabler:copy" color="grey" width={18} />
+              <Iconify icon="solar:copy-linear" color="grey" width={20} />
             </IconButton>
             <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-              <Tabs
-                textColor="primary.main"
-                value={tabValue}
-                onChange={handleTabChange}
-                TabIndicatorProps={{
-                  style: { display: "none" },
-                }}
-                sx={{
-                  minHeight: 32,
-                  "& .MuiTab-root": {
-                    minHeight: 32,
-                    padding: "12px 12px",
-                    marginRight: "10px !important",
-                    "&:not(.Mui-selected)": {
-                      color: "text.disabled", // Color for unselected tabs
-                    },
-                    "&.Mui-selected": {
-                      color: "primary.main", // Color for selected tab
-                      fontWeight: "bold",
-                    },
-                  },
-                }}
-              >
+              <SegmentedTabs value={tabValue} onChange={handleTabChange}>
                 <Tab value="markdown" label="Markdown" />
                 <Tab value="raw" label="Raw" />
-              </Tabs>
+              </SegmentedTabs>
               <ShowComponent condition={tabValue === "raw"}>
                 <Box
                   sx={{

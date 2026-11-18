@@ -8,10 +8,11 @@ vi.mock("src/components/iconify", () => ({
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
+// Looked up by accessible name (the icons are a design-system detail).
 const shareButton = (container) =>
-  container.querySelector('[data-icon="basil:share-outline"]');
+  container.querySelector('[aria-label="Share trace"]');
 const newTabButton = (container) =>
-  container.querySelector('[data-icon="iconoir:open-new-window"]');
+  container.querySelector('[aria-label="Open in new tab"]');
 
 describe("trace drawer header actions", () => {
   it("offers share and open-in-new-tab when the host handles them", () => {

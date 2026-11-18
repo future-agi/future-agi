@@ -46,11 +46,14 @@ from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
+    executions_without_result,
     finish_deferred_delete,
+    keep_delivered_attempt,
     record_cleanup,
     register_attempt,
     request_cancellation,
     scope_dispatch_to_rerun,
+    validate_cancellation_reason,
 )
 from simulate.services.hosted_harness_conversation import (
     _unacked_commands,
@@ -853,6 +856,13 @@ _GUEST_CAUSE_LINE = re.compile(r"(?:ProcessRuntimeError|RuntimeValidationError):
 _GUEST_INNER_EXCEPTION = re.compile(
     r"(?:^|\\n)([A-Za-z_.]+(?:Error|Exception)): ([^\\\"\n]+)"
 )
+
+
+# The labels of a guest's typed failures; the stored message adds the cause it printed.
+RUNTIME_VALIDATION_FAILED = (
+    "Generated environment failed real-runtime validation after bounded repair"
+)
+AUTHORING_FAILED = "Environment authoring failed before a runnable world was saved"
 
 
 def guest_failure_cause(tail: str) -> str:
@@ -4221,6 +4231,7 @@ class HostedHarnessGateway:
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
+        validate_cancellation_reason(reason)
         settled = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job,
             attempt_number=job.current_attempt_number,
@@ -4365,8 +4376,8 @@ class HostedHarnessGateway:
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
         # the domain is retryable and the whole-job attempt budget remains
-        # (spine §0.6 + §1 `retry`). Exit 0 (verdict delivered) and exit 3
-        # (superseded) never reach here.
+        # (spine §0.6 + §1 `retry`). Exit 3 (superseded) never reaches here; exit 0
+        # does only when the platform lost results the guest produced.
         retry = attempt.job.payload.get("retry", {})
         cycle_start = int(
             (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
@@ -4375,6 +4386,14 @@ class HostedHarnessGateway:
         return domain in retry.get(
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
+
+    def _keep_delivered_results(self, attempt: HostedHarnessAttempt) -> bool:
+        """Keep the Run of an attempt whose every call delivered its result, whatever
+        ended the guest, and say whether it did (`keep_delivered_attempt`). The results are
+        what the run page and a check run read."""
+        if executions_without_result(attempt.job, attempt.attempt_number) != []:
+            return False
+        return keep_delivered_attempt(attempt)
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4401,7 +4420,9 @@ class HostedHarnessGateway:
             observation = self.inspect(attempt)
         except SandboxNotFoundError:
             retry_pending = False
-            if not attempt.terminal_event_received:
+            if not attempt.terminal_event_received and not self._keep_delivered_results(
+                attempt
+            ):
                 attempt.terminal_stage = "failed"
                 attempt.terminal_failure = {
                     "domain": "infrastructure",
@@ -4449,34 +4470,37 @@ class HostedHarnessGateway:
                     attempt.provider_ref,
                 )
                 return None
-            attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
-                "domain": "infrastructure",
-                "stage": "running",
-                "code": "sandbox_unreachable",
-                "message": (
-                    "provider sandbox toolbox remained unreachable after the recovery "
-                    "grace period"
-                ),
-                "details": {
-                    "provider": self.client.name,
-                    "exception_type": type(exc).__name__,
-                    "grace_seconds": grace_seconds,
-                },
-            }
-            attempt.state = HostedHarnessAttempt.State.FAILED
-            attempt.save(
-                update_fields=[
-                    "terminal_stage",
-                    "terminal_failure",
-                    "state",
-                    "updated_at",
-                ]
-            )
+            kept = self._keep_delivered_results(attempt)
+            if not kept:
+                attempt.terminal_stage = "failed"
+                attempt.terminal_failure = {
+                    "domain": "infrastructure",
+                    "stage": "running",
+                    "code": "sandbox_unreachable",
+                    "message": (
+                        "provider sandbox toolbox remained unreachable after the "
+                        "recovery grace period"
+                    ),
+                    "details": {
+                        "provider": self.client.name,
+                        "exception_type": type(exc).__name__,
+                        "grace_seconds": grace_seconds,
+                    },
+                }
+                attempt.state = HostedHarnessAttempt.State.FAILED
+                attempt.save(
+                    update_fields=[
+                        "terminal_stage",
+                        "terminal_failure",
+                        "state",
+                        "updated_at",
+                    ]
+                )
             try:
                 return self._delete_and_record(
                     attempt,
-                    retry_pending=self._should_retry(attempt, "infrastructure"),
+                    retry_pending=not kept
+                    and self._should_retry(attempt, "infrastructure"),
                 )
             except SandboxConflictError:
                 # The first delete request can be accepted even when its wait call ends in a
@@ -4535,6 +4559,12 @@ class HostedHarnessGateway:
         if exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
+        elif (
+            not attempt.terminal_event_received or not attempt.manifest_acked
+        ) and self._keep_delivered_results(attempt):
+            # Every call's result is in, and the results are what a Run is: however the
+            # guest ended, only its ending or its manifest was lost.
+            pass
         elif exit_code == 4 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -4583,9 +4613,9 @@ class HostedHarnessGateway:
             )
             authoring_invalid = exit_code == 78 or authoring_failed
             label = (
-                "Generated environment failed real-runtime validation after bounded repair"
+                RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
+                else AUTHORING_FAILED
                 if authoring_failed
                 else f"guest entrypoint exited {exit_code}"
             )
@@ -4633,6 +4663,12 @@ class HostedHarnessGateway:
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
+            # Retry only results the guest produced and the platform lost: an ending the
+            # guest reported as failed or canceled is its own.
+            retry_pending = (
+                not attempt.terminal_event_received
+                or attempt.terminal_stage == "completed"
+            ) and self._should_retry(attempt, "infrastructure")
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",

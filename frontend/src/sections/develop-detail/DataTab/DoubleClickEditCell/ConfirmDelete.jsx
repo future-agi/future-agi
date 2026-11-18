@@ -36,7 +36,13 @@ const DeleteMediaDialog = ({
   const confirmationMessage = `Are you sure you want to delete ${fileName}?`;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
+      fullWidth
+    >
       <Box sx={{ padding: theme.spacing(2) }}>
         <DialogTitle sx={{ padding: 0, margin: 0 }}>
           <Box
@@ -54,7 +60,7 @@ const DeleteMediaDialog = ({
               {dialogTitle}
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <HelperText text={confirmationMessage} />
@@ -71,19 +77,16 @@ const DeleteMediaDialog = ({
               loading={isPending}
               onClick={onDelete}
               sx={{
-                backgroundColor: theme.palette.red[500],
+                backgroundColor: theme.palette.status.danger.solid,
                 color: "common.white",
                 "&:hover": {
-                  backgroundColor: theme.palette.red[500],
+                  backgroundColor: theme.palette.status.danger.solid,
                 },
               }}
               startIcon={
-                <SvgColor
+                <SvgColor width={16}
                   src="/assets/icons/components/ic_delete.svg"
-                  sx={{
-                    width: theme.spacing(2),
-                    height: theme.spacing(2),
-                    color: theme.palette.background.paper,
+                  sx={{ color: theme.palette.background.paper,
                   }}
                 />
               }

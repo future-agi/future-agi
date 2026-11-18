@@ -80,9 +80,10 @@ describe("ConnectedAgentsView", () => {
     );
     expect(screen.getByText("7 environments")).toBeInTheDocument();
     expect(screen.getByText("ride-voice-agent")).toBeInTheDocument();
+    // One-line rows: the description isn't a second line.
     expect(
-      screen.getByText("Inbound phone support for an online storefront"),
-    ).toBeInTheDocument();
+      screen.queryByText("Inbound phone support for an online storefront"),
+    ).toBeNull();
   });
 
   it("puts the old page's modality icon next to voice and chat", async () => {

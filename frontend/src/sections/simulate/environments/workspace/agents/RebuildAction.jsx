@@ -50,7 +50,7 @@ export default function RebuildAction({
       data-testid={`rebuild-action-${nudge.id}`}
       sx={{ mt: 1, pt: 1, borderTop: "1px solid", borderColor: "divider" }}
     >
-      <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold" }}>
+      <Typography sx={{ typography: "s3", fontWeight: 500 }}>
         {COPY.title}
       </Typography>
       {counts && (

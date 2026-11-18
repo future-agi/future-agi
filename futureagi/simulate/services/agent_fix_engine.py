@@ -62,6 +62,9 @@ _ENDING_STATES = {
     Ending.FAILED: AgentFixRun.State.FAILED,
 }
 MAX_PATCH_BYTES = 2 * 1024 * 1024
+# The engine asks once more for a check run that failed on the platform's side, under its
+# label with this suffix and the same repeat: either one is the same check.
+AGAIN_SUFFIX = "-again"
 
 
 def _locked_running(fix_run_id: Any) -> AgentFixRun:
@@ -316,8 +319,9 @@ def _finished_earlier(
     parallelism: int,
 ) -> HostedHarnessJob | None:
     """The same check, finished by a failed fix this one retries: the user paid for it
-    once, so it is read again instead of run again. Same label, versions, scenarios, trials
-    and parallelism; a run that failed or was canceled is run again."""
+    once, so it is read again instead of run again. Same label (or the label the engine asked
+    again under), versions, scenarios, trials and parallelism; a run that failed or was
+    canceled is run again."""
     earlier = fix_lineage(fix_run)[1:]
     picks = options.get("picks")
     if not earlier or picks is None:
@@ -332,7 +336,7 @@ def _finished_earlier(
     )
     for run in HostedHarnessJob.no_workspace_objects.filter(
         fix_run_id__in=earlier,
-        fix_label=request.label,
+        fix_label__in=(request.label, f"{request.label}{AGAIN_SUFFIX}"),
         state=HostedHarnessJob.State.COMPLETED,
         deleted=False,
     ).order_by("-created_at"):
@@ -418,9 +422,19 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             locked.plan = report.plan.model_dump(mode="json")
         if report.diagnosis is not None:
             locked.diagnosis = report.diagnosis.model_dump(mode="json")
+        if report.lost_models or report.last_error:
+            locked.engine_notes = _engine_notes(locked.engine_notes, report)
         if report.ending is not None:
             locked.report = report.model_dump(
-                mode="json", exclude={"candidates", "step", "plan", "diagnosis"}
+                mode="json",
+                exclude={
+                    "candidates",
+                    "step",
+                    "plan",
+                    "diagnosis",
+                    "lost_models",
+                    "last_error",
+                },
             )
         locked.save(
             update_fields=[
@@ -430,6 +444,7 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
                 "diagnosis",
                 "heartbeat_at",
                 "report",
+                "engine_notes",
                 "updated_at",
             ]
         )
@@ -461,6 +476,28 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
         _ENDING_STATES[report.ending],
         failure=_ending_failure(locked, report),
     )
+
+
+LAST_ERROR_CHARS = 500
+
+
+def _engine_notes(
+    stored: dict[str, Any] | None, report: EngineReport
+) -> dict[str, Any]:
+    """Every model a launch lost, with when it was first reported lost, for the next
+    launch's brief, and the last error an engine sent, for the failure of a fix whose
+    launches all stopped. The engine names its brief's models again in every report, so
+    a model already noted keeps its time."""
+    stored = stored or {}
+    now = timezone.now().isoformat()
+    lost = dict(stored.get("lost_models") or {})
+    for model in report.lost_models:
+        lost.setdefault(model, now)
+    return {
+        "lost_models": lost,
+        "last_error": (report.last_error or "")[:LAST_ERROR_CHARS]
+        or stored.get("last_error"),
+    }
 
 
 def _ending_failure(

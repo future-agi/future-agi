@@ -50,9 +50,12 @@ export default function TrialChart({ candidates }) {
   const pick =
     trials.find((c) => c.outcome === "winner") || trials[rates.indexOf(best)];
   const gain = pts(pick.verdict.target_pass_rate);
+  const versus = gain
+    ? `${gain > 0 ? "▲" : "▼"} ${Math.abs(gain)} pts vs the agent before the change`
+    : "· no change from the agent before the change";
   const lead = `pass rate on the target scenarios · Trial ${pick.attempt} · ${
     pick.outcome === "winner" ? "winner" : "best so far"
-  } ${gain >= 0 ? "▲" : "▼"} ${Math.abs(gain)} pts vs the agent before the change, on the same scenarios`;
+  } ${versus}, on the same scenarios`;
   return (
     <Box
       sx={{
@@ -75,7 +78,7 @@ export default function TrialChart({ candidates }) {
           borderColor: "divider",
         }}
       >
-        <Typography sx={{ typography: "m2", fontWeight: 700, ...num }}>
+        <Typography sx={{ typography: "m2", fontWeight: 600, ...num }}>
           {pct(pick.verdict.target_pass_rate[1])}
           <Box
             component="span"

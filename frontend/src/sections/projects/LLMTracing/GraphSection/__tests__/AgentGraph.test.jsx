@@ -606,3 +606,26 @@ describe("AgentGraph request states", () => {
     expect(container.querySelector(".react-flow")).toBeInTheDocument();
   });
 });
+
+
+it("preserves numeric Agent Graph metrics and labels incomplete node/edge coverage", () => {
+  const cost_coverage = { status: "partial", known_subtotal: 1.25, known_fact_count: 1, unknown_fact_count: 1 };
+  const graph = buildFlowData({
+    nodes: [canonicalNode("agent:parent"), canonicalNode("llm:chat", "llm", { total_cost: 1.25, cost_coverage })],
+    edges: [canonicalEdge("agent:parent", "llm:chat", { total_cost: 1.25, cost_coverage })],
+  });
+  expect(dataById(graph, "llm:chat").total_cost).toBe(1.25);
+  expect(dataById(graph, "llm:chat").cost_coverage).toEqual(cost_coverage);
+  expect(graph.edges[0].label).toContain("Partial · Known subtotal $1.25");
+});
+
+it("does not turn all-unknown edge amounts into free prices", () => {
+  const graph = buildFlowData({
+    nodes: [canonicalNode("agent:parent"), canonicalNode("llm:chat", "llm")],
+    edges: [canonicalEdge("agent:parent", "llm:chat", { total_cost: 0, cost_coverage: {
+      status: "unknown", known_subtotal: 0, known_fact_count: 0, unknown_fact_count: 1,
+    } })],
+  });
+  expect(graph.edges[0].label).toContain("Unknown");
+  expect(graph.edges[0].label).not.toContain("$0");
+});

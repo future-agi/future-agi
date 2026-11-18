@@ -1,12 +1,12 @@
 import {
   Box,
-  Card,
   FormControl,
   InputLabel,
   MenuItem,
   Select,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import React, { useState } from "react";
 import { useGetAllCustomMetrics } from "src/api/model/metric";
 import PropType from "prop-types";
@@ -36,7 +36,7 @@ const ModelPerformanceConfigCard = ({ defaultMetricId, isMetricAdded }) => {
 
   const [selectedMetricId, setSelectedMetricId] = useState(defaultMetricId);
   return (
-    <Card>
+    <Section variant="panel">
       <Box
         sx={{
           padding: 2.5,
@@ -47,7 +47,7 @@ const ModelPerformanceConfigCard = ({ defaultMetricId, isMetricAdded }) => {
           alignItems: "center",
         }}
       >
-        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
           Performance Configs
         </Typography>
         <LoadingButton
@@ -95,7 +95,7 @@ const ModelPerformanceConfigCard = ({ defaultMetricId, isMetricAdded }) => {
           </CustomTooltip>
         </Box>
       </Box>
-    </Card>
+    </Section>
   );
 };
 

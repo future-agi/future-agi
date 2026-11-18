@@ -170,4 +170,45 @@ describe("AnnotationSidebarContent", () => {
       projectId: "project-1",
     });
   });
+
+  it.each([
+    [
+      "a timeout",
+      { transportCode: "ECONNABORTED", message: "timeout of 15000ms exceeded" },
+      "The server took too long to answer. Try again in a moment.",
+    ],
+    [
+      "a server error",
+      { statusCode: 503, message: "Service unavailable" },
+      "The server ran into a problem. Try again in a moment.",
+    ],
+    [
+      "any other failure",
+      { statusCode: 404, message: "Not found" },
+      "Something went wrong. Try again.",
+    ],
+  ])("words the load error for %s and offers Retry", async (_, error, copy) => {
+    const user = userEvent.setup();
+    const defaultImpl = useQueueItemsForSource.getMockImplementation();
+    useQueueItemsForSource.mockImplementation(() => ({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      isFetching: false,
+      error,
+      refetch: mockRefetch,
+    }));
+    try {
+      render(
+        <AnnotationSidebarContent
+          sources={[{ sourceType: "trace", sourceId: "trace-1" }]}
+        />,
+      );
+      expect(screen.getByText(copy)).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(mockRefetch).toHaveBeenCalled();
+    } finally {
+      useQueueItemsForSource.mockImplementation(defaultImpl);
+    }
+  });
 });

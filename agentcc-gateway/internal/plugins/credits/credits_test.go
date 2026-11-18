@@ -281,6 +281,41 @@ func TestCreditsPlugin_NilKeyStore(t *testing.T) {
 	}
 }
 
+// A decision call runs on the customer's own provider key, which the vendor
+// bills. It never draws Future AGI credits, on a managed key included, and an
+// empty balance does not block it.
+func TestCreditsPlugin_ManagedKey_DecisionDrawsNothing(t *testing.T) {
+	ks := newKeyStore()
+	p := New(true, ks)
+	managed := findKey(ks, "managed")
+	if managed == nil {
+		t.Fatal("expected to find managed key")
+	}
+
+	rc := makeRC(managed.ID, "managed")
+	defer rc.Release()
+	rc.EndpointType = "decision"
+	rc.Metadata["cost"] = "0.500000"
+
+	if res := p.ProcessRequest(context.Background(), rc); res.Error != nil {
+		t.Fatalf("pre-check refused a decision: %v", res.Error)
+	}
+	if res := p.ProcessResponse(context.Background(), rc); res.Error != nil {
+		t.Fatalf("post-check: %v", res.Error)
+	}
+	if bal := managed.BalanceUSD(); bal != 10.0 {
+		t.Errorf("balance = %f, want 10 untouched", bal)
+	}
+	if _, ok := rc.Metadata["credits_used"]; ok {
+		t.Error("credits_used set for a decision")
+	}
+
+	managed.DeductMicros(auth.USDToMicros(10.0))
+	if res := p.ProcessRequest(context.Background(), rc); res.Error != nil {
+		t.Fatalf("an empty balance blocked a decision: %v", res.Error)
+	}
+}
+
 // A call that cannot spend, such as a delete, is not refused for a balance
 // that has run out.
 func TestCreditsPlugin_NoSpendCallIsNotRefused(t *testing.T) {

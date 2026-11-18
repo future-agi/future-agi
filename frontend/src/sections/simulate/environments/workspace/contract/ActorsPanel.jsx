@@ -1,9 +1,9 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, IconButton, Tooltip, Collapse, TextField, MenuItem, Chip,
+  Box, Stack, Typography, Button, IconButton, Tooltip, Collapse, TextField, MenuItem,
 } from "@mui/material";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import {
@@ -47,8 +47,8 @@ export default function ActorsPanel({ env, envState, patch, onGo, locked = false
     <Box>
       <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "flex-end" }} spacing={2} sx={{ mb: 2 }}>
         <Box flex={1}>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>{C.heading}</Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}>
+          <Typography sx={{ typography: "m1", fontWeight: 500 }}>{C.heading}</Typography>
+          <Typography sx={{ typography: "s1", color: "text.secondary", maxWidth: 780 }}>
             {C.headingBlurb}
           </Typography>
         </Box>
@@ -61,7 +61,7 @@ export default function ActorsPanel({ env, envState, patch, onGo, locked = false
                 setEditing({ entry: "present", pressure: "competing", name: "", goal: "", blurb: "", traits: [], modalities: [env.surface] })
               }
               startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-              sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+              sx={{ flexShrink: 0 }}
             >
               {C.create}
             </Button>
@@ -71,19 +71,19 @@ export default function ActorsPanel({ env, envState, patch, onGo, locked = false
 
       <Box
         sx={{
-          p: 1.75, mb: 2, borderRadius: 1.25, border: "1px solid", borderColor: "divider",
+          p: 1.5, mb: 2, borderRadius: "8px", border: "1px solid", borderColor: "divider",
           bgcolor: "background.neutral",
         }}
       >
         <Stack direction="row" spacing={1.25} alignItems="flex-start">
-          <Iconify icon="solar:lightbulb-linear" width={16} sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }} />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            <Box component="span" sx={{ fontWeight: "fontWeightBold", color: "text.primary" }}>{C.calloutLead}</Box>{" "}
+          <Iconify icon="solar:lightbulb-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }} />
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+            <Box component="span" sx={{ fontWeight: 500, color: "text.primary" }}>{C.calloutLead}</Box>{" "}
             {C.calloutBody}{" "}
             <Box
               component="span"
               onClick={() => onGo?.("scenarios")}
-              sx={{ color: "primary.main", fontWeight: "fontWeightBold", cursor: "pointer" }}
+              sx={{ color: "text.primary", fontWeight: 500, textDecoration: "underline", cursor: "pointer" }}
             >
               {C.calloutLink}
             </Box>
@@ -165,12 +165,12 @@ function ActorRow({ actor, action, onEdit }) {
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, py: 1.5 }}>
+      <Stack direction="row" alignItems="center" spacing={2} sx={{ px: 1.5, minHeight: ROW_HEIGHT.twoLine }}>
         <Tooltip arrow title={pressure.blurb}>
           <Box
             onClick={toggle}
             sx={{
-              width: 30, height: 30, borderRadius: 0.875, flexShrink: 0, cursor: "pointer",
+              width: 28, height: 28, borderRadius: "6px", flexShrink: 0, cursor: "pointer",
               display: "grid", placeItems: "center", color: "text.subtitle", bgcolor: "background.neutral",
             }}
           >
@@ -180,27 +180,18 @@ function ActorRow({ actor, action, onEdit }) {
 
         <Box flex={1} minWidth={0} onClick={toggle} sx={{ cursor: "pointer" }}>
           <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{actor.name}</Typography>
+            <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>{actor.name}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>· {actor.version}</Typography>
             {actor.owner === "system" && (
               <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>· {C.builtIn}</Typography>
             )}
           </Stack>
           <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
-            <Box component="span" sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}>{C.wants}</Box> {actor.goal}
+            <Box component="span" sx={{ color: "text.primary", fontWeight: 500 }}>{C.wants}</Box> {actor.goal}
           </Typography>
         </Box>
 
-        <Chip
-          size="small"
-          label={pressure.label}
-          sx={{
-            height: 20, borderRadius: 0.75, flexShrink: 0, color: pressure.color,
-            border: "1px solid", borderColor: alpha(pressure.color, 0.4), bgcolor: "transparent",
-            display: { xs: "none", md: "flex" },
-            "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: "fontWeightSemiBold" },
-          }}
-        />
+        <Tag label={pressure.label} sx={{ display: { xs: "none", md: "inline-flex" } }} />
 
         <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0, display: { xs: "none", md: "flex" } }}>
           {(actor.modalities || []).map((m) => (
@@ -232,7 +223,7 @@ function ActorRow({ actor, action, onEdit }) {
       </Stack>
 
       <Collapse in={open} unmountOnExit>
-        <Stack spacing={1.5} sx={{ px: 2.5, pb: 2, pl: 7 }}>
+        <Stack spacing={1.5} sx={{ pr: 1.5, pb: 2, pl: 7 }}>
           <DetailBlock label={C.detail.does} body={actor.blurb} />
           <DetailBlock label={C.detail.tests} body={actor.tests} />
           <DetailBlock label={C.detail.entry} body={`${entry.label} - ${entry.blurb}`} />
@@ -248,14 +239,7 @@ function ActorRow({ actor, action, onEdit }) {
             <Label>{C.detail.traits}</Label>
             <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
               {(actor.traits || []).map((t) => (
-                <Chip
-                  key={t} size="small" label={t}
-                  sx={{
-                    height: 20, borderRadius: 0.75, color: "text.secondary",
-                    border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-                    "& .MuiChip-label": { px: 0.75, typography: "s3" },
-                  }}
-                />
+                <Tag key={t} label={t} />
               ))}
             </Stack>
           </Box>
@@ -264,8 +248,8 @@ function ActorRow({ actor, action, onEdit }) {
             <Stack spacing={0.75}>
               {(actor.versions || []).map((v) => (
                 <Stack key={v.label} direction="row" spacing={1.5} alignItems="flex-start">
-                  <Typography sx={{ width: 28, flexShrink: 0, typography: "s2", fontWeight: "fontWeightBold" }}>{v.label}</Typography>
-                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>{v.note}</Typography>
+                  <Typography sx={{ width: 28, flexShrink: 0, typography: "s1", fontWeight: 500 }}>{v.label}</Typography>
+                  <Typography sx={{ typography: "s1", color: "text.secondary" }}>{v.note}</Typography>
                 </Stack>
               ))}
             </Stack>
@@ -277,17 +261,29 @@ function ActorRow({ actor, action, onEdit }) {
 }
 ActorRow.propTypes = { actor: ACTOR_SHAPE, action: PropTypes.node, onEdit: PropTypes.func };
 
-function ModalityChip({ label }) {
+// A neutral tag: 11/500 secondary text on action.selected, radius 4. `selected`
+// is the toggled-on look in the editor (text.primary on a stronger fill).
+function Tag({ label, selected = false, sx }) {
   return (
-    <Chip
-      size="small" label={label}
+    <Box
+      component="span"
       sx={{
-        height: 20, borderRadius: 0.75, color: "text.subtitle",
-        border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-        "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: "fontWeightMedium" },
+        px: 0.75, height: 18, display: "inline-flex", alignItems: "center", flexShrink: 0,
+        borderRadius: "4px", typography: "s3", fontWeight: 500,
+        color: selected ? "text.primary" : "text.secondary",
+        bgcolor: "action.selected",
+        ...(selected && { outline: "1px solid", outlineOffset: -1 }),
+        ...sx,
       }}
-    />
+    >
+      {label}
+    </Box>
   );
+}
+Tag.propTypes = { label: PropTypes.node, selected: PropTypes.bool, sx: PropTypes.object };
+
+function ModalityChip({ label }) {
+  return <Tag label={label} />;
 }
 ModalityChip.propTypes = { label: PropTypes.string };
 
@@ -295,7 +291,7 @@ function DetailBlock({ label, body }) {
   return (
     <Box>
       <Label>{label}</Label>
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{body}</Typography>
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>{body}</Typography>
     </Box>
   );
 }
@@ -312,14 +308,14 @@ function ActorEditor({ actor, onClose }) {
         <Stack sx={{ height: "100%", minHeight: 0 }}>
           {/* No close button here — SideDrawer renders the single (outlined)
               close in the corner. pr clears it so a long name doesn't collide. */}
-          <Box sx={{ pl: 2.5, pr: 6, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-            <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>{existing ? actor.name : "Create actor"}</Typography>
+          <Box sx={{ pl: 2, pr: 6, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+            <Typography sx={{ typography: "m1", fontWeight: 500 }}>{existing ? actor.name : "Create actor"}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {existing ? `Editing ${actor.version}: saving creates a new version` : "Available to every environment once saved"}
             </Typography>
           </Box>
 
-          <Stack spacing={2.25} sx={{ p: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <Stack spacing={2} sx={{ p: 2, flex: 1, minHeight: 0, overflowY: "auto" }}>
             <TextField size="small" label="Name" defaultValue={actor.name} fullWidth />
             <TextField
               size="small" label="What they want" defaultValue={actor.goal} fullWidth multiline minRows={2}
@@ -330,7 +326,7 @@ function ActorEditor({ actor, onClose }) {
             <TextField select size="small" label="Pressure" defaultValue={actor.pressure} fullWidth>
               {PRESSURE_KINDS.map((k) => (
                 <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
-                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{k.label}</Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: 500 }}>{k.label}</Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{k.blurb}</Typography>
                 </MenuItem>
               ))}
@@ -339,7 +335,7 @@ function ActorEditor({ actor, onClose }) {
             <TextField select size="small" label="When they enter" defaultValue={actor.entry} fullWidth>
               {ENTRY_KINDS.map((k) => (
                 <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
-                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{k.label}</Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: 500 }}>{k.label}</Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{k.blurb}</Typography>
                 </MenuItem>
               ))}
@@ -356,26 +352,17 @@ function ActorEditor({ actor, onClose }) {
                 {MODALITIES.map((m) => {
                   const on = actor.modalities?.includes(m);
                   return (
-                    <Chip
-                      key={m} size="small" label={m}
-                      sx={{
-                        height: 24, borderRadius: 0.75,
-                        color: on ? "primary.main" : "text.subtitle",
-                        border: "1px solid", borderColor: on ? "primary.main" : "divider",
-                        bgcolor: (t) => (on ? alpha(t.palette.primary.main, 0.08) : "transparent"),
-                        "& .MuiChip-label": { px: 1, typography: "s3", fontWeight: "fontWeightSemiBold" },
-                      }}
-                    />
+                    <Tag key={m} label={m} selected={!!on} />
                   );
                 })}
               </Stack>
             </Box>
           </Stack>
 
-          <Stack direction="row" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+          <Stack direction="row" spacing={1.5} sx={{ px: 2, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
             <Box flex={1} />
-            <Button onClick={onClose} sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.secondary" }}>Cancel</Button>
-            <Button variant="contained" color="primary" onClick={onClose} sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+            <Button onClick={onClose} color="inherit">Cancel</Button>
+            <Button variant="contained" color="primary" onClick={onClose}>
               {existing ? "Save as new version" : "Create actor"}
             </Button>
           </Stack>

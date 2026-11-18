@@ -9,7 +9,6 @@ export default function Actions({ onEditClick, onDeleteClick }) {
       <IconButton
         sx={{
           color: "text.primary",
-          borderRadius: 0.5,
           border: "1px solid",
           borderColor: "divider",
           padding: (theme) => theme.spacing(0.625),
@@ -28,7 +27,6 @@ export default function Actions({ onEditClick, onDeleteClick }) {
       <IconButton
         sx={{
           color: "text.primary",
-          borderRadius: 0.5,
           border: "1px solid",
           borderColor: "divider",
           padding: (theme) => theme.spacing(0.625),

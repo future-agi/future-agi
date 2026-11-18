@@ -29,6 +29,7 @@ import {
 } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY } from "../workspace.constants";
 import { refusalText } from "../evals/refusalText";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { PreflightReport } from "../agents/PreflightStatus";
 import { named } from "../agents/agentVersionStatus";
 import MakeDefaultConfirm from "./MakeDefaultConfirm";
@@ -46,7 +47,7 @@ function VersionRow({ version, selected, onSelect }) {
         onClick={onSelect}
         aria-current={selected ? "true" : undefined}
         sx={{
-          borderRadius: 1,
+          borderRadius: "4px",
           alignItems: "flex-start",
           display: "block",
           py: 1,
@@ -73,7 +74,7 @@ function VersionColumn({ piece, versions, selectedId, onSelect }) {
         minWidth: 0,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         p: 1,
       }}
     >
@@ -85,7 +86,7 @@ function VersionColumn({ piece, versions, selectedId, onSelect }) {
       >
         <Typography
           id={headingId}
-          sx={{ typography: "s1", fontWeight: "fontWeightBold" }}
+          sx={{ typography: "s1", fontWeight: 500 }}
         >
           {VERSIONS_COPY.pieces[piece]}
         </Typography>
@@ -127,7 +128,7 @@ function SuiteMembers({ envId, version }) {
   // A failed refresh keeps the members it already has.
   if (!data) {
     return (
-      <Typography sx={{ typography: "s2", color: "error.main" }}>
+      <Typography sx={{ typography: "s2", color: "status.danger.fg" }}>
         {VERSIONS_COPY.detail.membersError}
       </Typography>
     );
@@ -136,12 +137,13 @@ function SuiteMembers({ envId, version }) {
   const { members: COLS } = VERSIONS_COPY;
   return (
     <Stack spacing={1}>
-      <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+      <Typography sx={{ typography: "s2", fontWeight: 500 }}>
         {VERSIONS_COPY.detail.scenarios(named(version), members.length)}
       </Typography>
       <Box sx={{ overflowX: "auto" }}>
         <Table
           size="small"
+          sx={{ "& td": { height: ROW_HEIGHT.default } }}
           aria-label={VERSIONS_COPY.detail.scenarios(
             named(version),
             members.length,
@@ -200,7 +202,7 @@ function MakeDefault({ move, piece, version, defaultId }) {
         color="inherit"
         disabled={move.isPending}
         onClick={() => setConfirming(true)}
-        sx={{ textTransform: "none", flexShrink: 0 }}
+        sx={{ flexShrink: 0 }}
       >
         {makeDefault.action}
       </Button>
@@ -257,7 +259,7 @@ function VersionDetail({ envId, move, piece, version, siblings, defaultId }) {
     if (isLoading) return <CircularProgress size={18} />;
     if (isError) {
       return (
-        <Typography sx={{ typography: "s2", color: "error.main" }}>
+        <Typography sx={{ typography: "s2", color: "status.danger.fg" }}>
           {detail.loadError}
         </Typography>
       );
@@ -274,7 +276,7 @@ function VersionDetail({ envId, move, piece, version, siblings, defaultId }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         p: 2,
       }}
     >
@@ -286,7 +288,7 @@ function VersionDetail({ envId, move, piece, version, siblings, defaultId }) {
         useFlexGap
       >
         <Typography
-          sx={{ typography: "s1", fontWeight: "fontWeightBold", flex: 1 }}
+          sx={{ typography: "s1", fontWeight: 500, flex: 1 }}
         >
           {detail.changes(`${VERSIONS_COPY.pieces[piece]} ${named(version)}`)}
         </Typography>
@@ -321,7 +323,7 @@ function VersionDetail({ envId, move, piece, version, siblings, defaultId }) {
         )}
       </Stack>
       {move.isError && (
-        <Typography role="alert" sx={{ typography: "s2", color: "error.main" }}>
+        <Typography role="alert" sx={{ typography: "s2", color: "status.danger.fg" }}>
           {refusalText(move.error, VERSIONS_COPY.makeDefault.error)}
         </Typography>
       )}
@@ -392,7 +394,7 @@ export default function VersionsPanel({ env }) {
   const frame = (children) => (
     <Stack spacing={2.5} sx={{ p: 3 }}>
       <Box>
-        <Typography sx={{ typography: "m3", fontWeight: "fontWeightBold" }}>
+        <Typography sx={{ typography: "m3", fontWeight: 500 }}>
           {VERSIONS_COPY.title}
         </Typography>
         <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.5 }}>
@@ -414,7 +416,7 @@ export default function VersionsPanel({ env }) {
   // A failed refresh keeps the versions it already has.
   if (!data) {
     return frame(
-      <Typography sx={{ typography: "s2", color: "error.main" }}>
+      <Typography sx={{ typography: "s2", color: "status.danger.fg" }}>
         {VERSIONS_COPY.loadError}
       </Typography>,
     );
@@ -425,11 +427,11 @@ export default function VersionsPanel({ env }) {
         sx={{
           border: "1px dashed",
           borderColor: "divider",
-          borderRadius: 1.5,
+          borderRadius: "8px",
           p: 3,
         }}
       >
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>
+        <Typography sx={{ typography: "s1", fontWeight: 500 }}>
           {VERSIONS_COPY.empty.title}
         </Typography>
         <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}>

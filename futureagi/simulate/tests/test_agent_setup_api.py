@@ -24,7 +24,9 @@ def definition(db, organization, workspace):
 
 @pytest.fixture
 def version(definition):
-    return definition.create_version(description="", commit_message="first", status="active")
+    return definition.create_version(
+        description="", commit_message="first", status="active"
+    )
 
 
 def _agent_url(agent_id, version_id):
@@ -36,7 +38,9 @@ def _detail_url(agent_id, version_id):
 
 
 @pytest.mark.django_db
-def test_get_agent_answers_the_stored_agent_without_its_raw_setup(auth_client, definition, version):
+def test_get_agent_answers_the_stored_agent_without_its_raw_setup(
+    auth_client, definition, version
+):
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
 
     response = auth_client.get(_agent_url(definition.id, version.id))
@@ -44,7 +48,9 @@ def test_get_agent_answers_the_stored_agent_without_its_raw_setup(auth_client, d
     assert response.status_code == status.HTTP_200_OK
     body = response.json()
     assert sorted(body) == ["agent", "sdk_version", "setup_stale", "stored_at"]
-    expected = {key: value for key, value in source_agent().items() if key != "extension"}
+    expected = {
+        key: value for key, value in source_agent().items() if key != "extension"
+    }
     assert body["agent"] == expected
     assert (body["sdk_version"], body["setup_stale"]) == ("0.2.3", False)
     assert body["stored_at"]
@@ -52,9 +58,13 @@ def test_get_agent_answers_the_stored_agent_without_its_raw_setup(auth_client, d
 
 @pytest.mark.django_db
 def test_get_agent_404s(auth_client, definition, version):
-    other = definition.create_version(description="", commit_message="second", status="active")
+    other = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
-    failed = definition.create_version(description="", commit_message="third", status="draft")
+    failed = definition.create_version(
+        description="", commit_message="third", status="draft"
+    )
     store_setup_failure(agent_version_id=failed.id, code="invalid_key", message="x")
 
     cases = {
@@ -79,8 +89,12 @@ def test_get_agent_of_another_organization_404s(auth_client, workspace):
         description="x",
         organization=stranger,
     )
-    foreign_version = foreign.create_version(description="", commit_message="x", status="active")
-    store_agent(agent_version_id=foreign_version.id, agent=source_agent(), sdk_version="0.2.3")
+    foreign_version = foreign.create_version(
+        description="", commit_message="x", status="active"
+    )
+    store_agent(
+        agent_version_id=foreign_version.id, agent=source_agent(), sdk_version="0.2.3"
+    )
 
     response = auth_client.get(_agent_url(foreign.id, foreign_version.id))
 
@@ -100,8 +114,12 @@ def test_other_organization_404(auth_client, workspace):
         organization=stranger,
         workspace=workspace,
     )
-    foreign_version = foreign.create_version(description="", commit_message="x", status="active")
-    store_agent(agent_version_id=foreign_version.id, agent=source_agent(), sdk_version="0.2.3")
+    foreign_version = foreign.create_version(
+        description="", commit_message="x", status="active"
+    )
+    store_agent(
+        agent_version_id=foreign_version.id, agent=source_agent(), sdk_version="0.2.3"
+    )
 
     response = auth_client.get(_agent_url(foreign.id, foreign_version.id))
 
@@ -110,14 +128,27 @@ def test_other_organization_404(auth_client, workspace):
 
 
 @pytest.mark.django_db
-def test_version_detail_carries_agent_kind_from_the_summary(auth_client, definition, version):
-    assert auth_client.get(_detail_url(definition.id, version.id)).json()["agent_kind"] is None
+def test_version_detail_carries_agent_kind_from_the_summary(
+    auth_client, definition, version
+):
+    assert (
+        auth_client.get(_detail_url(definition.id, version.id)).json()["agent_kind"]
+        is None
+    )
 
     store_agent(agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3")
-    newer = definition.create_version(description="", commit_message="second", status="active")
+    newer = definition.create_version(
+        description="", commit_message="second", status="active"
+    )
 
-    assert auth_client.get(_detail_url(definition.id, version.id)).json()["agent_kind"] == "source"
-    assert auth_client.get(_detail_url(definition.id, newer.id)).json()["agent_kind"] == "source"
+    assert (
+        auth_client.get(_detail_url(definition.id, version.id)).json()["agent_kind"]
+        == "source"
+    )
+    assert (
+        auth_client.get(_detail_url(definition.id, newer.id)).json()["agent_kind"]
+        == "source"
+    )
 
 
 @pytest.mark.django_db

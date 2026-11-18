@@ -12,7 +12,6 @@ const loadingRows = (n) =>
       key={`loading-${i}`}
       disabled
       data-testid="version-option-skeleton"
-      sx={{ typography: "s2" }}
     >
       <LineSkeleton width={26} sx={{ mr: 1 }} />
       <LineSkeleton width={52} />
@@ -56,7 +55,7 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
           ? `${selected.label} · active`
           : `Viewing ${selected.label}`;
       }}
-      sx={{ height: 32, typography: "s2", fontWeight: 600, minWidth: 120 }}
+      sx={{ minWidth: 120 }}
       // Long histories scroll inside the menu instead of running off the page.
       MenuProps={{
         PaperProps: { sx: { maxHeight: 320 }, onScroll: onMenuScroll },
@@ -65,10 +64,10 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
       {/* Keeps the selected value valid for Select before any page arrives. */}
       {!selected && <MenuItem value={value} sx={{ display: "none" }} />}
       {versions.map((v) => (
-        <MenuItem key={v.id} value={v.id} sx={{ typography: "s2" }}>
+        <MenuItem key={v.id} value={v.id}>
           <Box
             component="span"
-            sx={{ fontFamily: MONO, fontWeight: 600, mr: 1 }}
+            sx={{ fontFamily: MONO, fontWeight: 500, mr: 1 }}
           >
             {v.label}
           </Box>

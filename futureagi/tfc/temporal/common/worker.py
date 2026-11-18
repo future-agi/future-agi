@@ -15,6 +15,7 @@ from temporalio.worker import ResourceBasedSlotConfig, Worker, WorkerTuner
 
 from tfc.temporal import TEMPORAL_HOST, TEMPORAL_NAMESPACE, get_queue_name
 from tfc.temporal.common.client import get_client
+from tfc.temporal.common.media_tool_interceptor import MediaToolActivityInterceptor
 from tfc.temporal.common.registry import (
     get_activities_for_queue,
     get_workflows_for_queue,
@@ -160,7 +161,7 @@ async def run_worker(
         "activity_executor": activity_executor,
         # Heartbeat throttling - prevents too frequent heartbeat calls
         "max_heartbeat_throttle_interval": timedelta(seconds=5),
-        "interceptors": [SentryInterceptor()],
+        "interceptors": [MediaToolActivityInterceptor(), SentryInterceptor()],
     }
 
     if graceful_shutdown_timeout:

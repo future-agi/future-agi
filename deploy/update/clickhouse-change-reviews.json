@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "changes": [
+    {
+      "path": "futureagi/tracer/sql_workbench/provision.py",
+      "before_sha256": null,
+      "after_sha256": "0b7f67e150af8c176fd78ba917dcc521dc3791142e35bea9dc4768435682f71f",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:spans",
+          "clickhouse:traces",
+          "clickhouse:trace_sessions",
+          "clickhouse:end_users",
+          "clickhouse:tracer_eval_logger",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:model_hub_score",
+          "clickhouse:derived_metrics",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits"
+        ],
+        "mitigation": "Operator-invoked provisioning only (management command prints DDL; nothing runs on deploy, migrate or update). Statements create a read-only definer/principal, a per-principal view database, SELECT grants and RESTRICTIVE row policies; no ALTER/DROP/INSERT on existing tables, no data rewrite. Rollback: DROP the created users, row policies and view database.",
+        "review": "https://github.com/future-agi/future-agi/pull/3577#discussion_r4537373859",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/028_reconcile_metadata_dictionaries.sql",
+      "before_sha256": null,
+      "after_sha256": "4fa7df992ce443f48b762fc32a92deeb72462dbf5e95b3cb300f0eda2b40defc",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:traces",
+          "clickhouse:end_users",
+          "clickhouse:trace_sessions",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Forward-only metadata repair. CREATE OR REPLACE DICTIONARY for trace_dict, end_users_dict and trace_sessions_dict, byte-identical to 015/017/018, runs ON CLUSTER through the fixed rewriter so every replica holds the dictionaries. No source table is altered, rewritten or replayed; each replica loads the dictionary the way the first replica already does. Rollback: the identical earlier definitions. Exercised on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730337",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
+      "before_sha256": "5c59bfeebdf31fdcfe99364f086f5ddc1f305fc214ef18520a4cb2400d599748",
+      "after_sha256": "98fce48096e41b5bdccf87b7d61efca27224822f47a0412d12dff2d0a6823822",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:traces",
+          "clickhouse:end_users",
+          "clickhouse:trace_sessions",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Replicated-mode rewriter now appends ON CLUSTER to CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS], with the same object-name grammar as tables and MVs. Table, MV and ALTER handling is unchanged. Affects only dictionary DDL over traces, end_users and trace_sessions (read by spans via dictGet). Exercised with 028 on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730344",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    }
+  ]
+}

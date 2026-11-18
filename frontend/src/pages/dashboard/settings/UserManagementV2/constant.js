@@ -41,16 +41,16 @@ export const wsLevelToString = {
 // Status chip styles
 export const cellStyles = {
   Pending: {
-    backgroundColor: "blue.o10",
-    color: "blue.700",
+    backgroundColor: "status.info.bg",
+    color: "status.info.fg",
   },
   Expired: {
-    backgroundColor: "red.o10",
-    color: "red.700",
+    backgroundColor: "status.danger.bg",
+    color: "status.danger.fg",
   },
   Active: {
-    backgroundColor: "green.o10",
-    color: "green.700",
+    backgroundColor: "status.success.bg",
+    color: "status.success.fg",
   },
   Deactivated: {
     backgroundColor: "action.selected",
@@ -61,12 +61,12 @@ export const cellStyles = {
 // Org role chip styles
 export const orgRoleCellStyles = {
   Owner: {
-    backgroundColor: "purple.o10",
-    color: "purple.700",
+    backgroundColor: "status.discovery.bg",
+    color: "status.discovery.fg",
   },
   Admin: {
-    backgroundColor: "blue.o10",
-    color: "blue.700",
+    backgroundColor: "status.info.bg",
+    color: "status.info.fg",
   },
   Member: {
     backgroundColor: "action.selected",
@@ -81,8 +81,8 @@ export const orgRoleCellStyles = {
 // Workspace role chip styles
 export const wsRoleCellStyles = {
   "Workspace Admin": {
-    backgroundColor: "blue.o10",
-    color: "blue.700",
+    backgroundColor: "status.info.bg",
+    color: "status.info.fg",
   },
   "Workspace Member": {
     backgroundColor: "action.selected",
@@ -105,7 +105,7 @@ const pendingExpiredMenus = [
   {
     title: "Cancel invite",
     image: "/assets/icons/deactivate.svg",
-    color: "red.500",
+    color: "status.danger.fg",
     action: "cancel-invite",
   },
 ];
@@ -121,7 +121,7 @@ export const actionMenusByStatus = {
     {
       title: "Remove from organization",
       image: "/assets/icons/deactivate.svg",
-      color: "red.500",
+      color: "status.danger.fg",
       action: "remove-member",
     },
   ],
@@ -149,7 +149,7 @@ export const wsActionMenusByStatus = {
     {
       title: "Remove from workspace",
       image: "/assets/icons/deactivate.svg",
-      color: "red.500",
+      color: "status.danger.fg",
       action: "remove-ws-member",
     },
   ],

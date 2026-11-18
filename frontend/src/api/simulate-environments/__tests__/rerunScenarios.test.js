@@ -1,9 +1,10 @@
 import React from "react";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   MutationCache,
   QueryClient,
   QueryClientProvider,
+  useQuery,
 } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,8 +22,13 @@ const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { enqueueSnackbar } = await import("notistack");
 const { handleError } = await import("src/utils/queryErrorHandler");
-const { listMatchingCalls, uniqueScenarioKeys, useRerunCallsInRun } =
-  await import("../rerunScenarios");
+const {
+  listMatchingCalls,
+  uniqueScenarioKeys,
+  useRerunCallsInRun,
+  useResumeRun,
+} = await import("../rerunScenarios");
+const { runSummaryKey } = await import("../runCalls");
 
 describe("uniqueScenarioKeys", () => {
   it("reduces calls to their scenarios, once each, skipping calls without one", () => {
@@ -121,5 +127,55 @@ describe("useRerunCallsInRun", () => {
       "this run is still running or grading; re-run its calls once it finishes",
       { variant: "error" },
     );
+  });
+});
+
+describe("useResumeRun", () => {
+  beforeEach(() => axios.post.mockReset());
+
+  it("stays pending until the run's read has refetched", async () => {
+    axios.post.mockResolvedValueOnce({ data: { success_count: 1 } });
+    let landRefetch;
+    const readRun = vi
+      .fn()
+      .mockResolvedValueOnce({ execution: { status: "failed" } })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            landRefetch = () => resolve({ execution: { status: "running" } });
+          }),
+      );
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const wrapper = ({ children }) =>
+      React.createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(
+      () => ({
+        read: useQuery({ queryKey: runSummaryKey("ex1"), queryFn: readRun }),
+        resume: useResumeRun("ex1"),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.read.isSuccess).toBe(true));
+
+    act(() => result.current.resume.mutate());
+    await waitFor(() => expect(readRun).toHaveBeenCalledTimes(2));
+    // The POST has answered; give its settle a turn to land.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    // The run still reads as interrupted, so Resume must not be clickable yet.
+    expect(axios.post).toHaveBeenCalledWith(
+      endpoints.testExecutions.rerunExecution("ex1"),
+      { rerun_type: "call_and_eval", unfinished_only: true },
+    );
+    expect(result.current.resume.isPending).toBe(true);
+
+    await act(async () => landRefetch());
+    await waitFor(() => expect(result.current.resume.isPending).toBe(false));
+    expect(result.current.read.data.execution.status).toBe("running");
   });
 });

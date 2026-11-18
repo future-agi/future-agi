@@ -1,5 +1,7 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
+import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
@@ -8,6 +10,7 @@ from typing import Any
 
 from django.conf import settings
 from django.db.models import (
+    Case,
     Count,
     DecimalField,
     Exists,
@@ -21,8 +24,10 @@ from django.db.models import (
     Subquery,
     Sum,
     Value,
+    When,
 )
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
@@ -30,16 +35,21 @@ from simulate.models import (
     AgentVersion,
     HarnessAgentVersionRuntime,
     HarnessSuiteMember,
+    HarnessSuiteVersion,
+    HostedHarnessConversation,
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
+    HELD_BACK_SHARE,
     HELD_BACK_VERIFIED_MIN,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
+    VARIATIONS_PER_CASE,
     AgentIdentity,
     CheckFailure,
     CheckRecord,
@@ -65,20 +75,31 @@ from simulate.services.agent_fix_agents import AgentKind, agent_kind
 from simulate.services.harness_environment import environment_name
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    run_max_duration_seconds,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
     judge_stored_eval,
     live_eval_specs,
 )
+from simulate.temporal.constants import (
+    AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
+    AGENT_FIX_VARIATIONS_WRITE_MINUTES,
+)
 
 TRANSCRIPT_CHARS = 8000
+# A lost model is skipped for this long after it was lost: a short outage may be over.
+LOST_MODELS_SKIPPED_FOR = timedelta(hours=1)
 FINISHED_RUN_STATES = {
     HostedHarnessJob.State.COMPLETED,
     HostedHarnessJob.State.FAILED,
     HostedHarnessJob.State.CANCELED,
 }
+# The fix's check run of the base version on its failing cases and their variations.
+VARIATIONS_LABEL = "variations"
 
 
 def sub_goal_names(raw: Any) -> list[str]:
@@ -91,16 +112,32 @@ def sub_goal_names(raw: Any) -> list[str]:
     return names
 
 
+def written_variations(suite_version: HarnessSuiteVersion | None) -> dict[str, str]:
+    """The variations a fix's builder wrote into the fix's private suite version, each
+    with the failing case it varies; none on any other suite version."""
+    if suite_version is None or suite_version.fix_run_id is None:
+        return {}
+    return dict((suite_version.documents or {}).get("variations") or {})
+
+
 def inventory(fix_run: AgentFixRun) -> list[InventoryScenario]:
-    """Every scenario a check run may select: the source run's pinned suite, or the
-    environment's own scenarios when the source run was not pinned."""
-    suite_version_id = (
+    """Every scenario a check run may select: the fix's suite (the source run's pinned
+    suite, or the fix's own when it wrote variations), or the environment's own
+    scenarios when the source run was not pinned. A variation the base version passed is
+    not a case of the fix, so it is left out."""
+    suite_version_id = fix_run.suite_version_id or (
         fix_run.source_run.suite_version_id if fix_run.source_run else None
     )
     if suite_version_id:
-        members = HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=suite_version_id
-        ).select_related("scenario")
+        kept = FixRequest.model_validate(fix_run.request).variation_parents
+        dropped = set(written_variations(fix_run.suite_version)) - set(kept)
+        members = (
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=suite_version_id
+            )
+            .exclude(scenario_key__in=dropped)
+            .select_related("scenario")
+        )
         return [
             _scenario(member.scenario_key, member.content or {}, member.scenario)
             for member in members.order_by("number")
@@ -129,9 +166,66 @@ def _scenario(
 
 
 def fix_deadline(fix_run: AgentFixRun) -> datetime:
-    """When the fix must have ended: its start plus the minutes the user allowed."""
-    minutes = FixRequest.model_validate(fix_run.request).max_minutes
+    """When the fix must have ended: its start plus the minutes the user allowed. While its
+    first step writes variations, that step's own cap comes on top: the fix's minutes start
+    once the step ends."""
+    request = FixRequest.model_validate(fix_run.request)
+    minutes = request.max_minutes
+    if request.variations_pending:
+        minutes += variations_minutes(fix_run)
     return (fix_run.started_at or fix_run.created_at) + timedelta(minutes=minutes)
+
+
+def variations_minutes(fix_run: AgentFixRun) -> int:
+    """The time of a fix's first step: the builder's cap to write the variations, then the
+    current version's run on the failing cases and their variations within that run's own
+    time limit, and a grace for the run to start and report. Until the run exists, its
+    limit is the one a run of every target and its variations would get."""
+    run = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run=fix_run, fix_label=VARIATIONS_LABEL
+        )
+        .order_by("-created_at")
+        .only("payload")
+        .first()
+    )
+    if run is not None:
+        seconds = int(run.payload["runtime"]["max_duration_seconds"])
+    else:
+        targets = len(FixRequest.model_validate(fix_run.request).target_scenario_keys)
+        seconds = run_max_duration_seconds(
+            int(fix_run.environment.payload["runtime"]["max_duration_seconds"]),
+            targets * (1 + VARIATIONS_PER_CASE),
+        )
+    return (
+        AGENT_FIX_VARIATIONS_WRITE_MINUTES
+        + -(-seconds // 60)
+        + AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES
+    )
+
+
+def queue_deadline(fix_run: AgentFixRun) -> datetime:
+    """When a fix still waiting for room fails. A fix ahead may run its whole limit and end
+    up to the grace after it, so a fix waits its own limit and the grace, or the queue
+    setting when that is longer."""
+    minutes = FixRequest.model_validate(fix_run.request).max_minutes
+    wait = max(
+        settings.AGENT_FIX_MAX_QUEUED_SECONDS,
+        minutes * 60 + settings.AGENT_FIX_TOKEN_GRACE_SECONDS,
+    )
+    return fix_run.created_at + timedelta(seconds=wait)
+
+
+def recent_lost_models(engine_notes: dict[str, Any] | None) -> dict[str, str]:
+    """The fix's lost models, each with when it was lost, that were lost within
+    LOST_MODELS_SKIPPED_FOR."""
+    cutoff = timezone.now() - LOST_MODELS_SKIPPED_FOR
+    lost = (engine_notes or {}).get("lost_models") or {}
+    return {
+        model: lost_at
+        for model, lost_at in lost.items()
+        if datetime.fromisoformat(lost_at) > cutoff
+    }
 
 
 def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
@@ -150,10 +244,66 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         base_commit=str(source.get("commit_sha") or ""),
         request=request,
         inventory=inventory(fix_run),
+        lost_models=list(recent_lost_models(fix_run.engine_notes)),
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
         deadline_at=fix_deadline(fix_run).isoformat(),
+        source_failures=source_failures(
+            fix_run.source_run, request, variations_run(fix_run)
+        ),
     )
+
+
+def variations_run(fix_run: AgentFixRun) -> HostedHarnessJob | None:
+    """The base version's finished run on the fix's failing cases and their variations,
+    which kept the variations it failed; a retry reads the one its failed fix finished."""
+    return (
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run_id__in=fix_lineage(fix_run),
+            fix_label=VARIATIONS_LABEL,
+            state=HostedHarnessJob.State.COMPLETED,
+            deleted=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def source_failures(
+    source_run: HostedHarnessJob,
+    request: FixRequest,
+    variations_run: HostedHarnessJob | None = None,
+) -> list[CheckRecord]:
+    """The source run's evidence on each target the engine searches: the first trial it
+    judged in full that failed a sub-goal, as a check record. A variation's evidence is its
+    trial in ``variations_run``, the run that kept it. The engine reads one such trial a
+    scenario, so the brief holds at most one record for each. The held-back targets stay
+    out, as they do from everything the engine reads."""
+    searched = set(request.target_scenario_keys) - set(request.held_back_scenario_keys)
+    variations = searched & set(request.variation_parents)
+    runs = Q(job=source_run, source_scenario__scenario_key__in=searched - variations)
+    if variations_run is not None:
+        runs |= Q(job=variations_run, source_scenario__scenario_key__in=variations)
+    found: dict[str, tuple[Any, CheckRecord]] = {}
+    for execution in (
+        HostedHarnessExecution.no_workspace_objects.filter(runs)
+        .select_related("source_scenario", "call_execution")
+        .order_by("trial_index", "execution_key")
+    ):
+        key = execution.source_scenario.scenario_key
+        receipt = (execution.call_execution.call_metadata or {}).get(
+            "hosted_harness_receipt"
+        )
+        if key in found or not isinstance(receipt, Mapping):
+            continue
+        record = _record(key, execution.trial_index, receipt, "")
+        if record.status == "ok" and False in record.sub_goals.values():
+            found[key] = (execution.call_execution_id, record)
+    transcripts = _transcripts(call_id for call_id, _ in found.values())
+    return [
+        record.model_copy(update={"transcript": transcripts.get(call_id, "")})
+        for call_id, record in found.values()
+    ]
 
 
 def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
@@ -217,6 +367,16 @@ def ran_at(run: HostedHarnessJob, trials: int | None = None) -> int:
 
 # A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
 _USER_FAILURE_CODES = frozenset({"usage_exhausted"})
+# Certification reports every failure as the environment's. A chat that timed out waiting
+# for the agent's reply, or an agent slower to come up than the wait (infrastructure on any
+# other run), says nothing about the agent. A reply that failed, or a connection the
+# agent's own process refused or never accepted, stays the user's.
+_CERTIFY_FAILED = "authoring_runtime_validation_failed"
+_CERTIFY_TIMED_OUT = re.compile(
+    r"chat_target_failed: (?!Connect|[^;\n]*\bConnection timed out\b)"
+    r"(?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
+    r"|depends_on/depends_on_timeout"
+)
 
 
 def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
@@ -225,11 +385,14 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     if not isinstance(failure, Mapping):
         return None
     code = str(failure.get("code") or "unknown")
+    message = str(failure.get("message") or "")
     user = failure.get("domain") == "environment" or code in _USER_FAILURE_CODES
+    if code == _CERTIFY_FAILED and _CERTIFY_TIMED_OUT.search(message):
+        user = False
     return CheckFailure(
         owner=FailureOwner.USER if user else FailureOwner.OURS,
         code=code,
-        message=str(failure.get("message") or "")[:500],
+        message=message[:500],
     )
 
 
@@ -281,16 +444,82 @@ def _record(
     )
 
 
+# The engine's speaker for a chat row's role.
+_CHAT_SPEAKERS = {
+    ChatMessageModel.RoleChoices.USER: "user",
+    ChatMessageModel.RoleChoices.ASSISTANT: "assistant",
+    ChatMessageModel.RoleChoices.TOOL: "tool_call_result",
+}
+# Chat ingestion means one exchange's rows to share a time, its user turn first.
+_USER_TURN_FIRST = Case(
+    When(role=ChatMessageModel.RoleChoices.USER, then=Value(0)), default=Value(1)
+)
+
+
 def _transcripts(call_ids: Iterable[Any]) -> dict[Any, str]:
+    """Each call's conversation as "<role>: <text>" lines, the way the engine reads them: a
+    voice call's CallTranscript rows, else a chat call's ChatMessage rows."""
+    ids = list(call_ids)
     lines: dict[Any, list[str]] = {}
     rows = CallTranscript.no_workspace_objects.filter(
-        call_execution_id__in=list(call_ids)
+        call_execution_id__in=ids
     ).order_by("call_execution_id", "start_time_ms", "created_at")
     for row in rows.values_list("call_execution_id", "speaker_role", "content"):
         lines.setdefault(row[0], []).append(f"{row[1]}: {row[2]}")
+    if chats := [one for one in ids if one not in lines]:
+        messages = ChatMessageModel.no_workspace_objects.filter(
+            call_execution_id__in=chats
+        ).order_by("call_execution_id", "created_at", _USER_TURN_FIRST)
+        for call_id, *row in messages.values_list(
+            "call_execution_id", "role", "messages", "content", "tool_calls"
+        ):
+            lines.setdefault(call_id, []).extend(_chat_lines(*row))
     return {
         call_id: "\n".join(turns)[:TRANSCRIPT_CHARS] for call_id, turns in lines.items()
     }
+
+
+def _chat_lines(role: str, messages: Any, content: Any, tool_calls: Any) -> list[str]:
+    """One chat row as transcript lines. Hosted chat folds an exchange's agent side into one
+    row: each item is its text, a call it made (``tool_calls``) or a call's result
+    (``tool_call_result``), in order. A text with calls is followed by a line of them."""
+    speaker = _CHAT_SPEAKERS.get(role, "unknown")
+    items = [item for item in content or [] if isinstance(item, Mapping)] or [
+        {"content": text} for text in messages or []
+    ]
+    lines = []
+    for item in items:
+        text = str(item.get("content") or "")
+        if item.get("kind") in ("tool_calls", "tool_call_result"):
+            lines.append(f"{item['kind']}: {text}")
+            continue
+        if text:
+            lines.append(f"{speaker}: {text}")
+        if item.get("tool_calls"):
+            lines.append(f"tool_calls: {_calls_json(item['tool_calls'])}")
+    if tool_calls:
+        lines.append(f"tool_calls: {_calls_json(tool_calls)}")
+    return lines
+
+
+def _calls_json(calls: Any) -> str:
+    """Tool calls as compact JSON of their names and arguments, from either the OpenAI
+    shape (``function.name``, arguments as a JSON string) or a flat one."""
+    named = []
+    for call in calls if isinstance(calls, list) else []:
+        if not isinstance(call, Mapping):
+            continue
+        function = call.get("function")
+        function = function if isinstance(function, Mapping) else call
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                # Arguments that are not JSON are shown as the model sent them.
+                pass
+        named.append({"name": function.get("name"), "arguments": arguments})
+    return json.dumps(named, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
@@ -443,9 +672,15 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
 
 
 def limited_validation(fix_run: AgentFixRun) -> bool:
-    """Whether too few cases were held back to call this fix verified, however it scored."""
-    held_back = fix_run.request.get("held_back_scenario_keys") or []
-    return len(held_back) < HELD_BACK_VERIFIED_MIN
+    """Whether too few cases were held back to call this fix verified, however it scored:
+    they must come from HELD_BACK_VERIFIED_MIN different cases of the run, a variation
+    counting as the case it varies."""
+    request = FixRequest.model_validate(fix_run.request)
+    cases = {
+        request.variation_parents.get(key, key)
+        for key in request.held_back_scenario_keys
+    }
+    return len(cases) < HELD_BACK_VERIFIED_MIN
 
 
 # The tiers the engine's final check records for a finalist, in order.
@@ -632,11 +867,18 @@ SURFACE_LABELS = {
     Surface.SETTINGS: "Settings",
     Surface.CODE: "Code",
 }
-# What the launch form starts from: the instructions only, within 1,500 credits and three
-# hours.
+# What the launch form starts from: the instructions only, within 1,500 credits and the time
+# default_max_minutes gives the run's suite.
 DEFAULT_SURFACES = [Surface.PROMPT]
 DEFAULT_BUDGET_CREDITS = 1500
 DEFAULT_MAX_MINUTES = 180
+
+
+def default_max_minutes(cases: int) -> int:
+    """A fix's default time limit for a suite of ``cases`` scenarios: Reproduce and Verify run
+    every one. Three hours up to 30 cases, then 4 minutes a case (5 hours at 60), within
+    the limit a launch accepts."""
+    return min(MAX_MINUTES_MAX, max(DEFAULT_MAX_MINUTES, 60 + 4 * cases))
 
 
 def launch_blocker(
@@ -671,6 +913,112 @@ def launch_blocker(
     return None
 
 
+def fewest_failing_cases() -> int:
+    """The fewest failing cases a fix starts from: below the floor it writes variations of
+    each, and with every variation failing these just reach it."""
+    floor = settings.AGENT_FIX_MIN_FAILING_CASES
+    return -(-floor // (1 + VARIATIONS_PER_CASE))
+
+
+def verified_cases_min() -> int:
+    """The fewest failing cases a fix that writes variations can end verified from. Its
+    held-back cases must come from HELD_BACK_VERIFIED_MIN cases, held back each with its
+    variations, within one in HELD_BACK_SHARE of all its cases; every case brings at most
+    VARIATIONS_PER_CASE variations, so the cases kept to search on hold at least
+    (HELD_BACK_SHARE - 1) times what is held back."""
+    held = HELD_BACK_VERIFIED_MIN
+    return held + -(-(HELD_BACK_SHARE - 1) * held // (1 + VARIATIONS_PER_CASE))
+
+
+_UNSAVED_WORDS = {"suite": "scenario", "environment": "setup"}
+
+
+def unsaved_changes(pieces: Iterable[str]) -> str | None:
+    """The unsaved changes the given draft pieces hold, in the words the user sees
+    ("scenario", "setup", or both); None when there are none."""
+    held = set(pieces)
+    words = [word for piece, word in _UNSAVED_WORDS.items() if piece in held]
+    return " and ".join(words) or None
+
+
+def fresh_draft_pieces(environment: HostedHarnessJob) -> list[str]:
+    """The pieces with an unsaved draft on the environment's current versions."""
+    from simulate.services.harness_versioning import drafts
+
+    return [
+        piece
+        for piece, ref in drafts.draft_refs(environment).items()
+        if ref.id is not None
+    ]
+
+
+def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | None:
+    """What would refuse a fix that first writes variations of its failing cases, on top of
+    launch_blocker; None when nothing would. The environment's builder writes them in its
+    chat's workspace, which holds any unsaved scenario or setup changes, so those must be
+    saved or discarded first: the variations are written from the run's cases only."""
+    from simulate.services.harness_versioning import drafts
+
+    environment = source_run.environment
+    if source_run.suite_version_id is None or source_run.environment_version_id is None:
+        return HostedHarnessError(
+            "fix_variations_unpinned",
+            "variations need a run pinned to scenario and environment versions; run the"
+            " environment again",
+            status_code=409,
+        )
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        return HostedHarnessError(
+            "environment_busy",
+            "The environment isn't ready; variations can't be written now",
+            status_code=409,
+        )
+    moved = variations_source_moved(environment, source_run)
+    if moved is not None:
+        return moved
+    if HostedHarnessConversation.no_workspace_objects.filter(
+        job=environment, state=HostedHarnessConversation.State.RETIRED
+    ).exists():
+        return HostedHarnessError(
+            "conversation_workspace_not_ready",
+            "This environment's saved files are no longer available; rebuild it to"
+            " write variations.",
+            status_code=409,
+        )
+    try:
+        drafts.require_no_rebuild(environment, piece="suite")
+    except HostedHarnessError as exc:
+        return exc
+    if unsaved := unsaved_changes(fresh_draft_pieces(environment)):
+        return HostedHarnessError(
+            "fix_draft_open",
+            f"This environment has unsaved {unsaved} changes. Save or discard them,"
+            " then run Epoch.",
+            status_code=409,
+        )
+    return None
+
+
+def variations_source_moved(
+    environment: HostedHarnessJob, source_run: HostedHarnessJob
+) -> HostedHarnessError | None:
+    """Why variations can't be written from this run now, if its environment's scenarios
+    or setup moved since it ran: the builder writes them from the environment as it is,
+    and the fix's suite holds the run's cases as they ran, so both must be one basis."""
+    if (environment.suite_version_id, environment.environment_version_id) == (
+        source_run.suite_version_id,
+        source_run.environment_version_id,
+    ):
+        return None
+    return HostedHarnessError(
+        "fix_variations_source_moved",
+        "The environment's scenarios or setup changed since this run. Run the"
+        " environment again and start the epoch from that run: its variations are"
+        " written from the cases as they ran.",
+        status_code=409,
+    )
+
+
 def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
     try:
         return agent_kind(environment)
@@ -691,6 +1039,13 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         "agent_definition", "harness_runtime"
     ).get(id=version_id)
     scenarios = scenario_results(source_run)
+    failing = sum(1 for one in scenarios if one.failing_sub_goals)
+    # Below the floor a fix's suite also holds the variations it writes.
+    variations = (
+        VARIATIONS_PER_CASE * failing
+        if failing < settings.AGENT_FIX_MIN_FAILING_CASES
+        else 0
+    )
     offered = kind.surfaces if kind else frozenset()
     number = (
         HostedHarnessJob.no_workspace_objects.filter(id=source_run.id)
@@ -702,6 +1057,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         source_run.environment_version or environment.environment_version
     )
     blocked = launch_blocker(source_run)
+    variations_blocked = variations_blocker(source_run)
     return LaunchOptions(
         source_run=LaunchSourceRun(
             id=str(source_run.test_execution_id),
@@ -738,15 +1094,23 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
-            max_minutes=DEFAULT_MAX_MINUTES,
+            max_minutes=default_max_minutes(len(scenarios) + variations),
         ),
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,
             max_minutes_max=MAX_MINUTES_MAX,
-            scenarios_min=settings.AGENT_FIX_MIN_FAILING_CASES,
+            scenarios_min=fewest_failing_cases(),
+            cases_min=settings.AGENT_FIX_MIN_FAILING_CASES,
+            variations_per_case=VARIATIONS_PER_CASE,
+            verified_cases_min=verified_cases_min(),
             scenarios_max=SCENARIOS_MAX,
         ),
         blocked=LaunchBlocked(code=blocked.code, message=blocked.message)
         if blocked
+        else None,
+        variations_blocked=LaunchBlocked(
+            code=variations_blocked.code, message=variations_blocked.message
+        )
+        if variations_blocked
         else None,
     )
