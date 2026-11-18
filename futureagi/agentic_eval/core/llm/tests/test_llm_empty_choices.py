@@ -2,7 +2,7 @@
 
 The xAI, gateway, and call_llm paths in LLM read response.choices[0]
 without checking the list first, so a provider response with no
-choices (content filtering, tool-call-only replies) failed with
+choices failed with
 "list index out of range" instead of the ValueError("Empty response
 from model") that the litellm paths in the same methods already raise.
 These tests pin the guarded behavior at each of those sites.
@@ -99,6 +99,26 @@ class TestGetCompletionContentEmptyChoices:
 
 
 class TestGetCompletionContentAsyncEmptyChoices:
+    def test_xai_empty_choices_raises_value_error(self):
+        llm = _make_llm(provider="xai")
+        create = AsyncMock(return_value=_empty_response())
+        llm.llm_client_async = MagicMock()
+        llm.llm_client_async.chat.completions.create = create
+        messages = [{"role": "user", "content": "hello"}]
+
+        with (
+            patch.object(llm, "_requires_managed_transport", return_value=True),
+            pytest.raises(ValueError, match="^Empty response from model$"),
+        ):
+            asyncio.run(llm._get_completion_content_async(messages=messages))
+
+        create.assert_awaited_once_with(
+            model=llm.model_name,
+            messages=messages,
+            max_tokens=llm.max_tokens,
+            temperature=llm.temperature,
+        )
+
     @patch("agentic_eval.core.llm.llm.log_to_clickhouse")
     def test_gateway_empty_choices_raises_value_error(self, mock_ch):
         from agentic_eval.core.llm.llm import LLM
