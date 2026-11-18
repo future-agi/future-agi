@@ -21406,7 +21406,7 @@ export const HarnessCapabilitySelectionCountsApiNext = {
 } as const;
 
 /**
- * Held-back cases per readiness row that held them.
+ * Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).
  */
 export type HarnessRunHeldBackApiBy = { [key: string]: number };
 
@@ -21415,7 +21415,7 @@ export interface HarnessRunHeldBackApi {
   count: number;
   keys: string[];
   truncated: boolean;
-  /** Held-back cases per readiness row that held them. */
+  /** Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now). */
   by: HarnessRunHeldBackApiBy;
 }
 

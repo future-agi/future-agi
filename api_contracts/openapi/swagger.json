@@ -147563,7 +147563,7 @@
                 },
                 "by": {
                     "title": "By",
-                    "description": "Held-back cases per readiness row that held them.",
+                    "description": "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
                     "type": "object",
                     "additionalProperties": {
                         "type": "integer",

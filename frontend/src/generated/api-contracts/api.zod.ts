@@ -45042,7 +45042,9 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
               simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackByMinOne,
             ),
         )
-        .describe("Held-back cases per readiness row that held them."),
+        .describe(
+          "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
+        ),
     }),
     reasons: zod
       .record(zod.string(), zod.string().min(1))
@@ -45619,7 +45621,9 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
                 simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackByMinOne,
               ),
           )
-          .describe("Held-back cases per readiness row that held them."),
+          .describe(
+            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
+          ),
       }),
       reasons: zod
         .record(zod.string(), zod.string().min(1))
@@ -67880,7 +67884,9 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                   simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackByMinOne,
                 ),
             )
-            .describe("Held-back cases per readiness row that held them."),
+            .describe(
+              "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
+            ),
         }),
         reasons: zod
           .record(zod.string(), zod.string().min(1))
