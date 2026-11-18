@@ -106,3 +106,43 @@ def test_invalid_billed_unit_is_not_a_catalog_or_custom_charge(model, field):
     assert amount(
         calculate_total_cost("openai/tts-1", {**TOKENS, field: 0}, fallback)
     ) == (0, "fallback")
+
+
+@pytest.mark.parametrize("config", [{}, {"n": None}], ids=["omitted", "null"])
+def test_image_handler_prices_a_null_count_as_one_image(config):
+    # A null `n` asks for the provider default (one image). It must not reach
+    # the calculator as a rejected count and turn a generated image into $0.
+    from unittest.mock import Mock, patch
+
+    from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
+        ModelHandlerContext,
+    )
+    from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers import (
+        ImageHandler,
+    )
+
+    image = Mock(url="https://example.com/synthetic.png", b64_json=None)
+    handler = ImageHandler(
+        ModelHandlerContext(
+            model="dall-e-3",
+            messages=[{"role": "user", "content": "A synthetic test image"}],
+            organization_id="00000000-0000-0000-0000-000000000000",
+            api_key="test-key",
+            run_prompt_config={"quality": "standard", **config},
+        )
+    )
+    handler_module = (
+        "agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.image_handler"
+    )
+    with (
+        patch("litellm.image_generation", return_value=Mock(data=[image])) as gen,
+        patch(f"{handler_module}.upload_image_to_s3", return_value=image.url),
+    ):
+        response = handler.execute_sync()
+    assert gen.call_args.kwargs["n"] == 1
+    one_image = calculate_total_cost(
+        "dall-e-3",
+        {"prompt_tokens": 0, "completion_tokens": 0, "images_generated": 1},
+    )
+    assert amount(response.metadata["cost"]) == amount(one_image)
+    assert amount(one_image)[1] == "available_models"
