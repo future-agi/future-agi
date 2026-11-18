@@ -4538,16 +4538,19 @@ class TestExecutor:
 
             # Only a harness run holds result columns with no mapping of their
             # own, so the lookup is made once per call and only when one is
-            # among the configs. It asks the call, not the run test: this runs
-            # once per call, and the run test's answer reads its other calls.
-            # A dispatcher that already asked the run test passes its answer,
-            # which also covers a call that lost the harness's key.
+            # among the configs. It asks the call first: this runs once per
+            # call, and the run test's answer reads its other calls. Only a
+            # call without the harness's key asks the run test, so a call that
+            # lost the key is still graded as part of its harness run. That is
+            # decided here, by the worker, because nothing new may cross the
+            # queue.
             harness_run = any(
                 not eval_config.mapping for eval_config in eval_configs
             ) and (
                 harness_run
                 if harness_run is not None
                 else is_harness_call(call_execution, run_test.id)
+                or is_harness_run_test(run_test.id)
             )
 
             # Run each evaluation
@@ -6168,7 +6171,7 @@ class TestExecutor:
     queue="tasks_xl",
 )
 def _run_simulate_evaluations_task(
-    call_execution_id, eval_config_ids=None, skip_existing=False, harness_run=None
+    call_execution_id, eval_config_ids=None, skip_existing=False
 ):
     """
     Temporal activity to run simulate evaluations for a call execution.
@@ -6177,9 +6180,6 @@ def _run_simulate_evaluations_task(
         call_execution_id: CallExecution ID to run evaluations on
         eval_config_ids: Optional list of specific eval config IDs to run. If None, runs all configs for the run_test
         skip_existing: If True, skip evaluations that already exist for this call execution
-        harness_run: The run test's answer to "is a harness scoring it", when
-            the dispatcher already worked it out once for the whole run. None
-            leaves the question to the call's own metadata.
     """
     try:
         close_old_connections()
@@ -6196,12 +6196,10 @@ def _run_simulate_evaluations_task(
         # evaluations fail when, for example, Vapi credentials are absent for
         # a LiveKit, Retell, chat, or connect-only run.
         test_executor = TestExecutor(initialize_voice_service=False)
-        extra = {} if harness_run is None else {"harness_run": harness_run}
         test_executor._run_simulate_evaluations(
             call_execution,
             eval_config_ids=eval_config_ids,
             skip_existing=skip_existing,
-            **extra,
         )
         return True
     except Exception as e:
@@ -6275,30 +6273,14 @@ def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
                 )
             return results
 
-        # Asked once per run test, not once per call: only a config with no
-        # mapping of its own can be a harness column, and the answer reads the
-        # run test's other calls, so a call that lost the harness's key is
-        # still graded as part of the harness run it belongs to.
-        harness_runs: dict = {}
-        if any(not eval_config.mapping for eval_config in eval_configs):
-            harness_runs = {
-                run_test_id: is_harness_run_test(run_test_id)
-                for run_test_id in call_executions.order_by()
-                .values_list("test_execution__run_test_id", flat=True)
-                .distinct()
-            }
-
         # Note: eval_started flag should be updated in bulk before calling this task (in the view)
         # Dispatch individual tasks for each call execution using the unified evaluation task
-        for call_execution in call_executions.select_related("test_execution"):
+        for call_execution in call_executions:
             try:
-                kwargs = {"eval_config_ids": eval_config_ids, "skip_existing": False}
-                if harness_runs.get(call_execution.test_execution.run_test_id):
-                    kwargs["harness_run"] = True
                 # Use the unified _run_simulate_evaluations_task with skip_existing=False to overwrite
                 task = _run_simulate_evaluations_task.apply_async(
                     args=(str(call_execution.id),),
-                    kwargs=kwargs,
+                    kwargs={"eval_config_ids": eval_config_ids, "skip_existing": False},
                 )
                 results["dispatched_tasks"].append(
                     {"call_execution_id": str(call_execution.id), "task_id": task.id}
