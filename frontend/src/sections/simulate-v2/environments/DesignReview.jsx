@@ -406,7 +406,7 @@ export default function DesignReview({
               tools.map((t) => (
                 <PlanLine
                   key={t.name}
-                  src={t.source || origin}
+                  src={t.designSrc || t.source || origin}
                   onRemove={onChange && (() => removeTool(t))}
                 >
                   <Box component="span" sx={{ fontWeight: 500 }}>

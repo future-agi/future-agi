@@ -460,7 +460,8 @@ export const designFromSourcesPatch = (env, fresh, allSources = []) => {
   const haveT = new Set((env?.seed?.tables || []).map((t) => t.name));
   const haveTools = new Set((env?.tools || []).map((t) => t.name));
   const tables = next.tables.filter((t) => !haveT.has(t.name) && !fileTables.has(t.name));
-  const tools = next.tools.filter((t) => !haveTools.has(t.name));
+  /* Tools a file called for say so on the design, whatever started it. */
+  const tools = next.tools.filter((t) => !haveTools.has(t.name)).map((t) => ({ ...t, designSrc: "From your files" }));
   const allTools = [...(env?.tools || []), ...tools];
   const haveCases = new Set((env?.starterScenarios || []).map((r) => r.key || r.id));
   const short = String(env?.name || "flow").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24);
