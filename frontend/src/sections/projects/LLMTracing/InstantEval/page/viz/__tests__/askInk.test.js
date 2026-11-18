@@ -7,7 +7,8 @@ import {
   recomposeColor,
 } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
-import { answerRamp, deepColor, inkOn } from "../vizParts";
+import { inkCache, inkOn } from "../chartInk";
+import { answerRamp, deepColor } from "../vizParts";
 
 // A translucent fill as the eye sees it on the page.
 const onPage = (fill, page) => {
@@ -25,13 +26,14 @@ const onPage = (fill, page) => {
 describe.each(["light", "dark"])("text on answer fills in %s mode", (mode) => {
   const theme = createTheme({ palette: palette(mode) });
   const page = theme.palette.background.paper;
+  // Every fill that carries text: each answer hue's five heatmap steps (the
+  // brand hues and the neutral catch-all), and the timeline's "+N" badge.
+  const hues = [...theme.palette.dataBrand, theme.palette.text.disabled];
   const fills = [
-    ...new Set(
-      theme.palette.dataBrand.flatMap((hue) => [
-        ...answerRamp(hue, mode),
-        deepColor(hue),
-      ]),
-    ),
+    ...new Set([
+      ...hues.flatMap((hue) => [...answerRamp(hue, mode), deepColor(hue)]),
+      theme.palette.text.secondary,
+    ]),
   ];
 
   it.each(fills)("stays readable on %s", (fill) => {
@@ -41,8 +43,14 @@ describe.each(["light", "dark"])("text on answer fills in %s mode", (mode) => {
     expect(getContrastRatio(shown, ink)).toBeGreaterThanOrEqual(
       getContrastRatio(shown, other),
     );
-    // A mid-tone fill tops out near 4.2:1 with any light or dark ink.
-    expect(getContrastRatio(shown, ink)).toBeGreaterThanOrEqual(4);
+    // Text needs 4.5:1, so no step may sit near the midpoint between the
+    // two inks, where the better of them tops out near 4.2:1.
+    expect(getContrastRatio(shown, ink)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("works out the ink once per fill", () => {
+    const inkFor = inkCache(theme);
+    fills.forEach((fill) => expect(inkFor(fill)).toBe(inkOn(fill, theme)));
   });
 
   it("reads a translucent fill against the page, not as solid", () => {

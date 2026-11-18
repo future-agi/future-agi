@@ -7,16 +7,7 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
-import {
-  alpha,
-  darken,
-  decomposeColor,
-  getContrastRatio,
-  hslToRgb,
-  lighten,
-  recomposeColor,
-  useTheme,
-} from "@mui/material/styles";
+import { alpha, darken, lighten, useTheme } from "@mui/material/styles";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { answerColor } from "../../results/answerColors";
 import { formatCount, isYesNo } from "./askAnswers";
@@ -245,46 +236,23 @@ export function useAnswerColor() {
     );
 }
 
-// `fill` as it shows on `surface`: a translucent fill is laid over it.
-const shownOn = (fill, surface) => {
-  const color = decomposeColor(fill.startsWith("hsl") ? hslToRgb(fill) : fill);
-  const opacity = color.values[3] ?? 1;
-  if (opacity >= 1) return fill;
-  const base = decomposeColor(surface).values;
-  return recomposeColor({
-    type: "rgb",
-    values: [0, 1, 2].map((i) =>
-      Math.round(color.values[i] * opacity + base[i] * (1 - opacity)),
-    ),
-  });
-};
-
 /**
- * The more readable ink for text on `fill`: the theme's primary text or the
- * page colour, one light and one dark in either mode, judged against the fill
- * as it shows on the page.
+ * The strong end of the same nominal hue, adapted for the chart surface: deep
+ * enough in light mode that text on it reads at 4.5:1 or more.
  */
-export function inkOn(fill, theme) {
-  const surface = theme.palette.background.paper;
-  const shown = shownOn(fill, surface);
-  const text = theme.palette.text.primary;
-  return getContrastRatio(shown, text) >= getContrastRatio(shown, surface)
-    ? text
-    : surface;
-}
-
-/** The strong end of the same nominal hue, adapted for the chart surface. */
 export const deepColor = (hue, mode = "light") =>
-  mode === "dark" ? lighten(hue, 0.3) : darken(hue, 0.3);
+  mode === "dark" ? lighten(hue, 0.3) : darken(hue, 0.4);
 
 /**
  * An answer's hue in five steps for a share from 0% to the top of a scale:
- * three tints, the hue itself, then its strong end.
+ * three tints, the hue itself, then its strong end. Every step carries text
+ * at 4.5:1 or more with one of the two theme inks; a tint near the midpoint
+ * between them (0.65 on the dark page) would top out near 4.2:1.
  */
 export const answerRamp = (hue, mode = "light") => [
   alpha(hue, mode === "dark" ? 0.16 : 0.12),
   alpha(hue, 0.35),
-  alpha(hue, 0.65),
+  alpha(hue, mode === "dark" ? 0.55 : 0.65),
   hue,
   deepColor(hue, mode),
 ];

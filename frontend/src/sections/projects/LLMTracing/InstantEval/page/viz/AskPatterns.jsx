@@ -536,8 +536,14 @@ export default function AskPatterns({
                     minWidth: 0,
                     px: 1,
                     border: "1px solid",
-                    borderColor: active ? "border.selected" : "divider",
+                    // Pressed is neutral, as on the timeline legend: purple
+                    // is for the main action and focus.
+                    borderColor: active ? "text.secondary" : "divider",
+                    bgcolor: active ? "action.selected" : "transparent",
                     color: active ? "text.primary" : "text.secondary",
+                    "&:hover": {
+                      bgcolor: active ? "action.selected" : "action.hover",
+                    },
                   }}
                 >
                   {label}

@@ -27,12 +27,12 @@ import {
 import { groupEntries, runTally } from "./askSummary";
 import AnswerMatrix from "./AnswerMatrix";
 import CellGrid from "./CellGrid";
+import { inkCache } from "./chartInk";
 import { dayText } from "./timelineBins";
 import {
   Swatch,
   VizCard,
   answerRamp,
-  inkOn,
   legendAnswers,
   quoted,
   rowsNoun,
@@ -176,6 +176,9 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
     }[grid.pivot] ||
     `day and ${grid.step === 1 ? "hour" : `${grid.step}-hour block`}`;
 
+  // One ink per ramp step, shared by the cells and the totals row, and only
+  // for the cells that show a number.
+  const inkFor = useMemo(() => inkCache(theme), [theme]);
   const paint = useMemo(
     () => (r, c) => {
       const cell = cells.get(`${rows[r].key}|${columns[c].key}`);
@@ -185,17 +188,18 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
         ? shareLevel(matchesOf(cell) / cell.answered, peak)
         : 0;
       const fill = cell.answered ? (small ? ramp[0] : ramp[level]) : null;
+      const text = showCounts ? formatCount(cell.n) : null;
       return {
         fill,
         hatch: small ? ramp[Math.max(level, 2)] : null,
         outline: cell.pending ? (cell.answered ? "solid" : "dashed") : null,
         dot: dotted(cell),
-        text: showCounts ? formatCount(cell.n) : null,
-        ink: fill ? inkOn(fill, theme) : null,
+        text,
+        ink: text && fill ? inkFor(fill) : null,
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cells, rows, columns, answer, peak, showCounts, theme, stats],
+    [cells, rows, columns, answer, peak, showCounts, theme, stats, inkFor],
   );
   const footer = useMemo(
     () => ({
@@ -211,14 +215,15 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
         const small = t.answered < SMALL_N;
         const level = shareLevel(t.matches / t.answered, peak);
         const fill = small ? ramp[0] : ramp[level];
+        const text =
+          cellW >= TOTAL_FITS
+            ? String(Math.round((t.matches / t.answered) * 100))
+            : null;
         return {
           fill,
           hatch: small ? ramp[Math.max(level, 2)] : null,
-          text:
-            cellW >= TOTAL_FITS
-              ? String(Math.round((t.matches / t.answered) * 100))
-              : null,
-          ink: inkOn(fill, theme),
+          text,
+          ink: text ? inkFor(fill) : null,
         };
       },
       describe: (c) => {
@@ -232,7 +237,7 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
         : "–",
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stats, columns, peak, cellW, theme, answer],
+    [stats, columns, peak, cellW, theme, answer, inkFor],
   );
 
   const describe = (r, c) => {

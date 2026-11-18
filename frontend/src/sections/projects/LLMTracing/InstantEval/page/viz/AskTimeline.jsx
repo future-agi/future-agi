@@ -45,11 +45,11 @@ import {
   squareLayout,
   stackCap,
 } from "./timelineBins";
+import { inkOn } from "./chartInk";
 import {
   Swatch,
   VizCard,
   deepColor,
-  inkOn,
   legendAnswers,
   quoted,
   rowsNoun,
@@ -719,9 +719,11 @@ function SquaresPlot({
             if (!stack.hidden) return null;
             const answer = dominantAnswer(columns[stack.index]);
             const text = `+${formatCount(stack.hidden)}`;
-            const badgeW = Math.max(w + 4, text.length * 6 + 8);
+            const badgeW = Math.max(w + 4, text.length * 7 + 8);
             const cx = stack.index * colW + colW / 2;
-            const y = stackTop(stack.index) - BADGE_H + 2;
+            // The pill fills the badge row but one pixel above the stack.
+            const y = stackTop(stack.index) - BADGE_H + 1;
+            const badgeH = BADGE_H - 2;
             const badgeFill = answer
               ? deepColor(colorOf(question, answer))
               : theme.palette.text.secondary;
@@ -731,16 +733,17 @@ function SquaresPlot({
                   x={cx - badgeW / 2}
                   y={y}
                   width={badgeW}
-                  height={BADGE_H - 3}
-                  rx={(BADGE_H - 3) / 2}
+                  height={badgeH}
+                  rx={badgeH / 2}
                   fill={badgeFill}
                 />
                 <text
                   x={cx}
-                  y={y + 9.5}
+                  y={y + badgeH / 2}
+                  dominantBaseline="central"
                   textAnchor="middle"
                   fill={inkOn(badgeFill, theme)}
-                  fontSize={9.5}
+                  fontSize={theme.typography.s2.fontSize}
                   fontWeight={theme.typography.fontWeightSemiBold}
                   fontFamily={theme.typography.fontFamily}
                 >
@@ -1478,13 +1481,14 @@ function LegendItem({ item, active, faded, onClick, quiet }) {
         py: 0.25,
         ml: -0.75,
         border: "1px solid",
-        borderColor: active ? "border.selected" : "transparent",
+        // Pressed reads as a neutral selection; purple is kept for focus.
+        borderColor: active ? "text.secondary" : "transparent",
         borderRadius: 1,
-        bgcolor: "transparent",
+        bgcolor: active ? "action.selected" : "transparent",
         font: "inherit",
         cursor: "pointer",
         opacity: faded ? 0.5 : 1,
-        "&:hover": { bgcolor: "action.hover" },
+        "&:hover": { bgcolor: active ? "action.selected" : "action.hover" },
         "&:focus-visible": {
           outline: `2px solid ${theme.palette.border.focus}`,
         },
