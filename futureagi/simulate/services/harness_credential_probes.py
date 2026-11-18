@@ -97,7 +97,9 @@ def _bearer(url: str, alias: str, **extra_headers: str):
 
 def _header(url: str, alias: str, header: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
-        return ProbeRequest("GET", url, {header: values[alias].strip(), **extra_headers})
+        return ProbeRequest(
+            "GET", url, {header: values[alias].strip(), **extra_headers}
+        )
 
     return build
 
@@ -143,7 +145,9 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
         "LiveKit", ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"), _livekit
     ),
     "vapi": ProviderProbe(
-        "Vapi", ("VAPI_API_KEY",), _bearer("https://api.vapi.ai/assistant?limit=1", "VAPI_API_KEY")
+        "Vapi",
+        ("VAPI_API_KEY",),
+        _bearer("https://api.vapi.ai/assistant?limit=1", "VAPI_API_KEY"),
     ),
     "retell": ProviderProbe(
         "Retell",
@@ -233,7 +237,12 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             if failed:
                 # A name is marked to fix only when its key was rejected; an unreachable
                 # provider or a server error is reported in the message alone.
-                wrong = {name for names, _, key_rejected in failed if key_rejected for name in names}
+                wrong = {
+                    name
+                    for names, _, key_rejected in failed
+                    if key_rejected
+                    for name in names
+                }
                 wrong = wrong or {name for names, _, _ in failed for name in names}
                 return ProbeResult(
                     provider,
@@ -243,13 +252,18 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
                     "; ".join(result.message for _, result, _ in failed),
                 )
             return ProbeResult(
-                provider, spec.label, present, True,
+                provider,
+                spec.label,
+                present,
+                True,
                 f"{spec.label} accepted {' and '.join(present)}",
             )
     return _probe_once(provider, spec, values)
 
 
-def _probe_once(provider: str, spec: ProviderProbe, values: Mapping[str, str]) -> ProbeResult:
+def _probe_once(
+    provider: str, spec: ProviderProbe, values: Mapping[str, str]
+) -> ProbeResult:
     return _probe_checked(provider, spec, values)[0]
 
 
@@ -275,22 +289,34 @@ def _probe_checked(
     except requests.RequestException as exc:
         # The run's own connect stage would hit the same wall, so this is a failure too.
         return ProbeResult(
-            provider, spec.label, aliases, False,
+            provider,
+            spec.label,
+            aliases,
+            False,
             f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
         ), False
     except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
         return ProbeResult(
-            provider, spec.label, aliases, False,
+            provider,
+            spec.label,
+            aliases,
+            False,
             f"{spec.label} check could not run ({type(exc).__name__}); check {named}",
         ), False
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
-            provider, spec.label, aliases, False,
+            provider,
+            spec.label,
+            aliases,
+            False,
             f"{spec.label} rejected {named} (HTTP {response.status_code})",
         ), True
     if response.status_code >= 400:
         return ProbeResult(
-            provider, spec.label, aliases, False,
+            provider,
+            spec.label,
+            aliases,
+            False,
             f"{spec.label} returned HTTP {response.status_code} for {named}",
         ), False
     return ProbeResult(

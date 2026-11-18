@@ -595,7 +595,7 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
                     mt: 8,
                   }}
                 >
-                  <Typography variant="body2" fontSize={13}>
+                  <Typography variant="body2" fontSize={12}>
                     Select a span to view details
                   </Typography>
                 </Box>
@@ -1144,7 +1144,7 @@ function ContentSection({ title, children, dataType, copyValue }) {
           bgcolor: "background.neutral",
           borderRadius: "4px",
           p: 2,
-          fontSize: 13,
+          fontSize: 12,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           maxHeight: 500,

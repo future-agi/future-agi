@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -107,10 +108,10 @@ func TestResellersAndFallbackNamesFrom2027(t *testing.T) {
 			p.now = clockAt(instant.at)
 			if tc.table != "" {
 				table := tc.table
-				p.SetPriceTables(func(_, _ string) string { return table })
+				p.SetPriceTables(func(*models.RequestContext) string { return table })
 			}
-			p.SetProviderTypes(func(_, id string) string {
-				if id == "di" {
+			p.SetProviderTypes(func(rc *models.RequestContext) string {
+				if rc.Provider == "di" {
 					return "deepinfra"
 				}
 				return ""
@@ -147,7 +148,7 @@ func TestBareResellerNameKeepsTodaysPrice(t *testing.T) {
 	for _, c := range resellerCells {
 		for _, form := range nameForms {
 			model := fmt.Sprintf(form, c.version)
-			key := priceKey(db, model, c.provider, "")
+			key := db.PriceKey(model, c.provider, "")
 			wantKey, wantKeep := c.own, false
 			if strings.Contains(c.own, "/google/") && strings.HasPrefix(model, "google/") {
 				// The lookup already lands on the reseller's own entry.
@@ -200,9 +201,10 @@ func TestProviderTypeIsAskedForTheRequestsOrg(t *testing.T) {
 	p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 	p.now = clockAt(t27)
 	var askedOrg string
-	p.SetProviderTypes(func(orgID, id string) string {
+	p.SetProviderTypes(func(rc *models.RequestContext) string {
+		orgID := rc.Metadata[tenant.MetadataKeyOrgID]
 		askedOrg = orgID
-		if orgID == "org-1" && id == "di" {
+		if orgID == "org-1" && rc.Provider == "di" {
 			return "deepinfra"
 		}
 		return ""

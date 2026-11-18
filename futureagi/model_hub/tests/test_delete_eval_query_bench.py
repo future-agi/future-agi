@@ -26,8 +26,8 @@ from django.utils import timezone
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
-CELL_COUNT_PER_COL = 5_000        # target: 5k eval + 5k reason  = 10k
-DISTRACTOR_COLUMNS = 40           # unrelated columns (other evals, other datasets)
+CELL_COUNT_PER_COL = 5_000  # target: 5k eval + 5k reason  = 10k
+DISTRACTOR_COLUMNS = 40  # unrelated columns (other evals, other datasets)
 DISTRACTOR_CELLS_PER_COL = 5_000  # 40 x 5k = 200k unrelated cells
 # The OLD Seq-Scan approach must pass over ALL 210k cells to decide which to
 # delete; the NEW column_id-IN approach uses the FK index to touch only the
@@ -44,7 +44,9 @@ def test_bench_old_vs_new_delete_query(organization, workspace):
 
     # ── Seed ────────────────────────────────────────────────────────────────
     dataset = Dataset.objects.create(
-        name="bench-ds", organization=organization, workspace=workspace,
+        name="bench-ds",
+        organization=organization,
+        workspace=workspace,
     )
     metric_id = uuid.uuid4()
     eval_col = Column.objects.create(
@@ -66,13 +68,17 @@ def test_bench_old_vs_new_delete_query(organization, workspace):
         batch_size=1000,
     )
     Cell.objects.bulk_create(
-        [Cell(dataset=dataset, row=rows[i], column=eval_col, value=f"v{i}")
-         for i in range(CELL_COUNT_PER_COL)],
+        [
+            Cell(dataset=dataset, row=rows[i], column=eval_col, value=f"v{i}")
+            for i in range(CELL_COUNT_PER_COL)
+        ],
         batch_size=1000,
     )
     Cell.objects.bulk_create(
-        [Cell(dataset=dataset, row=rows[i], column=reason_col, value=f"r{i}")
-         for i in range(CELL_COUNT_PER_COL)],
+        [
+            Cell(dataset=dataset, row=rows[i], column=reason_col, value=f"r{i}")
+            for i in range(CELL_COUNT_PER_COL)
+        ],
         batch_size=1000,
     )
 
@@ -80,32 +86,43 @@ def test_bench_old_vs_new_delete_query(organization, workspace):
     # what makes the NEW plan look meaningfully better: OLD Seq Scan must
     # pass over these too; NEW's column_id IN uses the FK index to skip
     # them entirely.
-    distractor_cols = Column.objects.bulk_create([
-        Column(
-            name=f"Other Col {i}",
-            dataset=dataset,
-            data_type=DataTypeChoices.TEXT.value,
-            source=SourceChoices.EVALUATION.value,
-            source_id=str(uuid.uuid4()),
-        )
-        for i in range(DISTRACTOR_COLUMNS)
-    ], batch_size=100)
+    distractor_cols = Column.objects.bulk_create(
+        [
+            Column(
+                name=f"Other Col {i}",
+                dataset=dataset,
+                data_type=DataTypeChoices.TEXT.value,
+                source=SourceChoices.EVALUATION.value,
+                source_id=str(uuid.uuid4()),
+            )
+            for i in range(DISTRACTOR_COLUMNS)
+        ],
+        batch_size=100,
+    )
     distractor_rows = Row.objects.bulk_create(
-        [Row(dataset=dataset, order=CELL_COUNT_PER_COL + i)
-         for i in range(DISTRACTOR_CELLS_PER_COL)],
+        [
+            Row(dataset=dataset, order=CELL_COUNT_PER_COL + i)
+            for i in range(DISTRACTOR_CELLS_PER_COL)
+        ],
         batch_size=1000,
     )
     for col in distractor_cols:
         Cell.objects.bulk_create(
-            [Cell(dataset=dataset, row=distractor_rows[i], column=col, value=f"x{i}")
-             for i in range(DISTRACTOR_CELLS_PER_COL)],
+            [
+                Cell(dataset=dataset, row=distractor_rows[i], column=col, value=f"x{i}")
+                for i in range(DISTRACTOR_CELLS_PER_COL)
+            ],
             batch_size=1000,
         )
 
-    total_cells = (CELL_COUNT_PER_COL * 2) + (DISTRACTOR_COLUMNS * DISTRACTOR_CELLS_PER_COL)
+    total_cells = (CELL_COUNT_PER_COL * 2) + (
+        DISTRACTOR_COLUMNS * DISTRACTOR_CELLS_PER_COL
+    )
     print(f"  Seeded: 2 target cols with {CELL_COUNT_PER_COL:,} cells each")
-    print(f"          {DISTRACTOR_COLUMNS} distractor cols with "
-          f"{DISTRACTOR_CELLS_PER_COL:,} cells each")
+    print(
+        f"          {DISTRACTOR_COLUMNS} distractor cols with "
+        f"{DISTRACTOR_CELLS_PER_COL:,} cells each"
+    )
     print(f"          Total Cell rows: {total_cells:,}")
     print()
 
@@ -151,8 +168,7 @@ def test_bench_old_vs_new_delete_query(organization, workspace):
 
     # NEW predicate — two-step
     step1_qs = Column.objects.filter(
-        Q(id=eval_col.id)
-        | Q(source_id__startswith=f"{eval_col.id}-sourceid-"),
+        Q(id=eval_col.id) | Q(source_id__startswith=f"{eval_col.id}-sourceid-"),
         deleted=False,
     ).values_list("id", flat=True)
     col_ids_preview = list(step1_qs)
@@ -190,8 +206,9 @@ def test_bench_old_vs_new_delete_query(organization, workspace):
     print()
 
     # Same forced-index run on the OLD predicate, for a fair prod-scale sim.
-    print("  OLD predicate — same query with `SET enable_seqscan=OFF` "
-          "(prod-scale sim):")
+    print(
+        "  OLD predicate — same query with `SET enable_seqscan=OFF` (prod-scale sim):"
+    )
     with connection.cursor() as cur:
         cur.execute("SET LOCAL enable_seqscan = OFF")
         cur.execute(f"EXPLAIN (ANALYZE, BUFFERS, TIMING) {old_sql}", old_params)
@@ -214,20 +231,21 @@ def test_bench_old_vs_new_delete_query(organization, workspace):
 
     # Reset — use all_objects to bypass BaseModelManager's deleted=False filter.
     Cell.all_objects.filter(column_id__in=[eval_col.id, reason_col.id]).update(
-        deleted=False, deleted_at=None,
+        deleted=False,
+        deleted_at=None,
     )
 
     # Time NEW UPDATE
     t0 = time.perf_counter()
     col_ids = list(
         Column.objects.filter(
-            Q(id=eval_col.id)
-            | Q(source_id__startswith=f"{eval_col.id}-sourceid-"),
+            Q(id=eval_col.id) | Q(source_id__startswith=f"{eval_col.id}-sourceid-"),
             deleted=False,
         ).values_list("id", flat=True)
     )
     Cell.objects.filter(column_id__in=col_ids, deleted=False).update(
-        deleted=True, deleted_at=now,
+        deleted=True,
+        deleted_at=now,
     )
     new_wall = time.perf_counter() - t0
 
@@ -243,6 +261,10 @@ def test_bench_old_vs_new_delete_query(organization, workspace):
     print()
 
     # Correctness check: both delete the same rows
-    assert Cell.objects.filter(
-        column_id__in=[eval_col.id, reason_col.id], deleted=False,
-    ).count() == 0, "NEW approach should have soft-deleted all seeded cells"
+    assert (
+        Cell.objects.filter(
+            column_id__in=[eval_col.id, reason_col.id],
+            deleted=False,
+        ).count()
+        == 0
+    ), "NEW approach should have soft-deleted all seeded cells"
