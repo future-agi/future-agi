@@ -3,7 +3,6 @@ import base64
 import copy
 import io
 import json
-import math
 import os
 import re
 import time
@@ -12639,8 +12638,8 @@ def run_evaluation_task(evaluation_data):
 
         futures = {}
         failed_metric_ids = set()
-        success_counts = defaultdict(int)
-        reporting_inputs = {}
+        success_counts: defaultdict[str, int] = defaultdict(int)
+        reporting_inputs: dict[str, tuple[Any, Any]] = {}
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(str(metric_id))
@@ -14503,9 +14502,9 @@ class CompareDatasetsView(APIView):
                 SourceChoices.EVALUATION_REASON.value,
             ]
 
-            num_pages_to_fetch = (page_size + 9) // 10
-            start_page = math.ceil((start + 1) / 10)
-            end_page = start_page + num_pages_to_fetch
+            # Physical pages covering the half-open requested row interval.
+            start_page = start // 10 + 1
+            end_page = (end + 9) // 10 + 1
 
             if cached_metadata is not None:
                 metadata = cached_metadata
@@ -14531,15 +14530,17 @@ class CompareDatasetsView(APIView):
                     return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
                 comparison_datasets = list(datasets)
-                if metadata.get("total_pages") < num_pages_to_fetch:
-                    return self._gm.bad_request(
-                        get_error_message("FAILED_TO_COMPARE_DATASETS")
-                    )
 
+                # While processing, progress is the last uploaded one-based page.
+                # Wait for the whole requested range, but not nonexistent pages.
+                last_required_page = min(
+                    end_page - 1, int(metadata.get("total_pages", 0))
+                )
                 loop_start = time.time()
                 while (
                     metadata.get("status") == "processing"
-                    and metadata.get("total_processed") >= start_page
+                    and start_page <= last_required_page
+                    and (metadata.get("total_processed") or 0) < last_required_page
                 ):
                     logger.info("waiting for files to be created")
                     metadata = self.read_metadata_safely(metadata_path)

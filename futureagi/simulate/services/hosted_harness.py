@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -18,6 +19,7 @@ from django.utils import timezone
 from simulate.models import (
     AgentVersion,
     CallExecution,
+    EvidenceImport,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
@@ -27,6 +29,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.models.hosted_harness import SEED_BITS
 from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
@@ -235,7 +238,7 @@ def create_hosted_job(
         run_id = payload.get("run_id") or uuid.uuid4()
         seed = payload.get("seed")
         if seed is None:
-            seed = secrets.randbits(63)
+            seed = secrets.randbits(SEED_BITS)
         normalized = _json_value(payload)
         # Deployment policy must not change the submitted request's idempotency digest.
         artifacts = normalized["artifacts"]
@@ -287,6 +290,24 @@ def run_idempotency_key(environment: HostedHarnessJob, idempotency_key: str) -> 
     """The key a Run submitted with ``idempotency_key`` is stored under."""
     idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
     return f"run:{environment.id}:{idempotency_digest}"
+
+
+# The environment's own bookkeeping, which a job made from its payload must not carry:
+# its build spend would be billed again and its markers would act on the new job.
+RUN_DROPPED_METADATA = (
+    "scenario_extend",
+    "usage_limit",
+    "harness_spend",
+    "authoring_usage_reports",
+    "usage_reports",
+    "sandbox_runtime",
+    "default_pairs",
+    "default_pair_sealed",
+    "conversation_checkpoints",
+    "draft_saves",
+    "evidence_adds",
+    "observability_refusal",
+)
 
 
 def create_selected_harness_run(
@@ -394,7 +415,12 @@ def create_selected_harness_run(
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
-                environment, child_idempotency_key, resolved, scenario_keys, trials
+                environment,
+                child_idempotency_key,
+                resolved,
+                scenario_keys,
+                trials,
+                seed=seed,
             )
             if replayed is not None:
                 return replayed, False
@@ -452,6 +478,9 @@ def create_selected_harness_run(
             )
         if pins is not None and pins.assembles:
             _refuse_ungradable(pins, scenario_keys)
+        from simulate.services.harness_tool_reach import refuse_production_only
+
+        refuse_production_only(environment, pins, scenario_keys)
 
         manifest: list[dict[str, Any]] = []
         for scenario_key in scenario_keys:
@@ -515,22 +544,9 @@ def create_selected_harness_run(
         if parallelism is not None:
             runtime["parallelism"] = parallelism
         child_metadata = child_payload.setdefault("metadata", {})
-        for key in (
-            "scenario_extend",
-            "usage_limit",
-            "harness_spend",
-            "authoring_usage_reports",
-            "usage_reports",
-            "sandbox_runtime",
-            "default_pairs",
-            "default_pair_sealed",
-            "conversation_checkpoints",
-            "draft_saves",
-            "observability_refusal",
-            # The run's payload never names which cases are held back; its sandbox
-            # still holds every case of the suite.
-            HELD_BACK_METADATA_KEY,
-        ):
+        # The run's payload never names which cases are held back; its sandbox still holds
+        # every case of the suite.
+        for key in (*RUN_DROPPED_METADATA, HELD_BACK_METADATA_KEY):
             child_metadata.pop(key, None)
         if coding_agent_key_id is not None:
             child_metadata["coding_agent_key_id"] = coding_agent_key_id
@@ -1082,7 +1098,8 @@ def _check_picks(
                 job=environment, id=pick, status=VersionStatus.ACTIVE
             )
             if piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
-                versions = versions.filter(fix_run__isnull=True)
+                # The model is HarnessSuiteVersion here; mypy checks both models.
+                versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
             if not versions.exists():
                 raise _not_pickable(piece)
     if not agent_id or agent_id == defaults[0]:
@@ -1139,11 +1156,10 @@ def _replayed_run(
     resolved: ResolvedPins,
     scenario_keys: list[str],
     trials: int,
+    seed: int | None = None,
 ) -> HostedHarnessJob | None:
-    """The run an earlier request with this key created, when this one repeats it.
-
-    A key reused for other versions, scenarios or trials is refused.
-    """
+    """The run an earlier request with this key created, when this one repeats it; a key reused for other versions,
+    scenarios, trials or another seed is refused."""
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
     ).first()
@@ -1170,6 +1186,7 @@ def _replayed_run(
         existing.workspace_id != environment.workspace_id
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
+        or (seed is not None and existing.seed != seed)
     ):
         raise HostedHarnessError(
             "idempotency_conflict",
@@ -2005,6 +2022,16 @@ def delete_environment(job: HostedHarnessJob) -> None:
         )
 
         close_environment_nudges(locked, code="environment_deleted")
+        # Its evidence imports go with it, and a transcript's stored text with them.
+        # One still drafting keeps its drafting chat until that is forgotten too.
+        from simulate.services.evidence_drafts import forget_later
+
+        for evidence_import in EvidenceImport.no_workspace_objects.filter(
+            environment=locked, deleted=False
+        ):
+            evidence_import.delete()
+            if evidence_import.drafting_job_id is not None:
+                transaction.on_commit(partial(forget_later, str(evidence_import.id)))
         active_children = list(
             HostedHarnessJob.no_workspace_objects.select_for_update()
             .filter(environment=locked)

@@ -55,6 +55,7 @@ class GuardrailCheck(GatewayAdminContractModel):
     enabled: bool | None = None
     action: str | None = None
     confidence_threshold: float | None = Field(None, validation_alias=AliasChoices('confidence_threshold', 'confidenceThreshold'))
+    configuration_error: str | None = Field(None, validation_alias=AliasChoices('configuration_error', 'configurationError'))
     config: dict[str, Any] | None = None
 
 
@@ -62,6 +63,16 @@ class GuardrailConfig(GatewayAdminContractModel):
     pipeline_mode: str | None = Field(None, validation_alias=AliasChoices('pipeline_mode', 'pipelineMode'))
     fail_open: bool | None = Field(None, validation_alias=AliasChoices('fail_open', 'failOpen'))
     timeout_ms: int | None = Field(None, validation_alias=AliasChoices('timeout_ms', 'timeoutMs'))
+    checks: dict[str, GuardrailCheck] | None = None
+    key_policies: list[KeyGuardrailPolicy] | None = Field(None, validation_alias=AliasChoices('key_policies', 'keyPolicies'))
+
+
+class KeyGuardrailPolicy(GatewayAdminContractModel):
+    id: str
+    name: str | None = None
+    mode: str | None = None
+    priority: int | None = None
+    key_ids: list[str] = Field(..., validation_alias=AliasChoices('key_ids', 'keyIds'))
     checks: dict[str, GuardrailCheck] | None = None
 
 
@@ -503,7 +514,7 @@ class OrgConfig(GatewayAdminContractModel):
 
 
 class CreateKeyRequest(GatewayAdminContractModel):
-    name: str = ...
+    name: str
     owner: str | None = None
     models: list[str] | None = None
     providers: list[str] | None = None
@@ -543,7 +554,7 @@ class KeyListResponse(GatewayAdminContractModel):
 
 
 class SyncedKey(GatewayAdminContractModel):
-    id: str = ...
+    id: str
     name: str | None = None
     owner: str | None = None
     key_hash: str = Field(..., validation_alias=AliasChoices('key_hash', 'keyHash'))
@@ -555,12 +566,12 @@ class SyncedKey(GatewayAdminContractModel):
 
 
 class ImportKeysRequest(GatewayAdminContractModel):
-    keys: list[SyncedKey] = ...
+    keys: list[SyncedKey]
 
 
 class ImportKeysResponse(GatewayAdminContractModel):
-    received: int = ...
-    loaded: int = ...
+    received: int
+    loaded: int
 
 
 class StatusResponse(GatewayAdminContractModel):

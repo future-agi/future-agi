@@ -99,4 +99,7 @@ observed_catalog:
   replay_interval: 1s
 
 admin:
-  addr: ":9464" # /healthz; the stock admin server has no /metrics route
+  # The Docker image checks http://127.0.0.1:9464/healthz. If you move the
+  # listener, also set HEALTHCHECK_URL to a URL reachable inside the container
+  # (e.g. http://127.0.0.1:9500/healthz for addr: ":9500").
+  addr: ":9464" # /healthz only; FI_ADMIN_ADDR overrides this address

@@ -1597,7 +1597,7 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     from deploy.update.apply import Interrupted
     from deploy.update.recovery import RecoveryError
     from deploy.update.standalone_backup import BackupError
-    from scripts.update_rehearsal_resources import ResourceObservationError
+    from scripts.update_rehearsal_resources import ResourceObservationError, sampling_failure_diagnostics
     from scripts.update_rehearsal_spool import ObservedSpoolWitnessError
     code = getattr(exc, 'reason_code', getattr(exc, 'refusal_code', None))
     if code is None and isinstance(exc, (BackupError, RecoveryError, ResourceObservationError)):
@@ -1627,6 +1627,9 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     if isinstance(exc, ObservedSpoolWitnessError):
         result['assertion_detail'] = exc.safe_detail
     if isinstance(exc, ResourceObservationError):
+        summary = sampling_failure_diagnostics(exc.sampling_failure) if exc.code == 'resource_sampling_gap' else None
+        if summary is not None:
+            result['resource_sampling_failure'] = summary
         # Only a line in our own fixed reader, never frame locals or host paths.
         trace = exc.__traceback__
         while trace is not None:
@@ -2132,13 +2135,19 @@ def _milestone_outcome(directory):
     except Exception:
         return None
     failure = record.get('failure') if type(record.get('failure')) is dict else None
-    return dict(status=record.get('status') if record.get('status') in ('passed', 'failed') else None,
+    result = dict(status=record.get('status') if record.get('status') in ('passed', 'failed') else None,
         executed_stages=[s for s in record.get('executed_stages', []) if type(s) is str][:64]
             if type(record.get('executed_stages')) is list else [],
         cleanup_verified=record.get('cleanup_verified') is True,
         failure=None if failure is None else {k: str(failure[k])[:512] for k in
             ('stage', 'reason', 'refusal_code', 'refusal_site', 'exception_type', 'detail', 'assertion_detail')
             if k in failure})
+    if failure is not None and failure.get('refusal_code') == 'resource_sampling_gap':
+        from scripts.update_rehearsal_resources import sampling_failure_diagnostics
+        summary = sampling_failure_diagnostics(failure.get('resource_sampling_failure'))
+        if summary is not None:
+            result['failure']['resource_sampling_failure'] = summary
+    return result
 
 
 def qualify(argv):
