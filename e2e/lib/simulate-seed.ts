@@ -422,6 +422,8 @@ def main():
         "started_at": at(0),
         "spans_received": True,
         "collection": "complete",
+        # The project its spans were read from, as record_call_workers keeps it: Participants opens a step's trace there.
+        "project_id": str(project.id),
         "coordinator": {"name": "Returns coordinator"},
         "workers": [
             {"worker_id": f"{run}/order_lookup", "id": "order_lookup", "name": "Order-lookup worker",
