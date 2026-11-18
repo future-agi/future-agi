@@ -293,6 +293,7 @@ def captured_span_fields(
     cutoff,
     preserve_pruned=False,
     previous_page=None,
+    dirty=None,
     unit_range=None,
     floors=None,
     sampling_context=None,
@@ -304,7 +305,8 @@ def captured_span_fields(
     caches each run's start floor across those pages.
     """
     store = writer.store
-    dirty = _dirty_buckets(attempt)
+    if dirty is None:
+        dirty = _dirty_buckets(attempt)
     if previous_page is not None and unit_range is not None:
         raise ValueError("a retirement page is already an identity page")
     previous, previous_params = _previous_fields(
@@ -671,7 +673,7 @@ def freeze_span_fields(
     budget on its own fails the pass. Bucket reconstruction subsequently
     consumes these frozen bytes, NOT mutable spans.
     """
-    dirty = _dirty_buckets(attempt)
+    dirty = sampling.dirty
     after, rows, floors = "", SPAN_CAPTURE_ROWS, sampling.floors
     with writer.store.compaction_budget(monotonic() + 600):
         while True:
@@ -691,6 +693,7 @@ def freeze_span_fields(
                     unit_range=(after, through),
                     floors=floors,
                     sampling_context=context,
+                    dirty=dirty,
                 )
                 sampling.check()
             except Exception as exc:
@@ -718,6 +721,7 @@ def _freeze_span_page(
     cutoff,
     unit_range,
     floors,
+    dirty,
     sampling_context=None,
 ):
     with captured_span_fields(
@@ -731,6 +735,7 @@ def _freeze_span_page(
         unit_range=unit_range,
         floors=floors,
         sampling_context=sampling_context,
+        dirty=dirty,
     ) as (fields, previous, params, count, size):
         tombstones = (
             "SELECT * REPLACE(toUInt8(1) AS is_deleted, 'no_value' AS status, "

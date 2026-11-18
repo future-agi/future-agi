@@ -1163,47 +1163,85 @@ def _checkpoint_key_pages(store, keys, params):
         lower, _ = keyset_after(totals, last, "checkpoint_lo")
 
 
-def _checkpoint_live_windows(store, retained, params, recipe, starts):
+def _checkpoint_window_rows(writer, attempt, predicate, window_params):
+    """Select this window from the successive *already retained* ledger batches.
+
+    Both checkpoint writers finish freezing FIELD_VALUES before bucket folds.
+    Thus removal (across ALL versions), owner scrubs and span repairs have
+    already been applied. Read each immutable batch once per oversized window,
+    not the original proposal and expired-unit subquery once per child range.
+    """
+    from tracer.services.derived_metrics.publication import FrozenRows
+    from tracer.services.derived_metrics.refresh import payload_select
+
+    for plan in writer.plans(attempt, kind="field_values"):
+        payload = FrozenRows.from_plan(plan)
+        batch, bound = payload_select(
+            FIELD_VALUES, [payload], prefix="checkpoint_batch"
+        )
+        keys = writer.store.execute(
+            f"SELECT level, unit_id, row_sequence FROM ({batch}) WHERE {predicate} "
+            "ORDER BY level, unit_id",
+            {**bound, **window_params},
+        )
+        # Freeze allocated contiguous row sequences in the payload's order.
+        # Select offsets, not a second serialization/copy of every wide field.
+        for level, unit, sequence in keys:
+            index = sequence - plan["first"]
+            if not 0 <= index < len(payload.rows):
+                raise MetricStateConflict("checkpoint field sequence is outside batch")
+            yield (level, unit), payload.rows[index]
+
+
+def _checkpoint_live_windows(writer, attempt, retained, params, recipe, starts):
     """Bisect only a rejected INPUT, before a fold could append any output."""
+    from tracer.services.derived_metrics.bounded_reads import FrozenCheckpointWindow
     from tracer.services.derived_metrics.frozen_relations import (
         FrozenRelationOverflow,
         SessionCapture,
     )
 
-    sql = (
-        f"SELECT * FROM ({retained}) WHERE is_deleted = 0 AND status != 'open' "
-        "AND field_id = toUUID(%(checkpoint_metric)s) "
+    predicate = (
+        "is_deleted = 0 AND status != 'open' AND field_id = toUUID(%(checkpoint_metric)s) "
         "AND field_version = %(checkpoint_version)s AND bucket_start IN %(checkpoint_starts)s"
     )
-    bound = {
-        **params,
+    sql = f"SELECT * FROM ({retained}) WHERE {predicate}"
+    window_params = {
         "checkpoint_metric": recipe[0],
         "checkpoint_version": recipe[1],
         "checkpoint_starts": tuple(starts),
     }
+    capture = SessionCapture(
+        writer.store,
+        schema=FIELD_VALUES.schema,
+        sources=lambda: [(sql, {**params, **window_params})],
+        role="checkpoint_bucket_fields",
+    )
     with ExitStack() as scratch:
         try:
-            live = scratch.enter_context(
-                SessionCapture(
-                    store,
-                    schema=FIELD_VALUES.schema,
-                    sources=lambda: [(sql, bound)],
-                    role="checkpoint_bucket_fields",
-                )
-            )
+            live = scratch.enter_context(capture)
         except FrozenRelationOverflow:
+            if capture.overflow_rows is None:
+                raise  # an upstream capture failed, not this window's input
             if len(starts) == 1:
-                # Input is the immutable retained proposal, not mutable source.
-                # Use the fold's identity scan instead of materializing the
-                # quarter. No output has been appended for this window yet.
-                yield starts, sql, bound
+                # This single-source capture measured the complete quarter
+                # before rejecting it. Its count must match the ledger stream.
+                window = FrozenCheckpointWindow(
+                    capture.overflow_rows,
+                    lambda: _checkpoint_window_rows(
+                        writer, attempt, predicate, window_params
+                    ),
+                )
+                yield starts, window, {}
                 return
         else:
             yield starts, live.select, {}
             return
     mid = len(starts) // 2
     for half in (starts[:mid], starts[mid:]):
-        yield from _checkpoint_live_windows(store, retained, params, recipe, half)
+        yield from _checkpoint_live_windows(
+            writer, attempt, retained, params, recipe, half
+        )
 
 
 def _uncovered_quarters(writer, head, fields, params, *, where, having=None):
@@ -1338,15 +1376,17 @@ def _repair_span_quarters(
                         "level": definition.level,
                     }
                 ],
-                ledger={
-                    "dirty_after": [
-                        {"level": "span", "bucket_start": at} for _, _, at in group
-                    ]
-                },
             )
         coverage = forward_coverage_start(definition)
         with SpanSamplingContext(
-            writer, draft, [definition], scope, as_of=as_of
+            writer,
+            draft,
+            [definition],
+            scope,
+            as_of=as_of,
+            # Scratch windows are derived afresh from the base on every retry.
+            # Only real predecessor work belongs in the durable recovery ledger.
+            dirty=tuple(at for _, _, at in group),
         ) as sampling:
             freeze_span_fields(
                 writer,
@@ -1508,7 +1548,7 @@ def _freeze_retained_buckets(
                     writer, head, recipe, starts, fields, params, source_backed
                 )
                 for batch, live, live_params in _checkpoint_live_windows(
-                    writer.store, retained, params, recipe, starts
+                    writer, attempt, retained, params, recipe, starts
                 ):
                     writer._freeze_buckets(
                         attempt,
@@ -2285,7 +2325,8 @@ def _expire_project(writer, definitions, retention_days, now, as_of, scratch):
             purpose="compaction",
             ceilings={
                 "retention_cutoff": cutoff,
-                **({"as_of": as_of or now} if repair_drafts else {}),
+                # A repair read only its own quarters. It cannot advance the
+                # inherited project-wide capture clock used for later admission.
                 **floor_terms,
                 "recovery_pending": recovery_pending,
                 # Expired handoffs are discharged without retaining their ids

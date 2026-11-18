@@ -67,6 +67,7 @@ class SessionCapture:
         self.name = "metric_capture_" + uuid4().hex
         self.socket = None
         self.digest = None
+        self.overflow_rows = None  # cumulative rows measured before a rejected insert
 
     def __enter__(self):
         self.store._restore_transients()
@@ -150,6 +151,7 @@ class SessionCapture:
                 )[0]
                 rows, size = rows + count, size + (length or 0)
                 if rows > CAPTURE_ROWS or size > CAPTURE_BYTES:
+                    self.overflow_rows = rows
                     raise FrozenRelationOverflow("session capture exceeds its budget")
                 if count:
                     store.execute(

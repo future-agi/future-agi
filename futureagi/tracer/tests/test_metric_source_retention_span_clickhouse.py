@@ -280,11 +280,72 @@ def test_cross_version_expiry_preserves_uncovered_span_survivor(span_versions):
     ] == [(1, 19, 1)]
 
 
-def test_unproven_arrival_cannot_fill_cross_version_span_gap(span_versions):
+def test_quarter_repair_does_not_age_out_undiscovered_span(span_versions):
+    from tracer.services.derived_metrics.changes import OVERLAP
+    from tracer.tests.test_derived_metric_retention_clickhouse import _created_span
+
+    case, first, second, base, truth, _ = uncovered_span_head(span_versions)
+    discovery = case.now
+    # This retained arrival in a different quarter is invisible to the last
+    # ordinary capture. Expiry must not claim to have consumed it.
+    created = discovery + timedelta(minutes=15)
+    session, trace = uuid4(), uuid4()
+    _created_span(
+        case.writer, case.scope, trace, "in-flight", session, created, created, 29
+    )
+    case.writer.retention_days = lambda: 2
+    repaired = expire_project(
+        case.writer,
+        [first, second],
+        retention_days=case.writer.retention_days,
+        now=discovery + timedelta(hours=1),
+    )
+    head = MetricProjectRefresh.for_project(case.scope.project).head_manifest
+    assert repaired["purged"] and head.pk != base.pk
+    assert case.field_values(head, second, case.quarter) == truth
+    assert case.field_values(head, first, created) == []
+
+    # Shorten the policy so a second scheduled pass really retires live
+    # published rows, deriving its admission clock from the repaired head.
+    case.now = discovery + timedelta(hours=23, minutes=30)
+    expired = case.expire([first, second])
+    assert not case.field_values(expired, first, case.quarter)
+    dependency = Dependency(
+        str(trace), "in-flight", str(session), str(session), "", "", created
+    )
+    later = case.writer.refresh(
+        change_for(session, dependencies=[dependency], cursor=next(case.cursors)),
+        [first],
+        case.scope,
+        start=case.old,
+        end=case.now,
+        as_of=case.now,
+    )
+    assert case.field_values(later, first, created) == [("in-flight", 29)]
+    assert (
+        expired.published_by.source_ceilings["retention_floor_at"]
+        == (discovery - OVERLAP).isoformat()
+    )
+
+
+@pytest.mark.parametrize(
+    "real_dirty", [False, True], ids=["scratch-only", "real-predecessor"]
+)
+def test_unproven_arrival_cannot_fill_cross_version_span_gap(span_versions, real_dirty):
     from tracer.models.derived_metric import MetricRefreshAttempt
-    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
+    from tracer.services.derived_metrics.refresh import (
+        PASS_YIELD,
+        MetricAdmissionUnproven,
+    )
 
     case, first, second, head, truth, elsewhere = uncovered_span_head(span_versions)
+    if real_dirty:
+        # Exactly the same anonymous nomination as the scratch repair. Only
+        # provenance distinguishes genuine unconsumed work from a repair input.
+        predecessor = case.writer.begin(
+            ledger={"dirty_after": [{"level": "span", "bucket_start": case.quarter}]}
+        )
+        case.writer.seal(predecessor)
     case.revision("mobile", elsewhere, 5, 4)
     case.revision("unknown", case.quarter, 42, 1)
     # Two source rows would satisfy a mere count check, but one has never
@@ -294,9 +355,18 @@ def test_unproven_arrival_cannot_fill_cross_version_span_gap(span_versions):
         case.expire([first, second])
     state = MetricProjectRefresh.for_project(case.scope.project)
     assert state.head_manifest_id == head.pk and state.head_manifest.revoked_at is None
-    assert not MetricRefreshAttempt.objects.filter(
-        project_id=state.project_id, state__in=MetricRefreshAttempt.OPEN_STATES
+    assert MetricRefreshAttempt.objects.filter(
+        parent_manifest=head,
+        purpose="backfill",
+        state="aborted",
+        abort_reason=PASS_YIELD,
     ).exists()
+    open_attempts = MetricRefreshAttempt.objects.filter(
+        project_id=state.project_id, state__in=MetricRefreshAttempt.OPEN_STATES
+    )
+    assert set(open_attempts.values_list("pk", flat=True)) == (
+        {predecessor.pk} if real_dirty else set()
+    )
 
     case.revision("mobile", case.quarter, 5, 5)
     seed_span_revision(
@@ -315,3 +385,13 @@ def test_unproven_arrival_cannot_fill_cross_version_span_gap(span_versions):
     retry = case.expire([first, second])
     assert case.field_values(retry, second, case.quarter) == truth
     assert case.totals(retry, second) == expected_totals(truth)
+    assert retry.published_by.source_ceilings["recovery_pending"] is real_dirty
+    assert not retry.published_by.source_ceilings["recovery_blocked"]
+    carried = [
+        entry
+        for chunk in retry.published_by.ledger_chunks.filter(part="dirty_after")
+        for entry in chunk.payload
+    ]
+    assert carried == (
+        [{"level": "span", "bucket_start": str(case.quarter)}] if real_dirty else []
+    )

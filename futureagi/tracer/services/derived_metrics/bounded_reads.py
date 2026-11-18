@@ -7,7 +7,7 @@ must still enter the subsequent committed collapse, including tombstones.
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -449,6 +449,14 @@ class BucketRangeOverflow(ValueError):
 
 
 @dataclass(frozen=True)
+class FrozenCheckpointWindow:
+    """An ordered stream of complete, already-retained field identities and bytes."""
+
+    expected_rows: int
+    rows: Callable[[], Iterator[tuple[tuple[str, str], str]]]
+
+
+@dataclass(frozen=True)
 class BucketFieldPlan:
     """Immutable source for exhaustive native-key ranges, not hash-sized jobs.
 
@@ -466,7 +474,7 @@ class BucketFieldPlan:
     field_version: int
     predicate: str
     params: dict
-    overlay: tuple[str, dict]
+    overlay: tuple[str | FrozenCheckpointWindow, dict]
     subdivide: bool
     complete_fields: bool = False
 
@@ -536,10 +544,64 @@ class BucketFieldScan:
             branches = [f"SELECT * FROM ({b}) WHERE {routing}" for b in branches]
         return branches, params
 
+    def _checkpoint_pages(self, window):
+        # A checkpoint froze exactly one final field per logical key, in native
+        # key order. Partition those bytes directly: no membership subquery,
+        # second project-wide collapse, or 1M-row in-memory copy of the quarter.
+        from tracer.services.derived_metrics.frozen_relations import (
+            FrozenRelationOverflow,
+        )
+        from tracer.services.derived_metrics.publication import (
+            MAX_COMPACTION_BYTES,
+            MAX_COMPACTION_ROWS,
+            FrozenRows,
+        )
+        from tracer.services.derived_metrics.refresh import payload_select
+
+        limit = min(self.byte_limit, MAX_COMPACTION_BYTES)
+        page, size, lower, last = [], 0, None, None
+
+        def child():
+            self.ranges.append((None, lower, last, len(page), size))
+            return payload_select(
+                FIELD_VALUES,
+                [FrozenRows(tuple(page), row_limit=MAX_COMPACTION_ROWS)],
+                prefix="checkpoint_child",
+            )
+
+        for key, row in window.rows():
+            if last is not None and key <= last:
+                raise ValueError("checkpoint window keys are not strictly ordered")
+            length = len(row) // 2
+            if length > limit:
+                raise FrozenRelationOverflow("checkpoint field exceeds input budget")
+            if page and (len(page) == self.target_rows or size + length > limit):
+                yield child()
+                page, size, lower = [], 0, last
+            page.append(row)
+            size += length
+            last = key
+        if page:
+            yield child()
+
     def __iter__(self):
         if self.started:
             raise ValueError("bucket range scan is single-use")
         self.started = True
+        overlay, _ = self.plan.overlay
+        if isinstance(overlay, FrozenCheckpointWindow):
+            if not self.plan.complete_fields or self.plan.subdivide:
+                raise ValueError("frozen window requires a complete checkpoint")
+            yield from self._checkpoint_pages(overlay)
+            if sum(r[3] for r in self.ranges) != overlay.expected_rows:
+                from tracer.services.derived_metrics.publication import (
+                    MetricVisibilityError,
+                )
+
+                raise MetricVisibilityError("checkpoint window coverage changed")
+            self.exhausted_routes.append(None)
+            self.complete = True
+            return
         keys = ("level", "unit_id")
         names = ", ".join(keys)
         routes = range(FIELD_CHECKPOINT_BUCKETS) if self.plan.subdivide else (None,)

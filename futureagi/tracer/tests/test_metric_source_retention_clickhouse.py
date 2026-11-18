@@ -476,6 +476,7 @@ def test_oversized_retained_quarter_folds_identity_ranges_in_one_checkpoint(
     live_writer, monkeypatch, budget
 ):
     from tracer.services.derived_metrics import frozen_relations
+    from tracer.services.derived_metrics.bounded_reads import BucketFieldScan
     from tracer.tests.test_derived_metric_refresh_clickhouse import metric_bucket_rows
 
     writer = live_writer
@@ -485,7 +486,10 @@ def test_oversized_retained_quarter_folds_identity_ranges_in_one_checkpoint(
     second = numeric_definition(first.metric_id)
     second.version = 2
     seed_fields_and_buckets(
-        writer, first, [("victim", now - timedelta(days=3), 41, "")]
+        writer,
+        first,
+        [("victim", now - timedelta(days=3), 41, "")]
+        + [(f"unrelated-{i}", now - timedelta(days=4), 1, "") for i in range(16)],
     )
     mates = [(f"mate-{i}", quarter, i, "") for i in range(1, 5)]
     base = seed_fields_and_buckets(
@@ -517,6 +521,24 @@ def test_oversized_retained_quarter_folds_identity_ranges_in_one_checkpoint(
         ranges.append(coverage[0])
         return result
 
+    # Record native work for the entire scan, including the actual child fold
+    # while the iterator is suspended. Output range sizes alone miss a broad IN.
+    ids = []
+    execute = writer.store.execute
+    scan = BucketFieldScan.__iter__
+
+    def tag(sql, params=None, **kwargs):
+        if sql.startswith(("SELECT", "INSERT")):
+            kwargs["query_id"] = str(uuid4())
+            ids.append(kwargs["query_id"])
+        return execute(sql, params, **kwargs)
+
+    def record_scan(scanner):
+        with monkeypatch.context() as probe:
+            probe.setattr(writer.store, "execute", tag)
+            yield from scan(scanner)
+
+    monkeypatch.setattr(BucketFieldScan, "__iter__", record_scan)
     monkeypatch.setattr(frozen_relations.FrozenRelations, "finish", record_fold)
     assert retention.expire_project(
         writer, [first, second], retention_days=lambda: 1, now=now
@@ -525,6 +547,18 @@ def test_oversized_retained_quarter_folds_identity_ranges_in_one_checkpoint(
     assert head.generation == base.generation + 1
     assert len(ranges) == 1 and len(ranges[0]) > 1
     assert sum(n for _, _, _, n, _ in ranges[0]) == len(mates)
+    execute("SYSTEM FLUSH LOGS")
+    reads = dict(
+        execute(
+            "SELECT query_id, read_rows FROM system.query_log WHERE type = 'QueryFinish' "
+            "AND query_id IN %(ids)s",
+            {"ids": tuple(ids)},
+        )
+    )
+    assert len(reads) == len(ids) >= len(ranges[0])
+    # Allow constant table-function overhead; a project-wide IN reads at
+    # least all 16 unrelated rows in addition to the actual range.
+    assert max(reads.values()) <= 8, reads
     assert all(
         n <= frozen_relations.CAPTURE_ROWS and size <= frozen_relations.CAPTURE_BYTES
         for _, _, _, n, size in ranges[0]

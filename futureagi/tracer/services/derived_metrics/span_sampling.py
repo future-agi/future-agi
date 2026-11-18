@@ -38,12 +38,13 @@ def _needs_context(definition):
 class SpanSamplingContext:
     """Freeze all filtered sampling populations before the attempt's first page."""
 
-    def __init__(self, writer, attempt, definitions, scope, *, as_of):
+    def __init__(self, writer, attempt, definitions, scope, *, as_of, dirty=None):
         self.writer = writer
         self.attempt = attempt
         self.definitions = definitions
         self.scope = scope
         self.as_of = as_of
+        self.dirty = dirty
         self.name = "metric_span_sampling_" + uuid4().hex
         self.socket = None
         self.populations = {}
@@ -124,6 +125,8 @@ class SpanSamplingContext:
             _span_window_floor,
         )
 
+        if self.dirty is None:
+            self.dirty = _dirty_buckets(self.attempt)
         definitions = {}
         for definition in self.definitions:
             if definition.level == "span" and _needs_context(definition):
@@ -136,7 +139,7 @@ class SpanSamplingContext:
         try:
             self._create_table()
             count = size = 0
-            for at, until in _bucket_runs(_dirty_buckets(self.attempt)):
+            for at, until in _bucket_runs(self.dirty):
                 self.writer.lease.keepalive()
                 self.floors[at, until] = _span_window_floor(
                     store, self.scope, at, until
