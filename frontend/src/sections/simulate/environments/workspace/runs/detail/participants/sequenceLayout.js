@@ -1,4 +1,6 @@
 import { useLayoutEffect, useState } from "react";
+import { alpha } from "@mui/material/styles";
+import { typography } from "src/theme/typography";
 
 export const GUT = 0;
 export const LANE_PAD = 80; // half a lane header, plus air
@@ -98,4 +100,80 @@ export const asMarkdown = (shown) => {
   );
   const fence = "`".repeat(Math.max(3, longest + 1));
   return `${fence}\n${shown.text}\n${fence}`;
+};
+
+// The theme's type, for SVG text: s3 for small words, s1 for names and step labels.
+export const SVG_TYPE = {
+  sm: typography.s3.fontSize,
+  md: typography.s1.fontSize,
+  mono: typography.code_sm.fontFamily,
+  family: typography.fontFamily,
+};
+
+// The theme's colours the drawing uses.
+export const coloursOf = (theme) => ({
+  fg: theme.palette.text.primary,
+  sub: theme.palette.text.secondary,
+  muted: theme.palette.text.tertiary || theme.palette.text.secondary,
+  faint: theme.palette.text.disabled,
+  line: theme.palette.divider,
+  code: theme.palette.background.neutral,
+  paper: theme.palette.background.paper,
+  bad: theme.palette.error.main,
+  warn: theme.palette.warning.main,
+  sel: alpha(theme.palette.primary.main, 0.08),
+  selLine: theme.palette.primary.main,
+  hover: theme.palette.action.hover,
+  onColour: theme.palette.common.white,
+});
+
+/* Where everything sits for a width: lane x positions, lane heads, and each
+   row on show (in order) with its centre line y. */
+export const layoutOf = (lanes, width, ordered) => {
+  const L = lanes.length;
+  const laneW = Math.max(240, width - GUT);
+  const gap = Math.max(
+    MIN_GAP,
+    Math.min(230, (laneW - 2 * LANE_PAD) / Math.max(1, L - 1)),
+  );
+  const X = Object.fromEntries(
+    lanes.map((ln, i) => [ln.id, LANE_PAD + i * gap]),
+  );
+  /* Never wider than the first lane's padding, or it clips at the edge. */
+  const headW = Math.min(150, gap - 8, 2 * LANE_PAD - 6);
+  const nameChars = Math.floor((headW - 12) / 6.6);
+  const heads = lanes.map((ln) => nameLines(ln.name, nameChars));
+  const headH = heads.some((h) => h.length > 1) ? 54 : 40;
+  const svgW = Math.max(laneW, 2 * LANE_PAD + gap * (L - 1));
+  let y = 10 + headH + 42; // first row's centre line
+  const rows = ordered.map((r) => {
+    const out = { ...r, y };
+    y += ROW_H[r.type];
+    return out;
+  });
+  return {
+    X,
+    headW,
+    heads,
+    headH,
+    svgW,
+    rows,
+    H: y + 6,
+    /* A tool call is a row of its own, so its one line may run across the
+       lanes beside it (on a paper backing); left of the lane when the lane is
+       near the right edge. */
+    toolSide: (from) => {
+      const right = svgW - X[from] - 30;
+      const left = X[from] - 30;
+      return right >= Math.min(260, left)
+        ? { left: false, room: right }
+        : { left: true, room: left };
+    },
+    /* A label may run past a short arrow; it stays inside the drawing. */
+    roomOf: (x1, x2) => Math.floor(Math.max(Math.abs(x2 - x1) - 16, 210) / CH),
+    placeX: (mid, text) => {
+      const half = (text.length * CH) / 2 + 4;
+      return Math.min(svgW - half, Math.max(half, mid));
+    },
+  };
 };

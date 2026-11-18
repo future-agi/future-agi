@@ -221,6 +221,3 @@ export function CopyLink({ url }) {
   );
 }
 CopyLink.propTypes = { url: PropTypes.string.isRequired };
-
-/* The picked step: what was asked and what came back, in full, with what
-   it cost and links out. */
