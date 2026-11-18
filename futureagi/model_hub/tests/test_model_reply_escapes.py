@@ -44,6 +44,10 @@ def test_custom_judge_preserves_explanation(monkeypatch, prefix, indent, suffix)
     reason = "left\tright\r\n" + r"C:\temp\report.txt"
     obj = json.dumps({"result": "Pass", "explanation": reason})
     reply = prefix + "{" + indent + obj[1:] + suffix
+    assert_judge_reply(monkeypatch, reply, reason)
+
+
+def assert_judge_reply(monkeypatch, reply, reason):
     monkeypatch.setattr(LLM, "_init_client", lambda *_: None)
     judge = CustomPromptEvaluator(
         rule_prompt="Evaluate {{output}}", model="gpt-4o", provider="openai"
@@ -69,7 +73,11 @@ def test_custom_judge_preserves_explanation(monkeypatch, prefix, indent, suffix)
 )
 def test_legacy_prompt_object_preserves_nested_strings(prefix, suffix):
     expected = {"notes": ["left\tright", r"\text{answer}", 'say "}"']}
-    message = SimpleNamespace(content=f"{prefix}{json.dumps(expected)}{suffix}")
+    assert_legacy_reply(f"{prefix}{json.dumps(expected)}{suffix}", expected)
+
+
+def assert_legacy_reply(reply, expected):
+    message = SimpleNamespace(content=reply)
     response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
     prompt = RunPrompt(
         model="gpt-4o",
@@ -87,3 +95,39 @@ def test_legacy_prompt_object_preserves_nested_strings(prefix, suffix):
     )
 
     assert prompt.get_formatted_output(response) == expected
+
+
+@pytest.mark.parametrize("caller", ["judge", "legacy"])
+@pytest.mark.parametrize(
+    "form",
+    ["labelled-example", "fenced-example", "quoted-rubric", "nbsp", "field-fence"],
+)
+def test_answer_not_example_or_evidence(monkeypatch, caller, form):
+    reason = 'Graded: "}"\t' + r"C:\temp\report.txt"
+    expected = (
+        {"result": "Pass", "explanation": reason}
+        if caller == "judge"
+        else {"notes": [{"reason": reason}]}
+    )
+    demo = {"result": "Fail", "explanation": "The response is missing the closing }."}
+    answer = json.dumps(expected)
+    if form == "labelled-example":
+        reply = f"Example only: {json.dumps(demo)}. Actual answer: {answer}"
+    elif form == "fenced-example":
+        reply = f"Example:\n```json\n{json.dumps(demo)}\n```\nFinal: {answer}"
+    elif form == "quoted-rubric":
+        reply = (
+            'Using {rubric: "write } to close", example: '
+            + json.dumps(demo)
+            + "}. "
+            + answer
+        )
+    elif form == "nbsp":
+        reply = "{\u00a0" + answer[1:] + " Evidence: {}"
+    else:
+        reply = "{```json\n" + answer[1:-1] + "\n```}"
+
+    if caller == "judge":
+        assert_judge_reply(monkeypatch, reply, reason)
+    else:
+        assert_legacy_reply(reply, expected)

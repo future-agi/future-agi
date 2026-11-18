@@ -6,7 +6,17 @@ from agentic_eval.core_evals.fi_utils.json import JsonHelper
 
 # A quoted fragment in prose isn't a key unless a colon follows it.
 _OBJECT_START = re.compile(
-    r"""\{(?:\s|\\[tr])*(?:\}|(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')(?:\s|\\[tr])*:)"""
+    r"""\{(?:\s|\\[tr])*(?:```|\}|(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')(?:\s|\\[tr])*:)"""
+)
+# Do not interpret these markers inside strings: match at decoded object boundaries.
+_EXAMPLE_LABEL = re.compile(
+    r"\b(?:example|sample)(?:\s+(?:only|response|answer))?\s*:\s*(?:`{1,3}(?:json)?\s*)?\Z",
+    re.IGNORECASE,
+)
+_ANSWER_SEPARATOR = re.compile(
+    r"\s*`{0,3}\s*[.;]?\s*(?:my\s+)?(?:actual(?:\s+answer)?|final(?:\s+answer)?)"
+    r"(?:\s+is)?\s*:\s*(?:`{1,3}(?:json)?\s*)?(?=\{)",
+    re.IGNORECASE,
 )
 
 
@@ -22,6 +32,17 @@ def _skip_placeholder(text: str, start: int, decoder: json.JSONDecoder) -> int:
                 continue
             except json.JSONDecodeError:
                 depth += 1
+        elif text[i] == '"':
+            # A quoted rubric value may itself describe a delimiter. Require
+            # a field delimiter after it: a stray prose quote is not a string.
+            try:
+                _, after = decoder.raw_decode(text, i)
+            except json.JSONDecodeError:
+                pass
+            else:
+                if re.match(r"\s*[,}\]]", text[after:]):
+                    i = after
+                    continue
         elif text[i] == "}":
             depth -= 1
             if depth == 0:
@@ -56,6 +77,9 @@ def _recover_object(text: str, start: int) -> tuple[str, int]:
             if depth == 0:
                 end = i + 1
                 break
+        elif char.isspace():
+            parts.extend((text[mark:i], " "))
+            mark = i + 1
         elif char == "\\" and text[i + 1 : i + 2] in ("t", "r"):
             parts.extend((text[mark:i], " "))
             mark = i + 2
@@ -73,10 +97,7 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
         )
 
     json_str = (
-        input_str[first : last + 1]
-        .replace("\n", "")
-        .replace("\r", "")
-        .replace("\t", "")
+        input_str[: last + 1].replace("\n", "").replace("\r", "").replace("\t", "")
     )
 
     decoder = json.JSONDecoder()
@@ -88,9 +109,12 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
             continue
         try:
             # Trailing commentary (even another object) cannot invalidate a good reply.
-            value, _ = decoder.raw_decode(json_str, start)
+            value, end = decoder.raw_decode(json_str, start)
         except json.JSONDecodeError:
             recovered, end = _recover_object(json_str, start)
+            fields = recovered[1:-1].strip()
+            if fields.startswith("```") and fields.endswith("```"):
+                recovered = "{" + strip_code_fence(fields) + "}"
             try:
                 value = json.loads(recovered)
             except json.JSONDecodeError:
@@ -113,6 +137,12 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
                 continue
         if not isinstance(value, dict):
             raise ValueError("Extracted string is not valid Response.")
+        if _ANSWER_SEPARATOR.match(json_str, end) and _EXAMPLE_LABEL.search(
+            json_str, 0, start
+        ):
+            # An explicitly labelled answer follows an explicitly labelled example.
+            # Don't confuse unlabelled objects or trailing evidence with that pair.
+            continue
         return value
     if fallback is not None:
         return fallback
