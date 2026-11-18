@@ -44491,6 +44491,12 @@ export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionUntested
 
 export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionGradingGradableMin = 0;
 
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRunningMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackByMinOne = 0;
+
 export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
   pairing: zod.object({
     agent_version: zod.object({
@@ -44954,6 +44960,39 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       .describe(
         "Every selected case's needs were read from its stored documents.",
       ),
+    next: zod
+      .enum(["validate_first", "run_unvalidated"])
+      .describe(
+        "When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise.",
+      ),
+    running: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRunningMin,
+      )
+      .describe("Selected cases a run of this selection would send."),
+    held_back: zod.object({
+      count: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackCountMin,
+        ),
+      keys: zod.array(zod.string().min(1)),
+      truncated: zod.boolean(),
+      by: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionHeldBackByMinOne,
+            ),
+        )
+        .describe("Held-back cases per readiness row that held them."),
+    }),
+    reasons: zod
+      .record(zod.string(), zod.string().min(1))
+      .describe("Each holding row's reason, in plain words."),
   }),
 });
 
@@ -45020,6 +45059,12 @@ export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSt
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionUntestedMin = 0;
 
 export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionGradingGradableMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRunningMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackByMinOne = 0;
 
 export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
   zod.object({
@@ -45492,6 +45537,39 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         .describe(
           "Every selected case's needs were read from its stored documents.",
         ),
+      next: zod
+        .enum(["validate_first", "run_unvalidated"])
+        .describe(
+          "When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise.",
+        ),
+      running: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRunningMin,
+        )
+        .describe("Selected cases a run of this selection would send."),
+      held_back: zod.object({
+        count: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackCountMin,
+          ),
+        keys: zod.array(zod.string().min(1)),
+        truncated: zod.boolean(),
+        by: zod
+          .record(
+            zod.string(),
+            zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionHeldBackByMinOne,
+              ),
+          )
+          .describe("Held-back cases per readiness row that held them."),
+      }),
+      reasons: zod
+        .record(zod.string(), zod.string().min(1))
+        .describe("Each holding row's reason, in plain words."),
     }),
   });
 
@@ -45726,6 +45804,12 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
           label: zod.string().min(1).nullish(),
         })
         .nullable(),
+      changed_test: zod
+        .boolean()
+        .optional()
+        .describe(
+          "The case changed between the two runs (its content, or a source it cites).",
+        ),
     }),
   ),
   summary: zod.object({
@@ -47101,6 +47185,12 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         }),
       ),
     }),
+    not_active: zod
+      .array(zod.record(zod.string(), zod.string()))
+      .optional()
+      .describe(
+        "Cases of the new suite version not Active on the new defaults: {scenario_key, reason, reason_text}.",
+      ),
   });
 
 /**
@@ -50181,6 +50271,181 @@ export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsBody =
   });
 
 /**
+ * Where one scenario validation got to, and whether it recorded its proofs.
+ */
+export const SimulateApiHarnessEnvironmentsValidationStatusParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsValidationStatusQueryParams =
+  zod.object({
+    job_id: zod.string().uuid(),
+  });
+
+export const SimulateApiHarnessEnvironmentsValidationStatusResponse =
+  zod.object({
+    state: zod.enum(["validating", "finished", "failed", "unavailable"]),
+    job_id: zod.string().min(1),
+    deadline_at: zod.string().min(1),
+    finished_at: zod.string().min(1),
+    proofs_recorded: zod.boolean(),
+    message: zod.string().min(1),
+  });
+
+/**
+ * Prove every scenario of the pair again; 202 while it runs, never refused while one is live.
+ */
+export const SimulateApiHarnessEnvironmentsValidateScenariosParams = zod.object(
+  {
+    id: zod.string(),
+  },
+);
+
+export const simulateApiHarnessEnvironmentsValidateScenariosBodyIfFreshDefault =
+  false;
+export const simulateApiHarnessEnvironmentsValidateScenariosBodyKeysItemMax = 255;
+
+export const simulateApiHarnessEnvironmentsValidateScenariosBodyKeysMax = 50;
+
+export const SimulateApiHarnessEnvironmentsValidateScenariosBody = zod.object({
+  agent_version_id: zod.string().uuid().optional(),
+  environment_version_id: zod.string().uuid().optional(),
+  suite_version_id: zod.string().uuid().optional(),
+  if_fresh: zod
+    .boolean()
+    .default(simulateApiHarnessEnvironmentsValidateScenariosBodyIfFreshDefault)
+    .describe(
+      "Answer ready without a new job when the newest proving finished after the pair's last change.",
+    ),
+  keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsValidateScenariosBodyKeysItemMax),
+    )
+    .max(simulateApiHarnessEnvironmentsValidateScenariosBodyKeysMax)
+    .optional()
+    .describe(
+      "Prove only these scenario keys; the other cases keep their proofs.",
+    ),
+});
+
+export const SimulateApiHarnessEnvironmentsValidateScenariosResponse =
+  zod.object({
+    state: zod.enum(["validating", "ready", "unavailable"]),
+    job_id: zod.string().min(1).optional(),
+    deadline_at: zod.string().min(1).optional(),
+    finished_at: zod.string().min(1).optional(),
+    message: zod.string().min(1).optional(),
+  });
+
+/**
+ * Take a scenario out of future runs, keeping its identity, runs and evidence.
+ */
+export const SimulateApiHarnessEnvironmentsArchiveScenarioParams = zod.object({
+  id: zod.string(),
+  key: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsArchiveScenarioBodyReasonDefault = ``;
+export const simulateApiHarnessEnvironmentsArchiveScenarioBodyReasonMax = 255;
+
+export const SimulateApiHarnessEnvironmentsArchiveScenarioBody = zod.object({
+  reason: zod
+    .string()
+    .max(simulateApiHarnessEnvironmentsArchiveScenarioBodyReasonMax)
+    .default(simulateApiHarnessEnvironmentsArchiveScenarioBodyReasonDefault),
+});
+
+export const SimulateApiHarnessEnvironmentsArchiveScenarioResponse = zod.object(
+  {
+    scenario_key: zod.string().min(1),
+    lifecycle: zod.record(zod.string(), zod.string()),
+    live: zod.boolean().optional(),
+  },
+);
+
+/**
+ * Seeded rows of one table, to pick a real record for a case whose record is missing. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsScenarioRecordsParams = zod.object({
+  id: zod.string(),
+  key: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsScenarioRecordsQueryTableMax = 255;
+
+export const SimulateApiHarnessEnvironmentsScenarioRecordsQueryParams =
+  zod.object({
+    table: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsScenarioRecordsQueryTableMax),
+  });
+
+export const SimulateApiHarnessEnvironmentsScenarioRecordsResponse = zod.object(
+  {
+    table: zod.string().min(1),
+    rows: zod.array(zod.record(zod.string(), zod.string())),
+    available: zod
+      .boolean()
+      .describe(
+        "False when the world's records live only in the agent's own service.",
+      ),
+  },
+);
+
+/**
+ * Bring an archived scenario back: at once when the saved suite still holds it, else as a draft.
+ */
+export const SimulateApiHarnessEnvironmentsRestoreScenarioParams = zod.object({
+  id: zod.string(),
+  key: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsRestoreScenarioBody = zod
+  .object({})
+  .passthrough();
+
+export const SimulateApiHarnessEnvironmentsRestoreScenarioResponse = zod.object(
+  {
+    scenario_key: zod.string().min(1),
+    lifecycle: zod.record(zod.string(), zod.string()),
+    live: zod.boolean().optional(),
+  },
+);
+
+/**
+ * Each distinct content of a scenario across saved suite versions, newest first.
+ */
+export const SimulateApiHarnessEnvironmentsScenarioRevisionsParams = zod.object(
+  {
+    id: zod.string(),
+    key: zod.string(),
+  },
+);
+
+export const SimulateApiHarnessEnvironmentsScenarioRevisionsResponse =
+  zod.object({
+    scenario_key: zod.string().min(1),
+    revisions: zod.array(
+      zod.object({
+        revision: zod.number(),
+        digest: zod.string().min(1),
+        suite_versions: zod.array(zod.number()),
+        first_suite_version: zod.number(),
+        changed_fields: zod.array(zod.string().min(1)),
+        lifecycle_on_default_environment: zod.record(
+          zod.string(),
+          zod.string(),
+        ),
+      }),
+    ),
+    truncated: zod.boolean(),
+  });
+
+/**
  * The seeded rows this scenario's facts name, each looked up by its key: held, or missing from the seed.
  */
 export const SimulateApiHarnessEnvironmentsStartingRecordsParams = zod.object({
@@ -51300,6 +51565,29 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionParams 
 
 export const SimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionBody =
   zod.object({});
+
+/**
+ * The rules and files this environment version changed that cases cite, with the cases citing each.
+ */
+export const SimulateApiHarnessEnvironmentsSourceChangesParams = zod.object({
+  id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsSourceChangesResponse = zod.object({
+  from_version: zod.number(),
+  to_version: zod.number(),
+  changes: zod.array(
+    zod.object({
+      kind: zod.enum(["rule", "file"]),
+      ref: zod.string(),
+      before: zod.string().min(1),
+      after: zod.string().min(1),
+      cited_by: zod.array(zod.string().min(1)),
+    }),
+  ),
+  truncated: zod.boolean(),
+});
 
 /**
  * The scenarios in one suite version, by number; a coding agent's read leaves
@@ -54504,11 +54792,36 @@ export const SimulateApiHarnessConversationsPublishParams = zod.object({
 
 export const simulateApiHarnessConversationsPublishBodyDigestMax = 128;
 
+export const simulateApiHarnessConversationsPublishBodyFailedScenariosItemScenarioKeyMax = 255;
+
+export const simulateApiHarnessConversationsPublishBodyFailedScenariosItemReasonMax = 2000;
+
+export const simulateApiHarnessConversationsPublishBodyFailedScenariosMax = 200;
+
 export const SimulateApiHarnessConversationsPublishBody = zod.object({
   digest: zod
     .string()
     .min(1)
     .max(simulateApiHarnessConversationsPublishBodyDigestMax),
+  failed_scenarios: zod
+    .array(
+      zod.object({
+        scenario_key: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessConversationsPublishBodyFailedScenariosItemScenarioKeyMax,
+          ),
+        reason: zod
+          .string()
+          .max(
+            simulateApiHarnessConversationsPublishBodyFailedScenariosItemReasonMax,
+          )
+          .optional(),
+      }),
+    )
+    .max(simulateApiHarnessConversationsPublishBodyFailedScenariosMax)
+    .optional(),
 });
 
 export const SimulateApiHarnessConversationsRerunParams = zod.object({
@@ -66425,6 +66738,10 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         reasons: zod
           .record(zod.string(), zod.string().min(1))
           .describe("Each holding row's reason, in plain words."),
+        next: zod
+          .enum(["validate_first", "run_unvalidated"])
+          .optional()
+          .describe("As the run preview's selection.next."),
       })
       .optional()
       .describe(
@@ -66523,6 +66840,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         label: zod.string(),
       })
       .optional(),
+    must_pass_failed: zod.array(zod.string().min(1)).optional(),
   }),
   summary: zod.object({
     total: zod.number(),

@@ -53562,6 +53562,273 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/scenarios/validate/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_validation_status",
+                "description": "Where one scenario validation got to, and whether it recorded its proofs.",
+                "parameters": [
+                    {
+                        "name": "job_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioValidationStatus"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "simulate_api_harness-environments_validate_scenarios",
+                "description": "Prove every scenario of the pair again; 202 while it runs, never refused while one is live.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioValidate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioValidateResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioValidateResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_archive_scenario",
+                "description": "Take a scenario out of future runs, keeping its identity, runs and evidence.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioArchive"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioLifecycleResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/scenarios/{key}/records/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_scenario_records",
+                "description": "Seeded rows of one table, to pick a real record for a case whose record is missing. No writes.",
+                "parameters": [
+                    {
+                        "name": "table",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioRecordsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_restore_scenario",
+                "description": "Bring an archived scenario back: at once when the saved suite still holds it, else as a draft.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioRestore"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioLifecycleResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_scenario_revisions",
+                "description": "Each distinct content of a scenario across saved suite versions, newest first.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioRevisions"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "key",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_starting_records",
@@ -53889,6 +54156,45 @@
                     "simulate"
                 ],
                 "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_source_changes",
+                "description": "The rules and files this environment version changed that cases cite, with the cases citing each.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceChanges"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
                 "x-runtime-response-validation": true
             },
             "parameters": [
@@ -147162,6 +147468,42 @@
                 }
             }
         },
+        "HarnessRunHeldBack": {
+            "required": [
+                "count",
+                "keys",
+                "truncated",
+                "by"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "by": {
+                    "title": "By",
+                    "description": "Held-back cases per readiness row that held them.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                }
+            }
+        },
         "HarnessCapabilitySelectionCounts": {
             "required": [
                 "suite_total",
@@ -147177,7 +147519,11 @@
                 "blocking_area",
                 "dropped",
                 "grading",
-                "requirements_recorded"
+                "requirements_recorded",
+                "next",
+                "running",
+                "held_back",
+                "reasons"
             ],
             "type": "object",
             "properties": {
@@ -147248,6 +147594,34 @@
                     "title": "Requirements recorded",
                     "description": "Every selected case's needs were read from its stored documents.",
                     "type": "boolean"
+                },
+                "next": {
+                    "title": "Next",
+                    "description": "When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise.",
+                    "type": "string",
+                    "enum": [
+                        "validate_first",
+                        "run_unvalidated"
+                    ],
+                    "x-nullable": true
+                },
+                "running": {
+                    "title": "Running",
+                    "description": "Selected cases a run of this selection would send.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "held_back": {
+                    "$ref": "#/definitions/HarnessRunHeldBack"
+                },
+                "reasons": {
+                    "title": "Reasons",
+                    "description": "Each holding row's reason, in plain words.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },
@@ -147640,6 +148014,11 @@
                 },
                 "removed_in": {
                     "$ref": "#/definitions/RunVersionLabel"
+                },
+                "changed_test": {
+                    "title": "Changed test",
+                    "description": "The case changed between the two runs (its content, or a source it cites).",
+                    "type": "boolean"
                 }
             }
         },
@@ -148897,6 +149276,17 @@
                 },
                 "versions": {
                     "$ref": "#/definitions/HarnessVersions"
+                },
+                "not_active": {
+                    "description": "Cases of the new suite version not Active on the new defaults: {scenario_key, reason, reason_text}.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
                 }
             }
         },
@@ -151012,42 +151402,6 @@
                 }
             }
         },
-        "HarnessRunHeldBack": {
-            "required": [
-                "count",
-                "keys",
-                "truncated",
-                "by"
-            ],
-            "type": "object",
-            "properties": {
-                "count": {
-                    "title": "Count",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                },
-                "truncated": {
-                    "title": "Truncated",
-                    "type": "boolean"
-                },
-                "by": {
-                    "title": "By",
-                    "description": "Held-back cases per readiness row that held them.",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "integer",
-                        "minimum": 0
-                    }
-                }
-            }
-        },
         "HarnessRunReadinessSelection": {
             "description": "The cases readiness held back from this run and why; null when runs are not pinned to versions, and for a coding agent's key.",
             "required": [
@@ -151094,6 +151448,16 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "next": {
+                    "title": "Next",
+                    "description": "As the run preview's selection.next.",
+                    "type": "string",
+                    "enum": [
+                        "validate_first",
+                        "run_unvalidated"
+                    ],
+                    "x-nullable": true
                 }
             },
             "x-nullable": true
@@ -151246,6 +151610,283 @@
                     "title": "Call execution count",
                     "description": "How many of the run's calls were queued for grading.",
                     "type": "integer"
+                }
+            }
+        },
+        "HarnessScenarioValidationStatus": {
+            "required": [
+                "state",
+                "job_id",
+                "deadline_at",
+                "finished_at",
+                "proofs_recorded",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "validating",
+                        "finished",
+                        "failed",
+                        "unavailable"
+                    ]
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "deadline_at": {
+                    "title": "Deadline at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "proofs_recorded": {
+                    "title": "Proofs recorded",
+                    "type": "boolean"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessScenarioValidate": {
+            "type": "object",
+            "properties": {
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "if_fresh": {
+                    "title": "If fresh",
+                    "description": "Answer ready without a new job when the newest proving finished after the pair's last change.",
+                    "type": "boolean",
+                    "default": false
+                },
+                "keys": {
+                    "description": "Prove only these scenario keys; the other cases keep their proofs.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 50
+                }
+            }
+        },
+        "HarnessScenarioValidateResponse": {
+            "required": [
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "validating",
+                        "ready",
+                        "unavailable"
+                    ]
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "deadline_at": {
+                    "title": "Deadline at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessScenarioArchive": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 255
+                }
+            }
+        },
+        "HarnessScenarioLifecycleResponse": {
+            "required": [
+                "scenario_key",
+                "lifecycle"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "lifecycle": {
+                    "title": "Lifecycle",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "live": {
+                    "title": "Live",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessScenarioRecordsResponse": {
+            "required": [
+                "table",
+                "rows",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "table": {
+                    "title": "Table",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "available": {
+                    "title": "Available",
+                    "description": "False when the world's records live only in the agent's own service.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessScenarioRestore": {
+            "type": "object",
+            "properties": {}
+        },
+        "HarnessScenarioRevision": {
+            "required": [
+                "revision",
+                "digest",
+                "suite_versions",
+                "first_suite_version",
+                "changed_fields",
+                "lifecycle_on_default_environment"
+            ],
+            "type": "object",
+            "properties": {
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "suite_versions": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "x-nullable": true
+                    }
+                },
+                "first_suite_version": {
+                    "title": "First suite version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "changed_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "lifecycle_on_default_environment": {
+                    "title": "Lifecycle on default environment",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessScenarioRevisions": {
+            "required": [
+                "scenario_key",
+                "revisions",
+                "truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "revisions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessScenarioRevision"
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
                 }
             }
         },
@@ -151751,6 +152392,80 @@
             "properties": {
                 "agent_version": {
                     "$ref": "#/definitions/HarnessVersion"
+                }
+            }
+        },
+        "HarnessSourceChange": {
+            "required": [
+                "kind",
+                "ref",
+                "before",
+                "after",
+                "cited_by"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "rule",
+                        "file"
+                    ]
+                },
+                "ref": {
+                    "title": "Ref",
+                    "type": "string"
+                },
+                "before": {
+                    "title": "Before",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "after": {
+                    "title": "After",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "cited_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessSourceChanges": {
+            "required": [
+                "from_version",
+                "to_version",
+                "changes",
+                "truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "from_version": {
+                    "title": "From version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "to_version": {
+                    "title": "To version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSourceChange"
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
                 }
             }
         },
@@ -155573,6 +156288,25 @@
                 }
             }
         },
+        "HarnessConversationFailedScenario": {
+            "required": [
+                "scenario_key"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "maxLength": 2000
+                }
+            }
+        },
         "HarnessConversationPublish": {
             "required": [
                 "digest"
@@ -155584,6 +156318,13 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "failed_scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationFailedScenario"
+                    },
+                    "maxItems": 200
                 }
             }
         },
@@ -168837,6 +169578,13 @@
                 },
                 "fix_run": {
                     "$ref": "#/definitions/RunFixRun"
+                },
+                "must_pass_failed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1163,
+  endpointCount: 1169,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29632,6 +29632,132 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/scenarios/validate/": {
+      get: {
+        operationId: "simulate_api_harness-environments_validation_status",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          job_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioValidationStatus",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_harness-environments_validate_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioValidate",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioValidateResponse",
+          },
+          202: {
+            $ref: "#/definitions/HarnessScenarioValidateResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/": {
+      post: {
+        operationId: "simulate_api_harness-environments_archive_scenario",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioArchive",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioLifecycleResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/{key}/records/": {
+      get: {
+        operationId: "simulate_api_harness-environments_scenario_records",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          table: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioRecordsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/": {
+      post: {
+        operationId: "simulate_api_harness-environments_restore_scenario",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioRestore",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioLifecycleResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/": {
+      get: {
+        operationId: "simulate_api_harness-environments_scenario_revisions",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioRevisions",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
       {
         get: {
@@ -29779,6 +29905,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessVersions",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/":
+      {
+        get: {
+          operationId: "simulate_api_harness-environments_source_changes",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessSourceChanges",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -68883,6 +69027,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 128,
           minLength: 1,
         },
+        failed_scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationFailedScenario",
+          },
+          maxItems: 200,
+        },
       },
     },
     HarnessConversationRead: {
@@ -69296,6 +69447,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         versions: {
           $ref: "#/definitions/HarnessVersions",
+        },
+        not_active: {
+          description:
+            "Cases of the new suite version not Active on the new defaults: {scenario_key, reason, reason_text}.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
         },
       },
     },
@@ -70789,6 +70952,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessScenarioArchive: {
+      type: "object",
+      properties: {
+        reason: {
+          title: "Reason",
+          type: "string",
+          default: "",
+          maxLength: 255,
+        },
+      },
+    },
+    HarnessScenarioLifecycleResponse: {
+      required: ["scenario_key", "lifecycle"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        lifecycle: {
+          title: "Lifecycle",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        live: {
+          title: "Live",
+          type: "boolean",
+        },
+      },
+    },
     HarnessScenarioListResponse: {
       required: [
         "count",
@@ -70961,6 +71159,179 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessScenarioRecordsResponse: {
+      required: ["table", "rows", "available"],
+      type: "object",
+      properties: {
+        table: {
+          title: "Table",
+          type: "string",
+          minLength: 1,
+        },
+        rows: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        available: {
+          title: "Available",
+          description:
+            "False when the world's records live only in the agent's own service.",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessScenarioRestore: {
+      type: "object",
+      properties: {},
+    },
+    HarnessScenarioRevisions: {
+      required: ["scenario_key", "revisions", "truncated"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        revisions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioRevision",
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessScenarioValidate: {
+      type: "object",
+      properties: {
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        if_fresh: {
+          title: "If fresh",
+          description:
+            "Answer ready without a new job when the newest proving finished after the pair's last change.",
+          type: "boolean",
+          default: false,
+        },
+        keys: {
+          description:
+            "Prove only these scenario keys; the other cases keep their proofs.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+      },
+    },
+    HarnessScenarioValidateResponse: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["validating", "ready", "unavailable"],
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        deadline_at: {
+          title: "Deadline at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessScenarioValidationStatus: {
+      required: [
+        "state",
+        "job_id",
+        "deadline_at",
+        "finished_at",
+        "proofs_recorded",
+        "message",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["validating", "finished", "failed", "unavailable"],
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          minLength: 1,
+        },
+        deadline_at: {
+          title: "Deadline at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        proofs_recorded: {
+          title: "Proofs recorded",
+          type: "boolean",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessSecretFileUploadResponse: {
       required: ["environment_name", "secret_ref", "size"],
       type: "object",
@@ -71011,6 +71382,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SecretReference",
           },
           maxItems: 10,
+        },
+      },
+    },
+    HarnessSourceChanges: {
+      required: ["from_version", "to_version", "changes", "truncated"],
+      type: "object",
+      properties: {
+        from_version: {
+          title: "From version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        to_version: {
+          title: "To version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceChange",
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
         },
       },
     },
@@ -108384,6 +108781,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "dropped",
         "grading",
         "requirements_recorded",
+        "next",
+        "running",
+        "held_back",
+        "reasons",
       ],
       type: "object",
       properties: {
@@ -108457,6 +108858,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "Every selected case's needs were read from its stored documents.",
           type: "boolean",
+        },
+        next: {
+          title: "Next",
+          description:
+            "When every selected case is held back only for not being validated on the pairing: a run validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here (run_unvalidated). Null otherwise.",
+          type: "string",
+          enum: ["validate_first", "run_unvalidated"],
+          "x-nullable": true,
+        },
+        running: {
+          title: "Running",
+          description: "Selected cases a run of this selection would send.",
+          type: "integer",
+          minimum: 0,
+        },
+        held_back: {
+          $ref: "#/definitions/HarnessRunHeldBack",
+        },
+        reasons: {
+          title: "Reasons",
+          description: "Each holding row's reason, in plain words.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -108807,6 +109234,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         removed_in: {
           $ref: "#/definitions/RunVersionLabel",
         },
+        changed_test: {
+          title: "Changed test",
+          description:
+            "The case changed between the two runs (its content, or a source it cites).",
+          type: "boolean",
+        },
       },
     },
     HarnessCompareSummary: {
@@ -108984,6 +109417,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessConversationFailedScenario: {
+      required: ["scenario_key"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          maxLength: 2000,
         },
       },
     },
@@ -111712,6 +112162,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        next: {
+          title: "Next",
+          description: "As the run preview's selection.next.",
+          type: "string",
+          enum: ["validate_first", "run_unvalidated"],
+          "x-nullable": true,
+        },
       },
       "x-nullable": true,
     },
@@ -112223,6 +112680,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessScenarioRevision: {
+      required: [
+        "revision",
+        "digest",
+        "suite_versions",
+        "first_suite_version",
+        "changed_fields",
+        "lifecycle_on_default_environment",
+      ],
+      type: "object",
+      properties: {
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        suite_versions: {
+          type: "array",
+          items: {
+            type: "integer",
+            "x-nullable": true,
+          },
+        },
+        first_suite_version: {
+          title: "First suite version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        changed_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        lifecycle_on_default_environment: {
+          title: "Lifecycle on default environment",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+      },
+    },
     SecretReference: {
       required: ["manager", "key", "purpose"],
       type: "object",
@@ -112249,6 +112756,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Purpose",
           type: "string",
           enum: ["target_provider", "simulator_provider", "source_checkout"],
+        },
+      },
+    },
+    HarnessSourceChange: {
+      required: ["kind", "ref", "before", "after", "cited_by"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["rule", "file"],
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+        },
+        before: {
+          title: "Before",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        after: {
+          title: "After",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        cited_by: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -119783,6 +120324,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         fix_run: {
           $ref: "#/definitions/RunFixRun",
+        },
+        must_pass_failed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -132576,6 +133124,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessRunHeldBack: {
+      required: ["count", "keys", "truncated", "by"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+        keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        by: {
+          title: "By",
+          description: "Held-back cases per readiness row that held them.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+      },
+    },
     HarnessCapabilityAffected: {
       description:
         "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
@@ -133781,37 +134360,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
-    },
-    HarnessRunHeldBack: {
-      required: ["count", "keys", "truncated", "by"],
-      type: "object",
-      properties: {
-        count: {
-          title: "Count",
-          type: "integer",
-          minimum: 0,
-        },
-        keys: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        truncated: {
-          title: "Truncated",
-          type: "boolean",
-        },
-        by: {
-          title: "By",
-          description: "Held-back cases per readiness row that held them.",
-          type: "object",
-          additionalProperties: {
-            type: "integer",
-            minimum: 0,
-          },
-        },
-      },
     },
     HarnessBlockedScenario: {
       required: ["key", "name"],
