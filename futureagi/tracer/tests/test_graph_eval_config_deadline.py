@@ -185,6 +185,51 @@ def install(monkeypatch):
     return setup
 
 
+def _admitting_analytics():
+    """A ``RecordingAnalytics`` whose estimate the USERS graph gate admits.
+
+    The shared fake pins ``cost_estimate_rows = 1_000_000`` because that is
+    affordable at the raw filtered graph's measured 1,796 rows/ms. The users
+    system-metric statement is costed at ``_USER_GRAPH_SCAN_ROWS_PER_MS`` (553),
+    where a million rows need about 1,808 ms -- over every budget used in this
+    module. Left at the shared value the gate refuses the read before it starts,
+    so the ownership phases these tests are about never run and they would
+    assert the gate's degradation instead of their own subject. 100,000 rows is
+    under even the smallest remaining budget here (553 x 250 ms = 138,250).
+    """
+
+    from tracer.tests.test_graph_public_source_routing import RecordingAnalytics
+
+    class _Admitting(RecordingAnalytics):
+        cost_estimate_rows = 100_000
+
+    return _Admitting()
+
+
+def _data_statements(analytics):
+    """The recorded statements that are not the routing gate's cost probe.
+
+    The gate issues one ``EXPLAIN ESTIMATE`` before it picks a lane, and the
+    shared fake records it like any other statement, so the exact counts below
+    have to exclude it.
+
+    A probe is identified by WHAT IT IS -- an ``EXPLAIN`` -- and not by a
+    parameter name it happens to carry. An earlier version excluded on the
+    substring ``graph_cost_project_id``; that is the key the shared fake routes
+    on, but it is incidental to the probe, so a probe whose parameters were
+    renamed would have been counted as a data statement and an ``== 1``
+    assertion could then have passed for the wrong reason. Nothing the product
+    issues to fetch rows is an ``EXPLAIN``, so this test cannot mistake one for
+    the other.
+    """
+
+    return [
+        call
+        for call in analytics.calls
+        if not call[0].lstrip().upper().startswith("EXPLAIN")
+    ]
+
+
 @pytest.mark.parametrize("outer", [False, True])
 @pytest.mark.parametrize("initial_timeout", ["0", "250ms", "8s"])
 def test_owned_lookup_removes_statement_cap_and_restores_previous_setting(
@@ -299,10 +344,7 @@ def test_public_request_checks_do_not_become_owned_metadata_statement_caps(
 ):
     from tracer.services.clickhouse import graph_dispatch as dispatch
     from tracer.services.clickhouse import read_budget
-    from tracer.tests.test_graph_public_source_routing import (
-        RecordingAnalytics,
-        eval_filters,
-    )
+    from tracer.tests.test_graph_public_source_routing import eval_filters
 
     pg, lookups = install()
     pg.clock = 0.0
@@ -316,7 +358,7 @@ def test_public_request_checks_do_not_become_owned_metadata_statement_caps(
         return result
 
     monkeypatch.setattr(graph, "_user_filter_clauses", expensive_clauses)
-    analytics = RecordingAnalytics()
+    analytics = _admitting_analytics()
     result = dispatch.fetch_user_system_metric_graph_ch(
         analytics=analytics,
         project_id=PROJECT,
@@ -328,8 +370,9 @@ def test_public_request_checks_do_not_become_owned_metadata_statement_caps(
     assert pg.config_query_timeout == 0
     assert result["query_complete"] is True
     assert lookups == [{"project_id": PROJECT, "deleted": False}]
-    assert len(analytics.calls) == 1
-    query, params, call = analytics.calls[0]
+    statements = _data_statements(analytics)
+    assert len(statements) == 1
+    query, params, call = statements[0]
     assert "eval_scan.custom_eval_config_id IN %(user_eval_config_ids)s" in query
     assert params["user_eval_config_ids"] == (CONFIG,)
     assert call["timeout_ms"] <= budget_ms - elapsed_ms
@@ -342,10 +385,7 @@ def test_public_expiry_skips_or_discards_ownership_without_background_grant(
 ):
     from tracer.services.clickhouse import graph_dispatch as dispatch
     from tracer.services.clickhouse import read_budget
-    from tracer.tests.test_graph_public_source_routing import (
-        RecordingAnalytics,
-        eval_filters,
-    )
+    from tracer.tests.test_graph_public_source_routing import eval_filters
 
     pg, lookups = install(
         outer=outer,
@@ -365,7 +405,7 @@ def test_public_expiry_skips_or_discards_ownership_without_background_grant(
         return result
 
     monkeypatch.setattr(graph, "_user_filter_clauses", expensive_clauses)
-    analytics = RecordingAnalytics()
+    analytics = _admitting_analytics()
     result = dispatch.fetch_user_system_metric_graph_ch(
         analytics=analytics,
         project_id=PROJECT,
@@ -376,7 +416,10 @@ def test_public_expiry_skips_or_discards_ownership_without_background_grant(
     )
     assert result["query_complete"] is False
     assert result["query_error_code"] == "read_budget_exceeded"
-    assert analytics.calls == []
+    # No DATA statement is issued, which is what this test pins. The routing
+    # gate's own cost probe runs first and is excluded: the read is refused in
+    # probe time by design, so "no statement at all" is no longer the contract.
+    assert _data_statements(analytics) == []
     assert pg.timeout == "8s" and pg.in_atomic_block is outer
     assert pg.wrappers == []
     if phase == "before-lookup":

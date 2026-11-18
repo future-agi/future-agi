@@ -38,6 +38,7 @@ import RunPromptButton from "./RunPromptButton";
 import StopGeneratingButton from "./StopGeneratingButton";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { usePromptStore } from "../../../workbench-v2/store/usePromptStore";
 import { NavLink } from "react-router-dom";
@@ -60,6 +61,7 @@ const PromptActions = () => {
 
   const [saveCommitOpen, setSaveCommitOpen] = useState(false);
   const { role: userRole } = useAuthContext();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
 
   const {
     setOpenSelectModel,
@@ -362,9 +364,9 @@ const PromptActions = () => {
           </NavLink>
           <span style={{ display: "inline-block", marginTop: "6px" }}>
             <Iconify
-              icon="fluent:chevron-right-12-regular"
-              width={24}
-              height={24}
+              icon="solar:alt-arrow-right-linear"
+              width={16}
+              height={16}
             />
           </span>
 
@@ -372,31 +374,24 @@ const PromptActions = () => {
             condition={RolePermission.PROMPTS[PERMISSIONS.CREATE][userRole]}
           >
             <CustomTooltip show title="Add New Prompt" arrow size="small">
-              <Box
+              <IconButton
+                size="small"
                 sx={{
-                  cursor: "pointer",
                   border: "1px solid",
                   borderColor: "divider",
                   color: "text.disabled",
-                  borderRadius: theme.spacing(0.5),
-                  padding: theme.spacing(0.5),
-                  lineHeight: 0,
-                  height: "32px",
-                  width: "32px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
                   flexShrink: 0,
                 }}
                 onClick={handleWritePrompt}
+                aria-label="Add new prompt"
               >
                 <ShowComponent condition={!isLoadingCreate}>
-                  <Iconify icon="eva:plus-fill" width="16px" height="16px" />
+                  <Iconify icon="solar:add-linear" width="16px" height="16px" />
                 </ShowComponent>
                 <ShowComponent condition={isLoadingCreate}>
                   <CircularProgress size={16} sx={{ color: "text.primary" }} />
                 </ShowComponent>
-              </Box>
+              </IconButton>
             </CustomTooltip>
           </ShowComponent>
           {!isLoadingCreate ? (
@@ -467,7 +462,7 @@ const PromptActions = () => {
                     variant="rectangular"
                     width={25}
                     height={23}
-                    sx={{ borderRadius: "2px" }}
+                    sx={{ borderRadius: "4px" }}
                   />
                 )}
                 {baseVersion?.isDraft ? <DraftBadge>Draft</DraftBadge> : null}
@@ -495,10 +490,7 @@ const PromptActions = () => {
                           backgroundColor: getTagColorMap(label?.name, theme)
                             ?.backgroundColor,
                           color: getTagColorMap(label?.name, theme)?.color,
-                          borderRadius: "100px",
                           typography: "s3",
-                          fontWeight: "fontWeightMedium",
-                          height: 24,
                           "&:hover": {
                             backgroundColor: getTagColorMap(label?.name, theme)
                               ?.hoverBackgroundColor,
@@ -514,12 +506,7 @@ const PromptActions = () => {
                 !isLoadingCreate &&
                 RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole] && (
                   <span style={{ display: "inline-block" }}>
-                    <IconButton
-                      onClick={handleEdit}
-                      sx={{
-                        padding: 0.5,
-                      }}
-                    >
+                    <IconButton onClick={handleEdit} aria-label="Rename prompt">
                       <SvgColor
                         src="/assets/icons/ic_edit_pencil.svg"
                         sx={{
@@ -567,11 +554,10 @@ const PromptActions = () => {
               >
                 <span style={{ display: "inline-block" }}>
                   <Button
+                    size="small"
                     variant="contained"
                     color="primary"
                     sx={{
-                      borderRadius: "4px",
-                      height: "30px",
                       whiteSpace: "nowrap",
                     }}
                     disabled={
@@ -586,10 +572,7 @@ const PromptActions = () => {
                       });
                     }}
                     startIcon={
-                      <SvgColor
-                        sx={{ width: "20px", height: "20px" }}
-                        src="/assets/icons/ic_commit.svg"
-                      />
+                      <SvgColor width={16} src="/assets/icons/ic_commit.svg" />
                     }
                   >
                     <Typography variant="s1" fontWeight={"fontWeightMedium"}>
@@ -641,12 +624,11 @@ const PromptActions = () => {
               }}
             >
               <Button
+                size="small"
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
-                  height: "30px",
                   "&:hover": {
                     backgroundColor: `${theme.palette.background.neutral} !important`,
                   },
@@ -767,7 +749,6 @@ const PromptActions = () => {
 
       <Box sx={{ paddingX: "16px", marginBottom: "8px" }}>
         <Tabs
-          textColor="primary"
           value={currentTab}
           onChange={(e, value) => {
             // Prevent tab change if conditions aren't met
@@ -789,24 +770,24 @@ const PromptActions = () => {
               value: value,
             });
           }}
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-              height: "2px",
-              borderRadius: "20px",
-            },
-          }}
-          sx={{ ...tabSx, borderColor: "divider" }}
+          sx={tabSx}
         >
           <Tab
-            icon={<SvgColor src={"/assets/icons/navbar/ic_evaluate.svg"} />}
+            icon={
+              <SvgColor
+                width={16}
+                src={"/assets/icons/navbar/ic_evaluate.svg"}
+              />
+            }
             iconPosition="start"
             label={"Playground"}
             value={"Playground"}
           />
 
           <Tab
-            icon={<SvgColor src={"/assets/icons/navbar/ic_eval.svg"} />}
+            icon={
+              <SvgColor width={16} src={"/assets/icons/navbar/ic_eval.svg"} />
+            }
             iconPosition="start"
             label={
               versions.length === 0 ||
@@ -833,7 +814,7 @@ const PromptActions = () => {
           />
 
           <Tab
-            icon={<SvgColor src={"/assets/icons/ic_metrics.svg"} />}
+            icon={<SvgColor width={16} src={"/assets/icons/ic_metrics.svg"} />}
             iconPosition="start"
             label={
               versions.length === 0 ||
@@ -859,38 +840,40 @@ const PromptActions = () => {
             value="Metrics"
           />
 
-          <Tab
-            icon={
-              <Iconify
-                icon="mdi:chat-processing-outline"
-                width={18}
-                height={18}
-              />
-            }
-            iconPosition="start"
-            label={
-              versions.length === 0 ||
-              isAnyPromptDraft ||
-              isContentEmpty ||
-              isGenerating ? (
-                <CustomTooltip
-                  size="small"
-                  title={
-                    versions.length === 0
-                      ? "You need to submit at least one prompt before running simulations."
-                      : "Save your prompt to run simulations"
-                  }
-                  show
-                  arrow
-                >
-                  <span>Simulation</span>
-                </CustomTooltip>
-              ) : (
-                "Simulation"
-              )
-            }
-            value="Simulation"
-          />
+          {!restrictSimulateToEnvironments && (
+            <Tab
+              icon={
+                <Iconify
+                  icon="solar:chat-round-line-linear"
+                  width={16}
+                  height={16}
+                />
+              }
+              iconPosition="start"
+              label={
+                versions.length === 0 ||
+                isAnyPromptDraft ||
+                isContentEmpty ||
+                isGenerating ? (
+                  <CustomTooltip
+                    size="small"
+                    title={
+                      versions.length === 0
+                        ? "You need to submit at least one prompt before running simulations."
+                        : "Save your prompt to run simulations"
+                    }
+                    show
+                    arrow
+                  >
+                    <span>Simulation</span>
+                  </CustomTooltip>
+                ) : (
+                  "Simulation"
+                )
+              }
+              value="Simulation"
+            />
+          )}
         </Tabs>
       </Box>
       <SaveAndCommit

@@ -1,23 +1,196 @@
 """ClickHouse query builder for Observe end-user list and detail metrics."""
 
-from typing import Any
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
+from datetime import timedelta
+from typing import Any, Literal, NamedTuple
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.list_cursor import canonical_filter_leaf
 from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
 )
-from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
+from tracer.services.clickhouse.query_builders.filters import (
+    ClickHouseFilterBuilder,
+    EvalFilterMetadata,
+)
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    SUMMARY_NAME,
+    usage_aggregate_sql,
+    usage_coverage_sql,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     literal_survivor_map_subquery,
     resolved_id_expr,
     survivor_map_subquery,
 )
+from tracer.services.users_walk_witness import canonical_picked_text_values
+
+# Native span dimensions the Users table has no per-user aggregate for.
+# ``SYSTEM_METRIC_MAP`` resolves each of these to a physical ``spans`` column,
+# and none of them has an ``OUTPUT_FILTER_MAP`` entry, so a Users filter on one
+# is answered from the user's own spans — the same any-span population the
+# users graph aggregates — instead of being looked up in the span attribute
+# maps, where a native column has no key and every user reads NULL.
+USER_NATIVE_SPAN_DIMENSIONS: dict[str, str] = {
+    column_id: ClickHouseFilterBuilder.SYSTEM_METRIC_MAP[column_id]
+    for column_id in (
+        "status",
+        "model",
+        "provider",
+        "observation_type",
+        "span_kind",
+        "node_type",
+        "name",
+        "span_name",
+        "trace_name",
+    )
+}
+
+
+class MembershipTerm(NamedTuple):
+    """One ``countIf(alias) <comparison>`` term of a user membership condition.
+
+    ``> 0`` is an existence term, ``= 0`` an absence term
+    (``exact_graph_reads.compile_user_membership_leaf``).
+    """
+
+    alias: str
+    predicate: str
+    comparison: Literal["> 0", "= 0"]
 
 
 class UnsupportedBoundedUserListQuery(ValueError):
     """Raised when an exact user page cannot use the bounded query path."""
+
+
+@dataclass(frozen=True)
+class MatchingActivityWitness:
+    """The one physical-row predicate the matching-activity walk discovers on.
+
+    ``family`` is ``raw`` (a span-attribute leaf, served by the deployed key
+    and value blooms) or ``native`` (a native span-dimension leaf, the users
+    graph's own per-span flag). ``sql``/``params`` are the predicate every
+    slice, instant, existence and estimate statement puts in ``WHERE``. A raw
+    witness names its attribute ``key`` and ``kind`` (``text``, ``canonical_text``,
+    ``number`` or ``boolean``); a native one the filter index of its leaf (``leaf_index``)
+    and its column (``key``, display only). ``index_pruned`` says whether a skip index
+    is known to serve the predicate, so an empty slice costs only its fixed
+    overhead; it is False for a native witness (only ``idx_status`` serves one
+    of them, and not by design).
+
+    ``identity`` is the leaf as the signed cursor binds it
+    (``canonical_filter_leaf``): the same for every request a cursor admits,
+    whatever position the leaf holds in it. ``leaf_index`` is only the
+    namespace of the leaf's parameters in this request. The choice among
+    witnesses ranks on ``identity``, never on position, and the walk binds
+    the chosen one into its cursor (``users_matching_walk``). It is left out
+    of equality: the predicate is what a witness is.
+    """
+
+    family: Literal["raw", "native"]
+    key: str
+    kind: Literal["text", "canonical_text", "number", "boolean", "native"]
+    sql: str
+    params: dict[str, Any] = field(default_factory=dict)
+    leaf_index: int | None = None
+    index_pruned: bool = True
+    identity: str = field(default="", compare=False)
+
+
+# How selective a walk witness is expected to be, most selective first
+# (``witness_selectivity_rank``). A witness the page's matches are rare
+# under, but that matches most users, finds the same users again in every
+# slice: each request certifies them, rejects them and publishes nothing, for
+# as many requests as the window has slices. The static rank guesses the
+# rarest leaf from what it asks for, without reading anything:
+#
+# 0  a raw text equality/``in``: a value of a key the user chose, served by
+#    the key and value blooms;
+# 1  ``status`` equal to ERROR alone: errors are the exception by definition;
+# 2  a span or trace name: one per operation, the widest native vocabulary;
+# 3  a model;
+# 4  a provider or an observation type (a handful of values), and a raw
+#    number or boolean (a range, or one of two values);
+# 5  a native pattern (``contains``, ``starts_with``, ``ends_with``);
+# 6  ``status`` with OK or UNSET among its values: what almost every span is;
+# 7  a native negation or null test: every span without the named value,
+#    or with any value at all.
+#
+# The rank is a guess: a common raw value (``env = production``) outranks a
+# rare ``status = ERROR``. So it only orders the walk's measured choice, which
+# falls back to it (``users_matching_walk._choose_witness`` states the rule).
+_WITNESS_RANK_NATIVE_EQUALITY = {
+    "name": 2,
+    "trace_name": 2,
+    "model": 3,
+    "provider": 4,
+    "observation_type": 4,
+}
+_WITNESS_RANK_DENSE_STATUS = frozenset({"ok", "unset"})
+_WITNESS_RANK_PATTERN_OPS = frozenset({"contains", "starts_with", "ends_with"})
+
+
+def witness_selectivity_rank(
+    item: dict[str, Any], witness: MatchingActivityWitness
+) -> int:
+    """The static selectivity rank of ``witness``, the witness of leaf ``item``."""
+
+    if witness.family == "raw":
+        return 0 if witness.kind == "text" else 4
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    operation = config.get("filter_op") or config.get("filterOp")
+    if operation in {"equals", "in"}:
+        if witness.key == "status":
+            raw = config.get("filter_value", config.get("filterValue"))
+            values = raw if isinstance(raw, (list, tuple)) else [raw]
+            dense = any(
+                str(value).strip().lower() in _WITNESS_RANK_DENSE_STATUS
+                for value in values
+            )
+            return 6 if dense else 1
+        return _WITNESS_RANK_NATIVE_EQUALITY.get(witness.key, 4)
+    if operation in _WITNESS_RANK_PATTERN_OPS:
+        return 5
+    return 7
+
+
+# The page metrics ``build_requested_page_metric_queries`` reads, one
+# statement per group that has a requested field: sessions, then spans.
+REQUESTED_PAGE_SESSION_METRIC_FIELDS = ("num_sessions", "avg_session_duration")
+REQUESTED_PAGE_SPAN_METRIC_FIELDS = (
+    "avg_trace_latency",
+    "num_llm_calls",
+    "num_guardrails_triggered",
+    "num_active_days",
+    "num_traces_with_errors",
+)
+# The estimate table ``EXPLAIN ESTIMATE`` returns on ClickHouse 25.3; the
+# matching-activity walk reads its ``rows`` to cost a tail existence statement.
+_MATCHING_ACTIVITY_ESTIMATE_COLUMNS = frozenset(
+    {"database", "table", "parts", "rows", "marks"}
+)
+
+
+# Execution shape of a SEEDED candidate page (a scalar attribute witness or a
+# finite candidate id set). In-order reads (``optimize_*_in_order``) stream a
+# DISTINCT or GROUP BY over the sorting key without a hash table, at the price
+# of one merged stream per selected part. For the UNSEEDED page that is the
+# right trade: its collapse spans the whole window, and a hash table over every
+# identity in it would be the unbounded structure. A seeded page replays only
+# the population its seed bounds, and there the per-part streams are the
+# footprint: measured on production, the seeded acquisition held most of its
+# peak memory in the in-order machinery alone and released it, with a third of
+# its wall, under hash execution - identical rows and bytes, since the
+# statement's DISTINCT and GROUP BY are unchanged. Stated on the statement so
+# the primary-key IN sets ClickHouse builds while planning run under it too;
+# the v2 boundary keeps an explicit aggregation choice.
+_SEEDED_PAGE_READ_SETTINGS = (
+    "SETTINGS optimize_aggregation_in_order = 0, "
+    "optimize_distinct_in_order = 0, optimize_read_in_order = 0"
+)
 
 
 def _touched_survivor_map_subquery(
@@ -50,6 +223,84 @@ def _touched_survivor_map_subquery(
         )
         GROUP BY any_id
     """
+
+
+def _latest_user_usage_sql(*, include_num_sessions: bool = False) -> str:
+    """Select usage, ownership and compact flags from ONE physical winner.
+
+    Attribute maps are inspected at the source, never retained in aggregate
+    state. Wrapping nullable fields in the row tuple also prevents argMax from
+    reviving an older non-null owner/end time.
+    """
+    coverage = usage_coverage_sql(
+        attrs="spans.attrs_string", prefix="spans.", include_summary=True
+    )
+    known_fact = """(
+        spans.total_tokens > 0 OR spans.prompt_tokens > 0
+        OR spans.completion_tokens > 0 OR spans.observation_type = 'llm'
+        OR spans.cost != 0 OR spans.attrs_string['fi.usage.scope'] = 'turn'
+        OR spans.attrs_string['fi.cost.kind'] IN ('provider_reported', 'estimated')
+    )"""
+    fields = (
+        ("end_user_id", "spans.end_user_id"),
+        ("start_time", "spans.start_time"),
+        ("end_time", "spans.end_time"),
+        ("cost", "spans.cost"),
+        ("total_tokens", "spans.total_tokens"),
+        ("prompt_tokens", "spans.prompt_tokens"),
+        ("completion_tokens", "spans.completion_tokens"),
+        ("is_deleted", "spans.is_deleted"),
+        ("coverage", coverage),
+        ("known_cost_fact", known_fact),
+        ("parent_span_id", "spans.parent_span_id"),
+        ("name", f"if(spans.name = '{SUMMARY_NAME}', '{SUMMARY_NAME}', '')"),
+        (
+            "trace_session_id",
+            "spans.trace_session_id"
+            if include_num_sessions
+            else "CAST(NULL, 'Nullable(UUID)')",
+        ),
+        ("observation_type", "spans.observation_type"),
+    )
+    return ",\n".join(
+        [
+            "argMax(tuple("
+            + ", ".join(value for _, value in fields)
+            + "), spans._version) AS latest_usage_state",
+            "id AS latest_id",
+            *(
+                f"tupleElement(latest_usage_state, {index}) AS latest_{name}"
+                for index, (name, _) in enumerate(fields, 1)
+            ),
+        ]
+    )
+
+
+def _user_trace_usage_sql() -> str:
+    """Keep one complete usage array and summary proof per user/trace."""
+    return usage_aggregate_sql(
+        prefix="latest_",
+        coverage="latest_coverage",
+        known_cost_fact="latest_known_cost_fact",
+    )
+
+
+def _user_trace_metrics_projection() -> str:
+    """Explicit projection of the materialized singleton tuple (CH 25)."""
+    return ",\n".join(
+        f"tupleElement(trace_metrics, {index}) AS {column}"
+        for index, column in enumerate(
+            (
+                "known_cost_subtotal",
+                "known_cost_fact_count",
+                "unknown_cost_fact_count",
+                "usage_total_tokens",
+                "usage_prompt_tokens",
+                "usage_completion_tokens",
+            ),
+            1,
+        )
+    )
 
 
 class UserListQueryBuilder(BaseQueryBuilder):
@@ -230,6 +481,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
         # treats `project_ids=[]` as falsy and would otherwise drop project
         # scoping entirely, re-introducing a cross-workspace leak.)
         self.empty_scope = empty_scope
+        # The witness the matching-activity walk chose for this page, set once
+        # by the walk (``UsersListManager.matching_activity_walk_applies``
+        # decides it); every slice, instant and probe statement reads it and
+        # none recomputes it.
+        self.walk_witness: MatchingActivityWitness | None = None
 
     def _finite_end_user_map(
         self,
@@ -426,7 +682,104 @@ class UserListQueryBuilder(BaseQueryBuilder):
         return " AND ".join(clauses), params
 
     def _positive_scalar_user_witness(self) -> tuple[str, dict[str, Any]]:
-        """Reuse the compiler's complete numeric witness; decline all other shapes."""
+        """Reuse complete numeric or ordinary text witnesses for group acquisition.
+
+        The seeded page keeps exactly the witnesses it always had: the first
+        text or number filter whose compiler graph witness compares a value.
+        The witnesses that qualify only the matching-activity walk (boolean,
+        and a positive equality the graph witness declines) are skipped here;
+        seeding the whole-window statement on them would move that statement
+        out of its reviewed shapes for no measured gain.
+        """
+        for _item, _kind, witness, params, seedable in self._scalar_user_witnesses():
+            if seedable:
+                return witness, params
+        return "", {}
+
+    def matching_activity_witnesses(self) -> list[MatchingActivityWitness]:
+        """Every witness the walk may discover on, the most selective first.
+
+        Raw span-attribute witnesses (``_scalar_user_witnesses``) and native
+        leaves with an existence term (``_native_user_witnesses``), ranked by
+        ``witness_selectivity_rank`` (a static order: the walk's measured
+        choice costs its candidates in it and falls back to it), then a raw
+        witness before a native one (the
+        blooms serve it, so an empty slice costs only its overhead), then one
+        the seeded page could seed on before one that qualifies the walk
+        alone, then the least ``identity``. Never by position in the request:
+        the cursor binds the filters without their order, so every request a
+        cursor admits ranks them the same. Whether the walk accepts a raw
+        witness is the manager's decision
+        (``UsersListManager.matching_activity_walk_applies``); which accepted
+        one it walks is the walk's (``users_matching_walk._choose_witness``).
+        """
+        ranked: list[tuple[int, int, bool, str, MatchingActivityWitness]] = []
+        for item, kind, witness, params, seedable in self._scalar_user_witnesses():
+            found = MatchingActivityWitness(
+                family="raw",
+                key=str(item.get("column_id") or item.get("columnId")),
+                kind=kind,
+                sql=witness,
+                params=params,
+                index_pruned=kind != "canonical_text",
+                identity=canonical_filter_leaf(item),
+            )
+            rank = witness_selectivity_rank(item, found)
+            ranked.append((rank, 0, not seedable, found.identity, found))
+        for item, found in self._native_user_witnesses():
+            rank = witness_selectivity_rank(item, found)
+            ranked.append((rank, 1, False, found.identity, found))
+        ranked.sort(key=lambda entry: entry[:4])
+        return [entry[-1] for entry in ranked]
+
+    def _native_user_witnesses(
+        self,
+    ) -> Iterator[tuple[dict[str, Any], MatchingActivityWitness]]:
+        """Native leaves whose graph condition has an existence term, in filter order.
+
+        Each leaf comes with its witness.
+
+        A native leaf decides membership with the users graph's own condition
+        (``compile_user_membership_leaf``). When that condition holds a term
+        ``countIf(flag) > 0``, every member has a latest live span satisfying
+        ``flag``, and that span's latest version is a physical row satisfying
+        it at the same ``start_time``: the flag is an exhaustive physical-row
+        witness, and the member's newest such span is its order key. The rest
+        of the condition (a negation's ``countIf(forbidden) = 0``) and every
+        other leaf are decided at certification over the whole window. A
+        condition that is one absence term (``is_null`` without a family:
+        ``countIf(present) = 0``) is witnessed by ``NOT present``
+        (``_native_witness_flag``); its order key is then the
+        member's newest latest live span. The terms come from the compiler as
+        data, never from parsing its SQL.
+        """
+        for index, item in enumerate(self.filters):
+            if self._is_date_filter(item):
+                continue
+            column = self.native_span_dimension(item)
+            if column is None:
+                continue
+            _flags, _condition, params, existence = (
+                self.native_span_dimension_membership(item, index=index)
+            )
+            if existence is None:
+                continue
+            _alias, predicate = existence
+            yield (
+                item,
+                MatchingActivityWitness(
+                    family="native",
+                    key=column,
+                    kind="native",
+                    sql=f"({predicate})",
+                    params=dict(params),
+                    leaf_index=index,
+                    index_pruned=False,
+                    identity=canonical_filter_leaf(item),
+                ),
+            )
+
+    def _scalar_user_witnesses(self):
         from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
             compile_trace_filter_plans,
         )
@@ -439,6 +792,14 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 self._is_date_filter(item)
                 or self._is_relation_filter(item)
                 or self._is_output_filter(item)
+                # A native span column has no attribute-map witness: seeding
+                # it as one acquires only users carrying a same-named raw
+                # attribute, which is nobody.
+                or self.native_span_dimension(item)
+                or (
+                    item.get("column_id") == "eval_score"
+                    and self._filter_col_type(item) != "SPAN_ATTRIBUTE"
+                )
             ):
                 continue
             config = dict(item.get("filter_config") or item.get("filterConfig") or {})
@@ -451,17 +812,89 @@ class UserListQueryBuilder(BaseQueryBuilder):
             if len(plans) != 1:
                 continue
             plan = plans[0]
-            witness = plan.raw_graph_value_witness_predicate or ""
             if (
                 plan.scope == "any"
                 and not plan.exclude_group_matches
-                and "span_attr_num[" in witness
-                and "span_attr_str" not in witness
-                and "span_attr_bool" not in witness
+                and canonical_picked_text_values(item)
+            ):
+                # Raw equality is not exhaustive for canonical JSON/boolean
+                # strings. Discover by presence in bounded time slices, then
+                # certify values and their newest matching time in Python.
+                yield (
+                    item,
+                    "canonical_text",
+                    "mapContains(attrs_string, %(canonical_text_key)s)",
+                    {
+                        "canonical_text_key": str(
+                            item.get("column_id") or item.get("columnId")
+                        )
+                    },
+                    False,
+                )
+                continue
+            operation = config.get("filter_op") or config.get("filterOp")
+            witness = plan.raw_graph_value_witness_predicate or ""
+            seedable = bool(witness)
+            if not witness and operation in {"equals", "in"}:
+                # The graph witness declines a positive equality whose missing
+                # key default could satisfy it (boolean false, number zero):
+                # its classifier aggregates key presence and value separately,
+                # so on a version tie those may come from different rows. The
+                # Users enrichment reads type and value of one row and drops an
+                # absent key as an empty value, so for it the compiler's raw
+                # witness (key present AND value equal on a physical row) is
+                # exhaustive: every latest live match has such a row. It
+                # qualifies the walk alone; the seeded page keeps declining it.
+                witness = plan.raw_witness_predicate or ""
+            raw_values = config.get("filter_value", config.get("filterValue"))
+            values = raw_values if isinstance(raw_values, list) else [raw_values]
+            # Users canonicalizes boolean/JSON-looking text and uses Python's
+            # Unicode lower(). Do not narrow those domains with raw equality.
+            # Unsupported shapes keep the complete existing path.
+            plain_text = (
+                (config.get("filter_type") or config.get("filterType"))
+                in {"text", "string"}
+                and operation in {"equals", "in"}
+                and bool(values)
+                and all(
+                    isinstance(value, str)
+                    and value
+                    and value.isascii()
+                    and value.strip().lower() not in {"true", "false"}
+                    and not value.strip().startswith(("{", "["))
+                    for value in values
+                )
+            )
+            # One typed map, compared by value (``column[key]``), nothing else.
+            mentioned = {
+                name
+                for name in ("span_attr_str", "span_attr_num", "span_attr_bool")
+                if name in witness
+            }
+            kind = None
+            if mentioned == {"span_attr_num"} and "span_attr_num[" in witness:
+                kind = "number"
+            elif mentioned == {"span_attr_bool"} and "span_attr_bool[" in witness:
+                kind = "boolean"
+            elif (
+                plain_text
+                and mentioned == {"span_attr_str"}
+                and "span_attr_str[" in witness
+            ):
+                kind = "text"
+            if (
+                kind is not None
+                and plan.scope == "any"
+                and not plan.exclude_group_matches
                 and "JSONExtract" not in witness
             ):
-                return rewrite_v1_sql_to_v2(witness), dict(plan.params)
-        return "", {}
+                yield (
+                    item,
+                    kind,
+                    rewrite_v1_sql_to_v2(witness),
+                    dict(plan.params),
+                    seedable and kind != "boolean",
+                )
 
     def build_dimension_survivor_query(
         self,
@@ -482,6 +915,296 @@ class UserListQueryBuilder(BaseQueryBuilder):
             f"FROM ({remap})",
             {"dimension_candidate_ids": ids},
         )
+
+    def build_matching_activity_slice_query(
+        self,
+        *,
+        slice_start: Any,
+        slice_end: Any,
+        limit: int,
+        before: tuple[Any, str] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Newest-first witnessed RAW user ids of one time slice.
+
+        ``before`` continues a truncated slice past its last returned raw id in
+        ``(raw_newest DESC, raw_end_user_id DESC)`` order, so ids tied on the
+        floor's timestamp cannot be re-served for ever; it filters groups after
+        aggregation and adds no scan.
+
+        One PREWHERE-bounded scan of ``[slice_start, slice_end)`` through the
+        deployed key and value blooms, grouped by the raw ``end_user_id`` the
+        span carries. It touches no other table: an empty slice therefore costs
+        only the granules the blooms cannot exclude, and the statement carries
+        no ``IN (subquery)`` over the sorting key, so ClickHouse materialises
+        nothing while planning; its work is bounded by the slice, never by the
+        window. Aliases are resolved afterwards, and only for a populated
+        slice, by the existing bounded survivor statement
+        (``build_dimension_survivor_query``) over exactly the ids returned.
+        Rows are a raw superset (stale versions, moved users, tombstones); the
+        page certifies each resolved user afterwards against latest state over
+        the whole window. ``raw_newest`` is only the slice's coverage floor
+        when the LIMIT truncates: every raw id with a witnessed row newer than
+        the last returned row is in the result, so every resolved user with
+        such a row is too.
+        """
+        if limit <= 0:
+            raise ValueError("matching activity slice limit must be positive")
+        params = self._witnessed_range_params(slice_start, slice_end)
+        params["slice_user_limit"] = int(limit)
+        keyset = ""
+        if before is not None:
+            before_time, before_id = before
+            params["slice_before_us"] = _unix_microseconds(before_time)
+            params["slice_before_end_user_id"] = str(before_id)
+            keyset = """
+        HAVING raw_newest < fromUnixTimestamp64Micro(%(slice_before_us)s, 'UTC')
+            OR (
+                raw_newest = fromUnixTimestamp64Micro(%(slice_before_us)s, 'UTC')
+                AND raw_end_user_id < %(slice_before_end_user_id)s
+            )
+            """
+        query = f"""
+        SELECT toString(end_user_id) AS raw_end_user_id, max(start_time) AS raw_newest
+        FROM spans
+        PREWHERE {self._matching_activity_range_predicate()}
+        WHERE {params.pop("_witness_sql")}
+        GROUP BY raw_end_user_id
+        {keyset}
+        ORDER BY raw_newest DESC, raw_end_user_id DESC
+        LIMIT %(slice_user_limit)s
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_instant_query(
+        self,
+        *,
+        instant: Any,
+        limit: int,
+        before_end_user_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Resolved users witnessed at exactly one instant, newest id first.
+
+        The slice statement orders RAW ids; the page orders resolved users by
+        ``(key DESC, id DESC)``. Inside one tied instant those orders differ
+        wherever an alias resolves to a survivor of another id, so a raw
+        position cannot say which resolved users at that instant are still
+        undecided. This statement reads the same witnessed rows as a slice of
+        ``[instant, instant + 1us)``, resolves each raw id through the
+        survivor map of exactly the groups those ids touch, and returns the
+        resolved ids in descending order, continued past
+        ``before_end_user_id``. Every resolved user with a witnessed row at
+        the instant and an id in ``[last returned, before)`` is in the result,
+        so a caller may treat that id range as decided.
+
+        Bounded by the instant: the spans scan is one microsecond of one
+        project, and the remap reads only the groups its raw ids touch.
+        """
+        if limit <= 0:
+            raise ValueError("matching activity instant limit must be positive")
+        params = self._witnessed_range_params(
+            instant, instant + timedelta(microseconds=1)
+        )
+        params["slice_user_limit"] = int(limit)
+        keyset = ""
+        if before_end_user_id is not None:
+            params["instant_before_end_user_id"] = str(before_end_user_id)
+            keyset = "HAVING instant_end_user_id < %(instant_before_end_user_id)s"
+        remap = _touched_survivor_map_subquery(
+            remap_table="end_user_id_remap",
+            candidate_cte="instant_raw",
+            candidate_column="instant_raw_id",
+        )
+        resolved = resolved_id_expr("instant_raw.instant_raw_id", "instant_remap")
+        query = f"""
+        WITH instant_raw AS (
+            SELECT DISTINCT end_user_id AS instant_raw_id
+            FROM spans
+            PREWHERE {self._matching_activity_range_predicate()}
+            WHERE {params.pop("_witness_sql")}
+        )
+        SELECT toString({resolved}) AS instant_end_user_id
+        FROM instant_raw
+        LEFT JOIN ({remap}) AS instant_remap
+            ON instant_raw.instant_raw_id = instant_remap.any_id
+        GROUP BY instant_end_user_id
+        {keyset}
+        ORDER BY instant_end_user_id DESC
+        LIMIT %(slice_user_limit)s
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_existence_query(
+        self,
+        *,
+        range_start: Any,
+        range_end: Any,
+        witness: MatchingActivityWitness | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """The newest witnessed row's time in ``[range_start, range_end)``, if any.
+
+        The same scan shape as a slice, with no aggregation: the newest row
+        (``ORDER BY start_time DESC LIMIT 1``) of the rows the blooms leave,
+        and for a value the blooms exclude everywhere it reads nothing but
+        index marks. The walk uses it to prove a long empty tail in one
+        statement instead of one statement per day, and when the tail is not
+        empty, to prove the range above its newest row empty: every slice
+        reads this predicate, so none would find a row there. It reads every
+        row its estimate counts, as the ``LIMIT 1`` existence statement it
+        replaced already did on dev (52,158 rows and 127 MiB for both), so it
+        is issued only after ``build_matching_activity_existence_estimate_query``
+        has costed it: nothing else bounds a statement wider than the slice
+        cap (application reads carry no server row, byte or time cap).
+        ``witness`` names a witness other than the walk's (``walk_witness``).
+        """
+        params = self._witnessed_range_params(range_start, range_end, witness=witness)
+        query = f"""
+        SELECT start_time AS witnessed
+        FROM spans
+        PREWHERE {self._matching_activity_range_predicate()}
+        WHERE {params.pop("_witness_sql")}
+        ORDER BY start_time DESC
+        LIMIT 1
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_presence_query(
+        self, *, range_start: Any, range_end: Any
+    ) -> tuple[str, dict[str, Any]]:
+        """Whether any span with a user lies in ``[range_start, range_end)``.
+
+        The slice and existence statements' own range predicate - project,
+        time terms, ``isNotNull(end_user_id)``, the empty-scope guard - with
+        the same parameters and NO witness, ``LIMIT 1``. Every witnessed row
+        a slice or existence statement could return satisfies it, so no row
+        here proves those statements would return none over the same range;
+        a row proves nothing about any witness. ``isNotNull(end_user_id)`` is
+        answered through the projection keyed by end user, so a scope with no
+        end users reads only boundary granules. The walk sends it once per
+        request, when the existence statement's estimate does not license
+        that statement, under a server cap.
+        """
+        params = self._matching_activity_range_params(range_start, range_end)
+        query = f"""
+        SELECT 1 AS present
+        FROM spans
+        PREWHERE {self._matching_activity_range_predicate()}
+        LIMIT 1
+        {_SEEDED_PAGE_READ_SETTINGS}
+        """
+        return query, params
+
+    def build_matching_activity_existence_estimate_query(
+        self,
+        *,
+        range_start: Any,
+        range_end: Any,
+        witness: MatchingActivityWitness | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """``EXPLAIN ESTIMATE`` of the existence statement, text for text.
+
+        Reads no column data: the server answers from the primary index and
+        the deployed key and value blooms with the parts, granules and rows
+        the existence statement WOULD read (verified on ClickHouse 25.3: a
+        value the value bloom excludes selects zero parts). It costs that
+        statement before the walk issues it; it never decides coverage,
+        because a planner's estimate is not a row read. The wrapped text is
+        exactly the existence statement, settings clause included, so the
+        rows it reports are the rows that statement reads. The estimate
+        itself is that statement's index analysis, and costs what the
+        analysis costs - the index granules of every selected part, read at
+        the caller's thread count and cache state - which is why the walk
+        runs it under the existence statement's own read settings and
+        inside the probe's wall. ``witness`` costs a witness other than the
+        walk's: the walk's choice among its eligible witnesses estimates each
+        one over the whole window before it walks any.
+        """
+        query, params = self.build_matching_activity_existence_query(
+            range_start=range_start, range_end=range_end, witness=witness
+        )
+        return "EXPLAIN ESTIMATE\n" + query.lstrip(), params
+
+    @staticmethod
+    def matching_activity_existence_estimate(
+        rows: Iterable[Mapping[str, Any]], columns: Iterable[str] | None
+    ) -> int | None:
+        """Reduce the estimate to the rows the existence statement would read.
+
+        Every ``spans`` row of the estimate table sums. ``None`` means the
+        answer cannot be read - the estimate table's columns are missing, a
+        row names another table or carries no integer, or the result is EMPTY.
+        ClickHouse 25.3 reports a selection of no part as a row of zeros, so
+        an empty result is a plan this reducer does not understand (the same
+        signal ``graph_dispatch`` refuses); the walk then slices at its cap
+        rather than issue a statement it has not costed.
+        """
+        names = {str(name) for name in (columns or ())}
+        if not _MATCHING_ACTIVITY_ESTIMATE_COLUMNS.issubset(names):
+            return None
+        estimate = 0
+        counted_any = False
+        for row in rows or ():
+            counted_any = True
+            if not isinstance(row, Mapping):
+                return None
+            if str(row.get("table") or "") != "spans":
+                return None
+            counted = row.get("rows")
+            if isinstance(counted, bool) or not isinstance(counted, (int, float)):
+                return None
+            estimate += max(0, int(counted))
+        return estimate if counted_any else None
+
+    def _matching_activity_range_params(
+        self, range_start: Any, range_end: Any
+    ) -> dict[str, Any]:
+        """The parameters of ``_matching_activity_range_predicate``."""
+        if range_start is None or range_end is None or range_start >= range_end:
+            raise ValueError("matching activity slice is invalid")
+        params: dict[str, Any] = {
+            "slice_start_date": range_start,
+            "slice_end_date": range_end,
+            "slice_start_us": _unix_microseconds(range_start),
+            "slice_end_us": _unix_microseconds(range_end),
+        }
+        if self.project_ids is not None:
+            params["project_ids"] = tuple(self.project_ids)
+        else:
+            params["project_id"] = self.project_id
+        return params
+
+    def _witnessed_range_params(
+        self,
+        range_start: Any,
+        range_end: Any,
+        *,
+        witness: MatchingActivityWitness | None = None,
+    ) -> dict[str, Any]:
+        """The range parameters, the witness's own and its SQL (``_witness_sql``).
+
+        ``witness`` defaults to the walk's (``walk_witness``).
+        """
+        range_params = self._matching_activity_range_params(range_start, range_end)
+        witness = witness if witness is not None else self.walk_witness
+        if witness is None:
+            raise UnsupportedBoundedUserListQuery(
+                "the matching-activity walk chose no witness for this page"
+            )
+        return {**witness.params, **range_params, "_witness_sql": witness.sql}
+
+    def _matching_activity_range_predicate(self) -> str:
+        return f"""{self._project_predicate("spans")}
+          AND toDate(start_time) BETWEEN toDate(%(slice_start_date)s) AND toDate(%(slice_end_date)s)
+          AND toStartOfHour(start_time) >= toStartOfHour(
+              fromUnixTimestamp64Micro(%(slice_start_us)s, 'UTC')
+          )
+          AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(%(slice_end_us)s, 'UTC')
+          AND start_time >= fromUnixTimestamp64Micro(%(slice_start_us)s, 'UTC')
+          AND start_time < fromUnixTimestamp64Micro(%(slice_end_us)s, 'UTC')
+          AND isNotNull(end_user_id)
+          {"AND 0 = 1" if self.empty_scope else ""}"""
 
     def supports_candidate_first_page(self) -> bool:
         """Whether the request can page exactly from latest physical spans.
@@ -693,9 +1416,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
             WHERE isNotNull(witness.end_user_id)
         ),
             """
-            candidate_end_user_filter = (
-                "HAVING end_user_id IN (SELECT end_user_id FROM scalar_candidate_users)"
-            )
+            # The curated dimension carries no HAVING on the witness set. The
+            # acquisition already binds it once, in the span filter below, and
+            # ClickHouse inlines a CTE at every use: a second binding replays
+            # the whole witness scan a second time. Membership is unchanged
+            # because `base_rows` INNER JOINs `exact_usage`, whose users are
+            # exactly the resolved users of the spans that filter admits. A row
+            # that survives the join without belonging to the witness set is a
+            # user whose latest state carries no witnessed span at all, so it
+            # cannot match the request; the manager's exact per-batch check
+            # rejects it and it is never published.
             candidate_span_filter = """
               AND end_user_id IN (
                   SELECT arrayJoin(if(ifNull(aliases.present, 0) = 1,
@@ -711,27 +1441,39 @@ class UserListQueryBuilder(BaseQueryBuilder):
         # resurrect an older version.  The first scan is only an identity
         # superset.  The second scan replays *all* versions of each selected
         # immutable identity and applies user/deletion predicates afterward.
-        embedded_session_state = (
-            "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,"
-            if self.include_num_sessions
-            else ""
-        )
         if self.include_num_sessions:
             # This presentation-only count deliberately skips canonical
             # session-remap folding. The manager labels it approximate and
             # never uses it to decide num_sessions filter membership.
             embedded_session_projection = """
-            uniqExactIf(
+            uniqExactIfState(
                 latest_trace_session_id,
                 isNotNull(latest_trace_session_id)
                 AND latest_trace_session_id != toUUID(
                     '00000000-0000-0000-0000-000000000000'
                 )
-            ) AS num_sessions,
+            ) AS session_count_state,
             """
+            merged_session_projection = (
+                "uniqExactIfMerge(session_count_state) AS num_sessions,"
+            )
         else:
-            embedded_session_projection = "toUInt64(0) AS num_sessions,"
-        usage_ctes = f"""
+            embedded_session_projection = ""
+            merged_session_projection = "toUInt64(0) AS num_sessions,"
+        # With scalar acquisition, the final INNER JOIN already applies this
+        # dimension membership. Repeating it here expands the witness/dimension
+        # CTE branch again. Keep it for unseeded reads to bound aggregation.
+        usage_user_filter = (
+            ""
+            if scalar_ctes
+            else f"""
+          AND {resolved_latest_eu} IN (
+              SELECT end_user_id FROM filtered_end_users
+          )
+        """
+        )
+        identity_acquisition_cte = (
+            f"""
     candidate_span_identities AS (
         SELECT DISTINCT
             project_id,
@@ -747,26 +1489,16 @@ class UserListQueryBuilder(BaseQueryBuilder):
           AND start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
           {candidate_span_filter}
     ),
-    latest_candidate_spans AS (
-        SELECT
-            project_id,
-            observation_type,
-            service_name,
-            toStartOfHour(start_time) AS identity_hour,
-            trace_id,
-            id,
-            argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
-            argMax(start_time, _version) AS latest_start_time,
-            argMax(tuple(end_time), _version).1 AS latest_end_time,
-            argMax(cost, _version) AS latest_cost,
-            argMax(total_tokens, _version) AS latest_total_tokens,
-            argMax(prompt_tokens, _version) AS latest_prompt_tokens,
-            argMax(completion_tokens, _version) AS latest_completion_tokens,
-            {embedded_session_state}
-            argMax(is_deleted, _version) AS latest_is_deleted
-        FROM spans
-        PREWHERE {self._project_predicate("spans")}
-          AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+        """
+            if candidate_span_filter
+            else ""
+        )
+        # Without a user/scalar seed, every latest row in the exact window
+        # witnesses its own identity. Replay the intersecting immutable hours
+        # directly instead of constructing the same identity population twice.
+        # Seeded reads must retain the identity set: end_user_id is mutable.
+        replay_identity_filter = (
+            """
           AND (
               project_id,
               observation_type,
@@ -784,6 +1516,32 @@ class UserListQueryBuilder(BaseQueryBuilder):
                   id
               FROM candidate_span_identities
           )
+        """
+            if candidate_span_filter
+            else """
+          AND toStartOfHour(start_time) >= toStartOfHour(
+              fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+          )
+          AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(
+              %(user_window_end_us)s, 'UTC'
+          )
+        """
+        )
+        usage_ctes = f"""
+    {identity_acquisition_cte}
+    latest_candidate_spans AS (
+        SELECT
+            project_id,
+            observation_type,
+            service_name,
+            toStartOfHour(start_time) AS identity_hour,
+            trace_id,
+            id,
+            {_latest_user_usage_sql(include_num_sessions=self.include_num_sessions)}
+        FROM spans
+        PREWHERE {self._project_predicate("spans")}
+          AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
+          {replay_identity_filter}
         GROUP BY
             project_id,
             observation_type,
@@ -792,15 +1550,17 @@ class UserListQueryBuilder(BaseQueryBuilder):
             trace_id,
             id
     ),
-    exact_usage AS (
+    user_trace_usage AS (
+        SELECT project_id, trace_id, end_user_id, last_active,
+            {"session_count_state," if self.include_num_sessions else ""}
+            {_user_trace_metrics_projection()}
+        FROM (
         SELECT
+            project_id,
+            trace_id,
             {resolved_latest_eu} AS end_user_id,
             {embedded_session_projection}
-            sum(latest_cost) AS total_cost,
-            sum(toInt64(latest_total_tokens)) AS total_tokens,
-            sum(toInt64(latest_prompt_tokens)) AS input_tokens,
-            sum(toInt64(latest_completion_tokens)) AS output_tokens,
-            uniqExact(trace_id) AS num_traces,
+            {_user_trace_usage_sql()},
             max(latest_end_time) AS last_active
         FROM latest_candidate_spans
         LEFT JOIN eu_survivor_map AS span_eu_remap
@@ -808,9 +1568,24 @@ class UserListQueryBuilder(BaseQueryBuilder):
         WHERE latest_is_deleted = 0
           AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
           AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
-          AND {resolved_latest_eu} IN (
-              SELECT end_user_id FROM filtered_end_users
-          )
+          {usage_user_filter}
+        GROUP BY project_id, trace_id, end_user_id
+        )
+        ARRAY JOIN trace_usage_metrics AS trace_metrics
+    ),
+    exact_usage AS (
+        SELECT
+            end_user_id,
+            {merged_session_projection}
+            sum(known_cost_subtotal) AS total_cost,
+            sum(known_cost_fact_count) AS known_cost_fact_count,
+            sum(unknown_cost_fact_count) AS unknown_cost_fact_count,
+            sum(toInt64(usage_total_tokens)) AS total_tokens,
+            sum(toInt64(usage_prompt_tokens)) AS input_tokens,
+            sum(toInt64(usage_completion_tokens)) AS output_tokens,
+            uniqExact(trace_id) AS num_traces,
+            max(last_active) AS last_active
+        FROM user_trace_usage
         GROUP BY end_user_id
     )
         """
@@ -859,6 +1634,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
             SELECT
                 eu.user_id AS user_id,
                 coalesce(xu.total_cost, 0) AS total_cost,
+                xu.known_cost_fact_count AS known_cost_fact_count,
+                xu.unknown_cost_fact_count AS unknown_cost_fact_count,
+                if(xu.unknown_cost_fact_count = 0, xu.total_cost,
+                    CAST(NULL, 'Nullable(Float64)')) AS complete_cost,
                 coalesce(xu.total_tokens, 0) AS total_tokens,
                 coalesce(xu.input_tokens, 0) AS input_tokens,
                 coalesce(xu.output_tokens, 0) AS output_tokens,
@@ -915,6 +1694,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
         SELECT
             user_id,
             total_cost,
+            known_cost_fact_count,
+            unknown_cost_fact_count,
+            complete_cost,
             total_tokens,
             input_tokens,
             output_tokens,
@@ -930,6 +1712,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM candidate_users
         {order_by}
         """
+        if self.candidate_end_user_ids or scalar_witness:
+            query = f"{query.rstrip()}\n        {_SEEDED_PAGE_READ_SETTINGS}"
         return query, params
 
     def build_relation_filter_user_query(
@@ -1233,92 +2017,32 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         if not end_user_ids:
             return "", {}
-        start_date, end_date = self.parse_time_range(self.filters)
-        params: dict[str, Any] = {
-            "candidate_end_user_ids": tuple(str(value) for value in end_user_ids),
-            "start_date": start_date,
-            "end_date": end_date,
-        }
-        if self.project_ids:
-            params["project_ids"] = tuple(self.project_ids)
-        else:
-            params["project_id"] = self.project_id
-
-        # Page hydration runs only after a finite user page is selected. Building
-        # the global remap window here made this read exceed the 256 MiB
-        # production ceiling on large remap tables. Expand only the consolidation
-        # groups touched by the page ids.
-        eu_map, finite_map_params = self._finite_end_user_map(
-            candidate_param="candidate_end_user_ids"
+        prefix, params = self._finite_user_activity_ctes(
+            end_user_ids,
+            [
+                "argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id",
+                "argMax(status, _version) AS latest_status",
+                "argMax(tuple(end_time), _version).1 AS latest_end_time",
+                "argMax(latency_ms, _version) AS latest_latency_ms",
+            ],
+            include_sessions=True,
         )
-        params.update(finite_map_params)
-        ts_map = survivor_map_subquery("trace_session_id_remap")
         resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
         resolved_latest_session = resolved_id_expr(
             "latest_trace_session_id", "span_ts_remap"
         )
 
         query = f"""
-        WITH
-        eu_survivor_map AS ({eu_map}),
-        ts_survivor_map AS ({ts_map}),
-        expanded_candidate_user_ids AS (
-            SELECT any_id AS end_user_id
-            FROM eu_survivor_map
-            WHERE survivor_id IN %(candidate_end_user_ids)s
-            UNION DISTINCT
-            SELECT end_user_id
-            FROM end_users FINAL
-            WHERE end_user_id IN %(candidate_end_user_ids)s
-        ),
-        candidate_span_identities AS (
-            SELECT DISTINCT
-                project_id,
-                trace_id,
-                id,
-                start_time
-            FROM spans
-            PREWHERE {self._project_predicate("spans")}
-              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
-              AND start_time >= %(start_date)s
-              AND start_time < %(end_date)s
-              AND end_user_id IN (
-                  SELECT end_user_id FROM expanded_candidate_user_ids
-              )
-        ),
-        latest_candidate_spans AS (
-            SELECT
-                project_id,
-                trace_id,
-                id,
-                start_time,
-                argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
-                argMax(tuple(trace_session_id), _version).1 AS latest_trace_session_id,
-                argMax(observation_type, _version) AS latest_observation_type,
-                argMax(status, _version) AS latest_status,
-                argMax(tuple(end_time), _version).1 AS latest_end_time,
-                argMax(latency_ms, _version) AS latest_latency_ms,
-                argMax(is_deleted, _version) AS latest_is_deleted
-            FROM spans
-            PREWHERE {self._project_predicate("spans")}
-              AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
-              AND start_time >= %(start_date)s
-              AND start_time < %(end_date)s
-              AND (project_id, trace_id, id, start_time) IN (
-                  SELECT project_id, trace_id, id, start_time
-                  FROM candidate_span_identities
-              )
-            GROUP BY project_id, trace_id, id, start_time
-        ),
+        {prefix},
         resolved_candidate_spans AS (
             SELECT
                 {resolved_latest_eu} AS end_user_id,
                 {resolved_latest_session} AS trace_session_id,
                 trace_id,
-                start_time,
+                latest_start_time AS start_time,
                 latest_end_time AS end_time,
                 latest_latency_ms AS latency_ms,
-                latest_observation_type AS observation_type,
+                observation_type,
                 latest_status AS status
             FROM latest_candidate_spans
             LEFT JOIN eu_survivor_map AS span_eu_remap
@@ -1326,6 +2050,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
             LEFT JOIN ts_survivor_map AS span_ts_remap
                 ON latest_trace_session_id = span_ts_remap.any_id
             WHERE latest_is_deleted = 0
+              AND latest_start_time >= fromUnixTimestamp64Micro(%(user_window_start_us)s, 'UTC')
+              AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
               AND {resolved_latest_eu} IN %(candidate_end_user_ids)s
         ),
         extra_metrics AS (
@@ -1375,6 +2101,168 @@ class UserListQueryBuilder(BaseQueryBuilder):
         FROM metric_user_ids AS ids
         LEFT JOIN session_aggregates AS sa ON sa.end_user_id = ids.end_user_id
         LEFT JOIN extra_metrics AS em ON em.end_user_id = ids.end_user_id
+        """
+        return query, params
+
+    def native_span_dimension_membership(
+        self, item: dict[str, Any], *, index: int
+    ) -> tuple[tuple[str, ...], str, dict[str, Any], tuple[str, str] | None]:
+        """The users graph's membership SQL for native leaf ``index``.
+
+        The per-span flags, the per-user condition over them, their
+        parameters and the leaf's witness flag, compiled once by the graph's
+        own compiler (``compile_user_membership_leaf``) under a namespace
+        unique to the leaf. For a SYSTEM_METRIC leaf that is
+        ``countIf(<span predicate>) > 0``: a user matches when ANY latest live
+        span in the window satisfies the span compiler's predicate, which
+        treats ``''`` as null on these non-nullable text columns and compares
+        case-insensitively. The witness flag is ``_native_witness_flag`` of
+        the condition's terms.
+        """
+
+        # exact_graph_reads imports this module; resolve it at call time.
+        from tracer.services.clickhouse.exact_graph_reads import (
+            compile_user_membership_leaf,
+        )
+
+        project_id = self.project_id or (self.project_ids or [""])[0]
+        flags, condition, params, terms = compile_user_membership_leaf(
+            item, project_id=str(project_id), namespace=f"native_leaf_{index}"
+        )
+        return flags, condition, params, self._native_witness_flag(terms)
+
+    @staticmethod
+    def _native_witness_flag(
+        terms: tuple[MembershipTerm, ...],
+    ) -> tuple[str, str] | None:
+        """``(alias, predicate)`` of a native leaf's witness flag.
+
+        The first term of the graph's condition for the leaf that is
+        ``countIf(alias) > 0``.
+
+        A condition that is one absence term, ``countIf(present) = 0`` (an
+        ``is_null`` without a family), has a witness too: a member has a
+        latest live span in the window (the graph answers no row, and no
+        match, for a user without one) and ``present`` holds for none of
+        them, so its newest latest live span satisfies ``NOT present``, and
+        that span's latest version is a physical row satisfying it at the
+        same ``start_time``. The flag is ``NOT ifNull((present), 0)``: exactly
+        the spans ``countIf(present)`` does not count, a NULL included. Its
+        alias, ``<present alias>_absent``, is not among the leaf's own flags;
+        a statement that projects it adds it (``build_native_span_dimension_query``).
+        ``None`` for any other condition with no existence term.
+        """
+
+        for term in terms:
+            if term.comparison == "> 0":
+                return term.alias, term.predicate
+        if len(terms) == 1 and terms[0].comparison == "= 0":
+            alias, predicate, _comparison = terms[0]
+            return f"{alias}_absent", f"NOT ifNull(({predicate}), 0)"
+        return None
+
+    def build_native_span_dimension_query(
+        self,
+        end_user_ids: list[str],
+        leaves: Iterable[tuple[int, dict[str, Any]]],
+        *,
+        newest: int | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Decide each native span-dimension leaf for a finite user page.
+
+        ``leaves`` pairs each native leaf with its index in the request's
+        filters. One row per page user that has a latest live span in the
+        window, with a ``native_leaf_<index>`` boolean per leaf computed by
+        the users graph's own membership SQL over the user's latest-state
+        spans (``native_span_dimension_membership``); a page user with no
+        such span has no row and matches no leaf, as in the graph.
+
+        ``newest`` names the leaf a native matching-activity walk discovers
+        on: the row also carries ``native_leaf_<newest>_newest``, the newest
+        latest live span in the window satisfying that leaf's existence flag
+        (``_native_witness_flag``), the user's order key. A user
+        with no such span reads the epoch there (``maxIf`` over nothing).
+        """
+
+        compiled: list[tuple[int, tuple[str, ...], str]] = []
+        params: dict[str, Any] = {}
+        columns: dict[str, None] = {}
+        newest_alias: str | None = None
+        for index, item in leaves:
+            column = self.native_span_dimension(item)
+            if column is None:
+                continue
+            flags, condition, leaf_params, existence = (
+                self.native_span_dimension_membership(item, index=index)
+            )
+            if index == newest:
+                if existence is None:
+                    raise ValueError(f"native leaf {index} has no existence flag")
+                newest_alias, flag = existence
+                if newest_alias.endswith("_absent"):
+                    # An absence witness: its flag is not one of the leaf's.
+                    flags = (*flags, f"({flag}) AS {newest_alias}")
+            compiled.append((index, flags, condition))
+            params.update(leaf_params)
+            columns[column] = None
+        if newest is not None and newest_alias is None:
+            raise ValueError(f"native leaf {newest} is not among the leaves")
+        if not end_user_ids or not compiled:
+            return "", {}
+        # ``observation_type`` is part of the replay identity (grouped, so it
+        # is already its latest value); every other column is replayed.
+        replayed = [column for column in columns if column != "observation_type"]
+        prefix, replay_params = self._finite_user_activity_ctes(
+            end_user_ids,
+            [f"argMax({column}, _version) AS latest_{column}" for column in replayed],
+        )
+        params.update(replay_params)
+        resolved_eu = resolved_id_expr("latest_end_user_id", "dimension_eu_remap")
+        projected = ",\n                    ".join(
+            column if column == "observation_type" else f"latest_{column} AS {column}"
+            for column in columns
+        )
+        flags_sql = ",\n                ".join(
+            flag for _index, flags, _condition in compiled for flag in flags
+        )
+        decisions = ",\n            ".join(
+            f"({condition}) AS native_leaf_{index}"
+            for index, _flags, condition in compiled
+        )
+        if newest_alias is not None:
+            decisions += (
+                ",\n            maxIf(native_span_start_time, "
+                f"{newest_alias}) AS native_leaf_{newest}_newest"
+            )
+        query = f"""
+        {prefix}
+        SELECT
+            end_user_id,
+            {decisions}
+        FROM (
+            SELECT
+                end_user_id,
+                native_span_start_time,
+                {flags_sql}
+            FROM (
+                SELECT
+                    toString({resolved_eu}) AS end_user_id,
+                    latest_start_time AS native_span_start_time,
+                    {projected}
+                FROM latest_candidate_spans
+                LEFT JOIN eu_survivor_map AS dimension_eu_remap
+                    ON latest_end_user_id = dimension_eu_remap.any_id
+                WHERE latest_is_deleted = 0
+                  AND latest_start_time >= fromUnixTimestamp64Micro(
+                      %(user_window_start_us)s, 'UTC'
+                  )
+                  AND latest_start_time < fromUnixTimestamp64Micro(
+                      %(user_window_end_us)s, 'UTC'
+                  )
+                  AND {resolved_eu} IN %(candidate_end_user_ids)s
+            ) AS native_span_rows
+        ) AS native_span_flags
+        GROUP BY end_user_id
         """
         return query, params
 
@@ -1539,13 +2427,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
     ) -> list[tuple[str, dict[str, Any], tuple[str, ...]]]:
         """Read only requested metric states; keep filters unrounded."""
         requested = set(metric_keys) & {
-            "num_sessions",
-            "avg_session_duration",
-            "avg_trace_latency",
-            "num_llm_calls",
-            "num_guardrails_triggered",
-            "num_active_days",
-            "num_traces_with_errors",
+            *REQUESTED_PAGE_SESSION_METRIC_FIELDS,
+            *REQUESTED_PAGE_SPAN_METRIC_FIELDS,
         }
         if not end_user_ids or not requested:
             return []
@@ -1554,7 +2437,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         queries: list[tuple[str, dict[str, Any], tuple[str, ...]]] = []
         session_fields = tuple(
             field
-            for field in ("num_sessions", "avg_session_duration")
+            for field in REQUESTED_PAGE_SESSION_METRIC_FIELDS
             if field in requested
         )
         if session_fields:
@@ -1638,15 +2521,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             queries.append((query, dict(base_params), session_fields))
 
         span_fields = tuple(
-            field
-            for field in (
-                "avg_trace_latency",
-                "num_llm_calls",
-                "num_guardrails_triggered",
-                "num_active_days",
-                "num_traces_with_errors",
-            )
-            if field in requested
+            field for field in REQUESTED_PAGE_SPAN_METRIC_FIELDS if field in requested
         )
         if span_fields:
             state_selects: list[str] = []
@@ -1759,6 +2634,54 @@ class UserListQueryBuilder(BaseQueryBuilder):
             pagination = ""
             total_count_select = "0 AS total_count"
 
+        candidate_selection = f"""
+            SELECT
+                *,
+                {total_count_select}
+            FROM base_rows
+            {final_filter}
+            {order_by}
+            {pagination}
+        """
+        candidate_ctes = f"candidate_users AS ({candidate_selection})"
+        if self.end_user_id or (
+            pagination and self.params["limit" if paginated else "max_rows"] >= 0
+        ):
+            # A limited page is bounded; an exact curated end_user_id also
+            # yields at most one canonical GROUP BY end_user_id row. The user
+            # metrics endpoint uses that latter path without pagination.
+            # A tuple keeps nullable members; never array-materialize all users.
+            candidate_columns = (
+                "user_id",
+                "total_cost",
+                "known_cost_fact_count",
+                "unknown_cost_fact_count",
+                "complete_cost",
+                "total_tokens",
+                "input_tokens",
+                "output_tokens",
+                "num_traces",
+                "activated_at",
+                "last_active",
+                "project_id",
+                "user_id_type",
+                "user_id_hash",
+                "end_user_id",
+                "total_count",
+            )
+            candidate_projection = ",\n".join(
+                f"tupleElement(candidate_user_row, {index}) AS {column}"
+                for index, column in enumerate(candidate_columns, 1)
+            )
+            candidate_ctes = f"""(
+            SELECT groupArray(tuple({", ".join(candidate_columns)}))
+            FROM ({candidate_selection})
+        ) AS candidate_user_rows,
+        candidate_users AS (
+            SELECT {candidate_projection}
+            FROM (SELECT arrayJoin(candidate_user_rows) AS candidate_user_row)
+        )"""
+
         eu_map = _touched_survivor_map_subquery(
             remap_table="end_user_id_remap",
             candidate_cte="filtered_end_users_raw",
@@ -1770,9 +2693,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             candidate_column="trace_session_id",
         )
         resolved_curated_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
-        resolved_usage_eu = resolved_id_expr(
-            "latest_usage_end_user_id", "usage_eu_remap"
-        )
+        resolved_usage_eu = resolved_id_expr("latest_end_user_id", "usage_eu_remap")
         resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
         resolved_latest_session = resolved_id_expr(
             "latest_trace_session_id", "span_ts_remap"
@@ -1823,9 +2744,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
         usage_candidate_span_identities AS (
             SELECT DISTINCT
                 project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
                 trace_id,
-                id,
-                start_time
+                id
             FROM spans
             PREWHERE {self._project_predicate("spans")}
               AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
@@ -1838,49 +2761,66 @@ class UserListQueryBuilder(BaseQueryBuilder):
         latest_usage_spans AS (
             SELECT
                 project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time) AS identity_hour,
                 trace_id,
                 id,
-                start_time,
-                argMax(tuple(end_user_id), _version).1 AS latest_usage_end_user_id,
-                argMax(tuple(end_time), _version).1 AS latest_usage_end_time,
-                argMax(cost, _version) AS latest_usage_cost,
-                argMax(total_tokens, _version) AS latest_usage_total_tokens,
-                argMax(prompt_tokens, _version) AS latest_usage_prompt_tokens,
-                argMax(completion_tokens, _version) AS latest_usage_completion_tokens,
-                argMax(is_deleted, _version) AS latest_usage_is_deleted
+                {_latest_user_usage_sql()}
             FROM spans
             PREWHERE {self._project_predicate("spans")}
               AND toDate(start_time) BETWEEN toDate(%(start_date)s) AND toDate(%(end_date)s)
-              AND start_time >= %(start_date)s
-              AND start_time < %(end_date)s
-              AND (project_id, trace_id, id, start_time) IN (
-                  SELECT project_id, trace_id, id, start_time
+              AND (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id) IN (
+                  SELECT project_id, observation_type, service_name, identity_hour, trace_id, id
                   FROM usage_candidate_span_identities
               )
-            GROUP BY project_id, trace_id, id, start_time
+            GROUP BY project_id, observation_type, service_name, identity_hour, trace_id, id
         ),
-        exact_usage AS (
+        user_trace_usage AS (
+            SELECT project_id, trace_id, end_user_id, last_active,
+                {_user_trace_metrics_projection()}
+            FROM (
             SELECT
+                project_id,
+                trace_id,
                 {resolved_usage_eu} AS end_user_id,
-                sum(latest_usage_cost) AS total_cost,
-                sum(toInt64(latest_usage_total_tokens)) AS total_tokens,
-                sum(toInt64(latest_usage_prompt_tokens)) AS input_tokens,
-                sum(toInt64(latest_usage_completion_tokens)) AS output_tokens,
-                uniqExact(trace_id) AS num_traces,
-                max(latest_usage_end_time) AS last_active
+                {_user_trace_usage_sql()},
+                max(latest_end_time) AS last_active
             FROM latest_usage_spans
             LEFT JOIN eu_survivor_map AS usage_eu_remap
-                ON latest_usage_end_user_id = usage_eu_remap.any_id
-            WHERE latest_usage_is_deleted = 0
+                ON latest_end_user_id = usage_eu_remap.any_id
+            WHERE latest_is_deleted = 0
+              AND latest_start_time >= %(start_date)s
+              AND latest_start_time < %(end_date)s
               AND {resolved_usage_eu} IN (
                   SELECT end_user_id FROM filtered_end_users
               )
+            GROUP BY project_id, trace_id, end_user_id
+            )
+            ARRAY JOIN trace_usage_metrics AS trace_metrics
+        ),
+        exact_usage AS (
+            SELECT
+                end_user_id,
+                sum(known_cost_subtotal) AS total_cost,
+                sum(known_cost_fact_count) AS known_cost_fact_count,
+                sum(unknown_cost_fact_count) AS unknown_cost_fact_count,
+                sum(toInt64(usage_total_tokens)) AS total_tokens,
+                sum(toInt64(usage_prompt_tokens)) AS input_tokens,
+                sum(toInt64(usage_completion_tokens)) AS output_tokens,
+                uniqExact(trace_id) AS num_traces,
+                max(last_active) AS last_active
+            FROM user_trace_usage
             GROUP BY end_user_id
         ),
         base_rows AS (
             SELECT
                 eu.user_id AS user_id,
                 coalesce(xu.total_cost, 0) AS total_cost,
+                xu.known_cost_fact_count AS known_cost_fact_count,
+                xu.unknown_cost_fact_count AS unknown_cost_fact_count,
+                if(xu.unknown_cost_fact_count = 0, xu.total_cost,
+                    CAST(NULL, 'Nullable(Float64)')) AS complete_cost,
                 coalesce(xu.total_tokens, 0) AS total_tokens,
                 coalesce(xu.input_tokens, 0) AS input_tokens,
                 coalesce(xu.output_tokens, 0) AS output_tokens,
@@ -1894,15 +2834,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             FROM filtered_end_users AS eu
             INNER JOIN exact_usage AS xu ON xu.end_user_id = eu.end_user_id
         ),
-        candidate_users AS (
-            SELECT
-                *,
-                {total_count_select}
-            FROM base_rows
-            {final_filter}
-            {order_by}
-            {pagination}
-        ),
+        {candidate_ctes},
         expanded_candidate_user_ids AS (
             SELECT any_id AS end_user_id
             FROM eu_survivor_map
@@ -2010,6 +2942,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
         SELECT
             cu.user_id AS user_id,
             cu.total_cost AS total_cost,
+            cu.known_cost_fact_count AS known_cost_fact_count,
+            cu.unknown_cost_fact_count AS unknown_cost_fact_count,
+            cu.complete_cost AS complete_cost,
             cu.total_tokens AS total_tokens,
             cu.input_tokens AS input_tokens,
             cu.output_tokens AS output_tokens,
@@ -2146,6 +3081,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 continue
             config = item.get("filter_config") or {}
             column = self.OUTPUT_FILTER_MAP[item.get("column_id")]
+            if column == "total_cost":
+                column = "complete_cost"
             clause, clause_params = self._condition(
                 column=column,
                 op=config.get("filter_op"),
@@ -2153,6 +3090,13 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 prefix=f"user_filter_{index}",
             )
             if clause:
+                # CH's nullable IN/not_in semantics must not make an unknown
+                # complete price compare equal (or unequal) to a numeric price.
+                if column == "complete_cost" and config.get("filter_op") not in {
+                    "is_null",
+                    "is_not_null",
+                }:
+                    clause = f"isNotNull(complete_cost) AND ({clause})"
                 clauses.append(clause)
                 params.update(clause_params)
         return " AND ".join(clauses), params
@@ -2170,6 +3114,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
             direction = str(sort.get("direction") or "desc").upper()
             if direction not in ("ASC", "DESC"):
                 direction = "DESC"
+            if column == "total_cost":
+                column = "complete_cost"
             parts.append(f"{column} {direction} NULLS LAST")
             has_end_user_tiebreaker = has_end_user_tiebreaker or column == "end_user_id"
         if parts and not has_end_user_tiebreaker:
@@ -2189,6 +3135,29 @@ class UserListQueryBuilder(BaseQueryBuilder):
         return item.get("column_id") in ("created_at", "start_time") and config.get(
             "filter_type"
         ) in ("datetime", "date")
+
+    @classmethod
+    def native_span_dimension(cls, item: dict[str, Any]) -> str | None:
+        """Return the span column backing a native Users system filter.
+
+        Identity rules follow ``_is_output_filter``, plus the registry rule
+        ``is_native_user_id_filter`` states: a raw attribute sharing the name
+        keeps its own SPAN_ATTRIBUTE compiler whether it declares that through
+        ``col_type`` or only through ``property_id``, eval/annotation leaves
+        keep the relation path, and a per-user output column wins outright.
+        """
+
+        if cls._filter_col_type(item) == "SPAN_ATTRIBUTE" or cls._is_relation_filter(
+            item
+        ):
+            return None
+        property_id = str(item.get("property_id") or item.get("propertyId") or "")
+        if property_id and not property_id.startswith("system_attribute:"):
+            return None
+        column_id = str(item.get("column_id") or item.get("columnId") or "")
+        if column_id in cls.OUTPUT_FILTER_MAP:
+            return None
+        return USER_NATIVE_SPAN_DIMENSIONS.get(column_id)
 
     @classmethod
     def _is_output_filter(cls, item: dict[str, Any]) -> bool:
@@ -2316,6 +3285,23 @@ class UserListQueryBuilder(BaseQueryBuilder):
                     ),
                 }
             )
+            # The old (unqualified) internal row boundary may omit both counts.
+            # New SQL always emits both; never default an incomplete companion.
+            if "known_cost_fact_count" in row or "unknown_cost_fact_count" in row:
+                known = int(row["known_cost_fact_count"])
+                unknown = int(row["unknown_cost_fact_count"])
+                table[-1]["cost_coverage"] = {
+                    "status": (
+                        "complete"
+                        if unknown == 0
+                        else "partial"
+                        if known
+                        else "unknown"
+                    ),
+                    "known_subtotal": float(row["total_cost"]),
+                    "known_fact_count": known,
+                    "unknown_fact_count": unknown,
+                }
         return {"table": table, "total_count": total_count}
 
     @staticmethod

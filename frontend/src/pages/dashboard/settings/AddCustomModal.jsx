@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { LoadingButton } from "@mui/lab";
 import {
@@ -13,6 +14,7 @@ import {
   Stack,
   Typography,
   useTheme,
+  Tab,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
@@ -21,15 +23,10 @@ import { useForm, useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { customModelValidation } from "./validation";
-import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
+import { trackEvent, Events } from "src/utils/Mixpanel";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import ConfigureCustomModel from "./ConfigureCustomModel";
 import APIKeyForm from "src/components/custom-model-dropdown/APIKeyForm";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 import { ShowComponent } from "src/components/show";
 import {
   AZURE_ENDPOINT_TYPES,
@@ -54,10 +51,10 @@ import {
   inferAzureEndpointType,
 } from "./helper";
 
-import logger from "src/utils/logger";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Image from "src/components/image";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const commonAttribute = {
   fullWidth: true,
@@ -136,7 +133,6 @@ const AddCustomModalForm = ({
   });
 
   const onSubmit = (data) => {
-    logger.debug(data);
     let configJson = {};
 
     if (data.modelProvider === MODEL_PROVIDERS.CUSTOM) {
@@ -234,12 +230,10 @@ const AddCustomModalForm = ({
     };
 
     trackEvent(Events.customModelAdded, {
-      [PropertyName.formFields]: {
-        payload,
-      },
+      model_provider: data.modelProvider,
+      operation: edit ? "edit" : "create",
     });
 
-    // console.log("Formatted Data:", payload);
     mutate(payload);
   };
 
@@ -390,22 +384,6 @@ const AddCustomModalForm = ({
     [theme],
   );
 
-  const tabWrapperStyles = useMemo(
-    () => ({
-      height: "38px",
-      marginBottom: 0,
-      alignSelf: "flex-start",
-    }),
-    [],
-  );
-
-  const tabStyles = useMemo(
-    () => ({
-      paddingTop: theme.spacing(0.5),
-    }),
-    [theme],
-  );
-
   const buttonGroupStyles = useMemo(
     () => ({
       display: "flex",
@@ -426,7 +404,7 @@ const AddCustomModalForm = ({
         }}
       >
         <Box sx={headerSectionStyles}>
-          <Typography fontWeight={700} color="text.primary">
+          <Typography fontWeight={600} color="text.primary">
             {edit ? "Update" : "Add"} Model
           </Typography>
           <Typography
@@ -441,7 +419,7 @@ const AddCustomModalForm = ({
             sx={closeButtonStyles}
             aria-label="Close custom model modal"
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Stack direction="row" spacing={2}>
@@ -578,34 +556,20 @@ const AddCustomModalForm = ({
                   <ShowComponent
                     condition={modelProvider !== MODEL_PROVIDERS.VERTEX_AI}
                   >
-                    <TabWrapper sx={tabWrapperStyles}>
-                      <CustomTabs
-                        textColor="primary"
+                    <Box sx={{ mb: 1.5 }}>
+                      <SegmentedTabs
                         value={currentTab}
                         onChange={(e, value) => setCurrentTab(value)}
-                        TabIndicatorProps={{
-                          style: {
-                            backgroundColor: theme.palette.primary.main,
-                            opacity: 0.08,
-                            height: "100%",
-                            borderRadius: "4px",
-                          },
-                        }}
                       >
-                        <CustomTab
+                        <Tab
                           label={TABS.FORM}
                           value={TABS.FORM}
                           disabled={false}
-                          sx={tabStyles}
                         />
 
-                        <CustomTab
-                          label={TABS.JSON}
-                          value={TABS.JSON}
-                          sx={tabStyles}
-                        />
-                      </CustomTabs>
-                    </TabWrapper>
+                        <Tab label={TABS.JSON} value={TABS.JSON} />
+                      </SegmentedTabs>
+                    </Box>
                   </ShowComponent>
 
                   <ShowComponent
@@ -755,6 +719,7 @@ const AddCustomModalForm = ({
                 fieldName={field.fieldName}
                 label={field.label}
                 placeholder={field.placeholder}
+                helperText={field.helperText}
                 type={field.type}
                 inputProps={field.inputProps}
                 onChange={field.onChange}
@@ -931,8 +896,11 @@ const AddCustomModal = ({ open, onClose, onRefresh, data, edit }) => {
     [theme],
   );
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={handleClose}

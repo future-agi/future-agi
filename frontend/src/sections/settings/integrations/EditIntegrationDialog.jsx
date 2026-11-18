@@ -192,7 +192,6 @@ function EditDialogContent({ onClose, connection }) {
           color="primary"
           size="small"
           loading={isPending}
-          sx={{ fontWeight: 500 }}
         >
           Save Changes
         </LoadingButton>
@@ -208,7 +207,13 @@ EditDialogContent.propTypes = {
 
 export default function EditIntegrationDialog({ open, onClose, connection }) {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>Edit Integration</DialogTitle>
       {open && <EditDialogContent onClose={onClose} connection={connection} />}
     </Dialog>

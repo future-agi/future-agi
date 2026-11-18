@@ -162,7 +162,7 @@ export default function Upload({
         },
       }}
     >
-      <Iconify icon="mingcute:close-line" width={18} />
+      <Iconify icon="solar:close-linear" width={20} />
     </IconButton>
   );
 
@@ -193,7 +193,7 @@ export default function Upload({
             size="small"
             variant="contained"
             onClick={onUpload}
-            startIcon={<Iconify icon="eva:cloud-upload-fill" />}
+            startIcon={<Iconify icon="solar:cloud-upload-linear" />}
           >
             Upload
           </Button>
@@ -232,7 +232,6 @@ export default function Upload({
           ...(isDragActive && {
             bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
             borderColor: (theme) => theme.palette.primary.main,
-            transform: "scale(1.02)",
           }),
           ...(disabled && {
             opacity: 0.48,

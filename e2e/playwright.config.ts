@@ -21,6 +21,6 @@ export default defineConfig({
     baseURL: E2E.appUrl,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'off',
+    video: process.env.E2E_RECORD_VIDEO === '1' ? 'on' : 'off',
   },
 });

@@ -70,7 +70,7 @@ curl -H "Authorization: Bearer agentcc-admin-secret" http://localhost:8090/-/mcp
 ```bash
 docker exec backend bash -c \
     "cd /app/backend && \
-     AGENTCC_GATEWAY_URL=http://agentcc-gateway:8090 \
+     AGENTCC_GATEWAY_URL=http://agentcc-gateway:8080 \
      AGENTCC_ADMIN_TOKEN=agentcc-admin-secret \
      PYTHONPATH=/app/backend \
      python agentic_eval/agenthub/eval_orchestrator/run_real_integration_tests.py --filter MCP"

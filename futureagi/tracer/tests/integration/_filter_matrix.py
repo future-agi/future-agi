@@ -785,9 +785,8 @@ def _global_annotator_leaves(annotator_user_id: str):
 
 
 def _session_aggregate_leaves():
-    # Session aggregates sum over ROOT spans (session_list restricts the inner
-    # scan to parent_span_id IS NULL). The shared aggregate compiler supports
-    # the complete number-operator contract in both list and graph queries.
+    # Usage cases receive every independent member span; trace-count cases
+    # receive roots only. The predicate stays independent of the SQL reducer.
     sess = {"only_targets": ("sessions",)}
 
     def cost(g):

@@ -1,7 +1,6 @@
 import React from "react";
 import {
   Box,
-  Card,
   Grid,
   Select,
   Stack,
@@ -11,6 +10,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import PropTypes from "prop-types";
 import ColumnChart from "src/components/charts/column-chart";
 import MultiLineChart from "src/components/charts/multi-line-chart";
@@ -63,7 +63,7 @@ export default function DriftCharts({ title = "Drift over time" }) {
           </Grid>
 
           <Grid item xs={12}>
-            <Card>
+            <Section variant="panel">
               <Stack direction={"column"} spacing={2}>
                 <Typography gutterBottom variant="h4">
                   Drift Breakdown
@@ -75,7 +75,7 @@ export default function DriftCharts({ title = "Drift over time" }) {
                 </Tabs>
                 <DriftBreakdownTable />
               </Stack>
-            </Card>
+            </Section>
           </Grid>
         </Grid>
       </Box>

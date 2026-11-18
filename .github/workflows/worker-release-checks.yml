@@ -1,4 +1,4 @@
-name: Worker release checks
+name: Release script checks
 on:
   pull_request:
     paths:
@@ -6,6 +6,8 @@ on:
       - ".github/workflows/worker-release-checks.yml"
       - "scripts/release-error-feed-worker.py"
       - "scripts/test_release_error_feed_worker.py"
+      - "scripts/verify-platform-image-tags.py"
+      - "scripts/test_verify_platform_image_tags.py"
 permissions:
   contents: read
 jobs:
@@ -13,4 +15,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s scripts -p test_release_error_feed_worker.py -v
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v

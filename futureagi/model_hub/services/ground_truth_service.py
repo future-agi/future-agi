@@ -124,7 +124,9 @@ class GroundTruthService:
             (variable_mapping, "variable"),
             (role_mapping, "role"),
         ):
-            missing = _first_missing_column(source_mapping, gt.columns or [], label=label)
+            missing = _first_missing_column(
+                source_mapping, gt.columns or [], label=label
+            )
             if missing is not None:
                 col, key = missing
                 return ServiceError(
@@ -384,6 +386,10 @@ class GroundTruthService:
             GROUND_TRUTH_TABLE_NAME,
             EmbeddingManager,
         )
+        from agentic_eval.core.embeddings.serving_client import (
+            SERVING_UNAVAILABLE_MESSAGE,
+            serving_available,
+        )
 
         data = gt.data or []
         if not data:
@@ -396,6 +402,11 @@ class GroundTruthService:
                 "variable_mapping is empty - at least one mapped column is "
                 "required before embedding.",
             )
+
+        # Checked before the soft-delete below, so vectors from an earlier
+        # pass are not thrown away for a pass that cannot write new ones.
+        if not serving_available():
+            return _mark_failed(gt, SERVING_UNAVAILABLE_MESSAGE)
 
         organization_id = _organization_id_or_raise(gt)
         workspace_id = _workspace_id_or_none(gt)

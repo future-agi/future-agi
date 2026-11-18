@@ -1,11 +1,4 @@
-import {
-  Box,
-  IconButton,
-  Button,
-  useTheme,
-  Typography,
-  Stack,
-} from "@mui/material";
+import { Box, IconButton, Button, Typography, Stack } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
@@ -266,7 +259,7 @@ const RunOptimizationForm = ({
               alignItems={"center"}
               justifyContent={"space-between"}
             >
-              <Typography fontWeight={700} color="text.primary">
+              <Typography fontWeight={600} color="text.primary">
                 Run Optimization
               </Typography>
               <Stack direction={"row"} alignItems={"center"} gap={1.5}>
@@ -280,17 +273,8 @@ const RunOptimizationForm = ({
                     );
                   }}
                   startIcon={
-                    <SvgColor
-                      sx={{
-                        height: "16px",
-                        width: "16px",
-                      }}
-                      src="/assets/icons/ic_paper.svg"
-                    />
+                    <SvgColor width={16} src="/assets/icons/ic_paper.svg" />
                   }
-                  sx={{
-                    px: 1.5,
-                  }}
                 >
                   View Docs
                 </Button>
@@ -301,7 +285,7 @@ const RunOptimizationForm = ({
                     color: "text.primary",
                   }}
                 >
-                  <Iconify icon="mingcute:close-line" />
+                  <Iconify icon="solar:close-linear" />
                 </IconButton>
               </Stack>
             </Stack>
@@ -324,11 +308,6 @@ const RunOptimizationForm = ({
               <Button
                 variant="contained"
                 color="primary"
-                sx={{
-                  px: "24px",
-                  borderRadius: "8px",
-                  height: "38px",
-                }}
                 onClick={() => {
                   onClose();
                   setOpenRunPrompt(true);
@@ -487,7 +466,6 @@ const RunOptimization = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isFormDirty, setFormIsDirty] = useState(false);
   const [selectedColumnId, setSelectedColumnId] = useState("");
-  const theme = useTheme();
 
   const { refreshGrid } = useDevelopDetailContext();
   const { dataset: datasetId } = useParams();
@@ -528,7 +506,7 @@ const RunOptimization = () => {
         height: "100vh",
         position: "fixed",
         zIndex: 2,
-        borderRadius: "10px",
+        borderRadius: "8px",
         backgroundColor: "background.paper",
       }}
     >
@@ -572,7 +550,6 @@ const RunOptimization = () => {
               setIsDialogOpen(false);
             }}
             size="small"
-            sx={{ paddingX: theme.spacing(2) }}
           >
             Confirm
           </Button>

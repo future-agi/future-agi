@@ -1,12 +1,6 @@
+import ErrorState from "src/components/error-state";
 import React from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useMCPConfig } from "src/api/mcp";
@@ -18,18 +12,16 @@ export default function MCPSetupPage() {
   const { data: config, isLoading, isError } = useMCPConfig();
 
   if (isLoading) {
-    return (
-      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   if (isError) {
     return (
-      <Box py={4}>
-        <Alert severity="error">
-          Failed to load MCP server configuration. Please try again later.
-        </Alert>
-      </Box>
+      <ErrorState
+        title="Failed to load MCP server configuration"
+        detail="Please try again later."
+        sx={{ height: "auto", flexGrow: 0, py: 4 }}
+      />
     );
   }
 
@@ -69,10 +61,6 @@ export default function MCPSetupPage() {
           variant="outlined"
           size="small"
           sx={{
-            borderRadius: "4px",
-            height: "30px",
-            px: "4px",
-            width: "105px",
             flexShrink: 0,
           }}
           onClick={() => {

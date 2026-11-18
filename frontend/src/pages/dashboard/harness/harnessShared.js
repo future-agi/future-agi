@@ -2,7 +2,25 @@ import { format, isToday } from "date-fns";
 
 import { STATUS_TYPES } from "src/utils/statusUtils";
 
-export const terminalStages = new Set(["completed", "failed", "canceled"]);
+// The stage strings we branch on by name. "completed" is the successful outcome;
+// "failed"/"canceled" are the terminal-failure outcomes (they are not members of
+// `stages`, which only holds pipeline positions). Kept as one enum so callers
+// stop hardcoding these literals.
+export const HARNESS_STAGE = {
+  QUEUED: "queued",
+  RUNNING: "running",
+  FINALIZING: "finalizing",
+  CLEANING_UP: "cleaning_up",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  CANCELED: "canceled",
+};
+
+export const terminalStages = new Set([
+  HARNESS_STAGE.COMPLETED,
+  HARNESS_STAGE.FAILED,
+  HARNESS_STAGE.CANCELED,
+]);
 
 // The ordered pipeline, by when the runner reaches each stage rather than by the declaration
 // order of HarnessStage in the ALK wheel (fi/alk/harness/job.py): validating_environment runs
@@ -572,11 +590,37 @@ export const errorMessage = (error) => {
     const first = Object.values(detail).flat().find(Boolean);
     if (typeof first === "string") return first;
   }
-  if (typeof payload?.error === "string" && payload.error.trim())
-    return payload.error;
+  // A harness error body carries a code in `error` and the sentence in `message`.
   if (typeof payload?.message === "string" && payload.message.trim())
     return payload.message;
+  if (typeof payload?.error === "string" && payload.error.trim())
+    return payload.error;
   if (typeof error?.message === "string" && error.message.trim())
     return error.message;
   return "Something went wrong";
+};
+
+// Parallelism degrade reason copy (C4 §6, normative). Keyed on the CLOSED
+// five-member enum — one shared vocabulary constant, never string literals
+// scattered in components. `port_not_consumable` is NOT here: it is a terminal
+// job failure surfaced via the failure banner, not a degrade notice (D28).
+export const PARALLELISM_DEGRADE_COPY = {
+  fixed_port:
+    "The agent declares a fixed network port, so scenarios ran one at a time.",
+  conformance_gate_failed:
+    "The environment failed its parallel-readiness check, so scenarios ran one at a time.",
+  resource_limited:
+    "The sandbox had fewer resources than requested — running {effective} scenario(s) at a time.",
+  literal_local_endpoint:
+    "An environment value points at a fixed local address, so scenarios ran one at a time.",
+  world_start_failed:
+    "Some parallel copies of the environment failed to start — continuing with {effective}.",
+};
+
+// Human copy for one degrade reason. Unknown reasons (a future v3 the FE may lag)
+// fall back to a neutral line — never crash, never hide the event.
+export const degradeReasonCopy = (reason, effective) => {
+  const template = PARALLELISM_DEGRADE_COPY[reason];
+  if (!template) return `Parallelism was reduced to ${effective}.`;
+  return template.replace("{effective}", String(effective));
 };

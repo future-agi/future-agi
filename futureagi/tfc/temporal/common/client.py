@@ -11,6 +11,7 @@ import os
 import threading
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, TypeVar
 
 from temporalio.client import Client, WorkflowExecutionStatus, WorkflowHandle
@@ -291,6 +292,7 @@ async def start_workflow_async(
     id_conflict_policy: WorkflowIDConflictPolicy = (
         WorkflowIDConflictPolicy.UNSPECIFIED
     ),
+    execution_timeout: timedelta | None = None,
 ) -> WorkflowHandle:
     """
     Start a workflow asynchronously with common options.
@@ -303,6 +305,8 @@ async def start_workflow_async(
         cancel_existing: If True, cancel existing running workflow first
         id_reuse_policy: Policy for reusing workflow IDs
         id_conflict_policy: Policy when the workflow ID is already running
+        execution_timeout: Longest the workflow may run, continue-as-new
+            included, before Temporal closes it; None for no limit
 
     Returns:
         WorkflowHandle for the started workflow
@@ -327,6 +331,7 @@ async def start_workflow_async(
         task_queue=task_queue,
         id_reuse_policy=id_reuse_policy,
         id_conflict_policy=id_conflict_policy,
+        execution_timeout=execution_timeout,
     )
 
 

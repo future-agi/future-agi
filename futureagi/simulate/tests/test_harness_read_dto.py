@@ -136,6 +136,9 @@ def test_serialize_job_returns_full_dto_shape(organization):
         "scenarios",
         "receipts",
         "platform",
+        "parallelism",
+        "adjustments",
+        "credentials",
         "runtime",
     } <= set(result)
     # Job sub-keys
@@ -145,6 +148,14 @@ def test_serialize_job_returns_full_dto_shape(organization):
     assert "test_execution_id" in result["job"]
     assert "source" in result["job"]
     assert "metadata" in result["job"]
+    assert "runtime" in result["job"]
+    # Parallelism projection (C4 §6): requested + attempt-level effective/reasons.
+    assert set(result["parallelism"]) == {
+        "requested",
+        "admitted",
+        "effective",
+        "degrade_reasons",
+    }
     # Status sub-keys
     assert "state" in result["status"]
     assert "stage" in result["status"]
@@ -329,9 +340,14 @@ def test_terminal_failure_copied_to_job(organization):
 
 @pytest.mark.django_db
 def test_terminal_completed_clears_failure(organization):
+    environment, _ = create_hosted_job(
+        organization, _v1_payload(), idempotency_key="terminal-ok-environment"
+    )
     job, _ = create_hosted_job(
         organization, _v1_payload(), idempotency_key="terminal-ok"
     )
+    job.environment = environment
+    job.save(update_fields=["environment", "updated_at"])
     cap = register_attempt(job.id, endpoint_base_url="https://platform.example.com")
     attempt = cap.attempt
     attempt.provider_ref = "sandbox-2"
@@ -520,23 +536,24 @@ def test_scenario_modality_uses_authored_contract_for_legacy_guest_payload():
 
 
 @pytest.mark.django_db
-def test_provision_rejects_wrong_count(organization):
+def test_provision_on_a_build_takes_the_count_it_built(organization):
     job, _ = create_hosted_job(
         organization, _v1_payload(scenario_count=2), idempotency_key="card-bad"
     )
     cap = register_attempt(job.id, endpoint_base_url="https://p.example.com")
-    with pytest.raises(HostedHarnessError) as exc:
-        provision_scenarios(
-            cap.attempt,
-            {
-                "operation": "provision",
-                "name": "test",
-                "personas": [
-                    {"scenario_key": "a", "name": "A"},
-                ],
-            },
-        )
-    assert exc.value.code == "scenario_count_mismatch"
+    provision_scenarios(
+        cap.attempt,
+        {
+            "operation": "provision",
+            "name": "test",
+            "personas": [
+                {"scenario_key": "a", "name": "A"},
+            ],
+        },
+    )
+    job.refresh_from_db()
+    assert job.scenario_count == 1
+    assert job.payload["scenario_count"] == 1
 
 
 @pytest.mark.django_db
@@ -566,7 +583,7 @@ def test_provision_rejects_duplicate_keys(organization):
 @pytest.mark.django_db
 @override_settings(HARNESS_PROVIDER="daytona")
 def test_create_rejects_non_platform_vault_secret_ref(user):
-    """Even if the serializer allowed it, admission rejects non-platform-vault."""
+    """Vault references are accepted; other managers are rejected before launch."""
     client = APIClient()
     client.force_authenticate(user=user)
     payload = _v1_payload()
@@ -576,11 +593,15 @@ def test_create_rejects_non_platform_vault_secret_ref(user):
             "manager": "platform-vault",
             "key": "gcp-sa",
             "purpose": "target_provider",
-        }
+        },
     }
 
     # Valid platform-vault ref should not hit the secret_manager_unsupported error
     with (
+        patch(
+            "simulate.services.harness_provider._preflight_source_connectors",
+            return_value=([], [], 0),
+        ),
         patch(
             "simulate.services.hosted_harness.create_hosted_job",
             return_value=(
@@ -599,7 +620,8 @@ def test_create_rejects_non_platform_vault_secret_ref(user):
         ),
         patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"),
         patch(
-            "simulate.services.harness_provider._validate_required_credential_files"
+            "simulate.services.harness_provider._preflight_source_connectors",
+            return_value=([], [], 0),
         ),
         patch(
             "simulate.services.harness_provider.serialize_job",
@@ -613,3 +635,13 @@ def test_create_rejects_non_platform_vault_secret_ref(user):
             HTTP_IDEMPOTENCY_KEY="secret-ok",
         )
     assert response.status_code == 202, response.data
+    payload["agent"]["secret_refs"]["GOOGLE_CREDS"]["manager"] = "platform-config"
+    response = client.post(
+        "/simulate/api/harness-jobs/",
+        payload,
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="secret-rejected",
+    )
+    assert response.status_code == 400
+    assert response.data["code"] == "invalid"
+    assert "only accept manager platform-vault" in response.data["detail"]

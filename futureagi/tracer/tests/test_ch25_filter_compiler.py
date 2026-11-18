@@ -264,9 +264,10 @@ class TestClickHouseFilterBuilderV2:
             ]
         )
 
-        assert "lowerUTF8(toString(attrs_string['prompt_slug'])) =" in sql
+        assert "lowerUTF8(toString(attrs_string[%(attr_key_1)s])) =" in sql
         assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
-        assert params["attr_1"] == "agent_k"
+        assert params["attr_key_1"] == "prompt_slug"
+        assert params["attr_2"] == "agent_k"
         assert {
             value
             for key, value in params.items()

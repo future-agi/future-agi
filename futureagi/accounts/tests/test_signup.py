@@ -9,6 +9,7 @@ import os
 import pytest
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 from unittest.mock import patch
@@ -111,9 +112,7 @@ class TestSignupAPI:
 
     @patch.dict("os.environ", {"ENV_TYPE": "local"})
     @patch("tfc.temporal.drop_in.start_activity")
-    def test_signup_with_valid_data(
-        self, mock_start_activity, api_client, db
-    ):
+    def test_signup_with_valid_data(self, mock_start_activity, api_client, db):
         """User can register with valid data."""
         from accounts.models import User
 
@@ -994,6 +993,18 @@ class TestActivateAccountAPI:
         user.refresh_from_db()
         assert user.is_active is False
 
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_activate_account_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        from django.core.cache import cache
+
+        cache.clear()
+        response = api_client.get(f"/accounts/activate/{bad_uid}/any-token/")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Activation link is invalid or has expired." in response.json()["result"]
+
     def test_activate_account_unknown_user(self, api_client, db):
         """Unknown uid returns bad request."""
         from django.core.cache import cache
@@ -1245,6 +1256,19 @@ class TestActivateAccountReplay:
 @pytest.mark.api
 class TestPasswordResetConfirmEdgeCases:
     """Edge-case tests for POST /accounts/password-reset-confirm/<uidb64>/<token>/."""
+
+    @pytest.mark.parametrize("bad_uid", ["a", "_w", "bm90LWEtdXVpZA", "4piD", "bnVsbA"])
+    def test_password_reset_confirm_malformed_uid_returns_bad_request(
+        self, api_client, db, bad_uid
+    ):
+        """Malformed base64, UTF-8 or UUID identifiers return 400, not 500."""
+        response = api_client.post(
+            f"/accounts/password-reset-confirm/{bad_uid}/any-token/",
+            {"new_password": "BrandNewPass123!", "repeat_password": "BrandNewPass123!"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Invalid reset link." in response.json()["result"]
 
     def test_inactive_auth_token_rejected(self, api_client, user):
         """Reset confirm rejects when the AuthToken is inactive."""
@@ -1606,7 +1630,6 @@ class TestInitiatePasswordResetSSO:
         assert "sso" in response.json()["message"].lower()
 
 
-
 OSS_SIGNUP_PASSWORD = "Futureagi@45xyz"
 
 
@@ -1814,8 +1837,9 @@ class TestCloudSignupUnchanged:
     def test_cloud_returns_the_check_your_email_message(
         self, db, api_client, no_outbound_email
     ):
-        with _oss(False), patch(
-            "accounts.views.signup.verify_recaptcha", return_value=True
+        with (
+            _oss(False),
+            patch("accounts.views.signup.verify_recaptcha", return_value=True),
         ):
             response = api_client.post(
                 "/accounts/signup/",
@@ -1828,8 +1852,9 @@ class TestCloudSignupUnchanged:
 
     def test_cloud_never_returns_a_session(self, db, api_client, no_outbound_email):
         """Tokens before verification would skip the verification entirely."""
-        with _oss(False), patch(
-            "accounts.views.signup.verify_recaptcha", return_value=True
+        with (
+            _oss(False),
+            patch("accounts.views.signup.verify_recaptcha", return_value=True),
         ):
             response = api_client.post(
                 "/accounts/signup/",
@@ -1841,13 +1866,12 @@ class TestCloudSignupUnchanged:
         assert "access" not in result
         assert "refresh" not in result
 
-    def test_cloud_ignores_a_posted_password(
-        self, db, api_client, no_outbound_email
-    ):
+    def test_cloud_ignores_a_posted_password(self, db, api_client, no_outbound_email):
         """password is allowlisted on OSS only, so a cloud caller cannot set one."""
         email = "cloud-c@futureagi.com"
-        with _oss(False), patch(
-            "accounts.views.signup.verify_recaptcha", return_value=True
+        with (
+            _oss(False),
+            patch("accounts.views.signup.verify_recaptcha", return_value=True),
         ):
             api_client.post(
                 "/accounts/signup/", _oss_signup_payload(email), format="json"
@@ -1893,9 +1917,7 @@ class TestOssPasswordResetLink:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["reset_link"]
 
-    def test_link_points_at_the_verify_route(
-        self, api_client, user, no_outbound_email
-    ):
+    def test_link_points_at_the_verify_route(self, api_client, user, no_outbound_email):
         """Same URL the email would have carried, so the existing confirm screen
         handles it unchanged."""
         with _oss():
@@ -2000,6 +2022,107 @@ class TestCloudPasswordResetUnchanged:
         assert set(known["result"]) == set(unknown["result"]) == {"message"}
 
 
+CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+
+@pytest.mark.unit
+class TestOssResetUnavailableMessage:
+    @pytest.mark.parametrize(
+        "setup, command",
+        [
+            ("standalone", "docker compose exec app python manage.py"),
+            ("distributed", "docker compose exec backend python manage.py"),
+            (
+                "helm",
+                "kubectl -n <namespace> exec -it deploy/<release>-futureagi-backend "
+                "-c backend -- python manage.py",
+            ),
+        ],
+    )
+    def test_names_the_recovery_command_of_the_setup(self, setup, command):
+        """There is no container called futureagi-backend-1 in any setup."""
+        from accounts.views.signup import oss_reset_unavailable_message
+
+        with patch("tfc.utils.install_setup.current_setup", return_value=setup):
+            message = oss_reset_unavailable_message()
+
+        assert f"`{command} reset_password --email <address>`" in message
+        assert "MAILGUN_API_KEY" in message
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOssPasswordResetByEmail:
+    """A self-hosted install with email delivery configured mails the reset
+    link like Cloud does; without it, the answer names the recovery command."""
+
+    @pytest.fixture(autouse=True)
+    def _link_withheld(self):
+        with patch.dict(
+            os.environ,
+            {"OSS_RETURN_PASSWORD_RESET_LINK": "false", "MAILGUN_API_KEY": "key-test"},
+        ):
+            yield
+
+    def test_the_link_is_mailed_once_email_is_configured(
+        self, api_client, user, no_outbound_email
+    ):
+        # The test settings' locmem backend stands in for Mailgun.
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "reset_link" not in response.json()["result"]
+        no_outbound_email.assert_called_once()
+        assert no_outbound_email.call_args.args[1] == "reset_password.html"
+        assert no_outbound_email.call_args.args[3] == [user.email]
+
+    def test_unknown_address_gets_the_same_answer(
+        self, api_client, user, db, no_outbound_email
+    ):
+        """With the link mailed, naming the address would make the endpoint
+        an account-existence oracle, as it would on Cloud."""
+        with _oss():
+            known = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()
+            unknown = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": "nobody-oss@futureagi.com"},
+                format="json",
+            ).json()
+
+        assert set(known["result"]) == set(unknown["result"]) == {"message"}
+        no_outbound_email.assert_called_once()
+
+    @override_settings(EMAIL_BACKEND=CONSOLE_EMAIL_BACKEND)
+    def test_without_delivery_the_answer_names_the_recovery_command(
+        self, api_client, user, no_outbound_email, monkeypatch
+    ):
+        monkeypatch.setenv("FI_EMBEDDED_TEMPORAL_WORKER", "true")
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        message = response.json()["result"]["message"]
+        assert (
+            "docker compose exec app python manage.py reset_password "
+            "--email <address>" in message
+        )
+        no_outbound_email.assert_not_called()
+
+
 def _oss_gate(enabled=True):
     return patch("tfc.ee_gating.is_oss", return_value=enabled)
 
@@ -2011,6 +2134,61 @@ def _first_signup_payload(email):
         "company_name": "",
         "password": OSS_SIGNUP_PASSWORD,
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("supplied_password", [True, False])
+def test_every_signup_dispatches_demo_seeding_after_commit(
+    supplied_password, no_outbound_email, django_capture_on_commit_callbacks
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed@futureagi.com")
+    if not supplied_password:
+        payload.pop("password")
+    with (
+        patch("accounts.utils.process_post_registration") as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration"),
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once()
+        user_id, generated_password = dispatch.call_args.args
+        assert user_id == user.id
+        if supplied_password:
+            assert generated_password is None
+        else:
+            assert generated_password
+
+
+@pytest.mark.django_db
+def test_signup_survives_unavailable_post_registration_worker(
+    no_outbound_email, django_capture_on_commit_callbacks, caplog
+):
+    from accounts.utils import first_signup
+
+    payload = _first_signup_payload("demo-seed-worker-down@futureagi.com")
+    with (
+        patch(
+            "accounts.utils.process_post_registration",
+            side_effect=RuntimeError("Temporal unavailable"),
+        ) as dispatch,
+        patch("accounts.utils.is_cloud_env", return_value=False),
+        patch("accounts.utils._fire_deployment_telemetry_registration") as telemetry,
+        patch("accounts.utils._record_signup_api_key_event"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            user = first_signup(payload)
+            dispatch.assert_not_called()
+        dispatch.assert_called_once_with(user.id, None)
+        telemetry.assert_called_once()
+
+    user.refresh_from_db()
+    assert user.check_password(payload["password"])
+    assert "Temporal unavailable" in caplog.text
 
 
 def _deployment(monkeypatch, *, cloud=False, ee=False):
@@ -2064,6 +2242,18 @@ class TestWorkEmailGate:
 
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
         _deployment(monkeypatch, cloud=True)
+
+        with pytest.raises(Exception, match="work email address"):
+            first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+    @pytest.mark.parametrize("region", ["us", " EU "])
+    def test_any_spelling_of_a_cloud_region_rejects_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch, region
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        monkeypatch.setattr(settings, "CLOUD_DEPLOYMENT", region)
 
         with pytest.raises(Exception, match="work email address"):
             first_signup(_first_signup_payload("solo.dev@gmail.com"))
@@ -2194,6 +2384,22 @@ class TestAuthLinkBuilders:
         assert "/auth/jwt/invitation/accept/" in build_invite_accept_link(user)
         assert "/auth/jwt/verify/" in build_password_reset_link("u", "t")
 
+    @override_settings(APP_URL="localhost:3000", APP_BASE_URL="http://localhost:3000")
+    def test_links_carry_a_scheme(self):
+        """APP_URL is a bare host; a link built from it alone
+        (``localhost:3000/auth/...``) does not open from a copied invite."""
+        from accounts.models import User
+        from accounts.utils import build_invite_accept_link, build_password_reset_link
+
+        invitee = User(email="invitee-oss@futureagi.com")
+
+        assert build_invite_accept_link(invitee).startswith(
+            "http://localhost:3000/auth/jwt/invitation/accept/"
+        )
+        assert build_password_reset_link("UID123", "TOKEN456") == (
+            "http://localhost:3000/auth/jwt/verify/UID123/TOKEN456"
+        )
+
 
 @pytest.fixture
 def pending_invite(db, user):
@@ -2233,9 +2439,7 @@ def _member_rows(client):
 class TestInviteLinkOnMemberList:
     """Without SMTP the invite mail never lands, so an admin needs the link."""
 
-    def test_oss_exposes_the_link_on_pending_invites(
-        self, auth_client, pending_invite
-    ):
+    def test_oss_exposes_the_link_on_pending_invites(self, auth_client, pending_invite):
         with _oss_gate(True):
             rows = _member_rows(auth_client)
 

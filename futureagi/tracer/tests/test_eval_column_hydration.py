@@ -159,9 +159,12 @@ class TestEvalOutputTypeForConfig:
 
     def test_template_without_config_attr_returns_none(self):
         # eval_template present but with no ``config`` attribute at all.
-        assert eval_output_type_for_config(
-            SimpleNamespace(eval_template=SimpleNamespace())
-        ) is None
+        assert (
+            eval_output_type_for_config(
+                SimpleNamespace(eval_template=SimpleNamespace())
+            )
+            is None
+        )
 
 
 @pytest.mark.unit
@@ -212,7 +215,10 @@ class TestSelectEvalScore:
         assert select_eval_score({"avg_score": 0.0, "pass_rate": None}, "score") == 0.0
 
     def test_passfail_zero_pass_rate_preserved(self):
-        assert select_eval_score({"avg_score": 100.0, "pass_rate": 0.0}, "Pass/Fail") == 0.0
+        assert (
+            select_eval_score({"avg_score": 100.0, "pass_rate": 0.0}, "Pass/Fail")
+            == 0.0
+        )
 
     def test_missing_field_returns_none(self):
         assert select_eval_score({"pass_rate": 50.0}, "score") is None
@@ -231,7 +237,9 @@ class TestListTracesEvalMerge:
             if config_id not in trace_evals:
                 continue
             flatten_eval_score_into_entry(
-                entry, config_id, trace_evals[config_id],
+                entry,
+                config_id,
+                trace_evals[config_id],
                 eval_output_type_for_config(config),
             )
         return entry

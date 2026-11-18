@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from "react";
 import {
   Button,
-  Chip,
   Divider,
   IconButton,
   InputAdornment,
@@ -10,14 +9,11 @@ import {
   OutlinedInput,
   Select,
   Stack,
-  Tooltip,
-  useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import {
-  useObserveProjectList,
-  useUpdateErrorFeedIssue,
-} from "src/api/errorFeed/error-feed";
+import SelectionBar from "src/components/selection-bar";
+import { FilterButton } from "src/components/filter";
+import { useUpdateErrorFeedIssue } from "src/api/errorFeed/error-feed";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 
@@ -59,11 +55,50 @@ const FIX_LAYER_OPTIONS = [
   { value: "Guardrails", label: "Guardrails" },
 ];
 
+// Filter panel fields. Each maps to one store value (a single selection), so
+// the panel rows and the store stay interchangeable.
+const withoutAll = (options) => options.filter((opt) => opt.value !== "");
+
+const buildFilterFields = (projectOptions) => [
+  {
+    id: "project",
+    label: "Project",
+    type: "enum",
+    options: withoutAll(projectOptions),
+    operators: ["equals"],
+  },
+  {
+    id: "status",
+    label: "Status",
+    type: "enum",
+    options: withoutAll(STATUS_OPTIONS),
+    operators: ["equals"],
+  },
+  {
+    id: "severity",
+    label: "Severity",
+    type: "enum",
+    options: withoutAll(SEVERITY_OPTIONS),
+    operators: ["equals"],
+  },
+  {
+    id: "fix_layer",
+    label: "Fix layer",
+    type: "enum",
+    options: withoutAll(FIX_LAYER_OPTIONS),
+    operators: ["equals"],
+  },
+  {
+    id: "source",
+    label: "Source",
+    type: "enum",
+    options: withoutAll(SOURCE_OPTIONS),
+    operators: ["equals"],
+  },
+];
+
 // ── compact select ─────────────────────────────────────────────────────────
 function CompactSelect({ value, onChange, options, minWidth = 130 }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   return (
     <Select
       value={value}
@@ -72,7 +107,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
       displayEmpty
       SelectDisplayProps={{
         style: {
-          fontSize: "13px",
+          fontSize: "12px",
           lineHeight: "32px",
           padding: "0 28px 0 10px",
           minHeight: "unset",
@@ -80,19 +115,19 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
       }}
       sx={{
         height: 32,
-        fontSize: "13px",
+        fontSize: "12px",
         minWidth,
         borderRadius: "6px",
         "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
         "&:hover .MuiOutlinedInput-notchedOutline": {
-          borderColor: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)",
+          borderColor: "text.disabled",
         },
         "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
           borderColor: "primary.main",
           borderWidth: "1px",
         },
         "& .MuiSelect-select": {
-          fontSize: "13px !important",
+          fontSize: "12px !important",
           padding: "0 28px 0 10px !important",
           lineHeight: "32px",
         },
@@ -107,7 +142,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
             borderColor: "divider",
             mt: 0.5,
             "& .MuiMenuItem-root": {
-              fontSize: "13px",
+              fontSize: "12px",
               minHeight: 32,
               py: 0.75,
             },
@@ -136,20 +171,24 @@ function BulkActionMenu({ count, selected, onClear }) {
   const updateIssue = useUpdateErrorFeedIssue();
 
   const actions = [
-    { label: "Mark as Resolved", icon: "mdi:check-circle", status: "resolved" },
+    {
+      label: "Mark as Resolved",
+      icon: "solar:check-circle-bold",
+      status: "resolved",
+    },
     {
       label: "Mark as Acknowledged",
-      icon: "mdi:check-circle-outline",
+      icon: "solar:check-circle-linear",
       status: "acknowledged",
     },
     {
       label: "Mark as For Review",
-      icon: "mdi:eye-outline",
+      icon: "solar:eye-linear",
       status: "for_review",
     },
     {
       label: "Mark as Escalating",
-      icon: "mdi:trending-up",
+      icon: "solar:graph-up-linear",
       status: "escalating",
     },
   ];
@@ -166,29 +205,33 @@ function BulkActionMenu({ count, selected, onClear }) {
 
   return (
     <>
-      <Chip
-        label={`${count} selected`}
-        size="small"
-        sx={{
-          height: 28,
-          fontSize: "12px",
-          fontWeight: 600,
-          bgcolor: "primary.main",
-          color: "primary.contrastText",
-          borderRadius: "4px",
-        }}
-        deleteIcon={<Iconify icon="mdi:close" width={14} />}
-        onDelete={onClear}
+      <SelectionBar
+        count={count}
+        noun="issue"
+        onCancel={onClear}
+        actions={[
+          {
+            label: "Bulk actions",
+            node: (
+              <Button
+                size="small"
+                variant="text"
+                color="inherit"
+                endIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={16} />
+                }
+                onClick={(e) => setAnchorEl(e.currentTarget)}
+                sx={{
+                  color: "text.secondary",
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                Bulk actions
+              </Button>
+            ),
+          },
+        ]}
       />
-      <Button
-        size="small"
-        variant="outlined"
-        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
-        onClick={(e) => setAnchorEl(e.currentTarget)}
-        sx={{ height: 32, fontSize: "13px", borderRadius: "6px" }}
-      >
-        Bulk actions
-      </Button>
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
@@ -197,8 +240,6 @@ function BulkActionMenu({ count, selected, onClear }) {
           elevation: 3,
           sx: {
             borderRadius: 1,
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 180,
           },
         }}
@@ -207,7 +248,7 @@ function BulkActionMenu({ count, selected, onClear }) {
           <MenuItem
             key={a.status}
             onClick={() => handleBulkStatus(a.status)}
-            sx={{ fontSize: "13px", gap: 1 }}
+            sx={{ gap: 1 }}
           >
             <Iconify
               icon={a.icon}
@@ -227,8 +268,17 @@ BulkActionMenu.propTypes = {
   onClear: PropTypes.func,
 };
 
+const DEFAULT_PROJECT_OPTIONS = [{ value: "", label: "All Projects" }];
+
 // ── main filter bar ────────────────────────────────────────────────────────
-export default function ErrorFeedFilters({ selected, onClearSelection }) {
+// The project options come from the page (TH-8209): the view owns the single
+// Observe catalog subscription so the picker and the empty-state decision
+// never disagree about freshness.
+export default function ErrorFeedFilters({
+  selected,
+  onClearSelection,
+  projectOptions = DEFAULT_PROJECT_OPTIONS,
+}) {
   const {
     searchQuery,
     setSearchQuery,
@@ -247,26 +297,42 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
     setTimeRange,
   } = useErrorFeedStore();
 
-  const { data: projects } = useObserveProjectList();
-  const projectOptions = useMemo(
-    () => [{ value: "", label: "All Projects" }, ...(projects ?? [])],
-    [projects],
+  const filterFields = useMemo(
+    () => buildFilterFields(projectOptions),
+    [projectOptions],
   );
-
-  const hasActiveFilters =
-    selectedProject ||
-    selectedStatus ||
-    selectedSeverity ||
-    selectedSource ||
-    selectedFixLayer;
-
-  const clearAllFilters = () => {
-    setSelectedProject("");
-    setSelectedStatus("");
-    setSelectedSeverity("");
-    setSelectedSource("");
-    setSelectedFixLayer("");
-    setSearchQuery("");
+  const filterValue = useMemo(
+    () =>
+      [
+        ["project", selectedProject],
+        ["status", selectedStatus],
+        ["severity", selectedSeverity],
+        ["fix_layer", selectedFixLayer],
+        ["source", selectedSource],
+      ]
+        .filter(([, value]) => value)
+        .map(([field, value]) => ({
+          field,
+          fieldType: "categorical",
+          operator: "equals",
+          value: [value],
+        })),
+    [
+      selectedProject,
+      selectedStatus,
+      selectedSeverity,
+      selectedFixLayer,
+      selectedSource,
+    ],
+  );
+  const handleFilterChange = (rows) => {
+    const valueOf = (field) =>
+      (rows || []).find((row) => row.field === field)?.value?.[0] ?? "";
+    setSelectedProject(valueOf("project"));
+    setSelectedStatus(valueOf("status"));
+    setSelectedSeverity(valueOf("severity"));
+    setSelectedFixLayer(valueOf("fix_layer"));
+    setSelectedSource(valueOf("source"));
   };
 
   return (
@@ -288,7 +354,7 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
             startAdornment={
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled" }}
                 />
@@ -302,7 +368,7 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
                     onClick={() => setSearchQuery("")}
                     edge="end"
                   >
-                    <Iconify icon="mdi:close" width={14} />
+                    <Iconify icon="solar:close-linear" width={14} />
                   </IconButton>
                 </InputAdornment>
               ) : null
@@ -310,7 +376,7 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
             sx={{
               height: 32,
               width: 280,
-              fontSize: "13px",
+              fontSize: "12px",
               borderRadius: "6px",
               "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
             }}
@@ -330,59 +396,11 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
             options={TIME_RANGE_OPTIONS}
             minWidth={140}
           />
-          <CompactSelect
-            value={selectedProject}
-            onChange={setSelectedProject}
-            options={projectOptions}
-            minWidth={140}
+          <FilterButton
+            fields={filterFields}
+            value={filterValue}
+            onChange={handleFilterChange}
           />
-
-          <CompactSelect
-            value={selectedStatus}
-            onChange={setSelectedStatus}
-            options={STATUS_OPTIONS}
-            minWidth={125}
-          />
-          <CompactSelect
-            value={selectedSeverity}
-            onChange={setSelectedSeverity}
-            options={SEVERITY_OPTIONS}
-            minWidth={130}
-          />
-          <CompactSelect
-            value={selectedFixLayer}
-            onChange={setSelectedFixLayer}
-            options={FIX_LAYER_OPTIONS}
-            minWidth={140}
-          />
-          <CompactSelect
-            value={selectedSource}
-            onChange={setSelectedSource}
-            options={SOURCE_OPTIONS}
-            minWidth={120}
-          />
-
-          {hasActiveFilters && (
-            <Tooltip title="Clear all filters" arrow>
-              <Button
-                size="small"
-                variant="text"
-                onClick={clearAllFilters}
-                startIcon={
-                  <Iconify icon="mdi:filter-remove-outline" width={14} />
-                }
-                sx={{
-                  height: 32,
-                  fontSize: "12px",
-                  color: "text.secondary",
-                  minWidth: 0,
-                  px: 1,
-                }}
-              >
-                Clear
-              </Button>
-            </Tooltip>
-          )}
         </Stack>
 
         {/* Right: bulk actions */}
@@ -403,4 +421,7 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
 ErrorFeedFilters.propTypes = {
   selected: PropTypes.array,
   onClearSelection: PropTypes.func,
+  projectOptions: PropTypes.arrayOf(
+    PropTypes.shape({ value: PropTypes.string, label: PropTypes.string }),
+  ),
 };

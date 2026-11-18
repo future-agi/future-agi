@@ -1,6 +1,7 @@
 from temporalio.client import ScheduleOverlapPolicy
 
 from tfc.deployment_telemetry.config import (
+    get_event_flush_seconds,
     get_telemetry_interval_hours,
     get_telemetry_jitter_seconds,
 )
@@ -21,7 +22,17 @@ def send_deployment_telemetry_heartbeat():
     return run_telemetry_cycle()
 
 
+@temporal_activity(time_limit=60, queue="default", max_retries=0)
+def flush_deployment_telemetry_events():
+    from tfc.deployment_telemetry.events import flush_events, queue_boot_event
+
+    queue_boot_event()
+
+    return {"sent": flush_events()}
+
+
 _interval = get_telemetry_interval_hours() * 3600
+_event_interval = get_event_flush_seconds()
 
 DEPLOYMENT_TELEMETRY_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
@@ -32,5 +43,14 @@ DEPLOYMENT_TELEMETRY_SCHEDULES: list[ScheduleConfig] = [
         queue="default",
         overlap_policy=ScheduleOverlapPolicy.SKIP,
         description="Register self-hosted deployments and send usage telemetry",
+    ),
+    ScheduleConfig(
+        schedule_id="deployment-telemetry-events",
+        activity_name="flush_deployment_telemetry_events",
+        interval_seconds=_event_interval,
+        jitter_seconds=0,
+        queue="default",
+        overlap_policy=ScheduleOverlapPolicy.SKIP,
+        description="Flush self-hosted customer journey events",
     ),
 ]

@@ -1,6 +1,7 @@
 import { LoadingButton } from "@mui/lab";
 import { Box, Collapse, Divider, IconButton, Typography } from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, { useEffect, useMemo } from "react";
 import Iconify from "src/components/iconify";
@@ -8,6 +9,8 @@ import PlaygroundInput from "src/components/PlaygroundInput/PlaygroundInput";
 import { ShowComponent } from "src/components/show";
 import EvalsOutput from "src/sections/evals/EvalDetails/EvalsConfig/EvalsOutput";
 import axios, { endpoints } from "src/utils/axios";
+import { RESPONSE_CODES } from "src/utils/constants";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { extractVariables } from "src/utils/utils";
 
 const CustomEvalsPlayground = ({ open, onClose, formData }) => {
@@ -151,6 +154,18 @@ const CustomEvalsPlayground = ({ open, onClose, formData }) => {
       const { result } = data?.data || {};
       setResults({ output: result.output, reason: result.reason });
     },
+    // The app-wide handler toasts every other failure but skips 429, so a
+    // rate-limit refusal would show nothing. Other statuses stay with it.
+    onError: (error) => {
+      if (error?.statusCode !== RESPONSE_CODES.LIMIT_REACHED) return;
+      enqueueSnackbar(
+        getSafeActionErrorMessage(
+          error,
+          "Failed to run evaluation. Please retry.",
+        ),
+        { variant: "error" },
+      );
+    },
   });
 
   useEffect(() => {
@@ -210,12 +225,9 @@ const CustomEvalsPlayground = ({ open, onClose, formData }) => {
                   Test your evaluations on our playground
                 </Typography>
               </Box>
-              <IconButton
-                onClick={onClose}
-                sx={{ height: "30px", borderRadius: 0.5 }}
-              >
+              <IconButton onClick={onClose}>
                 <Iconify
-                  icon="line-md:close"
+                  icon="solar:close-linear"
                   sx={{
                     width: (theme) => theme.spacing(2),
                     height: (theme) => theme.spacing(2),

@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from tracer.models.project import Project
 from tracer.serializers.filters import (
+    OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
     JsonValueField,
     MetricSortParamListField,
     ObserveGraphMetricConfigField,
@@ -9,6 +10,7 @@ from tracer.serializers.filters import (
     filter_list_field,
     filter_list_query_param_field,
 )
+from tracer.serializers.usage_coverage import CostCoverageBucketSerializer
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
 
@@ -32,6 +34,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "config",
             "source",
             "session_config",
+            "sampling_contact_attribute",
             "tags",
         ]
         read_only_fields = ["organization", "workspace"]
@@ -148,6 +151,9 @@ class ProjectViewSetListQuerySerializer(ProjectListQuerySerializer):
 
 
 class ProjectNameUpdateSerializer(serializers.Serializer):
+    sampling_contact_attribute = serializers.CharField(
+        max_length=200, allow_blank=True, required=False
+    )
     project_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=True)
     sampling_rate = serializers.FloatField(required=False, min_value=0.0, max_value=1.0)
@@ -191,6 +197,16 @@ class ProjectGraphDataResultSerializer(serializers.Serializer):
     """
 
     system_metrics = JsonValueField()
+    cost_coverage = CostCoverageBucketSerializer(many=True, required=False)
+    system_metric_statistics = serializers.DictField(
+        child=serializers.ChoiceField(choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES),
+        required=False,
+        help_text=(
+            "Statistic of each ``system_metrics`` series per bucket, e.g. "
+            '{"latency": "mean", "tokens": "sum", "cost": "mean", '
+            '"traffic": "count"}. Latency is always the mean (avg) span latency.'
+        ),
+    )
     evaluations = JsonValueField()
 
 
@@ -236,7 +252,9 @@ class ProjectUserGraphDataRequestSerializer(StrictInputSerializer):
 
 
 class ProjectUserGraphDataResultSerializer(serializers.Serializer):
-    """Five exact per-user time-series returned by the detail graph API."""
+    """Five exact per-user time-series and optional monetary coverage by bucket."""
+
+    cost_coverage = CostCoverageBucketSerializer(many=True, required=False)
 
     session = serializers.ListField(
         child=serializers.DictField(child=JsonValueField(allow_null=True))

@@ -16,18 +16,38 @@ config:
   config_params_desc: {reference: Ground truth, hypothesis: ASR output}
   code: |
     def evaluate(input, output, expected, context, **kwargs):
-        ref = str(kwargs.get("reference", expected or "")).strip().lower().split()
-        hyp = str(kwargs.get("hypothesis", output or "")).strip().lower().split()
+        import Levenshtein
+
+        def align_counts(ref, hyp):
+            hits = substitutions = deletions = insertions = 0
+            for opcode in Levenshtein.opcodes(ref, hyp):
+                operation = opcode[0]
+                ref_start = opcode[1]
+                ref_end = opcode[2]
+                hyp_start = opcode[3]
+                hyp_end = opcode[4]
+                ref_count = ref_end - ref_start
+                hyp_count = hyp_end - hyp_start
+                if operation == "equal":
+                    hits += ref_count
+                elif operation == "replace":
+                    substitutions += min(ref_count, hyp_count)
+                    deletions += max(ref_count - hyp_count, 0)
+                    insertions += max(hyp_count - ref_count, 0)
+                elif operation == "delete":
+                    deletions += ref_count
+                elif operation == "insert":
+                    insertions += hyp_count
+            return hits, substitutions, deletions, insertions
+
+        reference_value = kwargs.get("reference", expected)
+        hypothesis_value = kwargs.get("hypothesis", output)
+        ref = str(reference_value if reference_value is not None else "").strip().lower().split()
+        hyp = str(hypothesis_value if hypothesis_value is not None else "").strip().lower().split()
         if not ref and not hyp: return {"score": 1.0, "reason": "WIP: 1.0 (both empty)"}
         if not ref or not hyp: return {"score": 0.0, "reason": "WIP: 0.0 (one empty)"}
-        n, m = len(ref), len(hyp)
-        dp = list(range(m+1))
-        for i in range(1, n+1):
-            prev = dp[:]
-            dp[0] = i
-            for j in range(1, m+1):
-                cost = 0 if ref[i-1] == hyp[j-1] else 1
-                dp[j] = min(dp[j-1]+1, prev[j]+1, prev[j-1]+cost)
-        hits = max(0, n - dp[m])
+        n = len(ref)
+        m = len(hyp)
+        hits = align_counts(ref, hyp)[0]
         wip = (hits/n) * (hits/m)
         return {"score": float(wip), "reason": f"WIP: {wip:.4f}"}

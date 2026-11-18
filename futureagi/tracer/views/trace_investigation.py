@@ -10,13 +10,21 @@ from tfc.utils.api_errors import build_error_envelope
 from tracer.serializers.trace_investigation import (
     ClaimInvestigationsRequestSerializer,
     ClaimInvestigationsResponseSerializer,
+    ConversationEvidenceRequestSerializer,
+    ConversationEvidenceResponseSerializer,
     InvestigationControlErrorSerializer,
     PublishInvestigationRequestSerializer,
     PublishInvestigationResponseSerializer,
     RecordTraceNotificationsRequestSerializer,
     RecordTraceNotificationsResponseSerializer,
+    SimulationEvidenceRequestSerializer,
     UpdateInvestigationAttemptRequestSerializer,
     UpdateInvestigationAttemptResponseSerializer,
+)
+from tracer.services.conversation_evidence import conversation_evidence_rows
+from tracer.services.simulation_investigation import (
+    SimulationInvestigationConflict,
+    simulation_evidence_page,
 )
 from tracer.services.trace_investigation import (
     InvestigationConflict,
@@ -114,3 +122,44 @@ class PublishInvestigationView(InternalInvestigationView):
             return Response(publish_investigation(**request.validated_data))
         except InvestigationControlError as error:
             return _error_response(error)
+
+
+class ConversationEvidenceView(InternalInvestigationView):
+    @validated_request(
+        ConversationEvidenceRequestSerializer,
+        responses={
+            200: ConversationEvidenceResponseSerializer,
+            409: InvestigationControlErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    def post(self, request: Request, attempt_id) -> Response:
+        try:
+            return Response(
+                conversation_evidence_rows(
+                    attempt_id=attempt_id, **request.validated_data
+                )
+            )
+        except InvestigationControlError as error:
+            return _error_response(error)
+
+
+class SimulationEvidenceView(InternalInvestigationView):
+    @validated_request(
+        SimulationEvidenceRequestSerializer,
+        responses={409: InvestigationControlErrorSerializer},
+        reject_unknown_fields=True,
+    )
+    def post(self, request: Request, attempt_id):
+        try:
+            payload = simulation_evidence_page(
+                attempt_id=attempt_id, **request.validated_data
+            )
+        except SimulationInvestigationConflict as error:
+            return Response(
+                build_error_envelope(
+                    str(error), status_code=status.HTTP_409_CONFLICT, code="conflict"
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(payload, status=status.HTTP_200_OK)

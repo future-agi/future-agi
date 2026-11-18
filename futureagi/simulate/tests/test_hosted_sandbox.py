@@ -10,13 +10,15 @@ from simulate.services.hosted_sandbox import (
     DaytonaSandboxRuntimeProvider,
     E2BSandboxRuntimeProvider,
     SandboxCommandRequest,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
+    SandboxNotFoundError,
     SandboxProviderConfigurationError,
     SandboxProviderError,
     sandbox_provider_name,
     sandbox_runtime_reference,
 )
-from simulate.services.hosted_sandbox.e2b import E2BProcess
+from simulate.services.hosted_sandbox.e2b import E2BFilesystem, E2BProcess
 
 
 def _spec(**overrides) -> SandboxLaunchSpec:
@@ -107,6 +109,10 @@ def test_daytona_adapter_maps_provider_neutral_launch_spec(settings, monkeypatch
     assert params.domain_allow_list == "api.deepgram.com,platform.example.com"
     assert not hasattr(params, "network_allow_list")
     assert provider.runtime_digest == "sha256:digest"
+
+    provider.create(_spec(runtime_name="alk-hosted-certified-large"), timeout=300)
+    params, _ = _DaytonaClient.created
+    assert params.snapshot == "alk-hosted-certified-large"
 
 
 def test_daytona_adapter_ignores_cidrs_for_restricted_empty_policy(
@@ -215,6 +221,10 @@ class _E2BSandbox:
         self.files = _E2BFiles()
         self.commands = _E2BCommands()
         self.killed = False
+        self.renewed_timeout = None
+
+    def set_timeout(self, timeout):
+        self.renewed_timeout = timeout
 
     def kill(self):
         self.killed = True
@@ -262,6 +272,7 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
     settings.ALK_E2B_TEMPLATE_MEMORY_MB = 8192
     settings.ALK_E2B_TEMPLATE_DISK_GB = 10
     settings.ALK_E2B_MAX_TTL_SECONDS = 86400
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
 
     provider = E2BSandboxRuntimeProvider()
     sandbox = provider.create(_spec(), timeout=300)
@@ -285,12 +296,20 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
         "rm -f /usr/local/bin/python && "
         "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
         "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
-        "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip"
+        "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
+        "if [ -x /opt/alk-venv/bin/uv ]; then "
+        "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv; fi && "
+        "if [ -x /opt/alk-venv/bin/uvx ]; then "
+        "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx; fi && "
+        "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx"
     )
     assert bootstrap_options["user"] == "root"
     preview = provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
     assert preview.url == "https://8080-e2b-sandbox.e2b.app"
     assert preview.headers == {"E2B-Traffic-Access-Token": "traffic-token"}
+
+    provider.renew_ttl(sandbox, 7200)
+    assert _E2BSandboxClass.sandbox.renewed_timeout == 7200
 
     assert provider.delete(sandbox, timeout=1, wait=True) is True
     assert sandbox._sandbox.killed is True
@@ -352,6 +371,21 @@ def test_e2b_process_fails_when_command_disappears_without_exit_marker(monkeypat
         SandboxProviderError, match="disappeared without an exit marker"
     ):
         process.get_session_command("alk-harness", "99:missing")
+
+
+def test_e2b_reports_a_missing_file_apart_from_a_missing_sandbox(monkeypatch):
+    """A caller treats a missing sandbox as gone; a missing file in a live one is not that."""
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    files = E2BFilesystem(raw, "svc-control")
+
+    with pytest.raises(SandboxFileNotFoundError) as missing:
+        files.download_file("/work/builder-cost.json")
+    assert not isinstance(missing.value, SandboxNotFoundError)
+    assert isinstance(missing.value, SandboxProviderError)
+
+    raw.files.values["/work/builder-cost.json"] = b"{}"
+    assert files.download_file("/work/builder-cost.json") == b"{}"
 
 
 def test_e2b_template_capacity_fails_closed(settings):

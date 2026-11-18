@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,10 +158,14 @@ func authorizeRuntimeState(claims *licenseClaims, cfg config.LicenseAuthConfig, 
 		}
 	}
 
-	if allowed, err := store.AllowRate(claims.LicenseID, cfg.RateLimitRPM); err != nil {
+	if allowed, resetSeconds, err := store.AllowRate(claims.LicenseID, cfg.RateLimitRPM); err != nil {
 		return models.ErrServiceUnavailable("license rate state unavailable")
 	} else if !allowed {
-		return models.ErrTooManyRequests("license rate limit exceeded")
+		// Tell the caller when the window reopens, so its one retry is not
+		// spent inside the window that refused it.
+		apiErr := models.ErrTooManyRequests("license rate limit exceeded")
+		apiErr.RetryAfter = strconv.Itoa(resetSeconds)
+		return apiErr
 	}
 
 	if allowed, err := store.PeekMonthlyUsage(claims.LicenseID, cfg.MonthlyUsageLimit); err != nil {
@@ -176,6 +181,12 @@ type usageMeterResponseWriter struct {
 	http.ResponseWriter
 	status  int
 	written bool
+}
+
+// Unwrap lets http.ResponseController reach the real writer, so a deadline or
+// a hijack set further in still finds the connection.
+func (w *usageMeterResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func (w *usageMeterResponseWriter) WriteHeader(status int) {

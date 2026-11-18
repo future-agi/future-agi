@@ -44,6 +44,10 @@ same label independently; changes require coordinated compatibility review.
 from typing import Final
 
 FEATURE_POLICY_VERSION: Final[str] = "f6-minilm-features/v2"
+# Same MiniLM text/chunk recipe, with the broader simulation occurrence set.
+# A separate job identity preserves legacy source-bound feature receipts when
+# an existing simulation registry is explicitly upgraded.
+SIMULATION_FEATURE_POLICY_VERSION: Final[str] = "f6-minilm-simulation-features/v3"
 
 # Registry algorithm identity, separate from the input feature recipe. The
 # matching worker policy pins sealed F6 retrieval/admission/repair/revisit and
@@ -51,6 +55,20 @@ FEATURE_POLICY_VERSION: Final[str] = "f6-minilm-features/v2"
 # grouping decisions requires a new algorithm identity and explicit migration;
 # never relabel an existing registry as if it had used the new policy.
 GROUPING_POLICY_VERSION: Final[str] = "f6-minilm/v1"
+# Explicit per-project activation only. Existing registries/receipts retain
+# their original version; feature representation is unchanged.
+SAMPLED_GROUPING_POLICY_VERSION: Final[str] = "f6-minilm-sampled/v2"
+SIMULATION_GROUPING_POLICY_VERSION: Final[str] = "f6-minilm-simulation/v3"
+SAMPLED_GROUPING_POLICY_VERSIONS: Final[tuple[str, ...]] = (
+    SAMPLED_GROUPING_POLICY_VERSION,
+    SIMULATION_GROUPING_POLICY_VERSION,
+)
+
+# Which findings of a report become Feed occurrences. Stamped on each report at
+# publish and never rewritten. A report without it keeps the legacy gate
+# (failure outcome and a violated requirement), so already grouped reports keep
+# their occurrence list and source digest.
+GROUPING_GATE_VERSION: Final[str] = "unrecovered/v2"
 
 # Post-grouping impact assessment. Independent of F6 membership decisions.
 # Bump for rubric, evidence selection, or model changes; old receipts retain

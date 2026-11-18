@@ -98,6 +98,11 @@ class TraceDetailRead:
     annotations: tuple[dict[str, Any], ...]
     query_count: int
     elapsed_ms: float
+    # The core identity/content tree was proven complete, but the optional eval
+    # enrichment query itself failed. This is intentionally narrower than a
+    # detail-read failure: bounds, deadline, annotations and core content stay
+    # fail-closed.
+    eval_unavailable: bool = False
 
 
 class TraceDetailReadBuilder:
@@ -121,7 +126,8 @@ class TraceDetailReadBuilder:
                 trace_id,
                 id AS span_id,
                 start_time,
-                argMax(is_deleted, _version) AS latest_is_deleted
+                argMax(is_deleted, _version) AS latest_is_deleted,
+                max(_version) AS latest_version
             FROM {self.TABLE}
             PREWHERE project_id IN %(detail_project_ids)s
               AND trace_id = %(detail_trace_id)s
@@ -138,9 +144,12 @@ class TraceDetailReadBuilder:
     def build_span_anchor_query(self, span_id: str) -> tuple[str, dict[str, Any]]:
         """Resolve one span id inside the authorized project scope.
 
-        Span ids are not a globally unique physical identity.  Collapse every
-        candidate identity to its latest tombstone state and keep a sentinel so
-        an id collision can never become an arbitrary ``LIMIT 1`` choice.
+        Span ids are not a globally unique physical identity: a replay,
+        re-import or shared provider account writes the same span into
+        several projects.  Collapse every candidate identity to its latest
+        tombstone state and pick the most recently written live copy, so an
+        id collision is a deterministic choice rather than an arbitrary
+        ``LIMIT 1``.
         """
 
         return (
@@ -150,13 +159,16 @@ class TraceDetailReadBuilder:
                 trace_id,
                 id AS span_id,
                 start_time,
-                argMax(is_deleted, _version) AS latest_is_deleted
+                argMax(is_deleted, _version) AS latest_is_deleted,
+                max(_version) AS latest_version
             FROM {self.TABLE}
             PREWHERE project_id IN %(detail_project_ids)s
               AND id = %(detail_span_id)s
             GROUP BY project_id, trace_id, id, start_time
-            ORDER BY start_time DESC, trace_id DESC, project_id DESC
-            LIMIT 3
+            HAVING latest_is_deleted = 0
+            ORDER BY latest_version DESC, project_id DESC, trace_id DESC,
+                     start_time DESC
+            LIMIT 1
             """,
             {
                 "detail_project_ids": self.project_ids,
@@ -325,7 +337,10 @@ class TraceDetailReadBuilder:
                 latest_error AS error,
                 latest_error_message AS error_message,
                 latest_status AS status,
-                latest_skipped_reason AS skipped_reason
+                latest_skipped_reason AS skipped_reason,
+                latest_created_at AS created_at,
+                latest_target_type AS target_type,
+                toString(grouped_eval_id) AS log_id
             FROM (
                 SELECT
                     id AS grouped_eval_id,
@@ -344,6 +359,8 @@ class TraceDetailReadBuilder:
                         AS latest_error_message,
                     {status_aggregate} AS latest_status,
                     {skipped_reason_aggregate} AS latest_skipped_reason,
+                    argMax(created_at, {version}) AS latest_created_at,
+                    argMax(target_type, {version}) AS latest_target_type,
                     {deleted} AS latest_is_deleted
                 FROM {table}
                 PREWHERE trace_id = %(detail_eval_trace_id)s
@@ -462,13 +479,8 @@ def read_trace_detail(
     if len(identity_rows) > _MAX_PHYSICAL_SPANS:
         raise TraceDetailReadUnavailable("span_limit_exceeded")
 
-    identities = [
-        PhysicalSpanIdentity(
-            project_id=str(row.get("project_id") or ""),
-            trace_id=str(row.get("trace_id") or ""),
-            span_id=str(row.get("span_id") or ""),
-            start_time=row["start_time"],
-        )
+    live_rows = [
+        row
         for row in identity_rows
         if not row.get("latest_is_deleted")
         and row.get("project_id")
@@ -476,12 +488,29 @@ def read_trace_detail(
         and row.get("span_id")
         and isinstance(row.get("start_time"), datetime)
     ]
-    if not identities:
+    if not live_rows:
         raise TraceDetailNotFound
 
-    projects = {identity.project_id for identity in identities}
-    if len(projects) != 1:
-        raise TraceDetailReadUnavailable("ambiguous_trace_identity")
+    # A trace id is not unique across projects: a replay, re-import or shared
+    # provider account writes the same trace into several projects. Every
+    # candidate is already inside the authorized scope, so serve the most
+    # recently written copy as one project's coherent tree.
+    project_id = str(
+        max(
+            live_rows,
+            key=lambda row: (row.get("latest_version") or 0, str(row["project_id"])),
+        )["project_id"]
+    )
+    identities = [
+        PhysicalSpanIdentity(
+            project_id=project_id,
+            trace_id=str(row["trace_id"]),
+            span_id=str(row["span_id"]),
+            start_time=row["start_time"],
+        )
+        for row in live_rows
+        if str(row["project_id"]) == project_id
+    ]
     duplicate_ids = [
         span_id
         for span_id, count in Counter(
@@ -504,7 +533,6 @@ def read_trace_detail(
             raise TraceDetailReadUnavailable("incomplete_content_replay")
         content_rows.extend(rows)
 
-    project_id = next(iter(projects))
     span_ids = [identity.span_id for identity in identities]
 
     # The eval table has no tracer-project column. Resolve the selected
@@ -529,15 +557,25 @@ def read_trace_detail(
         span_ids=span_ids,
         eval_config_ids=eval_config_ids,
     )
-    eval_rows = (
-        execute(
-            eval_query,
-            eval_params,
-            max_result_rows=_MAX_EVAL_ROWS + 1,
+    eval_unavailable = False
+    try:
+        eval_rows = (
+            execute(
+                eval_query,
+                eval_params,
+                max_result_rows=_MAX_EVAL_ROWS + 1,
+            )
+            if eval_query
+            else []
         )
-        if eval_query
-        else []
-    )
+    except TraceDetailReadUnavailable as exc:
+        # Only the enrichment query's ClickHouse execution failure becomes an
+        # explicit unavailable marker. A proven read-budget/deadline/bounds
+        # failure remains a 503 because a partial read must never look complete.
+        if exc.code != "clickhouse_query_failed":
+            raise
+        eval_rows = []
+        eval_unavailable = True
     if len(eval_rows) > _MAX_EVAL_ROWS:
         raise TraceDetailReadUnavailable("eval_limit_exceeded")
 
@@ -559,6 +597,7 @@ def read_trace_detail(
         spans=tuple(content_rows),
         eval_config_ids=eval_config_ids,
         evals=tuple(eval_rows),
+        eval_unavailable=eval_unavailable,
         annotations=tuple(annotation_rows),
         query_count=query_count,
         elapsed_ms=(monotonic() - started) * 1000,
@@ -577,8 +616,8 @@ def read_span_detail(
     """Resolve a public span id, then reuse the exact trace-detail replay.
 
     The light anchor and the trace replay share one request wall budget.  A
-    tombstoned id is absent; multiple live physical identities are ambiguous
-    and fail closed rather than leaking or selecting another project's row.
+    tombstoned id is absent; when several live physical identities share the
+    id, the most recently written one inside the authorized scope is served.
     """
 
     started = monotonic()
@@ -593,7 +632,7 @@ def read_span_detail(
             anchor_query,
             anchor_params,
             timeout_ms=min(_QUERY_TIMEOUT_MS, remaining_ms),
-            settings={**_READ_SETTINGS, "max_result_rows": 3},
+            settings={**_READ_SETTINGS, "max_result_rows": 1},
         )
     except Exception as exc:
         if is_read_budget_error(exc):
@@ -602,14 +641,11 @@ def read_span_detail(
             raise TraceDetailReadUnavailable("clickhouse_query_failed") from None
         raise
 
-    anchor_rows = list(anchor_result.data or [])
-    if len(anchor_rows) > 2:
-        raise TraceDetailReadUnavailable("span_anchor_limit_exceeded")
-    live_rows = [row for row in anchor_rows if not row.get("latest_is_deleted")]
+    live_rows = [
+        row for row in anchor_result.data or [] if not row.get("latest_is_deleted")
+    ]
     if not live_rows:
         raise TraceDetailNotFound
-    if len(live_rows) != 1:
-        raise TraceDetailReadUnavailable("ambiguous_span_identity")
 
     anchor = live_rows[0]
     project_id = str(anchor.get("project_id") or "")

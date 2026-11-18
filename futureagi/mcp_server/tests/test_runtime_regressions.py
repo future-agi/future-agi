@@ -12,6 +12,7 @@ from mcp_server.api_executor import (
     MCPRequestContext,
     ensure_urlconf_loaded,
     executor,
+    load_urlconf_outside_workspace,
 )
 from mcp_server.generated_registry import registry
 from mcp_server.models.connection import MCPConnection
@@ -28,6 +29,7 @@ from model_hub.serializers.contracts import CreateEmptyDatasetRequestSerializer
 from model_hub.serializers.prompt_requests import PromptRunRequestSerializer
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
+    get_current_workspace,
     workspace_context,
 )
 
@@ -94,17 +96,14 @@ def test_minimal_dataset_request_has_a_valid_model_type():
 
 
 @pytest.mark.django_db
-def test_unknown_dataset_columns_do_not_block_row_creation(user, workspace):
+def test_unknown_dataset_columns_reject_row_creation(user, workspace):
     dataset = Dataset.objects.create(
         name="MCP columns",
         organization=user.organization,
         workspace=workspace,
         user=user,
     )
-    with patch(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
-        None,
-    ):
+    with pytest.raises(APIExecutionError, match="missing") as error:
         executor.execute_sync(
             registry.get("add_dataset_rows"),
             {
@@ -115,7 +114,8 @@ def test_unknown_dataset_columns_do_not_block_row_creation(user, workspace):
             },
             MCPRequestContext(user, user.organization, workspace),
         )
-    assert Row.objects.filter(dataset=dataset).exists()
+    assert error.value.status_code == 400
+    assert not Row.objects.filter(dataset=dataset).exists()
 
 
 @pytest.mark.django_db
@@ -127,6 +127,14 @@ def test_urlconf_loading_refuses_to_run_inside_a_bound_workspace(user, workspace
     with workspace_context(workspace, organization=user.organization, user=user):
         with pytest.raises(RuntimeError, match="before a workspace is bound"):
             ensure_urlconf_loaded()
+
+
+@pytest.mark.django_db
+def test_urlconf_loading_clears_bound_workspace_for_in_process_callers(user, workspace):
+    with workspace_context(workspace, organization=user.organization, user=user):
+        assert get_current_workspace() == workspace
+        load_urlconf_outside_workspace()
+        assert get_current_workspace() == workspace
 
 
 @pytest.mark.django_db
@@ -282,9 +290,9 @@ def test_revoked_organization_membership_fails_closed(user, workspace):
     org_membership.save(update_fields=["is_active"])
 
     _assert_denied_without_side_effects(context, "after leaving org")
-    assert not Dataset.no_workspace_objects.filter(
-        organization=other_org
-    ).exists(), "tool must not run in the user's other organization"
+    assert not Dataset.no_workspace_objects.filter(organization=other_org).exists(), (
+        "tool must not run in the user's other organization"
+    )
     assert not Dataset.no_workspace_objects.filter(workspace=other_workspace).exists()
 
 

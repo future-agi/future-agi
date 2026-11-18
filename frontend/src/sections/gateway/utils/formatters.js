@@ -13,9 +13,9 @@ export function formatNumber(value) {
 }
 
 export function formatCost(value) {
-  if (value == null) return "$0.00";
+  if (value == null) return "—";
   const num = Number(value);
-  if (Number.isNaN(num)) return "$0.00";
+  if (!Number.isFinite(num)) return "—";
 
   const abs = Math.abs(num);
 

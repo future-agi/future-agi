@@ -1,4 +1,4 @@
-import { Box, Button, Chip, Skeleton, Typography } from "@mui/material";
+import { Box, Button, Skeleton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
@@ -55,20 +55,13 @@ const TooltipContent = ({
       <Box>
         <ShowComponent condition={showMoreCondition}>
           <Box sx={{ mb: 1 }}>
-            <Typography
-              typography="s3"
-              sx={{
-                fontWeight: "fontWeightSemiBold",
-                textDecoration: "underline",
-                width: "20%",
-                ":hover": {
-                  cursor: "pointer",
-                },
-              }}
+            <Button
+              size="small"
+              variant="text"
               onClick={() => setExpanded(true)}
             >
               Show More
-            </Typography>
+            </Button>
           </Box>
         </ShowComponent>
         <Box sx={{ display: "flex", width: "100%", gap: 1 }}>
@@ -77,7 +70,7 @@ const TooltipContent = ({
               size="small"
               fullWidth
               variant="outlined"
-              startIcon={<Iconify icon="tabler:eye" />}
+              startIcon={<Iconify icon="solar:eye-linear" />}
               sx={buttonSx}
               onClick={onViewDetail}
             >
@@ -89,7 +82,7 @@ const TooltipContent = ({
               size="small"
               fullWidth
               variant="outlined"
-              startIcon={<Iconify icon="tabler:message" />}
+              startIcon={<Iconify icon="solar:chat-round-line-linear" />}
               onClick={onAddFeedback}
               sx={buttonSx}
             >
@@ -207,9 +200,7 @@ const EvalsCustomCellRenderer = (props) => {
       }
       return (
         <Box sx={{ display: "flex", gap: 1, padding: 1, width: "100%" }}>
-          {props.value.map((each) => (
-            <Chip key={each} label={each} variant="outlined" color="primary" />
-          ))}
+          {props.value.join(" · ")}
         </Box>
       );
     } else if (outputType === "bool" || outputType === "Pass/Fail") {

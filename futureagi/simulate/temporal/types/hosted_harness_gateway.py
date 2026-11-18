@@ -17,13 +17,6 @@ class HostedHarnessGatewayOutput:
 
 
 @dataclass(frozen=True)
-class HostedHarnessAuthoringOutput:
-    ready: bool
-    state: str
-    detail: str | None = None
-
-
-@dataclass(frozen=True)
 class HostedHarnessAttemptInput:
     attempt_id: str
 
@@ -31,6 +24,17 @@ class HostedHarnessAttemptInput:
 @dataclass(frozen=True)
 class HostedHarnessLaunchOutput:
     attempt_id: str
+
+
+@dataclass(frozen=True)
+class HostedHarnessLaunchFailureInput:
+    job_id: str
+
+
+@dataclass(frozen=True)
+class HostedHarnessLaunchRecoveryOutput:
+    state: str
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True)

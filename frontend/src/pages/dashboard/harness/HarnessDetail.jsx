@@ -2,6 +2,7 @@ import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 import {
   Alert,
   Box,
@@ -46,6 +47,7 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import {
   adjustmentStatus,
   completedStageCount,
+  degradeReasonCopy,
   errorMessage,
   eventTime,
   runElapsed,
@@ -67,6 +69,7 @@ import {
   terminalStages,
   environmentName,
 } from "./harnessShared";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // A tab says where the run is: spinning while its stage is being worked, ticked once it has
 // something to show, bare until then.
@@ -78,7 +81,7 @@ const tabIcon = (state) => {
         // Outline, not filled: a solid glyph carries as much ink as the label beside it,
         // which is too much for a secondary marker.
         icon="solar:check-circle-linear"
-        color="accent.pass"
+        color="status.success.solid"
         width={14}
       />
     );
@@ -91,6 +94,70 @@ const DETAIL_TABS = [
   { value: "scenarios", label: "Scenarios" },
   { value: "runs", label: "Runs" },
 ];
+
+// Parallelism surface (C4 §6). Three distinct, info-styled notices — never
+// presented as a scenario/agent failure:
+//  1. runtime degrade — effective W (from the attempt projection, NOT the event
+//     window) + per-reason copy, shown when the guest reduced parallelism;
+//  2. platform clamp — metadata.parallelism_clamped, shown when admission held
+//     the run at 1 because W>1 is not enabled for this deployment;
+//  3. literal-endpoint warning — metadata.parallelism_warnings from the
+//     submit-time environment_values scan.
+function ParallelismNotice({ parallelism, clamped, warnings }) {
+  const requested = parallelism?.requested;
+  const effective = parallelism?.effective;
+  const reasons = parallelism?.degrade_reasons || [];
+  const degraded = reasons.length > 0;
+  const clampedRequested = clamped?.requested;
+  const warningList = Array.isArray(warnings) ? warnings : [];
+  if (!degraded && !clampedRequested && warningList.length === 0) return null;
+  return (
+    <Stack spacing={1} sx={{ mt: 1.5 }}>
+      {degraded && (
+        <Alert severity="info" variant="outlined">
+          <Typography variant="subtitle2">
+            Parallelism: {effective} (requested {requested})
+          </Typography>
+          {reasons.map((reason) => (
+            <Typography key={reason} variant="body2" sx={{ mt: 0.25 }}>
+              {degradeReasonCopy(reason, effective)}
+            </Typography>
+          ))}
+        </Alert>
+      )}
+      {!degraded && clampedRequested ? (
+        <Alert severity="info" variant="outlined">
+          Requested {clampedRequested}, admitted {clamped?.admitted ?? 1} —
+          deployment, scenario-count, or sandbox capacity limits apply.
+        </Alert>
+      ) : null}
+      {warningList.map((warning, index) => (
+        <Alert key={index} severity="warning" variant="outlined">
+          An environment value points at a fixed local address
+          {warning?.aliases?.length ? ` (${warning.aliases.join(", ")})` : ""},
+          which can prevent scenarios from running in parallel.
+        </Alert>
+      ))}
+    </Stack>
+  );
+}
+
+ParallelismNotice.propTypes = {
+  parallelism: PropTypes.shape({
+    requested: PropTypes.number,
+    effective: PropTypes.number,
+    degrade_reasons: PropTypes.arrayOf(PropTypes.string),
+  }),
+  clamped: PropTypes.shape({
+    requested: PropTypes.number,
+    admitted: PropTypes.number,
+  }),
+  warnings: PropTypes.arrayOf(
+    PropTypes.shape({
+      aliases: PropTypes.arrayOf(PropTypes.string),
+    }),
+  ),
+};
 
 const parseActivityPayload = (text) => {
   if (!text) return null;
@@ -653,7 +720,7 @@ export default function HarnessDetail() {
           justifyContent: "center",
         }}
       >
-        <CircularProgress />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -696,7 +763,9 @@ export default function HarnessDetail() {
                 size="small"
                 color="inherit"
                 onClick={() => navigate(paths.dashboard.simulate.harness.root)}
-                startIcon={<Iconify icon="eva:arrow-back-fill" width={18} />}
+                startIcon={
+                  <Iconify icon="solar:arrow-left-linear" width={18} />
+                }
                 sx={{ color: "text.secondary", px: 1, ml: -1, minWidth: 0 }}
               >
                 All environments
@@ -730,7 +799,9 @@ export default function HarnessDetail() {
                       ),
                     )
                   }
-                  endIcon={<Iconify icon="eva:arrow-forward-fill" width={18} />}
+                  endIcon={
+                    <Iconify icon="solar:arrow-right-linear" width={18} />
+                  }
                 >
                   View simulation
                 </Button>
@@ -771,6 +842,25 @@ export default function HarnessDetail() {
             <Alert severity="info" variant="outlined" sx={{ mt: 1.5 }}>
               Cancellation requested. The sandbox is stopping and cleaning up.
             </Alert>
+          )}
+          <ParallelismNotice
+            parallelism={current.parallelism}
+            clamped={current.job?.metadata?.parallelism_clamped}
+            warnings={current.job?.metadata?.parallelism_warnings}
+          />
+          {current.parallelism && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              World slots: {current.parallelism.effective} effective /{" "}
+              {current.parallelism.admitted ?? current.parallelism.effective}{" "}
+              admitted / {current.parallelism.requested} requested
+              {Number.isInteger(status?.active_scenarios) && (
+                <>
+                  {" "}
+                  · {status.active_scenarios} active · {status.queued_scenarios}{" "}
+                  queued
+                </>
+              )}
+            </Typography>
           )}
           <CreditExhaustionBanner
             error={exhaustionError}
@@ -823,7 +913,7 @@ export default function HarnessDetail() {
                       copiedId ? "solar:check-read-linear" : "solar:copy-linear"
                     }
                     width={14}
-                    color={copiedId ? "accent.pass" : "text.secondary"}
+                    color={copiedId ? "status.success.solid" : "text.secondary"}
                   />
                 </IconButton>
               </CustomTooltip>
@@ -856,7 +946,7 @@ export default function HarnessDetail() {
               {status?.attempt || 1}
             </Typography>
             <Box sx={{ mt: 1.5 }}>
-              <Typography variant="caption" fontWeight={600}>
+              <Typography variant="caption" fontWeight={500}>
                 Consumption
               </Typography>
               {current.consumption == null ? (
@@ -900,6 +990,8 @@ export default function HarnessDetail() {
               <Button
                 fullWidth
                 color="inherit"
+                size="small"
+                variant="outlined"
                 onClick={() => setStagesOpen((open) => !open)}
                 aria-expanded={stagesOpen}
                 endIcon={
@@ -915,19 +1007,13 @@ export default function HarnessDetail() {
                 sx={{
                   justifyContent: "flex-start",
                   gap: 1,
-                  px: 1.25,
-                  py: 0.875,
-                  mb: 1.25,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "6px",
-                  textTransform: "none",
+                  mb: 1.5,
                   "& .MuiButton-endIcon": { ml: "auto" },
                 }}
               >
                 <Iconify
                   icon="solar:check-circle-bold"
-                  color="accent.pass"
+                  color="status.success.solid"
                   width={18}
                 />
                 <Typography variant="body2" color="text.secondary">
@@ -936,33 +1022,32 @@ export default function HarnessDetail() {
               </Button>
             )}
 
-            <Stack spacing={1.1} sx={{ pl: collapsible ? "11px" : 0 }}>
+            <Stack spacing={1} sx={{ pl: collapsible ? "11px" : 0 }}>
               {visibleStages.map((stage) => {
                 const index = stages.indexOf(stage);
                 const state = stageState(status, index, current?.events);
                 const muted = state === STAGE_STATE.PENDING;
                 const isCurrent = state === STAGE_STATE.ACTIVE;
-                // accent.* are the mode-aware status tokens; success.main/error.main are
-                // tuned for light only and fail contrast on the dark surface.
+                // status.* are the mode-aware status tokens.
                 const glyph = {
                   [STAGE_STATE.DONE]: {
                     icon: "solar:check-circle-bold",
-                    color: "accent.pass",
+                    color: "status.success.solid",
                   },
                   [STAGE_STATE.ACTIVE]: {
-                    icon: "solar:record-circle-bold",
-                    color: "accent.info",
+                    icon: "solar:play-circle-bold",
+                    color: "status.info.solid",
                   },
                   [STAGE_STATE.FAILED]: {
                     icon: "solar:close-circle-bold",
-                    color: "accent.fail",
+                    color: "status.danger.solid",
                   },
                   [STAGE_STATE.STOPPED]: {
                     icon: "solar:pause-circle-bold",
                     color: "text.secondary",
                   },
                   [STAGE_STATE.PENDING]: {
-                    icon: "solar:record-circle-linear",
+                    icon: "solar:circle-linear",
                     color: "text.secondary",
                   },
                 }[state];
@@ -970,7 +1055,7 @@ export default function HarnessDetail() {
                   <Stack
                     key={stage}
                     direction="row"
-                    spacing={1.2}
+                    spacing={1.5}
                     alignItems="flex-start"
                   >
                     <Iconify
@@ -988,14 +1073,14 @@ export default function HarnessDetail() {
                         variant="body2"
                         color={
                           state === STAGE_STATE.FAILED
-                            ? "accent.fail"
+                            ? "status.danger.fg"
                             : muted
                               ? "text.secondary"
                               : "text.primary"
                         }
                         sx={{
                           opacity: muted ? 0.6 : 1,
-                          fontWeight: isCurrent ? 600 : 400,
+                          fontWeight: isCurrent ? 500 : 400,
                         }}
                       >
                         {readable(stage)}
@@ -1035,6 +1120,7 @@ export default function HarnessDetail() {
               }}
             >
               <Tabs
+                sx={{ boxShadow: "none" }}
                 value={detailTab}
                 onChange={(_, value) => {
                   following.current = value === workingTab;
@@ -1042,42 +1128,6 @@ export default function HarnessDetail() {
                 }}
                 variant="scrollable"
                 scrollButtons={false}
-                sx={(theme) => ({
-                  minHeight: 38,
-                  // The theme gives every tab a 40px right margin at sm+
-                  // (theme/overrides/components/tabs.js), which spreads four short labels
-                  // across the whole column. Override that rather than adding a gap on top.
-                  // Unselected labels sit on text.subtitle rather than text.secondary. In
-                  // light mode that is black[600] against black[800] — noticeably softer —
-                  // while in dark mode both resolve to the same value, so nothing moves.
-                  "& .MuiTab-root:not(.Mui-selected)": {
-                    color: "text.subtitle",
-                  },
-                  // The pass green is #16A34A in light and #4ADE80 in dark, so the same
-                  // opacity reads heavy on white and washed out on black. Hold the ticks
-                  // back in dark, and let them keep their weight in light.
-                  "& .MuiTab-iconWrapper": {
-                    opacity: theme.palette.mode === "light" ? 0.9 : 0.5,
-                  },
-                  "& .Mui-selected .MuiTab-iconWrapper": { opacity: 1 },
-                  // The tick is a marker and can sit back; a spinner is the live signal on
-                  // the page and has to hold its weight on every tab, selected or not.
-                  "& .MuiTab-iconWrapper:has(.MuiCircularProgress-root)": {
-                    opacity: 1,
-                  },
-                  "& .MuiTab-root": {
-                    minHeight: 38,
-                    minWidth: "auto",
-                    // Tabs sit flush against each other and space themselves with padding,
-                    // so the indicator spans a whole tab and the row reads as one rail. The
-                    // theme's 40px right margin would break it back into separate boxes.
-                    // The tick sits to the left of the label, so equal padding leaves the
-                    // label sitting right of centre. A little extra on the right settles it.
-                    pl: 1.5,
-                    pr: 2.25,
-                    "&:not(:last-of-type)": { mr: 0 },
-                  },
-                })}
               >
                 {DETAIL_TABS.map((tab) => (
                   <Tab
@@ -1088,13 +1138,9 @@ export default function HarnessDetail() {
                     // Leading, and tight against the label: the tick marks the tab, so it
                     // reads as part of the name rather than a badge trailing after it.
                     iconPosition="start"
-                    sx={{
-                      textTransform: "none",
-                      // MUI gives the icon wrapper its own 8px margin, which stacks on top
-                      // of the gap. Zero it so the spacing is this one value.
-                      gap: 0.5,
-                      "& .MuiTab-iconWrapper": { m: 0 },
-                    }}
+                    // MUI gives the icon wrapper its own margin, which stacks on top of the
+                    // gap. Zero it so the spacing is this one value.
+                    sx={{ gap: 0.5, "& .MuiTab-iconWrapper": { m: 0 } }}
                   />
                 ))}
               </Tabs>
@@ -1120,7 +1166,16 @@ export default function HarnessDetail() {
                 <Stack spacing={1.5}>
                   {selectedOutputs.length ? (
                     selectedOutputs.map((output) => (
-                      <StageOutput key={output.id} output={output} />
+                      <StageOutput
+                        key={output.id}
+                        output={output}
+                        jobId={jobId}
+                        onChanged={() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["harness-jobs"],
+                          })
+                        }
+                      />
                     ))
                   ) : (
                     <Typography variant="body2" color="text.secondary">
@@ -1133,13 +1188,19 @@ export default function HarnessDetail() {
               ) : (
                 <Stack spacing={1.5}>
                   {selectedOutputs.map((output) => (
-                    <StageOutput key={output.id} output={output} />
+                    <StageOutput
+                      key={output.id}
+                      output={output}
+                      jobId={jobId}
+                      onChanged={() =>
+                        queryClient.invalidateQueries({
+                          queryKey: ["harness-jobs"],
+                        })
+                      }
+                    />
                   ))}
                   {current.credentials && (
-                    <Paper
-                      variant="outlined"
-                      sx={{ p: 1.5, bgcolor: "background.default" }}
-                    >
+                    <Paper variant="outlined" sx={{ p: 1.5 }}>
                       <Typography variant="subtitle2">
                         Runtime preflight
                       </Typography>
@@ -1164,12 +1225,10 @@ export default function HarnessDetail() {
                         sx={{
                           p: 1.5,
                           ml: 3,
-                          bgcolor: "background.default",
-                          borderColor: "accent.info",
                         }}
                       >
                         <Stack direction="row" justifyContent="space-between">
-                          <Typography variant="caption" color="accent.info">
+                          <Typography variant="caption" fontWeight={500}>
                             ALK requested a change
                           </Typography>
                           <Typography
@@ -1207,13 +1266,9 @@ export default function HarnessDetail() {
                         </Stack>
                       </Paper>
                     ) : (
-                      <Paper
-                        key={entry.id}
-                        variant="outlined"
-                        sx={{ p: 1.5, bgcolor: "background.default" }}
-                      >
+                      <Paper key={entry.id} variant="outlined" sx={{ p: 1.5 }}>
                         <Stack direction="row" justifyContent="space-between">
-                          <Typography variant="caption" color="accent.brand">
+                          <Typography variant="caption" fontWeight={500}>
                             {/* Hosted events name their stage at the top level, the
                               sandbox nests it in the payload. Without both, a hosted
                               card falls back to its type and repeats the body. */}
@@ -1387,7 +1442,7 @@ export default function HarnessDetail() {
                 </Typography>
               )}
               {Boolean(conversationFeed.length) && (
-                <Stack spacing={1.25} sx={{ mb: 2 }}>
+                <Stack spacing={1.5} sx={{ mb: 2 }}>
                   {conversationFeed
                     .filter((entry) => entry.kind === "message")
                     .map((entry) => {
@@ -1400,20 +1455,10 @@ export default function HarnessDetail() {
                             p: 1.5,
                             ml: item.role === "user" ? 6 : 0,
                             mr: item.role === "assistant" ? 6 : 0,
-                            bgcolor: "background.default",
-                            borderColor:
-                              item.role === "user" ? "accent.info" : "divider",
                           }}
                         >
                           <Stack direction="row" justifyContent="space-between">
-                            <Typography
-                              variant="caption"
-                              color={
-                                item.role === "user"
-                                  ? "accent.info"
-                                  : "accent.brand"
-                              }
-                            >
+                            <Typography variant="caption" fontWeight={500}>
                               {item.role === "user" ? "You" : "ALK"}
                             </Typography>
                             <Typography
@@ -1529,9 +1574,7 @@ export default function HarnessDetail() {
                           ? "Describe the scenarios to add — e.g. 'calm first-time riders booking an airport pickup' (optional)"
                           : "Tell the run what to change…"
                     }
-                    value={
-                      conversationComposerAvailable ? message : adjustment
-                    }
+                    value={conversationComposerAvailable ? message : adjustment}
                     onChange={(event) =>
                       conversationComposerAvailable
                         ? setMessage(event.target.value)
@@ -1558,7 +1601,7 @@ export default function HarnessDetail() {
                         adjust();
                       }
                     }}
-                    sx={{ px: 1.5, pt: 1.25, typography: "body2" }}
+                    sx={{ px: 1.5, pt: 1.5, typography: "body2" }}
                   />
                   <Stack
                     direction="row"
@@ -1590,9 +1633,9 @@ export default function HarnessDetail() {
                         disabled={sendingMessage || !message.trim()}
                         aria-label="Send"
                         sx={{
-                          bgcolor: "accent.brand",
-                          color: "common.white",
-                          "&:hover": { bgcolor: "accent.brand", opacity: 0.88 },
+                          bgcolor: "primary.main",
+                          color: "primary.contrastText",
+                          "&:hover": { bgcolor: "primary.dark" },
                           "&.Mui-disabled": {
                             bgcolor: "action.disabledBackground",
                             color: "text.disabled",
@@ -1613,7 +1656,7 @@ export default function HarnessDetail() {
                           sx={{
                             border: 1,
                             borderColor: "divider",
-                            borderRadius: 1,
+                            borderRadius: "6px",
                           }}
                         >
                           <IconButton
@@ -1664,14 +1707,6 @@ export default function HarnessDetail() {
                               />
                             )
                           }
-                          sx={{
-                            bgcolor: "accent.brand",
-                            color: "common.white",
-                            "&:hover": {
-                              bgcolor: "accent.brand",
-                              opacity: 0.88,
-                            },
-                          }}
                         >
                           Add scenarios
                         </Button>
@@ -1683,9 +1718,9 @@ export default function HarnessDetail() {
                         disabled={adjusting || !adjustment.trim()}
                         aria-label="Send"
                         sx={{
-                          bgcolor: "accent.brand",
-                          color: "common.white",
-                          "&:hover": { bgcolor: "accent.brand", opacity: 0.88 },
+                          bgcolor: "primary.main",
+                          color: "primary.contrastText",
+                          "&:hover": { bgcolor: "primary.dark" },
                           "&.Mui-disabled": {
                             bgcolor: "action.disabledBackground",
                             color: "text.disabled",

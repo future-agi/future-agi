@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shlex
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from django.conf import settings
@@ -12,11 +12,13 @@ from .base import (
     SandboxCommandLogs,
     SandboxCommandRequest,
     SandboxExecResult,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxPreview,
     SandboxProviderConfigurationError,
     SandboxProviderError,
+    SandboxProviderUnavailableError,
     SandboxRuntimeProvider,
 )
 
@@ -51,14 +53,30 @@ class E2BFilesystem:
         _call(self._sandbox.files.write, path, data, user=self._os_user)
 
     def download_file(self, path: str, timeout: int | None = None) -> bytes:
-        body = _call(
+        try:
+            body = self._sandbox.files.read(
+                path, format="bytes", request_timeout=timeout, user=self._os_user
+            )
+        except Exception as exc:
+            if _is_file_not_found(exc):
+                raise SandboxFileNotFoundError(str(exc)) from exc
+            translated = _translate_error(exc)
+            if translated is None:
+                raise
+            raise translated from exc
+        return bytes(body)
+
+    def download_file_stream(
+        self, path: str, timeout: int | None = None
+    ) -> Iterator[bytes]:
+        with _call(
             self._sandbox.files.read,
             path,
-            format="bytes",
+            format="stream",
             request_timeout=timeout,
             user=self._os_user,
-        )
-        return bytes(body)
+        ) as reader:
+            yield from reader
 
 
 class E2BProcess:
@@ -232,7 +250,19 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     supports_adjustments = True
     supports_public_ingress = True
 
+    def renew_ttl(self, sandbox: E2BSandbox, ttl_seconds: int) -> None:
+        self.validate_requested_resources(*self.configured_resources(), ttl_seconds)
+        _call(sandbox._sandbox.set_timeout, ttl_seconds)
+
     def __init__(self) -> None:
+        # Every method below imports `e2b` lazily; check it once here so a
+        # backend image without the optional `sandbox` extra fails with a
+        # typed, non-retryable error instead of a ModuleNotFoundError mid-job.
+        try:
+            import e2b  # noqa: F401
+        except ImportError as exc:
+            raise SandboxProviderUnavailableError("E2B", "e2b") from exc
+
         self.api_key = str(getattr(settings, "E2B_API_KEY", "") or "")
         self.runtime_name = str(
             getattr(settings, "ALK_E2B_TEMPLATE_REFERENCE", "") or ""
@@ -314,7 +344,7 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
                 network["allow_out"] = allow_out
         sandbox = _call(
             Sandbox.create,
-            template=self.template_reference,
+            template=spec.runtime_name or self.template_reference,
             timeout=spec.ttl_seconds,
             secure=True,
             allow_internet_access=True,
@@ -331,7 +361,12 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
                 "rm -f /usr/local/bin/python && "
                 "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
                 "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
-                "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip",
+                "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
+                "if [ -x /opt/alk-venv/bin/uv ]; then "
+                "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv; fi && "
+                "if [ -x /opt/alk-venv/bin/uvx ]; then "
+                "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx; fi && "
+                "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx",
                 timeout=min(timeout, 60),
                 user="root",
             )
