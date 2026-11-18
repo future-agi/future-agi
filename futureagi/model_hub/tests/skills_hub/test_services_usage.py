@@ -83,6 +83,8 @@ def test_empty_usage(hub_skill):
         "by_version": [],
         "consumers": [],
         "last_fetched_at": None,
+        # Never fetched, all time (UXF-07 first-day state).
+        "first_fetched_on": None,
     }
     assert fetches_7d_map([hub_skill.pk]) == {hub_skill.pk: 0}
 
