@@ -17,6 +17,7 @@ import { useExecuteCodeStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -24,7 +25,7 @@ const getDefaultValue = () => {
 def main(**kwargs):
     return kwargs.get("column_name")
 `,
-    newColumnName: "",
+    new_column_name: "",
     concurrency: "",
   };
 };
@@ -50,14 +51,7 @@ export const ExecuteCodeChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-      newColumnName: "",
-      concurrency: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(ExecuteCodeValidation(!!onFormSubmit, !!editId)),
   });
 
@@ -66,22 +60,9 @@ def main(**kwargs):
     if (initialData) {
       reset(initialData);
     } else if (!editId) {
-      // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
     }
   }, [initialData, reset, editId]);
-
-  const { mutate: addColumn, isPending: isSubmitting } = useMutation({
-    mutationFn: (data) =>
-      axios.post(endpoints.develop.addColumns.executeCode(dataset), data),
-    onSuccess: () => {
-      enqueueSnackbar("Custom code column created successfully", {
-        variant: "success",
-      });
-      refreshGrid(null, true);
-      onClose();
-    },
-  });
 
   const {
     data: previewData,
@@ -101,7 +82,7 @@ def main(**kwargs):
     },
   });
 
-  const { mutate: updateColumn } = useMutation({
+  const { mutate: updateColumn, isPending: isUpdatingColumn } = useMutation({
     mutationFn: (data) =>
       axios.post(
         endpoints.develop.addColumns.updateDynamicColumn(editId),
@@ -116,32 +97,28 @@ def main(**kwargs):
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { newColumnName, ...rest } = formValues;
-    return {
-      ...rest,
-      new_column_name: newColumnName,
-    };
-  };
-
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
-        config: transformFormToApi(formValues),
+        config: formValues,
         operation_type: "execute_code",
       });
       return;
     }
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "extract_code" });
-    } else {
-      addColumn(transformFormToApi(formValues));
+      return;
     }
+
+    enqueueSnackbar(
+      "Custom code column creation is unavailable. Existing custom code columns can still be edited.",
+      { variant: "warning" },
+    );
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(formValues);
     }
   });
 
@@ -170,7 +147,7 @@ def main(**kwargs):
             alignItems: "center",
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Execute Code" : "Execute Custom Code"}
           </Typography>
           <IconButton
@@ -180,7 +157,7 @@ def main(**kwargs):
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -199,11 +176,11 @@ def main(**kwargs):
               size="small"
               placeholder="Enter column name"
               control={control}
-              fieldName="newColumnName"
+              fieldName="new_column_name"
             />
           )}
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <Typography fontWeight={700} fontSize="12px" color="text.secondary">
+            <Typography fontWeight={600} fontSize="12px" color="text.secondary">
               Python code to be executed
             </Typography>
             <Box sx={{ borderRadius: "8px", overflow: "hidden" }}>
@@ -245,7 +222,7 @@ def main(**kwargs):
             fullWidth
             size="small"
             type="submit"
-            loading={isSubmitting}
+            loading={isUpdatingColumn}
           >
             {editId
               ? "Update Column"
@@ -267,7 +244,6 @@ ExecuteCodeChild.propTypes = {
 };
 
 const ExecuteCode = ({ initialData, onFormSubmit }) => {
-  // Using individual store
   const { openExecuteCode, setOpenExecuteCode } = useExecuteCodeStore();
 
   const onClose = () => {
@@ -284,10 +260,12 @@ const ExecuteCode = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openExecuteCode);
   return (
     <Drawer
       anchor="right"
       open={openExecuteCode}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -295,8 +273,7 @@ const ExecuteCode = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

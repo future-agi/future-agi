@@ -182,7 +182,7 @@ const TablePermission = ({ setActiveStep, onClose }) => {
                   sx={{ display: "flex", alignItems: "center", gap: 1 }}
                 >
                   BigQuery setup guide
-                  <Iconify icon="quill:link-out" />
+                  <Iconify icon="solar:arrow-right-up-linear" />
                 </Typography>
               </Box>
             </SectionCard>
@@ -286,7 +286,7 @@ const TablePermission = ({ setActiveStep, onClose }) => {
                           <IconButton color="primary" component="span">
                             <Iconify
                               width={24}
-                              icon="material-symbols:upload"
+                              icon="solar:upload-minimalistic-linear"
                               sx={{ color: "primary.main" }}
                             />
                           </IconButton>

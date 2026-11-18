@@ -6,7 +6,7 @@ export const ExtractEntitiesValidationSchema = (
 ) => {
   return z.object({
     type: z.string().optional(),
-    columnId: z
+    column_id: z
       .string({
         required_error: "Column ID is required",
       })
@@ -20,7 +20,7 @@ export const ExtractEntitiesValidationSchema = (
       .min(1, {
         message: "Instruction is required",
       }),
-    languageModelId: z
+    language_model_id: z
       .string({
         required_error: "Language Model is required",
       })
@@ -28,7 +28,7 @@ export const ExtractEntitiesValidationSchema = (
         message: "Language Model is required",
       }),
     concurrency: z.number().positive("Concurrency must be a positive integer"),
-    newColumnName:
+    new_column_name:
       isConditioalNode || isEdit
         ? z.string().optional()
         : z

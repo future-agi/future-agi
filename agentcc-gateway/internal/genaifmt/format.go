@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // ValidActions are the supported Google GenAI endpoint actions.
@@ -68,6 +69,25 @@ func ExtractTextFromContents(reqBody []byte) string {
 	return strings.Join(parts, " ")
 }
 
+// EmbedInputCharacters counts the characters of text an embedContent request
+// sends, the unit some embedding models are priced in. The response carries
+// no usage to price from.
+func EmbedInputCharacters(reqBody []byte) int {
+	var m struct {
+		Content struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(reqBody, &m); err != nil {
+		return 0
+	}
+	characters := 0
+	for _, part := range m.Content.Parts {
+		characters += utf8.RuneCountInString(extractTextFromPart(part))
+	}
+	return characters
+}
+
 // ExtractTextFromResponse extracts text from a Google GenAI response body.
 func ExtractTextFromResponse(respBody []byte) string {
 	var m struct {
@@ -93,18 +113,23 @@ func ExtractTextFromResponse(respBody []byte) string {
 }
 
 // ExtractUsageMetadata extracts token counts from a Google GenAI response.
-func ExtractUsageMetadata(respBody []byte) (promptTokens int, candidateTokens int, totalTokens int) {
+// completionTokens folds in thinking tokens (reported separately as
+// thoughtsTokenCount but billed as output), so thinking-on runs aren't
+// under-billed.
+func ExtractUsageMetadata(respBody []byte) (promptTokens int, completionTokens int, totalTokens int) {
 	var m struct {
 		UsageMetadata struct {
 			PromptTokenCount     int `json:"promptTokenCount"`
 			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
 			TotalTokenCount      int `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
 	if err := json.Unmarshal(respBody, &m); err != nil {
 		return 0, 0, 0
 	}
-	return m.UsageMetadata.PromptTokenCount, m.UsageMetadata.CandidatesTokenCount, m.UsageMetadata.TotalTokenCount
+	completion := m.UsageMetadata.CandidatesTokenCount + m.UsageMetadata.ThoughtsTokenCount
+	return m.UsageMetadata.PromptTokenCount, completion, m.UsageMetadata.TotalTokenCount
 }
 
 func extractTextFromPart(raw json.RawMessage) string {
@@ -115,4 +140,15 @@ func extractTextFromPart(raw json.RawMessage) string {
 		return part.Text
 	}
 	return ""
+}
+
+// ExtractModelVersion names the concrete model behind an alias.
+func ExtractModelVersion(respBody []byte) string {
+	var m struct {
+		ModelVersion string `json:"modelVersion"`
+	}
+	if err := json.Unmarshal(respBody, &m); err != nil {
+		return ""
+	}
+	return m.ModelVersion
 }

@@ -134,6 +134,10 @@ def extract_raw_result(eval_result, eval_template):
     All evaluators return an object with eval_results[0] containing the
     actual data. This normalizes it into the standard dict used everywhere.
 
+    Empty ``eval_results`` and ``eval_results[0]`` wrapped in an extra list
+    (``[[{...}]]``) are handled — some evaluator subclasses return that
+    shape and would otherwise crash callers with IndexError / AttributeError.
+
     Args:
         eval_result: The raw return value from eval_instance.run()
         eval_template: EvalTemplate for output_type lookup
@@ -142,7 +146,13 @@ def extract_raw_result(eval_result, eval_template):
         Dict with keys: data, failure, reason, runtime, model, metrics,
                        metadata, output
     """
-    first = eval_result.eval_results[0]
+    eval_results = getattr(eval_result, "eval_results", None) or []
+    first = eval_results[0] if eval_results else {}
+    if isinstance(first, list):
+        first = first[0] if first else {}
+    if first is None:
+        first = {}
+    template_config = getattr(eval_template, "config", None) or {}
     return {
         "data": first.get("data"),
         "failure": first.get("failure"),
@@ -151,5 +161,5 @@ def extract_raw_result(eval_result, eval_template):
         "model": first.get("model"),
         "metrics": first.get("metrics"),
         "metadata": first.get("metadata"),
-        "output": eval_template.config.get("output", "score"),
+        "output": template_config.get("output", "score"),
     }

@@ -260,7 +260,7 @@ describe("ExportToDatasetDialog", () => {
       screen.getByRole("progressbar", { name: /loading export drawer/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("progressbar", { name: /loading source fields/i }),
+      screen.getByRole("status", { name: /loading source fields/i }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add column/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
@@ -332,6 +332,33 @@ describe("ExportToDatasetDialog", () => {
     expect(
       mocks.exportMutate.mock.calls[0][0].column_mapping[0],
     ).not.toHaveProperty("data_type");
+  });
+
+  it("keeps the label visible and submits status_filter when 'All items' is picked", async () => {
+    const user = userEvent.setup();
+    mocks.exportMutate.mockClear();
+    render(<ExportToDatasetDialog open onClose={() => {}} queueId="queue-1" />);
+
+    const itemsSelect = screen.getByRole("combobox", {
+      name: /items to export/i,
+    });
+    expect(itemsSelect).toHaveTextContent("Completed only");
+
+    await user.click(itemsSelect);
+    await user.click(screen.getByRole("option", { name: "All items" }));
+
+    // Regression: an empty-string value rendered the select blank.
+    expect(itemsSelect).toHaveTextContent("All items");
+
+    await user.type(screen.getByLabelText(/Dataset name/), "All items export");
+    await user.click(screen.getByRole("button", { name: "Export" }));
+
+    await waitFor(() =>
+      expect(mocks.exportMutate).toHaveBeenCalledWith(
+        expect.objectContaining({ status_filter: "all" }),
+        expect.any(Object),
+      ),
+    );
   });
 
   it("lets users choose an existing dataset without pasting a dataset id", async () => {

@@ -2,6 +2,7 @@ import { useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { useMemo } from "react";
 import ReactApexChart from "react-apexcharts";
+import { seriesColor } from "src/theme/data-colors";
 
 /**
  * Eval usage chart — dual axis:
@@ -44,7 +45,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
       }
     }
 
-    const label = "Task Completion Rate";
+    const label = outputType === "pass_fail" ? "Pass rate" : "Average score";
     return { volumeData: vol, valueData: val, valueLabel: label };
   }, [data, outputType]);
 
@@ -67,7 +68,9 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
         background: "transparent",
         fontFamily: "'IBM Plex Sans', sans-serif",
       },
-      colors: hasTwoAxes ? ["#5BE49B", "#7B56DB"] : ["#7B56DB"],
+      colors: hasTwoAxes
+        ? [seriesColor(theme, 2), seriesColor(theme, 0)]
+        : [seriesColor(theme, 0)],
       stroke: { width: hasTwoAxes ? [0, 2.5] : [0], curve: "smooth" },
       plotOptions: {
         bar: { columnWidth: "55%", borderRadius: 2 },
@@ -76,7 +79,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
         type: "datetime",
         tickAmount: Math.min(volumeData.length, 12),
         labels: {
-          style: { fontSize: "10px", colors: theme.palette.text.secondary },
+          style: { fontSize: "12px", colors: theme.palette.text.secondary },
           datetimeUTC: false,
           datetimeFormatter: { day: "MMM dd", month: "MMM ''yy" },
         },
@@ -89,13 +92,13 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
               title: {
                 text: "Volume",
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                 },
               },
               labels: {
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   colors: theme.palette.text.secondary,
                 },
                 formatter: (v) => (v != null ? Math.round(v).toString() : ""),
@@ -108,13 +111,13 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
               title: {
                 text: valueLabel,
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                 },
               },
               labels: {
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   colors: theme.palette.text.secondary,
                 },
                 formatter: (v) => (v != null ? `${Math.round(v * 100)}%` : ""),
@@ -128,7 +131,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
             {
               labels: {
                 style: {
-                  fontSize: "10px",
+                  fontSize: "12px",
                   colors: theme.palette.text.secondary,
                 },
                 formatter: (v) => (v != null ? Math.round(v).toString() : ""),
@@ -146,7 +149,7 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
       legend: {
         position: "top",
         horizontalAlign: "right",
-        fontSize: "11px",
+        fontSize: "12px",
         labels: { colors: theme.palette.text.secondary },
         markers: { width: 8, height: 8, radius: 2 },
       },

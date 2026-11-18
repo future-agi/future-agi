@@ -13,19 +13,28 @@ import {
   Step,
   StepLabel,
   Stepper,
+  Switch,
   TextField,
   Tooltip,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
-import { canonicalEntries } from "src/utils/utils";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
+import { apiPath } from "src/api/contracts/api-surface";
+import axios from "src/utils/axios";
 
 import {
   useDevelopDatasetList,
@@ -35,44 +44,57 @@ import {
 import { useEvalDetail } from "../hooks/useEvalDetail";
 import {
   useDeleteGroundTruth,
-  useGroundTruthConfig,
   useGroundTruthData,
   useGroundTruthList,
   useGroundTruthStatus,
-  useSearchGroundTruth,
+  useSaveGroundTruthSetup,
   useTriggerEmbedding,
-  useUpdateGroundTruthConfig,
-  useUpdateRoleMapping,
-  useUpdateVariableMapping,
   useUploadGroundTruth,
 } from "../hooks/useGroundTruth";
-import SwitchComponent from "src/components/Switch/SwitchComponent";
+import { extractJinjaVariables } from "src/utils/jinjaVariables";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  createEmptyGroundTruthDatasetRead,
+  readNextGroundTruthDatasetPage,
+} from "./ground_truth_dataset_pagination";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import ContentSkeleton from "src/components/content-skeleton";
+import { LoadingScreen } from "src/components/loading-screen";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
 // ═══════════════════════════════════════════════════════════════
 const StatusBadge = ({ status }) => {
   const map = {
-    pending: { label: "Pending", color: "default", icon: "mdi:clock-outline" },
+    pending: {
+      label: "Pending",
+      role: "neutral",
+      icon: "solar:clock-circle-linear",
+    },
     processing: {
       label: "Embedding...",
-      color: "warning",
+      role: "info",
       icon: "mdi:loading",
     },
     completed: {
       label: "Ready",
-      color: "success",
-      icon: "mdi:check-circle-outline",
+      role: "success",
+      icon: "solar:check-circle-linear",
     },
     failed: {
       label: "Failed",
-      color: "error",
-      icon: "mdi:alert-circle-outline",
+      role: "danger",
+      icon: "solar:danger-circle-linear",
     },
   };
   const info = map[status] || map.pending;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
+      label={info.label}
+      role={info.role}
       icon={
         <Iconify
           icon={info.icon}
@@ -89,17 +111,12 @@ const StatusBadge = ({ status }) => {
           }
         />
       }
-      label={info.label}
-      size="small"
-      color={info.color}
-      variant="outlined"
-      sx={{ fontSize: "11px", height: 22 }}
     />
   );
 };
 
 // ═══════════════════════════════════════════════════════════════
-// Upload Drawer — right sidebar like KB
+// Upload Drawer - right sidebar like KB
 // ═══════════════════════════════════════════════════════════════
 const ACCEPTED_TYPES = {
   "text/csv": [".csv"],
@@ -110,7 +127,88 @@ const ACCEPTED_TYPES = {
   "application/vnd.ms-excel": [".xls"],
 };
 
-const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
+// ── shared helpers ───────────────────────────────────────────────
+// Strip empty values + sort keys so two mappings compare structurally,
+// independent of insertion order or trailing blanks. Used by every
+// dirty-state check in this file.
+const normalizeMapping = (m = {}) =>
+  Object.fromEntries(
+    Object.entries(m)
+      .filter(([, v]) => v !== "" && v != null)
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+
+const shallowEqual = (a, b) => {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((k) => a[k] === b[k]);
+};
+
+// Minimal RFC 4180 CSV parser: comma-separated, double-quote escaped fields
+// (including embedded commas, newlines, and "" escapes). First row is the
+// header. Returns { columns, rows }, where rows are dicts keyed by header.
+const parseCsvText = (text) => {
+  const src = text.replace(/^\uFEFF/, "");
+  const records = [];
+  let field = "";
+  let row = [];
+  let inQuotes = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (src[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && src[i + 1] === "\n") i++;
+      row.push(field);
+      records.push(row);
+      field = "";
+      row = [];
+    } else {
+      field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    records.push(row);
+  }
+  const nonEmpty = records.filter((r) => !(r.length === 1 && r[0] === ""));
+  if (nonEmpty.length === 0) return { columns: [], rows: [] };
+  const [header, ...body] = nonEmpty;
+  const columns = header.map((c) => c.trim());
+  const rows = body.map((r) => {
+    const obj = {};
+    columns.forEach((col, idx) => {
+      obj[col] = r[idx] ?? "";
+    });
+    return obj;
+  });
+  return { columns, rows };
+};
+
+export const UploadDrawer = ({
+  open,
+  onClose,
+  templateId,
+  evalVariables,
+  canEdit = true,
+}) => {
   const { enqueueSnackbar } = useSnackbar();
   const upload = useUploadGroundTruth(templateId);
 
@@ -125,6 +223,12 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
   const [datasetSearch, setDatasetSearch] = useState("");
   const [selectedDataset, setSelectedDataset] = useState(null);
   const [loadingDatasetData, setLoadingDatasetData] = useState(false);
+  const [datasetRead, setDatasetRead] = useState(() =>
+    createEmptyGroundTruthDatasetRead(),
+  );
+  const [datasetReadError, setDatasetReadError] = useState("");
+  const [datasetReadBlocked, setDatasetReadBlocked] = useState(false);
+  const datasetReadGeneration = useRef(0);
 
   // Fetch datasets list
   const { data: datasets = [], isLoading: datasetsLoading } =
@@ -137,6 +241,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
   });
 
   const reset = useCallback(() => {
+    datasetReadGeneration.current += 1;
     setStep(0);
     setFile(null);
     setName("");
@@ -145,6 +250,9 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
     setDatasetSearch("");
     setSelectedDataset(null);
     setLoadingDatasetData(false);
+    setDatasetRead(createEmptyGroundTruthDatasetRead());
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -178,7 +286,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
           const arr = Array.isArray(parsed) ? parsed : parsed.data || [parsed];
           if (arr.length > 0) setParsedColumns(Object.keys(arr[0]));
         } catch {
-          /* ignore */
+          /* preview-only; non-JSON files just skip column detection */
         }
       };
       reader.readAsText(f.slice(0, 65536));
@@ -194,14 +302,40 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
 
   const handleFileUpload = useCallback(async () => {
     if (!file || !name) return;
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("name", name);
-    if (Object.keys(variableMapping).length > 0) {
-      fd.append("variable_mapping", JSON.stringify(variableMapping));
-    }
+    const lowerName = file.name.toLowerCase();
+    const isCsv = lowerName.endsWith(".csv");
+    const isJson = lowerName.endsWith(".json");
     try {
-      await upload.mutateAsync(fd);
+      let payload;
+      if (isCsv || isJson) {
+        // Parse client-side and send as JSON body so structured fields
+        // (variable_mapping, role_mapping) travel as real objects rather
+        // than JSON-encoded strings inside multipart.
+        const text = await file.text();
+        let columns;
+        let data;
+        if (isCsv) {
+          const parsed = parseCsvText(text);
+          columns = parsed.columns;
+          data = parsed.rows;
+        } else {
+          const parsed = JSON.parse(text);
+          const arr = Array.isArray(parsed) ? parsed : parsed.data || [parsed];
+          columns = arr.length > 0 ? Object.keys(arr[0]) : [];
+          data = arr;
+        }
+        payload = { name, file_name: file.name, columns, data };
+        if (Object.keys(variableMapping).length > 0) {
+          payload.variable_mapping = variableMapping;
+        }
+      } else {
+        // Binary uploads (xlsx/xls) still go via multipart; users set the
+        // variable mapping post-upload from the GT setup screen.
+        payload = new FormData();
+        payload.append("file", file);
+        payload.append("name", name);
+      }
+      await upload.mutateAsync(payload);
       enqueueSnackbar("Dataset uploaded successfully", { variant: "success" });
       handleClose();
     } catch (err) {
@@ -213,41 +347,152 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
 
   // ── Dataset selection flow ──
   const handleDatasetSelect = useCallback((ds) => {
+    datasetReadGeneration.current += 1;
     setSelectedDataset(ds);
     setName(ds.name);
+    setVariableMapping({});
+    setDatasetRead(createEmptyGroundTruthDatasetRead());
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
+    setLoadingDatasetData(false);
     setStep(3);
   }, []);
 
   // Derive column names from dataset columns response
   const datasetColumnNames = useMemo(() => {
-    if (!datasetColumns) return [];
-    return datasetColumns.map(
-      (col) => col.name || col.label || col.id || String(col),
+    const columns = datasetRead.columns || datasetColumns;
+    if (!columns) return [];
+    return columns.map((col) => col.name || col.label || col.id || String(col));
+  }, [datasetColumns, datasetRead.columns]);
+
+  // The independent column-preview request is advisory. Once the exact
+  // snapshot returns its signed inventory, remove mappings that do not exist
+  // in that authoritative inventory so a dataset switch/race cannot retain a
+  // stale column reference.
+  useEffect(() => {
+    if (!Array.isArray(datasetRead.columns)) return;
+    const exactNames = new Set(
+      datasetRead.columns
+        .map((column) => String(column?.name || "").trim())
+        .filter(Boolean),
     );
-  }, [datasetColumns]);
+    setVariableMapping((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(
+          ([, columnName]) => !columnName || exactNames.has(columnName),
+        ),
+      ),
+    );
+  }, [datasetRead.columns]);
+
+  const handleLoadDatasetRows = useCallback(async () => {
+    if (
+      !selectedDataset ||
+      loadingDatasetData ||
+      datasetRead.complete ||
+      datasetReadBlocked
+    )
+      return;
+    const datasetId = selectedDataset.dataset_id || selectedDataset.id;
+    const readGeneration = datasetReadGeneration.current;
+    setLoadingDatasetData(true);
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
+    try {
+      const nextRead = await readNextGroundTruthDatasetPage({
+        previous: datasetRead,
+        requestPage: ({ pageIndex, pageSize, cursor, signal, timeout }) =>
+          axios.get(
+            apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
+              dataset_id: datasetId,
+            }),
+            {
+              params: {
+                current_page_index: pageIndex,
+                page_size: pageSize,
+                exact_snapshot: true,
+                ...(cursor ? { cursor } : {}),
+              },
+              signal,
+              timeout,
+            },
+          ),
+      });
+      if (datasetReadGeneration.current !== readGeneration) return;
+      setDatasetRead(nextRead);
+      if (nextRead.complete && nextRead.totalRows === 0) {
+        enqueueSnackbar("Dataset has no rows", { variant: "warning" });
+      }
+    } catch (err) {
+      if (datasetReadGeneration.current !== readGeneration) return;
+      const message =
+        err?.response?.data?.message ||
+        err?.message ||
+        "Dataset rows could not be loaded exactly. Retry.";
+      setDatasetReadError(message);
+      setDatasetReadBlocked(
+        err?.code === "dataset_exact_limit_exceeded" ||
+          err?.response?.data?.code === "dataset_exact_limit_exceeded",
+      );
+      enqueueSnackbar(message, { variant: "error" });
+    } finally {
+      if (datasetReadGeneration.current === readGeneration) {
+        setLoadingDatasetData(false);
+      }
+    }
+  }, [
+    datasetRead,
+    datasetReadBlocked,
+    enqueueSnackbar,
+    loadingDatasetData,
+    selectedDataset,
+  ]);
 
   const handleDatasetUpload = useCallback(async () => {
     if (!selectedDataset || !name) return;
+    if (!datasetRead.complete) {
+      enqueueSnackbar("Load every dataset row before importing.", {
+        variant: "warning",
+      });
+      return;
+    }
     setLoadingDatasetData(true);
     try {
-      // Fetch dataset rows
-      const datasetId = selectedDataset.dataset_id || selectedDataset.id;
-      const { data: res } = await (
-        await import("src/utils/axios")
-      ).default.get(`/model-hub/develops/${datasetId}/get-dataset-table/`, {
-        params: { current_page_index: 0, page_size: 10000 },
-      });
-      const tableData = res?.result;
-      const tableRows = tableData?.table || [];
+      const tableRows = datasetRead.rows;
 
-      // Build column ID → name map from already-fetched datasetColumns
+      // Build the map from the exact paginated response rather than the
+      // independently cached column query. Every page is required to carry
+      // the same ordered column identity before it can be accumulated.
       const colMap = {};
-      (datasetColumns || []).forEach((col) => {
+      (datasetRead.columns || []).forEach((col) => {
         const colId = String(col.id || col.column_id);
         colMap[colId] = col.name || col.label || colId;
       });
 
       const colNames = Object.values(colMap);
+      if (
+        colNames.some((columnName) => !String(columnName).trim()) ||
+        new Set(colNames).size !== colNames.length
+      ) {
+        enqueueSnackbar(
+          "Dataset column names must be non-empty and unique before importing.",
+          { variant: "error" },
+        );
+        setLoadingDatasetData(false);
+        return;
+      }
+
+      const invalidMappings = Object.entries(variableMapping).filter(
+        ([, columnName]) => columnName && !colNames.includes(columnName),
+      );
+      if (invalidMappings.length > 0) {
+        enqueueSnackbar(
+          "Variable mappings no longer match the exact dataset columns. Review them before importing.",
+          { variant: "error" },
+        );
+        setLoadingDatasetData(false);
+        return;
+      }
       let flatRows = [];
 
       // table rows are: {column_uuid: {cell_value, ...}, row_id: "..."}
@@ -302,25 +547,28 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
   }, [
     selectedDataset,
     name,
+    datasetRead,
     variableMapping,
-    upload,
     enqueueSnackbar,
     handleClose,
+    upload,
   ]);
 
   // Columns for the mapping step (from file or from dataset)
   const activeColumns = step === 1 ? parsedColumns : datasetColumnNames;
   const isConfigStep = step === 1 || step === 3;
   const isSubmitting = upload.isPending || loadingDatasetData;
+  const covered = useDrawerCovered(open);
 
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={handleClose}
       PaperProps={{
         sx: {
-          width: 520,
+          width: 480,
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
@@ -357,7 +605,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 : "Configure Dataset"}
           </Typography>
           <IconButton size="small" onClick={handleClose}>
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Box>
 
@@ -365,7 +613,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
         <Stepper
           activeStep={step === 2 ? 0 : isConfigStep ? 1 : 0}
           alternativeLabel
-          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "11px" } }}
+          sx={{ mb: 3, "& .MuiStepLabel-label": { fontSize: "12px" } }}
         >
           <Step>
             <StepLabel>Choose Source</StepLabel>
@@ -386,7 +634,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
               sx={{
                 border: "2px dashed",
                 borderColor: isDragActive ? "primary.main" : "divider",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 p: 4,
                 display: "flex",
                 flexDirection: "column",
@@ -394,18 +642,10 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 gap: 1.5,
                 cursor: "pointer",
                 transition: "all 0.2s",
-                bgcolor: isDragActive
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.08)"
-                        : "rgba(124,77,255,0.04)"
-                  : "transparent",
+                bgcolor: isDragActive ? "status.discovery.bg" : "transparent",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -414,18 +654,15 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 sx={{
                   width: 48,
                   height: 48,
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(124,77,255,0.12)"
-                      : "rgba(124,77,255,0.08)",
+                  bgcolor: "status.discovery.bg",
                 }}
               >
                 <Iconify
-                  icon="mdi:cloud-upload-outline"
+                  icon="solar:cloud-upload-linear"
                   width={24}
                   sx={{ color: "primary.main" }}
                 />
@@ -440,15 +677,13 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 color="text.secondary"
                 textAlign="center"
               >
-                CSV, Excel (.xls, .xlsx), or JSON — up to 50 MB
+                CSV, Excel (.xls, .xlsx), or JSON. Up to 50 MB.
               </Typography>
               <Button
                 variant="outlined"
                 size="small"
                 sx={{
                   mt: 0.5,
-                  px: 3,
-                  borderRadius: "8px",
                   borderColor: "divider",
                   color: "text.primary",
                 }}
@@ -469,7 +704,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "10px",
+                borderRadius: "8px",
                 p: 2.5,
                 display: "flex",
                 alignItems: "center",
@@ -478,10 +713,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 transition: "all 0.2s",
                 "&:hover": {
                   borderColor: "primary.main",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "rgba(0,0,0,0.02)",
+                  bgcolor: "background.neutral",
                 },
               }}
             >
@@ -493,14 +725,11 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  bgcolor: (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.06)"
-                      : "background.neutral",
+                  bgcolor: "background.neutral",
                 }}
               >
                 <Iconify
-                  icon="mdi:database-outline"
+                  icon="solar:database-linear"
                   width={20}
                   sx={{ color: "text.secondary" }}
                 />
@@ -514,7 +743,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 </Typography>
               </Box>
               <Iconify
-                icon="mdi:chevron-right"
+                icon="solar:alt-arrow-right-linear"
                 width={20}
                 sx={{ color: "text.disabled" }}
               />
@@ -541,13 +770,13 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
               InputProps={{
                 startAdornment: (
                   <Iconify
-                    icon="mdi:magnify"
-                    width={18}
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ mr: 0.5, color: "text.disabled" }}
                   />
                 ),
               }}
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             <Box
@@ -559,11 +788,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 gap: 1,
               }}
             >
-              {datasetsLoading && (
-                <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-                  <CircularProgress size={20} />
-                </Box>
-              )}
+              {datasetsLoading && <LoadingScreen compact />}
 
               {!datasetsLoading && datasets.length === 0 && (
                 <Typography
@@ -592,16 +817,13 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                     transition: "all 0.15s",
                     "&:hover": {
                       borderColor: "primary.main",
-                      bgcolor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.03)"
-                          : "rgba(0,0,0,0.015)",
+                      bgcolor: "background.neutral",
                     },
                   }}
                 >
                   <Iconify
-                    icon="mdi:table"
-                    width={18}
+                    icon="solar:table-linear"
+                    width={20}
                     sx={{ color: "primary.main", flexShrink: 0 }}
                   />
                   <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -615,8 +837,8 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                     )}
                   </Box>
                   <Iconify
-                    icon="mdi:chevron-right"
-                    width={18}
+                    icon="solar:alt-arrow-right-linear"
+                    width={20}
                     sx={{ color: "text.disabled", flexShrink: 0 }}
                   />
                 </Box>
@@ -668,7 +890,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                     file.name.endsWith(".csv")
                       ? "mdi:file-delimited-outline"
                       : file.name.endsWith(".json")
-                        ? "mdi:code-json"
+                        ? "solar:code-linear"
                         : "mdi:file-excel-outline"
                   }
                   width={20}
@@ -690,7 +912,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                     setParsedColumns([]);
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
               </Box>
             )}
@@ -708,7 +930,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 }}
               >
                 <Iconify
-                  icon="mdi:table"
+                  icon="solar:table-linear"
                   width={20}
                   sx={{ color: "primary.main", flexShrink: 0 }}
                 />
@@ -725,12 +947,92 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                 <IconButton
                   size="small"
                   onClick={() => {
+                    datasetReadGeneration.current += 1;
                     setSelectedDataset(null);
+                    setDatasetRead(createEmptyGroundTruthDatasetRead());
+                    setDatasetReadError("");
+                    setDatasetReadBlocked(false);
+                    setLoadingDatasetData(false);
                     setStep(2);
                   }}
                 >
-                  <Iconify icon="mdi:close" width={16} />
+                  <Iconify icon="solar:close-linear" width={16} />
                 </IconButton>
+              </Box>
+            )}
+
+            {step === 3 && selectedDataset && (
+              <Box
+                sx={{
+                  p: 1.5,
+                  borderRadius: "8px",
+                  border: "1px solid",
+                  borderColor: datasetReadError ? "error.main" : "divider",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 1,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 1,
+                  }}
+                >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" fontWeight={600}>
+                      Dataset rows
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {datasetRead.totalRows === null
+                        ? "Load one exact page at a time before importing."
+                        : `${datasetRead.rows.length} of ${datasetRead.totalRows} rows loaded`}
+                    </Typography>
+                  </Box>
+                  {datasetRead.complete && (
+                    <RunStatusBadge
+                      status="completed"
+                      label="Complete"
+                      role="success"
+                    />
+                  )}
+                </Box>
+                {datasetRead.totalRows !== null &&
+                  datasetRead.totalRows > 0 && (
+                    <LinearProgress
+                      variant="determinate"
+                      value={Math.min(
+                        100,
+                        (datasetRead.rows.length / datasetRead.totalRows) * 100,
+                      )}
+                    />
+                  )}
+                {datasetReadError && (
+                  <Typography variant="caption" color="status.danger.fg">
+                    {datasetReadError}
+                  </Typography>
+                )}
+                {datasetRead.rows.length > 0 &&
+                  !datasetRead.complete &&
+                  !datasetReadBlocked && (
+                    <Button
+                      variant="text"
+                      color="inherit"
+                      size="small"
+                      disabled={loadingDatasetData}
+                      onClick={() => {
+                        datasetReadGeneration.current += 1;
+                        setDatasetRead(createEmptyGroundTruthDatasetRead());
+                        setDatasetReadError("");
+                        setDatasetReadBlocked(false);
+                      }}
+                      sx={{ alignSelf: "flex-start", px: 0 }}
+                    >
+                      Restart row loading
+                    </Button>
+                  )}
               </Box>
             )}
 
@@ -741,7 +1043,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
               value={name}
               onChange={(e) => setName(e.target.value)}
               fullWidth
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             {/* Variable mapping */}
@@ -769,19 +1071,21 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                         mb: 1.5,
                       }}
                     >
-                      <Chip
-                        label={`{{${varName}}}`}
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          fontSize: "11px",
-                          height: 24,
-                          minWidth: 100,
-                          fontFamily: "monospace",
-                        }}
-                      />
+                      <Tooltip title={varName} placement="top" arrow>
+                        <Chip
+                          label={varName}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            minWidth: 100,
+                            maxWidth: 200,
+                            flexShrink: 0,
+                            fontFamily: "monospace",
+                          }}
+                        />
+                      </Tooltip>
                       <Iconify
-                        icon="mdi:arrow-right"
+                        icon="solar:arrow-right-linear"
                         width={14}
                         sx={{ color: "text.disabled", flexShrink: 0 }}
                       />
@@ -799,14 +1103,10 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                         sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
                       >
                         <MenuItem value="">
-                          <em>— skip —</em>
+                          <em>Skip</em>
                         </MenuItem>
                         {activeColumns.map((col) => (
-                          <MenuItem
-                            key={col}
-                            value={col}
-                            sx={{ fontSize: "12px" }}
-                          >
+                          <MenuItem key={col} value={col}>
                             {col}
                           </MenuItem>
                         ))}
@@ -835,7 +1135,6 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
                       label={col}
                       size="small"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 20 }}
                     />
                   ))}
                 </Box>
@@ -867,10 +1166,21 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
             <Button
               variant="contained"
               size="small"
-              onClick={step === 1 ? handleFileUpload : handleDatasetUpload}
+              onClick={
+                step === 1
+                  ? handleFileUpload
+                  : datasetRead.complete
+                    ? handleDatasetUpload
+                    : handleLoadDatasetRows
+              }
               disabled={
+                !canEdit ||
                 (step === 1 && (!file || !name)) ||
                 (step === 3 && (!selectedDataset || !name)) ||
+                (step === 3 &&
+                  datasetRead.complete &&
+                  datasetRead.totalRows === 0) ||
+                (step === 3 && datasetReadBlocked) ||
                 isSubmitting
               }
               sx={{ flex: 1 }}
@@ -878,7 +1188,13 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
               {isSubmitting ? (
                 <CircularProgress size={16} sx={{ color: "inherit" }} />
               ) : step === 3 ? (
-                "Import"
+                datasetRead.complete ? (
+                  "Import"
+                ) : datasetRead.rows.length > 0 ? (
+                  "Load more"
+                ) : (
+                  "Load rows"
+                )
               ) : (
                 "Upload"
               )}
@@ -893,9 +1209,9 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
 // ═══════════════════════════════════════════════════════════════
 // Empty state
 // ═══════════════════════════════════════════════════════════════
-const EmptyState = ({ onUpload }) => (
+const EmptyState = ({ onUpload, canEdit = true }) => (
   <Box
-    onClick={onUpload}
+    onClick={canEdit ? onUpload : undefined}
     sx={{
       display: "flex",
       flexDirection: "column",
@@ -904,17 +1220,15 @@ const EmptyState = ({ onUpload }) => (
       py: 8,
       gap: 2,
       height: "100%",
-      cursor: "pointer",
+      cursor: canEdit ? "pointer" : "not-allowed",
+      opacity: canEdit ? 1 : 0.6,
       borderRadius: "12px",
       border: "1px dashed",
       borderColor: "divider",
       transition: "all 0.2s",
       "&:hover": {
         borderColor: "primary.main",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       },
     }}
   >
@@ -926,14 +1240,11 @@ const EmptyState = ({ onUpload }) => (
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        bgcolor: (t) =>
-          t.palette.mode === "dark"
-            ? "rgba(255,255,255,0.06)"
-            : "background.neutral",
+        bgcolor: "background.neutral",
       }}
     >
       <Iconify
-        icon="mdi:database-plus-outline"
+        icon="solar:add-folder-linear"
         width={28}
         sx={{ color: "text.disabled" }}
       />
@@ -956,425 +1267,530 @@ const EmptyState = ({ onUpload }) => (
   </Box>
 );
 
-// ═══════════════════════════════════════════════════════════════
-// Variable Mapping Section — maps eval {{variables}} to GT columns
-// ═══════════════════════════════════════════════════════════════
-const VariableMappingSection = ({ gt, evalVariables, onUpdate }) => {
-  const [mapping, setMapping] = useState(
-    gt.variable_mapping || gt.variableMapping || {},
-  );
-  const updateMapping = useUpdateVariableMapping();
-  const { enqueueSnackbar } = useSnackbar();
+// Flat single-save form for the GT tab. Posts to
+// /ground-truth/<id>/setup/, which rejects when the mandatory `output`
+// column is missing. The output-type hint reads
+// `template.output_type_normalized` + `choice_scores`; column content
+// is not validated against the type.
 
-  const handleSave = useCallback(async () => {
-    const filtered = Object.fromEntries(
-      Object.entries(mapping).filter(([, v]) => v),
-    );
-    try {
-      await updateMapping.mutateAsync({
-        gtId: gt.id,
-        variableMapping: filtered,
-      });
-      enqueueSnackbar("Variable mapping saved", { variant: "success" });
-      onUpdate?.();
-    } catch (err) {
-      enqueueSnackbar(
-        err?.response?.data?.message || "Failed to save mapping",
-        { variant: "error" },
-      );
-    }
-  }, [mapping, gt.id, updateMapping, enqueueSnackbar, onUpdate]);
-
-  if (!evalVariables.length) return null;
-
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-      <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-        Variable Mapping
-      </Typography>
-      <Typography variant="caption" color="text.secondary">
-        Map eval template variables to ground truth columns. These are
-        substituted into the eval prompt at runtime.
-      </Typography>
-      {evalVariables.map((varName) => (
-        <Box
-          key={varName}
-          sx={{ display: "flex", alignItems: "center", gap: 1 }}
-        >
-          <Chip
-            label={`{{${varName}}}`}
-            size="small"
-            variant="outlined"
-            sx={{
-              fontSize: "11px",
-              height: 24,
-              minWidth: 100,
-              fontFamily: "monospace",
-            }}
-          />
-          <Iconify
-            icon="mdi:arrow-right"
-            width={14}
-            sx={{ color: "text.disabled", flexShrink: 0 }}
-          />
-          <TextField
-            select
-            size="small"
-            fullWidth
-            value={mapping[varName] || ""}
-            onChange={(e) =>
-              setMapping((prev) => ({ ...prev, [varName]: e.target.value }))
-            }
-            sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
-          >
-            <MenuItem value="">
-              <em>None</em>
-            </MenuItem>
-            {(gt.columns || []).map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
-                {col}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
-      ))}
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={handleSave}
-        disabled={updateMapping.isPending}
-        sx={{ alignSelf: "flex-start", mt: 0.5 }}
-      >
-        {updateMapping.isPending ? "Saving..." : "Save Mapping"}
-      </Button>
-    </Box>
-  );
+const OUTPUT_TYPE_HINTS = {
+  pass_fail: "Use Pass / Fail / True / False / Yes / No.",
+  percentage: "Use a number between 0 and 1.",
 };
 
-// ═══════════════════════════════════════════════════════════════
-// Role Mapping Section — maps semantic roles for few-shot formatting
-// ═══════════════════════════════════════════════════════════════
-const RoleMappingSection = ({ gt, onUpdate }) => {
-  const [roleMapping, setRoleMapping] = useState(
-    gt.roleMapping || gt.role_mapping || {},
+export function shouldTriggerEmbed({
+  enabled,
+  mappingDirty,
+  embeddingsReady,
+  hasOnEmbed,
+}) {
+  return Boolean(enabled && (mappingDirty || !embeddingsReady) && hasOnEmbed);
+}
+
+function describeReferenceOutputColumn(evalConfig) {
+  if (!evalConfig) {
+    return "The correct answer for each row.";
+  }
+  const outputType =
+    evalConfig.output_type_normalized ||
+    evalConfig.outputTypeNormalized ||
+    (evalConfig.output || "").toLowerCase();
+  const choiceScores =
+    evalConfig.choice_scores || evalConfig.choiceScores || null;
+  const choiceLabels =
+    choiceScores && typeof choiceScores === "object"
+      ? Object.keys(choiceScores)
+      : null;
+
+  if (choiceLabels && choiceLabels.length > 0) {
+    return `Use one of: ${choiceLabels.join(", ")}.`;
+  }
+  if (outputType && OUTPUT_TYPE_HINTS[outputType]) {
+    return OUTPUT_TYPE_HINTS[outputType];
+  }
+  if (outputType === "deterministic") {
+    return "Use one of the eval's configured choices.";
+  }
+  return "Match the format of your eval's output.";
+}
+
+const GroundTruthSetupForm = ({
+  gt,
+  template,
+  evalVariables,
+  rulePrompt,
+  onEmbed,
+  onTest,
+  embedPending,
+  embeddingStatus,
+  embeddingsStale,
+  canEdit = true,
+}) => {
+  // Always derive Jinja variables from the live rule prompt so removing
+  // a variable from the prompt also drops its row from the mapping UI
+  // even before the eval config field is repopulated.
+  const liveVariables = useMemo(() => {
+    if (evalVariables && evalVariables.length > 0) return evalVariables;
+    return extractJinjaVariables(rulePrompt || "");
+  }, [evalVariables, rulePrompt]);
+
+  const persistedVarMapping = useMemo(
+    () => normalizeMapping(gt.variable_mapping || {}),
+    [gt.variable_mapping],
   );
-  const updateRole = useUpdateRoleMapping();
-  const { enqueueSnackbar } = useSnackbar();
+  const persistedRoleMapping = useMemo(
+    () => gt.role_mapping || {},
+    [gt.role_mapping],
+  );
 
-  const roles = [
-    { key: "input", label: "Input", desc: "The input/question column" },
-    {
-      key: "expected_output",
-      label: "Expected Output",
-      desc: "The expected/reference answer",
-    },
-    { key: "score", label: "Score", desc: "Human-assigned score (0-1)" },
-    { key: "reasoning", label: "Reasoning", desc: "Explanation for the score" },
-  ];
+  const initialOutputColumn =
+    persistedRoleMapping.output || persistedRoleMapping.expected_output || "";
+  const initialExplanationColumn =
+    persistedRoleMapping.explanation ||
+    persistedRoleMapping.reasoning ||
+    persistedRoleMapping.reason ||
+    "";
 
-  const handleSave = useCallback(async () => {
-    const filtered = Object.fromEntries(
-      Object.entries(roleMapping).filter(([, v]) => v),
-    );
+  const templateConfig = template?.config || {};
+  // Runtime knobs live on the GT row itself; the previous template.config
+  // snapshot was removed in favour of per-tenant typed columns.
+  const persistedMaxExamples = gt.max_examples ?? gt.maxExamples ?? 3;
+  const persistedEnabled = Boolean(gt.enabled);
+
+  const [varMapping, setVarMapping] = useState(persistedVarMapping);
+  const [outputColumn, setOutputColumn] = useState(initialOutputColumn);
+  const [explanationColumn, setExplanationColumn] = useState(
+    initialExplanationColumn,
+  );
+  const [maxExamples, setMaxExamples] = useState(persistedMaxExamples);
+  const [enabled, setEnabled] = useState(persistedEnabled);
+
+  // Resync local state whenever the persisted snapshot changes (post-save
+  // refetch). This keeps the dirty indicator honest.
+  useEffect(() => setVarMapping(persistedVarMapping), [persistedVarMapping]);
+  useEffect(() => setOutputColumn(initialOutputColumn), [initialOutputColumn]);
+  useEffect(
+    () => setExplanationColumn(initialExplanationColumn),
+    [initialExplanationColumn],
+  );
+  useEffect(() => setMaxExamples(persistedMaxExamples), [persistedMaxExamples]);
+  useEffect(() => setEnabled(persistedEnabled), [persistedEnabled]);
+
+  const save = useSaveGroundTruthSetup(template?.id);
+  const [embedChainRunning, setEmbedChainRunning] = useState(false);
+
+  useEffect(() => {
+    if (!embedChainRunning) return;
+    if (embeddingStatus === "completed" || embeddingStatus === "failed") {
+      setEmbedChainRunning(false);
+    }
+  }, [embedChainRunning, embeddingStatus]);
+
+  useEffect(() => {
+    if (save.isError) setEmbedChainRunning(false);
+  }, [save.isError]);
+
+  const mappingDirty = !shallowEqual(
+    normalizeMapping(varMapping),
+    persistedVarMapping,
+  );
+  const paramsDirty =
+    outputColumn !== initialOutputColumn ||
+    explanationColumn !== initialExplanationColumn ||
+    Number(maxExamples) !== Number(persistedMaxExamples) ||
+    enabled !== persistedEnabled;
+
+  const hasMapping = Object.keys(normalizeMapping(varMapping)).length > 0;
+  const canSave =
+    Boolean(outputColumn) && (!enabled || hasMapping) && !save.isPending;
+  const embedActive =
+    embedChainRunning ||
+    embedPending ||
+    embeddingStatus === "processing" ||
+    (embeddingStatus === "pending" && embedPending);
+  const embeddingsReady = embeddingStatus === "completed" && !embeddingsStale;
+
+  const configDirty = mappingDirty || paramsDirty;
+  // Embed only matters when GT is enabled; a paused GT should settle to
+  // "Saved" without pushing the user toward embedding.
+  const needsEmbed = enabled && !embeddingsReady && !embedActive;
+  const hasWork = configDirty || needsEmbed;
+  const ctaPending = save.isPending || embedActive;
+  let ctaLabel;
+  if (save.isPending) ctaLabel = "Saving…";
+  else if (embedActive) ctaLabel = "Embedding…";
+  else if (hasWork) ctaLabel = "Save";
+  else ctaLabel = "Saved";
+  const ctaDisabled = !canEdit || !canSave || ctaPending || !hasWork;
+
+  const buildPayload = () => {
+    const role = { output: outputColumn };
+    if (explanationColumn) role.explanation = explanationColumn;
+    return {
+      gtId: gt.id,
+      variableMapping: normalizeMapping(varMapping),
+      roleMapping: role,
+      maxExamples: Number(maxExamples),
+      enabled,
+    };
+  };
+
+  const handleCtaClick = async () => {
     try {
-      await updateRole.mutateAsync({ gtId: gt.id, roleMapping: filtered });
-      enqueueSnackbar("Role mapping saved", { variant: "success" });
-      onUpdate?.();
+      if (configDirty) await save.mutateAsync(buildPayload());
+      if (
+        shouldTriggerEmbed({
+          enabled,
+          mappingDirty,
+          embeddingsReady,
+          hasOnEmbed: !!onEmbed,
+        })
+      ) {
+        setEmbedChainRunning(true);
+        await onEmbed();
+      }
     } catch (err) {
-      enqueueSnackbar(
-        err?.response?.data?.message || "Failed to save mapping",
-        { variant: "error" },
-      );
+      setEmbedChainRunning(false);
+      throw err;
     }
-  }, [roleMapping, gt.id, updateRole, enqueueSnackbar, onUpdate]);
+  };
+
+  const columns = gt.columns || [];
+  const referenceHint = describeReferenceOutputColumn(templateConfig);
+
+  // Small reusable card surface so every section reads as a distinct
+  // group instead of one undifferentiated stack of rows.
+  const sectionCardSx = {
+    border: 1,
+    borderColor: "divider",
+    borderRadius: 1,
+    p: 1.5,
+    display: "flex",
+    flexDirection: "column",
+    gap: 1.25,
+    bgcolor: "background.paper",
+  };
+  const sectionTitleSx = {
+    fontSize: "12px",
+    fontWeight: 600,
+    color: "text.primary",
+  };
+  const labelColSx = {
+    width: 130,
+    flexShrink: 0,
+    color: "text.secondary",
+    fontSize: "12px",
+  };
+  const fieldFontSx = { "& .MuiInputBase-input": { fontSize: "12px" } };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-      <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-        Role Mapping{" "}
-        <Typography component="span" variant="caption" color="text.secondary">
-          (for few-shot formatting)
-        </Typography>
-      </Typography>
-      {roles.map(({ key, label, desc }) => (
-        <Box key={key} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Tooltip title={desc} placement="left">
-            <Typography
-              variant="caption"
-              sx={{ width: 110, flexShrink: 0, color: "text.secondary" }}
-            >
-              {label}
-            </Typography>
-          </Tooltip>
-          <Iconify
-            icon="mdi:arrow-right"
-            width={14}
-            sx={{ color: "text.disabled", flexShrink: 0 }}
-          />
-          <TextField
-            select
-            size="small"
-            fullWidth
-            value={roleMapping[key] || ""}
-            onChange={(e) =>
-              setRoleMapping((prev) => ({ ...prev, [key]: e.target.value }))
-            }
-            sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
-          >
-            <MenuItem value="">
-              <em>None</em>
-            </MenuItem>
-            {(gt.columns || []).map((col) => (
-              <MenuItem key={col} value={col} sx={{ fontSize: "12px" }}>
-                {col}
-              </MenuItem>
-            ))}
-          </TextField>
-        </Box>
-      ))}
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={handleSave}
-        disabled={updateRole.isPending}
-        sx={{ alignSelf: "flex-start", mt: 0.5 }}
-      >
-        {updateRole.isPending ? "Saving..." : "Save Mapping"}
-      </Button>
-    </Box>
-  );
-};
-
-// ═══════════════════════════════════════════════════════════════
-// Injection Config
-// ═══════════════════════════════════════════════════════════════
-const ConfigPanel = ({ templateId, gtId }) => {
-  const { data: config } = useGroundTruthConfig(templateId);
-  const updateConfig = useUpdateGroundTruthConfig(templateId);
-  const { enqueueSnackbar } = useSnackbar();
-  const [maxExamples, setMaxExamples] = useState(
-    config?.maxExamples ?? config?.max_examples ?? 3,
-  );
-  const theme = useTheme()
-  const [threshold, setThreshold] = useState(
-    config?.similarityThreshold ?? config?.similarity_threshold ?? 0.7,
-  );
-  const enabled = config?.enabled ?? false;
-
-  const handleToggle = useCallback(async () => {
-    try {
-      await updateConfig.mutateAsync({
-        enabled: !enabled,
-        ground_truth_id: gtId,
-        mode: "auto",
-        max_examples: maxExamples,
-        similarity_threshold: threshold,
-      });
-      enqueueSnackbar(
-        enabled ? "Ground truth disabled" : "Ground truth enabled",
-        { variant: "success" },
-      );
-    } catch {
-      enqueueSnackbar("Failed to update config", { variant: "error" });
-    }
-  }, [enabled, gtId, maxExamples, threshold, updateConfig, enqueueSnackbar]);
-
-  const handleSave = useCallback(async () => {
-    try {
-      await updateConfig.mutateAsync({
-        enabled: true,
-        ground_truth_id: gtId,
-        mode: "auto",
-        max_examples: maxExamples,
-        similarity_threshold: threshold,
-      });
-      enqueueSnackbar("Config saved", { variant: "success" });
-    } catch {
-      enqueueSnackbar("Failed to save config", { variant: "error" });
-    }
-  }, [gtId, maxExamples, threshold, updateConfig, enqueueSnackbar]);
-
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      {/* Header toggle. Drives gt.enabled, which the runtime checks
+          before injecting GT context. */}
       <Box
         sx={{
           display: "flex",
-          justifyContent: "space-between",
           alignItems: "center",
+          gap: 1,
+          p: 1.25,
+          border: 1,
+          borderColor: enabled ? "primary.main" : "divider",
+          borderRadius: 1,
+          bgcolor: enabled ? "action.hover" : "background.paper",
+          width: "100%",
+          minWidth: 0,
+          boxSizing: "border-box",
+          overflow: "hidden",
         }}
       >
-        <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-          Injection Settings
-        </Typography>
-
-        <SwitchComponent
-          label={enabled ? "Enabled" : "Disabled"}
-          labelPlacement={"start"}
-          labelStyle={{
-            fontSize: theme.spacing(1.5),
-          }}
-          size={"small"}
-          checked={enabled}
-          disableRipple
-          onChange={handleToggle}
-        />
-
-      </Box>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ width: 110, flexShrink: 0 }}
-        >
-          Few-shot examples
-        </Typography>
-        <Slider
-          size="small"
-          value={maxExamples}
-          onChange={(_, v) => setMaxExamples(v)}
-          min={1}
-          max={10}
-          step={1}
-          valueLabelDisplay="auto"
-          sx={{ flex: 1 }}
-        />
-        <Typography variant="caption" sx={{ width: 20, textAlign: "right" }}>
-          {maxExamples}
-        </Typography>
-      </Box>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ width: 110, flexShrink: 0 }}
-        >
-          Min similarity
-        </Typography>
-        <Slider
-          size="small"
-          value={threshold}
-          onChange={(_, v) => setThreshold(v)}
-          min={0}
-          max={1}
-          step={0.05}
-          valueLabelDisplay="auto"
-          sx={{ flex: 1 }}
-        />
-        <Typography variant="caption" sx={{ width: 30, textAlign: "right" }}>
-          {threshold}
-        </Typography>
-      </Box>
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={handleSave}
-        disabled={updateConfig.isPending}
-        sx={{ alignSelf: "flex-start" }}
-      >
-        Save Config
-      </Button>
-    </Box>
-  );
-};
-
-// ═══════════════════════════════════════════════════════════════
-// Test Retrieval
-// ═══════════════════════════════════════════════════════════════
-const TestRetrieval = ({ gtId }) => {
-  const [query, setQuery] = useState("");
-  const search = useSearchGroundTruth();
-
-  const handleSearch = useCallback(() => {
-    if (!query.trim()) return;
-    search.mutate({ gtId, query: query.trim(), maxResults: 3 });
-  }, [gtId, query, search]);
-
-  return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-      <Typography variant="body2" fontWeight={600} sx={{ fontSize: "12px" }}>
-        Test Retrieval
-      </Typography>
-      <Box sx={{ display: "flex", gap: 1 }}>
-        <TextField
-          size="small"
-          fullWidth
-          placeholder="Enter a query to test similarity search..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
-        />
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={handleSearch}
-          disabled={search.isPending || !query.trim()}
-          sx={{ flexShrink: 0, minWidth: 70 }}
-        >
-          {search.isPending ? <CircularProgress size={14} /> : "Search"}
-        </Button>
-      </Box>
-      {search.data?.results?.length > 0 && (
         <Box
           sx={{
             display: "flex",
             flexDirection: "column",
-            gap: 1,
-            maxHeight: 200,
-            overflow: "auto",
+            flex: 1,
+            minWidth: 0,
           }}
         >
-          {search.data.results.map((r, i) => (
-            <Box
-              key={i}
-              sx={{
-                p: 1,
-                borderRadius: "6px",
-                border: "1px solid",
-                borderColor: "divider",
-                fontSize: "11px",
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  mb: 0.5,
-                }}
-              >
-                <Typography variant="caption" fontWeight={600}>
-                  Match {i + 1}
-                </Typography>
-                <Chip
-                  label={`${(r.similarity * 100).toFixed(0)}%`}
-                  size="small"
-                  color={
-                    r.similarity > 0.8
-                      ? "success"
-                      : r.similarity > 0.6
-                        ? "warning"
-                        : "default"
-                  }
-                  sx={{ fontSize: "10px", height: 18 }}
-                />
-              </Box>
-              {canonicalEntries(r.row_data || r.rowData || {})
-                .slice(0, 4)
-                .map(([k, v]) => (
-                  <Typography
-                    key={k}
-                    variant="caption"
-                    color="text.secondary"
-                    component="div"
-                    noWrap
-                  >
-                    <strong>{k}:</strong> {String(v).slice(0, 100)}
-                  </Typography>
-                ))}
-            </Box>
-          ))}
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              fontSize: "12px",
+              lineHeight: 1.3,
+              wordBreak: "break-word",
+            }}
+          >
+            Use ground truth
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "text.secondary",
+              fontSize: "12px",
+              lineHeight: 1.3,
+              wordBreak: "break-word",
+            }}
+          >
+            {enabled
+              ? "On. Retrieved examples are injected into the evaluator prompt."
+              : "Off. The evaluator runs without ground truth context."}
+          </Typography>
         </Box>
-      )}
+        <Switch
+          size="small"
+          checked={enabled}
+          onChange={(_, v) => setEnabled(v)}
+          sx={{ flexShrink: 0, ml: 1 }}
+        />
+      </Box>
+
+      {/* One row per template variable. */}
+      <Box sx={sectionCardSx}>
+        <Typography sx={sectionTitleSx}>Inputs</Typography>
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
+        >
+          Map each template variable to a ground truth column.
+        </Typography>
+        {enabled && !hasMapping && liveVariables.length > 0 ? (
+          <Typography
+            variant="caption"
+            sx={{ color: "status.danger.fg", fontSize: "12px", mt: 0.25 }}
+          >
+            Map at least one input variable before saving with ground truth
+            enabled.
+          </Typography>
+        ) : null}
+        {liveVariables.length === 0 ? (
+          <Typography variant="caption" color="text.secondary">
+            This rule prompt has no <code>{"{{variables}}"}</code> to map.
+          </Typography>
+        ) : (
+          liveVariables.map((varName) => (
+            <Box
+              key={varName}
+              sx={{ display: "flex", alignItems: "center", gap: 1 }}
+            >
+              <Chip
+                label={varName}
+                size="small"
+                variant="outlined"
+                sx={{
+                  maxWidth: 160,
+                  "& .MuiChip-label": {
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  },
+                }}
+              />
+              <Iconify
+                icon="solar:arrow-right-linear"
+                width={14}
+                sx={{ color: "text.disabled", flexShrink: 0 }}
+              />
+              <TextField
+                select
+                size="small"
+                fullWidth
+                value={varMapping[varName] || ""}
+                onChange={(e) =>
+                  setVarMapping((prev) => ({
+                    ...prev,
+                    [varName]: e.target.value,
+                  }))
+                }
+                sx={fieldFontSx}
+              >
+                <MenuItem value="">
+                  <em>None</em>
+                </MenuItem>
+                {columns.map((col) => (
+                  <MenuItem key={col} value={col}>
+                    {col}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Box>
+          ))
+        )}
+      </Box>
+
+      {/* Reference Output (required) + Eval Explanation (optional) */}
+      <Box sx={sectionCardSx}>
+        <Typography sx={sectionTitleSx}>Reference output</Typography>
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
+        >
+          The expected answer the evaluator should converge toward for each
+          example.
+        </Typography>
+        {referenceHint && (
+          <Typography
+            variant="caption"
+            sx={{ color: "status.warning.fg", fontSize: "12px", mt: -0.25 }}
+          >
+            Values in this column must match the eval&apos;s output type.{" "}
+            {referenceHint}
+          </Typography>
+        )}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography variant="caption" sx={labelColSx}>
+            Output column *
+          </Typography>
+          <Iconify
+            icon="solar:arrow-right-linear"
+            width={14}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+          <TextField
+            select
+            size="small"
+            fullWidth
+            value={outputColumn}
+            onChange={(e) => setOutputColumn(e.target.value)}
+            sx={fieldFontSx}
+            error={!outputColumn}
+          >
+            <MenuItem value="">
+              <em>Pick a column</em>
+            </MenuItem>
+            {columns.map((col) => (
+              <MenuItem key={col} value={col}>
+                {col}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography variant="caption" sx={labelColSx}>
+            Explanation (optional)
+          </Typography>
+          <Iconify
+            icon="solar:arrow-right-linear"
+            width={14}
+            sx={{ color: "text.disabled", flexShrink: 0 }}
+          />
+          <TextField
+            select
+            size="small"
+            fullWidth
+            value={explanationColumn}
+            onChange={(e) => setExplanationColumn(e.target.value)}
+            sx={fieldFontSx}
+          >
+            <MenuItem value="">
+              <em>None (optional)</em>
+            </MenuItem>
+            {columns.map((col) => (
+              <MenuItem key={col} value={col}>
+                {col}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Box>
+      </Box>
+
+      {/* Retrieval knobs. */}
+      <Box sx={sectionCardSx}>
+        <Typography sx={sectionTitleSx}>Retrieval</Typography>
+        <Typography
+          variant="caption"
+          sx={{ color: "text.secondary", fontSize: "12px", mt: -0.5 }}
+        >
+          On each eval run, the rows most similar to the input are attached to
+          the judge prompt as calibration examples.
+        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Tooltip
+            placement="top"
+            arrow
+            title="How many of the closest matching rows are shown to the judge. More examples sharpen calibration but slow down each run."
+          >
+            <Typography variant="caption" sx={labelColSx}>
+              Examples shown ⓘ
+            </Typography>
+          </Tooltip>
+          <Slider
+            size="small"
+            value={Number(maxExamples)}
+            onChange={(_, v) => setMaxExamples(v)}
+            min={1}
+            max={10}
+            step={1}
+            marks
+            valueLabelDisplay="auto"
+            sx={{ flex: 1 }}
+          />
+          <Chip size="small" label={maxExamples} sx={{ minWidth: 36 }} />
+        </Box>
+      </Box>
+
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 0.75,
+          mt: 0.5,
+        }}
+      >
+        {!outputColumn && (
+          <Typography
+            variant="caption"
+            sx={{
+              color: "status.danger.fg",
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+            }}
+          >
+            <Iconify icon="solar:danger-circle-linear" width={14} />
+            Pick the column that holds the reference output.
+          </Typography>
+        )}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Button
+            variant={hasWork ? "contained" : "outlined"}
+            onClick={handleCtaClick}
+            disabled={ctaDisabled}
+            startIcon={
+              ctaPending ? (
+                <CircularProgress size={14} />
+              ) : hasWork ? (
+                <Iconify icon="solar:diskette-linear" width={16} />
+              ) : (
+                <Iconify icon="solar:check-linear" width={16} />
+              )
+            }
+            sx={{ flex: 1, minWidth: 0 }}
+          >
+            {ctaLabel}
+          </Button>
+          <Tooltip
+            title={
+              embedActive
+                ? "Embeddings are still generating; this run may not return GT examples yet."
+                : !embeddingsReady
+                  ? "GT retrieval needs embeddings; run an Embed first for best results."
+                  : "Try GT retrieval against a sample input"
+            }
+          >
+            <span>
+              <Button
+                variant="text"
+                onClick={onTest}
+                endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
+                disabled={!onTest}
+                sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
+              >
+                Test eval
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
+      </Box>
     </Box>
   );
 };
@@ -1382,15 +1798,23 @@ const TestRetrieval = ({ gtId }) => {
 // ═══════════════════════════════════════════════════════════════
 // MAIN TAB
 // ═══════════════════════════════════════════════════════════════
-const EvalGroundTruthTab = ({ templateId }) => {
+const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
   const { enqueueSnackbar } = useSnackbar();
+  const { role } = useAuthContext();
+  const canEdit = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Eval data — to get required_keys (variables)
+  // Eval data - to get required_keys (variables)
   const { data: evalData } = useEvalDetail(templateId);
   const evalVariables = useMemo(() => {
     const config = evalData?.config || {};
     return config.requiredKeys || config.required_keys || [];
+  }, [evalData]);
+  const rulePrompt = useMemo(() => {
+    const config = evalData?.config || {};
+    return config.rulePrompt || config.rule_prompt || "";
   }, [evalData]);
 
   const { data: listData, isLoading: listLoading } =
@@ -1403,9 +1827,13 @@ const EvalGroundTruthTab = ({ templateId }) => {
     pageSize: 500,
   });
   const { data: statusData } = useGroundTruthStatus(activeDataset?.id, {
+    // Poll while the embed job is still in flight. The trigger view
+    // sets `pending` synchronously and the Temporal activity flips
+    // through `processing` before settling on a terminal status - both
+    // need polling so the UI can react.
     enabled:
-      (activeDataset?.embedding_status || activeDataset?.embeddingStatus) ===
-      "processing",
+      activeDataset?.embedding_status === "pending" ||
+      activeDataset?.embedding_status === "processing",
   });
 
   const deleteGt = useDeleteGroundTruth();
@@ -1414,11 +1842,9 @@ const EvalGroundTruthTab = ({ templateId }) => {
   const embeddingStatus =
     statusData?.embedding_status ||
     activeDataset?.embedding_status ||
-    activeDataset?.embeddingStatus ||
     "pending";
-  const embeddedCount =
-    statusData?.embedded_row_count || statusData?.embeddedRowCount || 0;
-  const totalRows = activeDataset?.row_count || activeDataset?.rowCount || 0;
+  const embeddedCount = statusData?.embedded_row_count || 0;
+  const totalRows = activeDataset?.row_count || 0;
 
   const handleDelete = useCallback(async () => {
     if (!activeDataset) return;
@@ -1440,6 +1866,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
         err?.response?.data?.message || "Failed to trigger embedding",
         { variant: "error" },
       );
+      throw err;
     }
   }, [activeDataset, triggerEmbed, enqueueSnackbar]);
 
@@ -1484,7 +1911,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
           height: "100%",
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -1506,10 +1933,13 @@ const EvalGroundTruthTab = ({ templateId }) => {
         onClose={() => setDrawerOpen(false)}
         templateId={templateId}
         evalVariables={evalVariables}
+        canEdit={canEdit}
       />
 
-      {/* Empty state — clicks opens drawer */}
-      {!datasets.length && <EmptyState onUpload={() => setDrawerOpen(true)} />}
+      {/* Empty state - clicks opens drawer */}
+      {!datasets.length && (
+        <EmptyState onUpload={() => setDrawerOpen(true)} canEdit={canEdit} />
+      )}
 
       {/* Dataset header */}
       {activeDataset && (
@@ -1523,22 +1953,18 @@ const EvalGroundTruthTab = ({ templateId }) => {
             }}
           >
             <Iconify
-              icon="mdi:database-outline"
-              width={18}
+              icon="solar:database-linear"
+              width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography variant="body2" fontWeight={600}>
               {activeDataset.name}
             </Typography>
-            <Chip
-              label={`${totalRows} rows`}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
+            <Chip label={`${totalRows} rows`} size="small" variant="outlined" />
             <StatusBadge status={embeddingStatus} />
 
-            {embeddingStatus === "processing" && (
+            {(embeddingStatus === "processing" ||
+              (embeddingStatus === "pending" && triggerEmbed.isPending)) && (
               <Box
                 sx={{
                   display: "flex",
@@ -1549,48 +1975,50 @@ const EvalGroundTruthTab = ({ templateId }) => {
                 }}
               >
                 <LinearProgress
-                  variant="determinate"
-                  value={totalRows > 0 ? (embeddedCount / totalRows) * 100 : 0}
+                  variant={
+                    embeddingStatus === "processing"
+                      ? "determinate"
+                      : "indeterminate"
+                  }
+                  value={
+                    embeddingStatus === "processing" && totalRows > 0
+                      ? (embeddedCount / totalRows) * 100
+                      : undefined
+                  }
                   sx={{ flex: 1, height: 4, borderRadius: 2 }}
                 />
                 <Typography variant="caption" color="text.secondary">
-                  {embeddedCount}/{totalRows}
+                  {embeddingStatus === "processing"
+                    ? `${embeddedCount}/${totalRows}`
+                    : "Queuing…"}
                 </Typography>
               </Box>
             )}
 
             <Box sx={{ flex: 1 }} />
 
-            {(embeddingStatus === "pending" ||
-              embeddingStatus === "failed") && (
-              <Tooltip title="Generate embeddings for similarity search">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<Iconify icon="mdi:brain" width={14} />}
-                  onClick={handleTriggerEmbed}
-                  disabled={triggerEmbed.isPending}
-                  sx={{ fontSize: "11px", height: 26 }}
-                >
-                  Embed
-                </Button>
-              </Tooltip>
-            )}
-
             <Tooltip title="Upload new dataset">
-              <IconButton size="small" onClick={() => setDrawerOpen(true)}>
-                <Iconify icon="mdi:upload" width={16} />
-              </IconButton>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => setDrawerOpen(true)}
+                  disabled={!canEdit}
+                >
+                  <Iconify icon="solar:upload-minimalistic-linear" width={16} />
+                </IconButton>
+              </span>
             </Tooltip>
             <Tooltip title="Delete dataset">
-              <IconButton
-                size="small"
-                color="error"
-                onClick={handleDelete}
-                disabled={deleteGt.isPending}
-              >
-                <Iconify icon="mdi:delete-outline" width={16} />
-              </IconButton>
+              <span>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={handleDelete}
+                  disabled={deleteGt.isPending || !canEdit}
+                >
+                  <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+                </IconButton>
+              </span>
             </Tooltip>
           </Box>
 
@@ -1599,32 +2027,32 @@ const EvalGroundTruthTab = ({ templateId }) => {
             {/* Left: settings */}
             <Box
               sx={{
-                width: 320,
+                width: 420,
                 flexShrink: 0,
                 display: "flex",
                 flexDirection: "column",
-                gap: 2.5,
+                gap: 2,
                 overflow: "auto",
                 pr: 1,
               }}
             >
-              <VariableMappingSection
+              <GroundTruthSetupForm
                 gt={activeDataset}
+                template={evalData}
                 evalVariables={evalVariables}
-                onUpdate={() => {}}
+                rulePrompt={rulePrompt}
+                onEmbed={handleTriggerEmbed}
+                onTest={onSwitchToDetails}
+                embedPending={triggerEmbed.isPending}
+                embeddingStatus={embeddingStatus}
+                embeddingsStale={Boolean(
+                  activeDataset?.embeddings_stale ||
+                    activeDataset?.embeddingsStale,
+                )}
+                canEdit={canEdit}
               />
-              {evalVariables.length > 0 && <Divider />}
-              <RoleMappingSection gt={activeDataset} onUpdate={() => {}} />
-              <Divider />
-              <ConfigPanel templateId={templateId} gtId={activeDataset.id} />
-              {embeddingStatus === "completed" && (
-                <>
-                  <Divider />
-                  <TestRetrieval gtId={activeDataset.id} />
-                </>
-              )}
             </Box>
-            {/* Right: data preview — AG Grid spreadsheet */}
+            {/* Right: data preview - AG Grid spreadsheet */}
             <Box
               sx={{
                 flex: 1,
@@ -1657,10 +2085,6 @@ const EvalGroundTruthTab = ({ templateId }) => {
                 sx={{
                   flex: 1,
                   minHeight: 200,
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  border: "1px solid",
-                  borderColor: "divider",
                 }}
               >
                 <AgGridReact
@@ -1669,7 +2093,7 @@ const EvalGroundTruthTab = ({ templateId }) => {
                   rowData={previewData?.rows || []}
                   defaultColDef={defaultColDef}
                   headerHeight={34}
-                  rowHeight={32}
+                  rowHeight={ROW_HEIGHT.default}
                   animateRows={false}
                   suppressCellFocus
                   enableCellTextSelection
@@ -1677,8 +2101,8 @@ const EvalGroundTruthTab = ({ templateId }) => {
                   pagination
                   paginationPageSize={50}
                   paginationPageSizeSelector={[25, 50, 100]}
-                  overlayNoRowsTemplate="<span style='font-size:13px;opacity:0.5'>No data</span>"
-                  overlayLoadingTemplate="<span style='font-size:13px;opacity:0.5'>Loading...</span>"
+                  overlayNoRowsTemplate="<span style='font-size:12px;opacity:0.5'>No data</span>"
+                  overlayLoadingTemplate="<span style='font-size:12px;opacity:0.5'>Loading...</span>"
                   loading={!previewData}
                 />
               </Box>

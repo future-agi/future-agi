@@ -6,29 +6,27 @@ import {
   Button,
   Chip,
   FormControlLabel,
-  IconButton,
   LinearProgress,
   Stack,
   Switch,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { statusColors } from "src/utils/runStatus";
+
+const STATUS_ROLE = {
+  warning: "warning",
+  info: "info",
+  success: "success",
+  error: "danger",
+};
+
+const COMMENT_ROLE = { warning: "warning", primary: "discovery" };
 
 function statusTone(theme, color = "info") {
-  const paletteColor = theme.palette[color] || theme.palette.info;
-  return {
-    border: alpha(
-      paletteColor.main,
-      theme.palette.mode === "dark" ? 0.34 : 0.24,
-    ),
-    bg: alpha(paletteColor.main, theme.palette.mode === "dark" ? 0.13 : 0.055),
-    text:
-      theme.palette.mode === "dark"
-        ? paletteColor.light || paletteColor.main
-        : paletteColor.dark || paletteColor.main,
-  };
+  const c = statusColors(theme, STATUS_ROLE[color] || "info");
+  return { border: c.border, bg: c.bg, text: c.fg };
 }
 
 function tooltipChipSx(color) {
@@ -36,15 +34,15 @@ function tooltipChipSx(color) {
     const tone =
       color === "default"
         ? {
-            border: alpha(theme.palette.text.primary, 0.14),
-            bg: alpha(theme.palette.text.primary, 0.04),
-            text: theme.palette.text.secondary,
+            border: statusColors(theme, "neutral").border,
+            bg: statusColors(theme, "neutral").bg,
+            text: statusColors(theme, "neutral").fg,
           }
         : statusTone(theme, color);
     return {
       height: 22,
-      fontSize: 11,
-      fontWeight: 700,
+      fontSize: 12,
+      fontWeight: 600,
       borderColor: tone.border,
       bgcolor: tone.bg,
       color: tone.text,
@@ -54,18 +52,11 @@ function tooltipChipSx(color) {
 }
 
 function commentsTooltipPaperSx(theme) {
-  const borderColor = alpha(
-    theme.palette.text.primary,
-    theme.palette.mode === "dark" ? 0.16 : 0.12,
-  );
+  const borderColor = theme.palette.divider;
   return {
     bgcolor: "background.paper",
     color: "text.primary",
     border: `1px solid ${borderColor}`,
-    boxShadow:
-      theme.palette.mode === "dark"
-        ? `0 18px 42px ${alpha(theme.palette.common.black, 0.48)}`
-        : `0 18px 42px ${alpha(theme.palette.grey[700], 0.16)}`,
     borderRadius: 1,
     p: 0,
     maxWidth: 340,
@@ -76,37 +67,25 @@ function commentsTooltipArrowSx(theme) {
   return {
     color: theme.palette.background.paper,
     "&::before": {
-      border: `1px solid ${alpha(
-        theme.palette.text.primary,
-        theme.palette.mode === "dark" ? 0.16 : 0.12,
-      )}`,
+      border: `1px solid ${theme.palette.divider}`,
     },
   };
 }
 
 function commentBadgeSx(hasOpenFeedback) {
   return (theme) => {
-    const tone = theme.palette[hasOpenFeedback ? "warning" : "info"];
-    const isDark = theme.palette.mode === "dark";
+    const tone = statusColors(theme, hasOpenFeedback ? "warning" : "info");
 
     return {
       "& .MuiBadge-badge": {
         minWidth: 22,
         height: 22,
         px: 0.5,
-        fontWeight: 800,
-        border: `1px solid ${
-          isDark
-            ? alpha(tone.light || tone.main, 0.46)
-            : alpha(theme.palette.background.paper, 0.94)
-        }`,
-        bgcolor: isDark ? alpha(tone.main, 0.24) : tone.main,
-        color: isDark
-          ? tone.light || theme.palette.common.white
-          : theme.palette.common.white,
-        boxShadow: `0 0 0 2px ${
-          isDark ? theme.palette.grey[900] : theme.palette.background.paper
-        }`,
+        fontWeight: 600,
+        border: `1px solid ${theme.palette.background.paper}`,
+        bgcolor: tone.solid,
+        color: tone.onSolid,
+        boxShadow: `0 0 0 2px ${theme.palette.background.paper}`,
       },
     };
   };
@@ -213,9 +192,18 @@ export default function AnnotateHeader({
         spacing={1}
         sx={{ minWidth: 0, flex: "1 1 260px" }}
       >
-        <IconButton onClick={onBack} size="small">
-          <Iconify icon="eva:arrow-back-fill" />
-        </IconButton>
+        <Button
+          size="small"
+          color="inherit"
+          onClick={onBack}
+          startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
+          sx={{
+            color: "text.primary",
+            flexShrink: 0,
+          }}
+        >
+          Back to Queue
+        </Button>
         <Typography variant="h6" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
           {queueName || "Queue"}
         </Typography>
@@ -230,19 +218,15 @@ export default function AnnotateHeader({
             <Chip
               size="small"
               variant="outlined"
-              icon={<Iconify icon="eva:checkmark-circle-2-fill" width={14} />}
+              icon={<Iconify icon="solar:check-circle-bold" width={14} />}
               label={completedByCurrentUser ? "Done by you" : "Done"}
               sx={(theme) => {
                 const tone = statusTone(theme, "success");
                 return {
-                  height: 24,
                   flexShrink: 0,
-                  borderRadius: 0.75,
                   borderColor: tone.border,
                   bgcolor: tone.bg,
                   color: tone.text,
-                  fontWeight: 700,
-                  "& .MuiChip-label": { px: 0.75 },
                   "& .MuiChip-icon": {
                     color: tone.text,
                     ml: 0.75,
@@ -295,7 +279,7 @@ export default function AnnotateHeader({
                 color: "text.secondary",
                 "& .MuiFormControlLabel-label": {
                   fontSize: 12,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   whiteSpace: "nowrap",
                 },
               }}
@@ -304,6 +288,7 @@ export default function AnnotateHeader({
         )}
         {onOpenComments && (
           <Tooltip
+            classes={{ tooltip: "ds-hovercard" }}
             arrow
             placement="bottom"
             componentsProps={{
@@ -313,7 +298,7 @@ export default function AnnotateHeader({
             title={
               <Stack spacing={1} sx={{ p: 1.25, minWidth: 260 }}>
                 <Stack spacing={0.25}>
-                  <Typography variant="subtitle2" fontWeight={700}>
+                  <Typography variant="subtitle2" fontWeight={600}>
                     Item comments
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
@@ -377,37 +362,24 @@ export default function AnnotateHeader({
                     <Iconify icon="solar:chat-round-dots-bold" width={16} />
                   }
                   sx={{
-                    borderRadius: 0.75,
-                    minHeight: 32,
-                    px: 1.25,
-                    fontWeight: 700,
                     color: "text.primary",
                     borderColor: (theme) =>
                       commentTone
-                        ? alpha(theme.palette[commentTone].main, 0.32)
-                        : alpha(theme.palette.text.primary, 0.14),
+                        ? statusColors(theme, COMMENT_ROLE[commentTone]).border
+                        : theme.palette.border.default,
                     bgcolor: (theme) =>
                       commentTone
-                        ? alpha(
-                            theme.palette[commentTone].main,
-                            theme.palette.mode === "dark" ? 0.14 : 0.08,
-                          )
+                        ? statusColors(theme, COMMENT_ROLE[commentTone]).bg
                         : "transparent",
                     "&:hover": {
                       borderColor: (theme) =>
                         commentTone
-                          ? alpha(theme.palette[commentTone].main, 0.42)
-                          : alpha(theme.palette.text.primary, 0.22),
+                          ? statusColors(theme, COMMENT_ROLE[commentTone]).fg
+                          : theme.palette.border.hover,
                       bgcolor: (theme) =>
                         commentTone
-                          ? alpha(
-                              theme.palette[commentTone].main,
-                              theme.palette.mode === "dark" ? 0.18 : 0.11,
-                            )
-                          : alpha(
-                              theme.palette.text.primary,
-                              theme.palette.mode === "dark" ? 0.08 : 0.04,
-                            ),
+                          ? statusColors(theme, COMMENT_ROLE[commentTone]).bg
+                          : theme.palette.action.hover,
                     },
                   }}
                 >
@@ -436,7 +408,7 @@ export default function AnnotateHeader({
             sx={{
               height: 6,
               borderRadius: 3,
-              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
+              bgcolor: "action.selected",
               "& .MuiLinearProgress-bar": {
                 borderRadius: 3,
                 bgcolor: (theme) => theme.palette.text.primary,
@@ -445,29 +417,32 @@ export default function AnnotateHeader({
           />
         </Box>
         {!isReviewMode && (
-          <Tooltip title="Press S to skip">
+          <Tooltip
+            title={
+              isItemCompleted
+                ? "Completed items cannot be skipped"
+                : "Press S to skip"
+            }
+          >
             <span>
               <Button
                 variant="outlined"
                 color="inherit"
                 size="small"
                 onClick={onSkip}
-                disabled={isSkipping || isAssignedToOther || isSkipDisabled}
-                startIcon={<Iconify icon="eva:skip-forward-fill" width={16} />}
+                disabled={
+                  isSkipping ||
+                  isAssignedToOther ||
+                  isSkipDisabled ||
+                  isItemCompleted
+                }
+                startIcon={<Iconify icon="solar:skip-next-linear" width={16} />}
                 sx={{
-                  borderRadius: 0.75,
                   color: "text.primary",
-                  borderColor: (theme) =>
-                    alpha(theme.palette.text.primary, 0.14),
-                  fontWeight: 700,
+                  borderColor: "border.default",
                   "&:hover": {
-                    borderColor: (theme) =>
-                      alpha(theme.palette.text.primary, 0.22),
-                    bgcolor: (theme) =>
-                      alpha(
-                        theme.palette.text.primary,
-                        theme.palette.mode === "dark" ? 0.08 : 0.04,
-                      ),
+                    borderColor: "border.hover",
+                    bgcolor: "action.hover",
                   },
                 }}
               >

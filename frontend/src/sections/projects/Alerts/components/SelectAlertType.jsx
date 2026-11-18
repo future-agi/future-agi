@@ -74,7 +74,7 @@ export default function SelectAlertType({
             display: "flex",
             flexDirection: "column",
             gap: 0.5,
-            borderRadius: 0.5,
+            borderRadius: "4px",
           }}
         >
           <Typography
@@ -114,6 +114,7 @@ export default function SelectAlertType({
             fullWidth
             color="primary"
             variant="contained"
+            data-alert-type-action="next"
           >
             Next
           </Button>

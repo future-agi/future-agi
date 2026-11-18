@@ -6,7 +6,7 @@ import {
 } from "src/utils/constant";
 import CustomCellRender from "src/sections/common/DevelopCellRenderer/CustomCellRender";
 import CustomDevelopGroupCellHeader from "src/sections/common/DevelopCellRenderer/CustomDevelopGroupCellHeader";
-import { interpolateColorBasedOnScore } from "src/utils/utils";
+import { statusColors } from "src/utils/runStatus";
 import {
   reorderMenuList,
   setMenuIcons,
@@ -320,14 +320,10 @@ export const getColumnConfig = ({
   const editCell = useEditCellStore.getState().editCell;
   const setEditCell = useEditCellStore.getState().setEditCell;
 
-  // Read both snake_case (canonical API shape) and camelCase (alias) so
-  // this function works whether `eachCol` came straight from the axios
-  // response (has non-enumerable camelCase getters) or from a spread/clone
-  // (only snake_case keys survive).
-  const colDataType = eachCol?.data_type ?? eachCol?.dataType;
-  const colOriginType = eachCol?.origin_type ?? eachCol?.originType;
-  const colIsFrozen = eachCol?.is_frozen ?? eachCol?.isFrozen;
-  const colIsVisible = eachCol?.is_visible ?? eachCol?.isVisible;
+  const colDataType = eachCol?.data_type;
+  const colOriginType = eachCol?.origin_type;
+  const colIsFrozen = eachCol?.is_frozen;
+  const colIsVisible = eachCol?.is_visible;
 
   const isEditable =
     !isViewerRole &&
@@ -339,7 +335,7 @@ export const getColumnConfig = ({
     headerName: eachCol?.name,
     valueGetter: (v) => {
       const cell = v?.data?.[eachCol?.id];
-      const rawValue = cell?.cell_value ?? cell?.cellValue;
+      const rawValue = cell?.cell_value;
       return parseCellValue(rawValue, AGGridCellDataType[colDataType]);
     },
     valueSetter: (params) => {
@@ -421,7 +417,7 @@ export const getColumnConfig = ({
       ...baseConfig,
       valueGetter: (v) => {
         const cell = v.data?.[eachCol.id];
-        const rawValue = cell?.cell_value ?? cell?.cellValue;
+        const rawValue = cell?.cell_value;
         const date = parseDate(rawValue);
         return date;
       },
@@ -526,7 +522,7 @@ const getMainMenuItems =
       // use the underlying eval / eval_reason column ids, so the old
       // `column.id` key no longer matched what was stored and the
       // "Hide Reasoning" state was lost.
-      const key = column?.sourceId || column?.id;
+      const key = column?.source_id || column?.id;
       extraMenuItems.push({
         name: showSummary.includes(key) ? "Hide Reasoning" : "Show Reasoning",
         action: () => {
@@ -616,7 +612,7 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   }
 
   const columnId = params?.column?.colId;
-  const rowId = params?.data?.rowId;
+  const rowId = params?.data?.row_id ?? params?.data?.rowId;
   const newValue = params?.newValue;
   const oldValue = params?.oldValue;
   const dataType = params?.column?.colDef?.dataType;
@@ -691,82 +687,31 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   }
 };
 
-export const getStatusColor = (value, theme) => {
-  if (!value) {
-    return {
-      backgroundColor: interpolateColorBasedOnScore(0, 1),
-      color: theme.palette.red[500],
-      fontWeight: 400,
-    };
-  }
-
-  if (Array.isArray(value)) {
-    return {
-      backgroundColor: theme.palette.action.hover,
-      color: theme.palette.primary.main,
-      fontWeight: 400,
-    };
-  }
-
-  if (value === STATUS.PASSED) {
-    return {
-      backgroundColor: interpolateColorBasedOnScore(1, 1),
-      color: theme.palette.green[500],
-      fontWeight: 400,
-    };
-  }
-
-  // if (typeof value === "number") {
-  //   return {
-  //     backgroundColor: interpolateColorBasedOnScore(value, 1),
-  //     color: value >= 0.5 ? theme.palette.green[500] : theme.palette.red[500],
-  //     fontWeight: 400,
-  //   };
-  // }
-
+// Role of an eval result in the one status map (src/utils/runStatus):
+// pass/fail verdicts and score bands; choice labels stay neutral.
+export const evalResultRole = (value) => {
+  if (!value) return "danger";
+  if (Array.isArray(value)) return "neutral";
+  if (value === STATUS.PASSED) return "success";
   if (!isNaN(Number(value))) {
     const numericValue = Number(value) * 100;
-
-    let color, backgroundColor;
-
-    if (numericValue <= 49) {
-      color = "red.500";
-      backgroundColor = "red.o10";
-    } else if (numericValue <= 79) {
-      color = "orange.500";
-      backgroundColor = "orange.o10";
-    } else if (numericValue <= 100) {
-      color = "green.500";
-      backgroundColor = "green.o10";
-    } else {
-      color = "green.500";
-      backgroundColor = "green.o10";
-    }
-
-    return {
-      color,
-      backgroundColor,
-      fontWeight: 400,
-    };
+    if (numericValue <= 49) return "danger";
+    if (numericValue <= 79) return "warning";
+    return "success";
   }
-  // >>>>>>> dev
+  if (value === STATUS.FAILED) return "danger";
+  return "neutral";
+};
 
-  if (value === STATUS.FAILED) {
-    return {
-      backgroundColor: interpolateColorBasedOnScore(0, 1),
-      color: theme.palette.red[500],
-      fontWeight: 400,
-    };
-  }
-
+// Chip sx for an eval result, resolved from theme.palette.status.
+export const getStatusColor = (value, theme) => {
+  const colors = statusColors(theme, evalResultRole(value));
   return {
-    backgroundColor: theme.palette.action.hover,
-    color: theme.palette.primary.main,
+    backgroundColor: colors.bg,
+    color: colors.fg,
     fontWeight: 400,
   };
 };
-
-
 
 export const parsePythonReprIfNeeded = (value) => {
   if (typeof value !== "string") return value;
@@ -819,13 +764,15 @@ export const normalizeEvalCellValue = (value) => {
   return v;
 };
 
-
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
+  // Scored choices evals emit {score, choice} / {score, choices} as the bucket
+  // key, which would otherwise stringify to "[object Object]".
+  const choiceLabel = extractChoiceLabel(parsed);
+  if (choiceLabel !== null) return choiceLabel;
   return String(parsed ?? value);
 };
-
 
 // Map an outputType string (with all its casing/spelling variants) to a canonical
 // kind. Returns null when no type was given or it isn't recognized.
@@ -844,7 +791,12 @@ const inferKindFromValue = (/** @type {any} */ v) => {
   if (typeof v === "string") {
     const trimmed = v.trim();
     const lowered = trimmed.toLowerCase();
-    if (lowered === "passed" || lowered === "failed" || lowered === "pass" || lowered === "fail") {
+    if (
+      lowered === "passed" ||
+      lowered === "failed" ||
+      lowered === "pass" ||
+      lowered === "fail"
+    ) {
       return "passfail";
     }
     // numeric-looking string → score
@@ -905,14 +857,22 @@ export const normalizeEvalResult = (value, outputType) => {
       items = [v];
     }
     items = items
-      .map((/** @type {any} */ x) =>
-        x && typeof x === "object" ? (x.choice ?? x.label ?? x.value ?? "") : x,
-      )
+      .flatMap((x) => {
+        if (!x || typeof x !== "object") return [x];
+        return (
+          extractChoiceArray(x) ?? [
+            extractChoiceLabel(x) ?? x.label ?? x.value ?? "",
+          ]
+        );
+      })
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };
     const score =
-      v && typeof v === "object" && !Array.isArray(v) && typeof v.score === "number"
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof v.score === "number"
         ? v.score
         : null;
     return { kind: "choices", items, score };
@@ -964,23 +924,19 @@ export const DATASET_TYPES = {
 export const enhanceCol = (col, averageMetaData) => {
   const columnConfig = averageMetaData?.find((d) => d.id === col.id);
   if (!columnConfig) return col;
-  // Spread only copies enumerable own properties; the non-enumerable
-  // camelCase aliases installed by the axios response interceptor are
-  // lost. Explicitly re-add them so downstream code reading camelCase
-  // fields (like `eachCol?.dataType`) still works.
   return {
     ...col,
     metadata: columnConfig?.metadata,
-    data_type: col?.data_type ?? col?.dataType,
-    dataType: col?.data_type ?? col?.dataType,
-    origin_type: col?.origin_type ?? col?.originType,
-    originType: col?.origin_type ?? col?.originType,
-    is_frozen: col?.is_frozen ?? col?.isFrozen,
-    isFrozen: col?.is_frozen ?? col?.isFrozen,
-    is_visible: col?.is_visible ?? col?.isVisible,
-    isVisible: col?.is_visible ?? col?.isVisible,
-    source_id: col?.source_id ?? col?.sourceId,
-    sourceId: col?.source_id ?? col?.sourceId,
+    data_type: col?.data_type,
+    dataType: col?.data_type,
+    origin_type: col?.origin_type,
+    originType: col?.origin_type,
+    is_frozen: col?.is_frozen,
+    isFrozen: col?.is_frozen,
+    is_visible: col?.is_visible,
+    isVisible: col?.is_visible,
+    source_id: col?.source_id,
+    sourceId: col?.source_id,
   };
 };
 
@@ -1066,6 +1022,8 @@ export const getDatasetViewOptions = (viewOptions) => {
       viewOptions?.showDrawer !== undefined ? viewOptions?.showDrawer : true,
     bottomRow:
       viewOptions?.bottomRow !== undefined ? viewOptions?.bottomRow : true,
+    showEvals:
+      viewOptions?.showEvals !== undefined ? viewOptions?.showEvals : true,
   };
 };
 
@@ -1119,9 +1077,6 @@ export const postProcessPopup = (params) => {
       element.textContent.trim() === "Hide Reasoning"
     ) {
       element.style.color = "var(--primary-main)";
-    }
-    if (element.textContent.trim() === "Delete Column") {
-      element.style.color = "#fa0c0c";
     }
     element.style.fontWeight = 400;
     element.style.fontSize = "12px";

@@ -103,5 +103,4 @@ export const defaultOptimizationColDef = {
   filter: false,
   resizable: true,
   suppressMenu: true,
-  suppressMultiSort: true,
 };

@@ -76,7 +76,7 @@ const AllSelectField = ({ label, ...rest }) => {
         {...rest}
         fullWidth
         sx={{
-          backgroundColor: "rgba(147, 143, 163, 0.08)",
+          backgroundColor: "background.neutral",
           "& .MuiOutlinedInput-root": {
             "&:hover .MuiOutlinedInput-notchedOutline": {
               border: "1px solid var(--border-default)",
@@ -100,7 +100,7 @@ const AllSelectField = ({ label, ...rest }) => {
 const Label1 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re-tune
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -114,7 +114,7 @@ const Label1 = () => {
 const Label2 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re- calculate for this row
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -128,7 +128,7 @@ const Label2 = () => {
 const Label3 = () => {
   return (
     <Box>
-      <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+      <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
         Re-tune and re-calculate for this dataset
       </Typography>
       <Typography sx={{ fontSize: "12px" }}>
@@ -250,20 +250,20 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: "14px",
+            fontSize: "12px",
             fontWeight: "400",
             lineHeight: "21px",
             padding: "16px",
             borderRadius: "8px",
             border: "1px solid var(--border-default)",
-            backgroundColor: "rgba(147, 143, 163, 0.08)",
+            backgroundColor: "background.neutral",
           }}
         >
           {data?.valueInfos?.reason}
         </Typography>
       </Stack>
 
-      {feedbackData?.outputType === "reason" && (
+      {feedbackData?.output_type === "reason" && (
         <AllInputField
           label="Write a right value"
           placeholder="Improve the tone and grammar of the prompt"
@@ -275,7 +275,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           rows={3}
         />
       )}
-      {feedbackData?.outputType === "score" && (
+      {feedbackData?.output_type === "score" && (
         <AllInputField
           label="Write a right value"
           placeholder="Add Number"
@@ -308,8 +308,8 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
         </Box>
       )}
 
-      {(feedbackData?.outputType === "Pass/Fail" ||
-        feedbackData?.outputType === "choices") && (
+      {(feedbackData?.output_type === "Pass/Fail" ||
+        feedbackData?.output_type === "choices") && (
         <RadioField
           label="Select a right value"
           control={control}
@@ -320,7 +320,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
           }))}
         />
       )}
-      {feedbackData?.outputType === "select" && (
+      {feedbackData?.output_type === "select" && (
         <AllSelectField
           label="Select a right value"
           control={control}
@@ -364,7 +364,7 @@ const SubmittedFeedback = ({ control, data }) => {
     >
       <Typography
         sx={{
-          fontSize: "18px",
+          fontSize: "16px",
           fontWeight: "600",
           lineHeight: "26px",
         }}
@@ -378,7 +378,7 @@ const SubmittedFeedback = ({ control, data }) => {
           borderRadius: "12px",
         }}
       >
-        <Typography sx={{ fontSize: "14px", fontWeight: "600" }}>
+        <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
           {data?.eval_name}
         </Typography>
         <Typography sx={{ fontSize: "12px" }}>
@@ -526,7 +526,7 @@ export default function CompareDatasetEvalsAddFeedbackForm({
     if (existingFeedback && open) {
       setValue("value", existingFeedback?.value);
       setValue("explanation", existingFeedback?.comment);
-      setSubmittedFeedBackValue("value", existingFeedback?.actionType);
+      setSubmittedFeedBackValue("value", existingFeedback?.action_type);
     }
   }, [existingFeedback, open, setSubmittedFeedBackValue, setValue]);
 
@@ -538,6 +538,7 @@ export default function CompareDatasetEvalsAddFeedbackForm({
       action_type: formData.value,
       user_eval_metric_id: evalDetail?.sourceId,
       feedback_id: feedbackId,
+      row_id: evalDetail?.cellRowId,
     };
     if (newFeedback?.current?.value) {
       payload.value = newFeedback?.current?.value;
@@ -583,9 +584,9 @@ export default function CompareDatasetEvalsAddFeedbackForm({
       }
       PaperProps={{
         sx: {
-          width: "500px",
+          width: "560px",
           maxWidth: "none",
-          borderRadius: "16px !important",
+          borderRadius: "12px !important",
           padding: "20px !important",
         },
       }}
@@ -612,7 +613,7 @@ export default function CompareDatasetEvalsAddFeedbackForm({
               disabled={isSubmitting || submittingFields}
               onClick={handleClose}
             >
-              <Iconify icon="material-symbols:close-rounded" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Stack>
           {/* <Typography

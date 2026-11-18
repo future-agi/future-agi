@@ -26,6 +26,7 @@ const SmartPreview = ({
   ContentCard,
   AttributesCard,
   JsonPreviewBlock,
+  drawerOpen = true,
 }) => {
   const type = (span?.observation_type || "").toLowerCase();
   const model = span?.model;
@@ -108,6 +109,9 @@ const SmartPreview = ({
           attributes={attributes}
           searchQuery={searchQuery}
           hideInlineSearch
+          spanId={span?.id}
+          traceId={span?.trace}
+          drawerOpen={drawerOpen}
         />
       </Stack>
     );
@@ -255,6 +259,9 @@ const SmartPreview = ({
         attributes={attributes}
         searchQuery={searchQuery}
         hideInlineSearch
+        spanId={span?.id}
+        traceId={span?.trace}
+        drawerOpen={drawerOpen}
       />
     </Stack>
   );
@@ -264,12 +271,7 @@ const SmartPreview = ({
 const ErrorBanner = ({ message }) => (
   <Alert
     severity="error"
-    variant="outlined"
-    sx={{
-      fontSize: 12,
-      py: 0.5,
-      "& .MuiAlert-message": { overflow: "hidden" },
-    }}
+    sx={{ "& .MuiAlert-message": { overflow: "hidden" } }}
   >
     <Typography sx={{ fontSize: 12, fontWeight: 600, mb: message ? 0.25 : 0 }}>
       Error
@@ -277,7 +279,7 @@ const ErrorBanner = ({ message }) => (
     {message && (
       <Typography
         sx={{
-          fontSize: 11,
+          fontSize: 12,
           whiteSpace: "pre-wrap",
           wordBreak: "break-all",
           maxHeight: 120,
@@ -322,27 +324,31 @@ const ModelHeader = ({ model, provider, providerLogo, tokens, cost }) => (
           component="img"
           src={providerLogo}
           alt={provider}
-          sx={{ width: 14, height: 14, borderRadius: "2px" }}
+          sx={{ width: 14, height: 14, borderRadius: "4px" }}
         />
       ) : (
-        <Iconify icon="mdi:brain" width={14} sx={{ color: "text.secondary" }} />
+        <Iconify
+          icon="solar:brain-linear"
+          width={14}
+          sx={{ color: "text.secondary" }}
+        />
       )}
       <Typography sx={{ fontSize: 12, fontWeight: 600, color: "text.primary" }}>
         {model}
       </Typography>
       {provider && (
-        <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+        <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
           ({provider})
         </Typography>
       )}
     </Box>
     {tokens != null && tokens > 0 && (
-      <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+      <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
         {formatTokenCount(tokens)} tokens
       </Typography>
     )}
     {cost != null && cost > 0 && (
-      <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+      <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
         {formatCost(cost)}
       </Typography>
     )}
@@ -379,23 +385,25 @@ const ToolPreview = ({
           gap: 0.5,
           px: 1,
           py: 0.25,
-          bgcolor: alpha("#EA580C", 0.08),
+          bgcolor: "status.warning.bg",
           borderRadius: "4px",
           border: "1px solid",
-          borderColor: alpha("#EA580C", 0.2),
+          borderColor: "status.warning.border",
         }}
       >
         <Iconify
-          icon="mdi:wrench-outline"
+          icon="solar:toolbox-linear"
           width={14}
-          sx={{ color: "#EA580C" }}
+          sx={{ color: "status.warning.fg" }}
         />
-        <Typography sx={{ fontSize: 13, fontWeight: 600, color: "#EA580C" }}>
+        <Typography
+          sx={{ fontSize: 12, fontWeight: 600, color: "status.warning.fg" }}
+        >
           {name || "Tool"}
         </Typography>
       </Box>
       {latency != null && (
-        <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+        <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
           {formatLatency(latency)}
         </Typography>
       )}
@@ -460,7 +468,7 @@ const RetrieverPreview = ({
         <Box>
           <Typography
             data-search-skip="true"
-            sx={{ fontSize: 13, fontWeight: 500, mb: 0.75 }}
+            sx={{ fontSize: 12, fontWeight: 500, mb: 0.75 }}
           >
             Retrieved Documents ({docs.length})
           </Typography>
@@ -470,9 +478,9 @@ const RetrieverPreview = ({
                 key={i}
                 sx={{
                   border: "1px solid",
-                  borderColor: alpha("#0D9488", 0.2),
+                  borderColor: "status.success.border",
                   borderRadius: "4px",
-                  bgcolor: alpha("#0D9488", 0.08),
+                  bgcolor: "status.success.bg",
                   p: 1,
                 }}
               >
@@ -485,12 +493,18 @@ const RetrieverPreview = ({
                   }}
                 >
                   <Typography
-                    sx={{ fontSize: 11, fontWeight: 600, color: "#0D9488" }}
+                    sx={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: "status.success.fg",
+                    }}
                   >
                     Document {i + 1}
                   </Typography>
                   {doc.score != null && (
-                    <Typography sx={{ fontSize: 11, color: "#0D9488" }}>
+                    <Typography
+                      sx={{ fontSize: 12, color: "status.success.fg" }}
+                    >
                       Score:{" "}
                       {typeof doc.score === "number"
                         ? doc.score.toFixed(3)
@@ -515,7 +529,7 @@ const RetrieverPreview = ({
               </Box>
             ))}
             {docs.length > 10 && (
-              <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+              <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
                 +{docs.length - 10} more documents
               </Typography>
             )}
@@ -565,23 +579,33 @@ const GuardrailPreview = ({
             px: 1,
             py: 0.25,
             borderRadius: "4px",
-            bgcolor: alpha(passed ? "#16A34A" : "#DC2626", 0.08),
+            bgcolor: (t) =>
+              alpha(
+                passed ? t.palette.accent.pass : t.palette.accent.fail,
+                0.08,
+              ),
             border: "1px solid",
-            borderColor: alpha(passed ? "#16A34A" : "#DC2626", 0.2),
+            borderColor: (t) =>
+              alpha(
+                passed ? t.palette.accent.pass : t.palette.accent.fail,
+                0.2,
+              ),
           }}
         >
           <Iconify
             icon={
-              passed ? "mdi:shield-check-outline" : "mdi:shield-alert-outline"
+              passed
+                ? "solar:shield-check-linear"
+                : "solar:shield-warning-linear"
             }
             width={14}
-            sx={{ color: passed ? "#16A34A" : "#DC2626" }}
+            sx={{ color: passed ? "accent.pass" : "accent.fail" }}
           />
           <Typography
             sx={{
               fontSize: 12,
               fontWeight: 600,
-              color: passed ? "#16A34A" : "#DC2626",
+              color: passed ? "accent.pass" : "accent.fail",
             }}
           >
             {passed ? "Passed" : "Failed"}
@@ -742,18 +766,20 @@ const AgentPreview = ({
             gap: 0.5,
             px: 1,
             py: 0.25,
-            bgcolor: alpha("#9333EA", 0.08),
+            bgcolor: (t) => alpha(t.palette.accent.agent, 0.08),
             borderRadius: "4px",
             border: "1px solid",
-            borderColor: alpha("#9333EA", 0.2),
+            borderColor: (t) => alpha(t.palette.accent.agent, 0.2),
           }}
         >
           <Iconify
-            icon="mdi:robot-outline"
+            icon="solar:bot-linear"
             width={14}
-            sx={{ color: "#9333EA" }}
+            sx={{ color: "accent.agent" }}
           />
-          <Typography sx={{ fontSize: 12, fontWeight: 600, color: "#9333EA" }}>
+          <Typography
+            sx={{ fontSize: 12, fontWeight: 600, color: "accent.agent" }}
+          >
             {agentName}
           </Typography>
         </Box>
@@ -776,34 +802,34 @@ const AgentPreview = ({
                 component="img"
                 src={providerLogo}
                 alt={provider}
-                sx={{ width: 13, height: 13, borderRadius: "2px" }}
+                sx={{ width: 13, height: 13, borderRadius: "4px" }}
               />
             ) : (
               <Iconify
-                icon="mdi:brain"
-                width={13}
+                icon="solar:brain-linear"
+                width={14}
                 sx={{ color: "text.secondary" }}
               />
             )}
             <Typography
-              sx={{ fontSize: 11, fontWeight: 500, color: "text.primary" }}
+              sx={{ fontSize: 12, fontWeight: 500, color: "text.primary" }}
             >
               {model}
             </Typography>
           </Box>
         )}
         {tokens > 0 && (
-          <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
+          <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
             {formatTokenCount(tokens)} tokens
           </Typography>
         )}
         {cost > 0 && (
-          <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
+          <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
             {formatCost(cost)}
           </Typography>
         )}
         {latency > 0 && (
-          <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
+          <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
             {formatLatency(latency)}
           </Typography>
         )}
@@ -820,24 +846,24 @@ const AgentPreview = ({
                 gap: 0.25,
                 px: 0.75,
                 py: 0.15,
-                bgcolor: alpha("#EA580C", 0.08),
-                borderRadius: "3px",
+                bgcolor: "status.warning.bg",
+                borderRadius: "4px",
                 border: "1px solid",
-                borderColor: alpha("#EA580C", 0.2),
+                borderColor: "status.warning.border",
               }}
             >
               <Iconify
-                icon="mdi:wrench-outline"
-                width={11}
-                sx={{ color: "#EA580C" }}
+                icon="solar:toolbox-linear"
+                width={12}
+                sx={{ color: "status.warning.fg" }}
               />
-              <Typography sx={{ fontSize: 10, color: "#EA580C" }}>
+              <Typography sx={{ fontSize: 12, color: "status.warning.fg" }}>
                 {agentConfig.tools} tools
               </Typography>
             </Box>
           )}
           {agentConfig.model && (
-            <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+            <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
               Model: {agentConfig.model}
             </Typography>
           )}
@@ -908,6 +934,7 @@ SmartPreview.propTypes = {
   ContentCard: PropTypes.elementType.isRequired,
   AttributesCard: PropTypes.elementType.isRequired,
   JsonPreviewBlock: PropTypes.elementType.isRequired,
+  drawerOpen: PropTypes.bool,
 };
 
 export default React.memo(SmartPreview);

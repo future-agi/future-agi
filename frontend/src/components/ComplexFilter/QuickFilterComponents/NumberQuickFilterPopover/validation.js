@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
+
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 export const NumberQuickFilterValidationSchema = z
   .object({
@@ -9,7 +12,7 @@ export const NumberQuickFilterValidationSchema = z
   .superRefine((formValues, ctx) => {
     const operator = formValues.operator;
 
-    if (operator === "between" || operator === "not_in_between") {
+    if (RangeOperators.has(operator)) {
       if (formValues.value2 === undefined || formValues.value2 === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

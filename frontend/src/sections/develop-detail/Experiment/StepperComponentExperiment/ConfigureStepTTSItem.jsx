@@ -49,13 +49,13 @@ const ConfigureStepTTSItem = ({
   const { data: runPromptOptions } = useRunPromptOptions();
   const toolsOptions = useMemo(() => {
     return (
-      runPromptOptions?.availableTools?.map((t) => ({
+      runPromptOptions?.available_tools?.map((t) => ({
         label: t.name,
         value: t.id,
         tool: t,
       })) ?? []
     );
-  }, [runPromptOptions?.availableTools]);
+  }, [runPromptOptions?.available_tools]);
   const watchedMessages =
     useWatch({
       name: `promptConfig.${index}.messages`,
@@ -252,10 +252,9 @@ const ConfigureStepTTSItem = ({
               variant="outlined"
               startIcon={
                 <SvgColor
+                  width={20}
                   sx={{
                     color: "text.secondary",
-                    height: 20,
-                    width: 20,
                   }}
                   src={"/assets/icons/ic_add.svg"}
                 />
@@ -265,7 +264,6 @@ const ConfigureStepTTSItem = ({
                 "& .MuiButton-icon > svg": { marginRight: 0 },
                 minWidth: "unset",
                 borderColor: "divider",
-                height: 40,
                 ml: "auto",
               }}
             >

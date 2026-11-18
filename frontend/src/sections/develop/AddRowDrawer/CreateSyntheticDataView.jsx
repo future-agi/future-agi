@@ -1,5 +1,11 @@
-import { Box, Button, Divider, Stack, Typography } from "@mui/material";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Box, Button, Divider, Stack } from "@mui/material";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import PageHeadings from "src/sections/develop-detail/Common/PageHeadings";
 import FormTabs from "./CreateSyntheticData/FormTabs";
@@ -22,6 +28,7 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import PropTypes from "prop-types";
 
 import { getSyntheticDefaultValues } from "./CreateSyntheticData/common";
+import { syntheticDataEventFields } from "./syntheticDataEventFields";
 import CreateSyntheticDatasetOptionModal from "./EditSyntheticData/CreateSyntheticDatasetOptionModal";
 import { useEditSyntheticDataStore } from "./EditSyntheticData/state";
 import { useDatasetOriginStore } from "../../develop-detail/states";
@@ -159,9 +166,7 @@ const CreateSyntheticDataView = ({
       : navigate("/dashboard/develop");
   };
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const knowledgeBaseOptions = useMemo(
     () =>
@@ -178,6 +183,10 @@ const CreateSyntheticDataView = ({
     }
     return "";
   }, [knowledgeBaseOptions, kb_id]);
+
+  const handleDatasetCreateOptionAction = useCallback((optionState) => {
+    modalSubmitRef.current?.(optionState);
+  }, []);
 
   const { mutate: createSyntheticData, isPending } = useMutation({
     mutationFn: (data) => {
@@ -205,6 +214,7 @@ const CreateSyntheticDataView = ({
       );
       reset();
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create synthetic dataset", {
@@ -223,6 +233,10 @@ const CreateSyntheticDataView = ({
       );
     },
     onSuccess: (res) => {
+      const updatedDatasetId =
+        res?.data?.result?.data?.dataset_id ??
+        res?.data?.result?.data?.datasetId ??
+        dataset;
       if (onClose) onClose();
       if (onEditSuccessCallback) {
         onEditSuccessCallback();
@@ -231,12 +245,9 @@ const CreateSyntheticDataView = ({
         variant: "success",
       });
       setTimeout(() => {
-        navigate(
-          `/dashboard/develop/${res?.data?.result?.data?.datasetId}?tab=data`,
-          {
-            replace: true,
-          },
-        );
+        navigate(`/dashboard/develop/${updatedDatasetId}?tab=data`, {
+          replace: true,
+        });
       }, 0);
       reset();
     },
@@ -298,10 +309,10 @@ const CreateSyntheticDataView = ({
     }
 
     trackEvent(Events.createSyntheticDatasetClicked, {
-      [PropertyName.formFields]: {
-        ...payload,
-        ...(kb_id && { knowledgeBaseName: selectedKB }),
-      },
+      [PropertyName.formFields]: syntheticDataEventFields(payload, {
+        editMode,
+        datasetId: editMode ? dataset : undefined,
+      }),
     });
     setProcessingComplete(false);
 
@@ -379,7 +390,7 @@ const CreateSyntheticDataView = ({
               type="button"
               color="error"
               size="small"
-              sx={{ paddingX: "24px", minWidth: "88px" }}
+              sx={{ minWidth: "88px" }}
               onClick={handleBack}
             >
               Yes
@@ -394,12 +405,11 @@ const CreateSyntheticDataView = ({
             width: "max-content",
             border: "1px solid",
             borderColor: "action.hover",
-            paddingX: "12px",
           }}
           startIcon={
             <Iconify
               // @ts-ignore
-              icon="octicon:chevron-left-24"
+              icon="solar:alt-arrow-left-linear"
               width="24px"
               sx={{ color: "text.secondary" }}
             />
@@ -426,24 +436,20 @@ const CreateSyntheticDataView = ({
           />
           <Stack direction={"row"} gap={3} alignItems={"center"}>
             {activeTab.value !== "addDetails" && (
-              <Typography
-                variant="s1"
-                fontWeight="fontWeightMedium"
-                color="text.secondary"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.5,
-                  cursor: "pointer",
-                }}
+              <Button
+                size="small"
+                variant="text"
+                color="inherit"
+                endIcon={
+                  <Iconify
+                    icon="solar:question-circle-linear"
+                    color="text.secondary"
+                  />
+                }
                 onClick={() => setOpenHelp(true)}
               >
                 Help
-                <Iconify
-                  icon="material-symbols-light:help-outline"
-                  color="text.secondary"
-                />
-              </Typography>
+              </Button>
             )}
             {/* <ShowComponent condition={editMode}>
               <IconButton
@@ -529,7 +535,7 @@ const CreateSyntheticDataView = ({
         editMode={editMode}
         open={openDatasetCreateOptions}
         onClose={() => setOpenDatasetCreateOptions(false)}
-        onAction={modalSubmitRef.current}
+        onAction={handleDatasetCreateOptionAction}
         isLoading={isPending || isUpdating}
       />
     </>

@@ -1,16 +1,20 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Chip, Typography } from "@mui/material";
+import { Box, Button, Chip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
 function defaultFixNotice() {
-  enqueueSnackbar("Fix with Falcon — not available in this view", {
+  enqueueSnackbar("Fix with AI isn’t available in this view", {
     variant: "info",
   });
 }
@@ -87,45 +91,101 @@ const isPassedEval = (ev) => {
   return label === "pass" || label === "passed" || label === "true";
 };
 
-/** Score → colored background + text — traffic-light pattern */
-export function scoreColor(score) {
-  if (score == null)
+/** Score (0-100) → status role: 80 and up passes, below 50 fails. */
+function scoreRole(score) {
+  if (score >= 80) return "success";
+  if (score >= 50) return "warning";
+  return "danger";
+}
+
+// Resizable columns. Until the user drags a header edge the table keeps its
+// percentage layout; the first drag freezes every column at its rendered
+// pixel width so only the dragged column changes. Widths persist per viewer.
+const COL_MIN_WIDTH = { name: 80, score: 60, span: 80 };
+const ACTION_COL_MIN_WIDTH = 90;
+const CHEVRON_COL_WIDTH = 20;
+const ROW_PADDING_X = 24;
+
+const colWidthsStorageKey = (showSpanColumn) =>
+  `evals-tab-col-widths:${showSpanColumn ? "span" : "nospan"}`;
+
+function readColWidths(storageKey, columnKeys) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(storageKey));
+    return columnKeys.every((key) => Number.isFinite(stored?.[key]))
+      ? stored
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeColWidths(storageKey, widths) {
+  try {
+    if (widths) localStorage.setItem(storageKey, JSON.stringify(widths));
+    else localStorage.removeItem(storageKey);
+  } catch {
+    // Storage unavailable: the widths last for this view only.
+  }
+}
+
+/** Per-column sx for the header and every row. */
+function columnLayout(colWidths, showSpanColumn, showActions) {
+  const percent = {
+    name: showSpanColumn ? "30%" : "60%",
+    score: showActions ? "15%" : "40%",
+    span: "30%",
+  };
+  if (!colWidths) {
     return {
-      bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
-      text: "text.disabled",
+      row: {},
+      name: { width: percent.name },
+      score: { width: percent.score },
+      span: { width: percent.span },
+      action: { width: "25%", flexShrink: 0 },
     };
-  if (score >= 80)
-    return {
-      bg: (theme) => alpha(theme.palette.success.main, 0.08),
-      text: "success.dark",
-    };
-  if (score >= 50)
-    return {
-      bg: (theme) => alpha(theme.palette.warning.main, 0.08),
-      text: "warning.dark",
-    };
+  }
+  const fixed = (key) => ({ width: colWidths[key], flexShrink: 0 });
+  const dataWidth =
+    colWidths.name + colWidths.score + (showSpanColumn ? colWidths.span : 0);
   return {
-    bg: (theme) => alpha(theme.palette.error.main, 0.08),
-    text: "error.main",
+    // Wider than the drawer scrolls horizontally instead of squeezing.
+    row: {
+      minWidth:
+        CHEVRON_COL_WIDTH +
+        dataWidth +
+        (showActions ? ACTION_COL_MIN_WIDTH : 0) +
+        ROW_PADDING_X,
+    },
+    name: fixed("name"),
+    score: fixed("score"),
+    span: fixed("span"),
+    action: { flex: `1 0 ${ACTION_COL_MIN_WIDTH}px` },
   };
 }
 
 /** Single eval row with collapsible explanation + optional "View span" */
-const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => {
+const EvalTableRow = ({
+  ev,
+  onSelectSpan,
+  showSpanColumn,
+  onFixWithFalcon,
+  showFixWithFalcon,
+  showErrorLocalization = true,
+  layout,
+}) => {
   const [expanded, setExpanded] = useState(false);
+  const showActions = !!onSelectSpan;
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
-  const sc = isSkipped
-    ? {
-        bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
-        text: "text.disabled",
-      }
+  // Every non-score state (queued / evaluating / skipped / errored) renders
+  // through the shared EvalStatusIndicator so the drawer matches the tables:
+  // Queued pill, full-cell Evaluating skeleton, Skipped chip, Error chip.
+  const indicatorStatus = isSkipped
+    ? EVAL_STATUS.SKIPPED
     : hasError
-      ? {
-          bg: (theme) => alpha(theme.palette.error.main, 0.08),
-          text: "error.main",
-        }
-      : scoreColor(ev.score);
+      ? EVAL_STATUS.ERRORED
+      : getEvalNonScoreStatus(ev?.status);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
   // Pass/Fail evals
@@ -142,13 +202,16 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
     ? "Skipped"
     : hasError
       ? "Error"
-      : (ev.score_label ??
+      : ev.score_label ??
         passFailLabel ??
-        (ev.score != null ? `${ev.score}%` : "—"));
+        (ev.score != null ? `${ev.score}%` : "—");
 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based
   // flow. Rows with just an explanation still expand without it.
+  // Composite evals have no localizable input of their own — skip the whole
+  // localization flow before computing any of its identifiers.
+  const isComposite = ev?.template_type === "composite";
   const initialAnalysis = ev.error_analysis || ev.errorAnalysis || null;
   const cellId = ev.cell_id || ev.cellId;
   const observationSpanId =
@@ -163,10 +226,13 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
-    !!initialAnalysis ||
-    !!cellId ||
-    !!initialStatus ||
-    !!(observationSpanId && customEvalConfigId);
+    showErrorLocalization &&
+    !isComposite &&
+    (ev?.error_localizer === true ||
+      !!initialAnalysis ||
+      !!cellId ||
+      !!initialStatus ||
+      !!(observationSpanId && customEvalConfigId));
   const canExpand = !!explanation || hasErrorLocalization;
 
   return (
@@ -179,8 +245,9 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
           py: 0.5,
           borderBottom: "1px solid",
           borderColor: "divider",
-          "&:hover": { bgcolor: "rgba(0,0,0,0.02)" },
+          "&:hover": { bgcolor: "action.hover" },
           minHeight: 32,
+          ...layout.row,
         }}
       >
         {/* Expand chevron */}
@@ -194,7 +261,11 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
         >
           {canExpand && (
             <Iconify
-              icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+              icon={
+                expanded
+                  ? "solar:alt-arrow-down-linear"
+                  : "solar:alt-arrow-right-linear"
+              }
               width={14}
               color="text.disabled"
             />
@@ -202,48 +273,94 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
         </Box>
 
         {/* Eval name — widens to fill space when Span column is hidden */}
-        <Typography
-          noWrap
+        <Box
+          data-testid={`evals-col-name-${ev.id}`}
           onClick={() => canExpand && setExpanded((p) => !p)}
           sx={{
-            width: showSpanColumn ? "30%" : "60%",
-            fontSize: 11.5,
-            fontWeight: 500,
+            ...layout.name,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            minWidth: 0,
             cursor: canExpand ? "pointer" : "default",
           }}
         >
-          {evalName}
-        </Typography>
+          <OverflowTooltip title={evalName}>
+            <Typography noWrap sx={{ fontSize: 12, fontWeight: 500 }}>
+              {evalName}
+            </Typography>
+          </OverflowTooltip>
+          {ev.removed && (
+            <Chip
+              data-testid="removed-eval-marker"
+              size="small"
+              label="Removed"
+              sx={{
+                flexShrink: 0,
+                bgcolor: "background.neutral",
+                color: "text.subtitle",
+              }}
+            />
+          )}
+        </Box>
 
-        {/* Score — choices render as violet chips, else a colored badge */}
-        <Box sx={{ width: "15%", display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-          {ev.score_items?.length ? (
+        {/* Score — non-score states (queued/evaluating/skipped/errored) show
+            the shared indicator; choices render as plain text; pass/fail as a
+            status badge; else the score */}
+        <Box
+          data-testid="eval-score-cell"
+          sx={{
+            ...layout.score,
+            minHeight: 22,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 0.5,
+          }}
+        >
+          {indicatorStatus ? (
+            <EvalStatusIndicator
+              status={indicatorStatus}
+              skippedReason={ev.skipped_reason}
+            />
+          ) : ev.score_items?.length ? (
             ev.score_items.map((item, i) => (
-              <Chip
-                key={i}
-                label={item}
-                size="small"
-                variant="outlined"
-                sx={{
-                  borderRadius: "4px",
-                  borderColor: "purple.500",
-                  color: "purple.500",
-                  typography: "s3",
-                }}
-              />
+              <React.Fragment key={i}>
+                <OverflowTooltip title={item}>
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.primary" }}
+                  >
+                    {item}
+                  </Typography>
+                </OverflowTooltip>
+                {i < ev.score_items.length - 1 && (
+                  <Typography
+                    component="span"
+                    sx={{ typography: "s3", color: "text.disabled" }}
+                  >
+                    ·
+                  </Typography>
+                )}
+              </React.Fragment>
             ))
+          ) : passFailLabel != null ? (
+            <StatusBadge
+              role={ev.result ? "success" : "danger"}
+              label={scoreLabel}
+            />
+          ) : ev.score != null ? (
+            <StatusBadge
+              role={scoreRole(ev.score)}
+              label={scoreLabel}
+              variant="badge"
+              dot={false}
+            />
           ) : (
             <Typography
               sx={{
-                display: "inline-block",
-                fontSize: 11.5,
-                fontWeight: "fontWeightSemiBold",
-                color: sc.text,
-                bgcolor: sc.bg,
-                px: 0.75,
-                py: 0.15,
-                borderRadius: "3px",
-                minWidth: 36,
+                fontSize: 12,
+                color: "text.primary",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
               {scoreLabel}
@@ -253,55 +370,46 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
 
         {/* Span name — hidden for single-call views (voice drawer) */}
         {showSpanColumn && (
-          <Typography
-            noWrap
-            sx={{ width: "30%", fontSize: 10.5, color: "text.secondary" }}
-          >
-            {ev.spanName || ""}
-          </Typography>
+          <OverflowTooltip title={ev.spanName || ""}>
+            <Typography
+              noWrap
+              sx={{ ...layout.span, fontSize: 12, color: "text.secondary" }}
+            >
+              {ev.spanName || ""}
+            </Typography>
+          </OverflowTooltip>
         )}
 
-        {/* Action buttons */}
-        <Box
-          sx={{
-            width: "25%",
-            display: "flex",
-            gap: 0.5,
-            justifyContent: "flex-end",
-            flexShrink: 0,
-          }}
-        >
-          {ev.spanId && onSelectSpan && (
-            <Box
-              onClick={(e) => {
-                e.stopPropagation();
-                onSelectSpan(ev.spanId);
-              }}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "3px",
-                px: 0.5,
-                py: 0.15,
-                borderRadius: "3px",
-                cursor: "pointer",
-                fontSize: 10,
-                color: "text.disabled",
-                "&:hover": {
-                  color: "primary.main",
-                  bgcolor: "rgba(120,87,252,0.06)",
-                },
-              }}
-            >
-              <Iconify icon="mdi:eye-outline" width={12} />
-              <span>View span</span>
-            </Box>
-          )}
-        </Box>
+        {/* Action buttons — only where an eval can jump to its span */}
+        {showActions && (
+          <Box
+            data-testid="eval-actions-column"
+            sx={{
+              ...layout.action,
+              display: "flex",
+              gap: 0.5,
+              justifyContent: "flex-end",
+            }}
+          >
+            {ev.spanId && (
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<Iconify icon="solar:eye-linear" width={12} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectSpan(ev.spanId);
+                }}
+              >
+                View span
+              </Button>
+            )}
+          </Box>
+        )}
       </Box>
 
       {/* Expanded area — markdown explanation + error localization +
-          Fix with Falcon. Renders whenever any of those pieces exist. */}
+          Fix with AI. Renders whenever any of those pieces exist. */}
       {expanded && canExpand && (
         <Box
           sx={{
@@ -319,7 +427,7 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
           {explanation && (
             <Box
               sx={{
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.secondary",
                 lineHeight: 1.6,
                 "& p": { m: 0, mb: 0.5 },
@@ -329,8 +437,8 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
                 "& code": {
                   bgcolor: (theme) => alpha(theme.palette.text.disabled, 0.15),
                   px: 0.5,
-                  borderRadius: "2px",
-                  fontSize: 10,
+                  borderRadius: "4px",
+                  fontSize: 12,
                 },
               }}
             >
@@ -351,15 +459,23 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
               projectVersionId={projectVersionId}
               initialAnalysis={initialAnalysis}
               initialStatus={initialStatus}
+              initialMessage={
+                ev.error_localizer_message || ev.errorLocalizerMessage
+              }
               datapoint={ev.datapoint}
               selectedInputKey={ev.selected_input_key || ev.selectedInputKey}
             />
           )}
 
-          {/* Fix with Falcon — hidden for passed evals (nothing to fix);
+          {/* Fix with AI — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
-          {!isPassedEval(ev) && (
-            <Box
+          {showFixWithFalcon && !isPassedEval(ev) && (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+              }
               onClick={(e) => {
                 e.stopPropagation();
                 if (onFixWithFalcon) {
@@ -368,30 +484,10 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
                   defaultFixNotice();
                 }
               }}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.5,
-                px: 0.75,
-                py: 0.25,
-                alignSelf: "flex-start",
-                border: "1px solid",
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-                borderRadius: "4px",
-                cursor: "pointer",
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-                "&:hover": {
-                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                },
-              }}
+              sx={{ alignSelf: "flex-start" }}
             >
-              <Iconify icon="mdi:creation" width={12} color="primary.main" />
-              <Typography
-                sx={{ fontSize: 10, fontWeight: 600, color: "primary.main" }}
-              >
-                Fix with Falcon
-              </Typography>
-            </Box>
+              Fix with AI
+            </Button>
           )}
         </Box>
       )}
@@ -404,11 +500,14 @@ EvalTableRow.propTypes = {
   onSelectSpan: PropTypes.func,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
+  layout: PropTypes.object.isRequired,
 };
 
 /**
  * Main shared view. Renders:
- *  - summary bar (pass/fail counts, progress, optional "Fix with Falcon")
+ *  - summary bar (pass/fail counts, progress, optional "Fix with AI")
  *  - search + "Add Evals" toolbar
  *  - sticky table header + scrollable rows
  */
@@ -418,9 +517,88 @@ const EvalsTabView = ({
   emptyMessage,
   showSpanColumn = true,
   onFixWithFalcon,
+  showFixWithFalcon = true,
+  showAddEvals = true,
+  showErrorLocalization = true,
 }) => {
   const [search, setSearch] = useState("");
+  // The action column only holds "View span", so a drawer that can't jump to
+  // a span gives its width to Score instead.
+  const showActions = !!onSelectSpan;
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
+
+  const widthsKey = colWidthsStorageKey(showSpanColumn);
+  const columnKeys = showSpanColumn
+    ? ["name", "score", "span"]
+    : ["name", "score"];
+  const [colWidths, setColWidths] = useState(() =>
+    readColWidths(widthsKey, columnKeys),
+  );
+  const layout = columnLayout(colWidths, showSpanColumn, showActions);
+  const headerRefs = useRef({});
+  const stopDrag = useRef(null);
+  useEffect(() => () => stopDrag.current?.(), []);
+
+  const startResize = (key, event) => {
+    event.preventDefault();
+    const base = Object.fromEntries(
+      columnKeys.map((k) => [
+        k,
+        Math.round(
+          headerRefs.current[k]?.getBoundingClientRect().width ||
+            COL_MIN_WIDTH[k],
+        ),
+      ]),
+    );
+    const startX = event.clientX;
+    let latest = null;
+    const onMove = (moveEvent) => {
+      latest = {
+        ...base,
+        [key]: Math.max(
+          COL_MIN_WIDTH[key],
+          base[key] + moveEvent.clientX - startX,
+        ),
+      };
+      setColWidths(latest);
+    };
+    const onUp = () => {
+      stopDrag.current?.();
+      if (latest) writeColWidths(widthsKey, latest);
+    };
+    stopDrag.current = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      stopDrag.current = null;
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const resetColWidths = () => {
+    setColWidths(null);
+    writeColWidths(widthsKey, null);
+  };
+
+  const resizeHandle = (key) => (
+    <Box
+      data-testid={`evals-col-resize-${key}`}
+      onMouseDown={(event) => startResize(key, event)}
+      onDoubleClick={resetColWidths}
+      title="Drag to resize. Double-click to reset."
+      sx={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        right: 0,
+        width: 6,
+        cursor: "col-resize",
+        borderRight: "1px solid",
+        borderColor: "divider",
+        "&:hover": { bgcolor: "divider" },
+      }}
+    />
+  );
 
   const totalPass = useMemo(
     () => list.filter((e) => e.score != null && e.score >= 50).length,
@@ -448,7 +626,7 @@ const EvalsTabView = ({
     return (
       <Box sx={{ textAlign: "center", py: 4, px: 2, color: "text.secondary" }}>
         <Iconify
-          icon="mdi:chart-box-outline"
+          icon="solar:chart-2-linear"
           width={32}
           sx={{ mb: 1, opacity: 0.4 }}
         />
@@ -481,19 +659,19 @@ const EvalsTabView = ({
                 mb: 0.5,
               }}
             >
-              <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+              <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
                 {totalPass}/{list.length} passed
               </Typography>
               {totalFail > 0 && (
                 <Typography
                   sx={{
-                    fontSize: 11,
+                    fontSize: 12,
                     color: "error.main",
                     fontWeight: 500,
                     bgcolor: (theme) => alpha(theme.palette.error.main, 0.08),
                     px: 0.5,
                     py: 0.1,
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                   }}
                 >
                   {totalFail} failed
@@ -519,20 +697,25 @@ const EvalsTabView = ({
                         ? "warning.main"
                         : "error.main",
                   borderRadius: 2,
-                  transition: "width 300ms",
+                  transition: "width 200ms",
                 }}
               />
             </Box>
           </Box>
         </Box>
 
-        {/* Summary-bar Fix with Falcon — hidden when every eval passed
+        {/* Summary-bar Fix with AI — hidden when every eval passed
             (nothing failing to escalate). Uses isPassedEval so unscored /
             label-based non-passes also keep the button visible (e.g. an
             eval with score=null and no Pass label still shows up as
             non-passing in the "X/N passed" text). */}
-        {list.some((e) => !isPassedEval(e)) && (
-          <Box
+        {showFixWithFalcon && list.some((e) => !isPassedEval(e)) && (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify icon="solar:stars-minimalistic-linear" width={14} />
+            }
             onClick={() => {
               if (onFixWithFalcon) {
                 const failing = list.filter((e) => !isPassedEval(e));
@@ -545,31 +728,10 @@ const EvalsTabView = ({
                 defaultFixNotice();
               }
             }}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.5,
-              mt: 1,
-              px: 1,
-              py: 0.35,
-              border: "1px solid",
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-              borderRadius: "6px",
-              cursor: "pointer",
-              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-              "&:hover": {
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.5),
-              },
-            }}
+            sx={{ mt: 1 }}
           >
-            <Iconify icon="mdi:creation" width={14} color="primary.main" />
-            <Typography
-              sx={{ fontSize: 11, fontWeight: 600, color: "primary.main" }}
-            >
-              Fix with Falcon
-            </Typography>
-          </Box>
+            Fix with AI
+          </Button>
         )}
       </Box>
 
@@ -599,7 +761,11 @@ const EvalsTabView = ({
             borderRadius: "4px",
           }}
         >
-          <Iconify icon="mdi:magnify" width={12} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={12}
+            color="text.disabled"
+          />
           <Box
             component="input"
             placeholder="Search evals..."
@@ -609,7 +775,7 @@ const EvalsTabView = ({
               border: "none",
               outline: "none",
               flex: 1,
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               bgcolor: "transparent",
               py: 0.15,
@@ -617,48 +783,50 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        <Box
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            px: 1,
-            py: 0.35,
-            border: "1px dashed",
-            borderColor: "divider",
-            borderRadius: "4px",
-            bgcolor: "background.paper",
-            flexShrink: 0,
-            opacity: 0.7,
-          }}
-        >
-          <Iconify
-            icon="mdi:plus-circle-outline"
-            width={13}
-            color="text.disabled"
-          />
-          <Typography
-            sx={{ fontSize: 11, fontWeight: 500, color: "text.disabled" }}
-          >
-            Add Evals
-          </Typography>
+        {showAddEvals && (
           <Box
             sx={{
-              px: 0.6,
-              py: 0.1,
-              borderRadius: "3px",
-              bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
-              color: "success.dark",
-              fontSize: 9,
-              fontWeight: 700,
-              letterSpacing: 0.2,
-              lineHeight: 1.5,
-              whiteSpace: "nowrap",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              px: 1,
+              py: 0.35,
+              border: "1px dashed",
+              borderColor: "divider",
+              borderRadius: "4px",
+              bgcolor: "background.paper",
+              flexShrink: 0,
+              opacity: 0.7,
             }}
           >
-            Coming soon
+            <Iconify
+              icon="solar:add-circle-linear"
+              width={14}
+              color="text.disabled"
+            />
+            <Typography
+              sx={{ fontSize: 12, fontWeight: 500, color: "text.disabled" }}
+            >
+              Add Evals
+            </Typography>
+            <Box
+              sx={{
+                px: 0.6,
+                py: 0.1,
+                borderRadius: "4px",
+                bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
+                color: "success.dark",
+                fontSize: 12,
+                fontWeight: 600,
+                letterSpacing: 0.2,
+                lineHeight: 1.5,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Coming soon
+            </Box>
           </Box>
-        </Box>
+        )}
       </Box>
 
       {/* Table */}
@@ -674,46 +842,78 @@ const EvalsTabView = ({
             position: "sticky",
             top: 0,
             zIndex: 1,
+            ...layout.row,
           }}
         >
-          <Box sx={{ width: 20, flexShrink: 0 }} />
+          <Box sx={{ width: CHEVRON_COL_WIDTH, flexShrink: 0 }} />
           <Typography
+            component="div"
+            data-testid="evals-col-header-name"
+            ref={(el) => {
+              headerRefs.current.name = el;
+            }}
             sx={{
-              width: showSpanColumn ? "30%" : "60%",
-              fontSize: 11,
+              ...layout.name,
+              position: "relative",
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
               display: "flex",
               alignItems: "center",
               gap: 0.5,
+              minWidth: 0,
+              pr: 1,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
             }}
           >
-            <Iconify icon="mdi:checkbox-marked-circle-outline" width={12} />
+            <Iconify icon="solar:check-circle-linear" width={12} />
             Evaluation metric
+            {resizeHandle("name")}
           </Typography>
           <Typography
+            component="div"
+            data-testid="evals-col-header-score"
+            ref={(el) => {
+              headerRefs.current.score = el;
+            }}
             sx={{
-              width: "15%",
-              fontSize: 11,
+              ...layout.score,
+              position: "relative",
+              fontSize: 12,
               fontWeight: 600,
               color: "text.secondary",
+              pl: 0.5,
+              pr: 1,
             }}
           >
             Score
+            {resizeHandle("score")}
           </Typography>
           {showSpanColumn && (
             <Typography
+              component="div"
+              data-testid="evals-col-header-span"
+              ref={(el) => {
+                headerRefs.current.span = el;
+              }}
               sx={{
-                width: "30%",
-                fontSize: 11,
+                ...layout.span,
+                position: "relative",
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.secondary",
+                pl: 0.5,
+                pr: 1,
               }}
             >
               Span
+              {resizeHandle("span")}
             </Typography>
           )}
-          <Box sx={{ width: "25%" }} />
+          {showActions && (
+            <Box data-testid="eval-actions-column" sx={layout.action} />
+          )}
         </Box>
 
         {filtered.map((ev) => (
@@ -723,6 +923,9 @@ const EvalsTabView = ({
             onSelectSpan={onSelectSpan}
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
+            showFixWithFalcon={showFixWithFalcon}
+            showErrorLocalization={showErrorLocalization}
+            layout={layout}
           />
         ))}
       </Box>
@@ -736,6 +939,9 @@ EvalsTabView.propTypes = {
   emptyMessage: PropTypes.string,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
+  showAddEvals: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
 };
 
 export default EvalsTabView;

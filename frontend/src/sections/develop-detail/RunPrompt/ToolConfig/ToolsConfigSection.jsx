@@ -22,12 +22,12 @@ const ToolsConfigSection = ({
   const theme = useTheme();
 
   const toolsOptions = useMemo(() => {
-    return runPromptOptions?.availableTools?.map((t) => ({
+    return runPromptOptions?.available_tools?.map((t) => ({
       label: t.name,
       value: t.id,
       tool: t,
     }));
-  }, [runPromptOptions?.availableTools]);
+  }, [runPromptOptions?.available_tools]);
 
   const filteredToolOptions = useMemo(() => {
     return (toolsOptions || [])?.filter((tool) =>
@@ -104,7 +104,7 @@ const ToolsConfigSection = ({
                   }
                 }}
                 options={[
-                  ...(runPromptOptions?.toolChoices || []),
+                  ...(runPromptOptions?.tool_choices || []),
                   { value: "none", label: "None" },
                 ]}
                 sx={{ width: 200 }}
@@ -134,14 +134,12 @@ const ToolsConfigSection = ({
                 sx={{
                   border: "1px solid",
                   borderColor: "divider",
-                  padding: theme.spacing(1, 2),
                 }}
                 startIcon={
                   <SvgColor
+                    width={20}
                     sx={{
                       color: "text.secondary",
-                      height: 20,
-                      width: 20,
                     }}
                     src={"/assets/icons/ic_add.svg"}
                   />

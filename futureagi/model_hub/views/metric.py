@@ -2,12 +2,12 @@ import re
 
 from django.db.models import Case, CharField, F, Value, When
 from django.db.models.functions import Lower
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from accounts.utils import get_request_organization
 
 from tfc.ee_stub import _ee_stub
 
@@ -15,30 +15,57 @@ try:
     from ee.agenthub.prompt_eval_agent.prompt_eval import PromptValidator
 except ImportError:
     PromptValidator = _ee_stub("PromptValidator")
-from model_hub.models import AIModel
 from model_hub.models.metric import Metric
 from model_hub.models.metric_prompt_checker import PromptChecker
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    CustomMetricListResponseSerializer,
+    CustomMetricMutationRequestSerializer,
+    CustomMetricTestRequestSerializer,
+    CustomMetricTestResponseSerializer,
+    MetricTagOptionSerializer,
+    ModelHubPaginatedResponseSerializer,
+    ModelHubStatusResponseSerializer,
+)
 from model_hub.serializers.metric import MetricSerializer
 from model_hub.utils.utils import check_valid_metrics, get_evaluation_type
+from model_hub.utils.workspace_scope import scoped_ai_model_queryset
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+
+
+def _get_scoped_model(request, model_id):
+    return scoped_ai_model_queryset(request).filter(id=model_id).first()
+
+
+def _scoped_metric_queryset(request):
+    return Metric.objects.filter(
+        model_id__in=scoped_ai_model_queryset(request).values("id")
+    )
+
+
+def _get_metric_type(metric_type):
+    try:
+        metric_type = int(metric_type)
+    except (TypeError, ValueError):
+        pass
+    return Metric.MetricTypes.get_metric_type(metric_type)
 
 
 class AllMetricApiView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: CustomMetricListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, model_id, *args, **kwargs):
-        organization = get_request_organization(self.request)
-        try:
-            ai_model = AIModel.objects.get(id=model_id, organization=organization)
-        except AIModel.DoesNotExist:
-            return Response(
-                {"error": "Model with given id not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        ai_model = _get_scoped_model(request, model_id)
+        if not ai_model:
+            return GeneralMethods().not_found("Model with given id not found.")
 
         all_metrics = (
-            Metric.objects.filter(model=model_id)
+            Metric.objects.filter(model=ai_model)
             .annotate(
                 updated_evaluation_type=Case(
                     When(
@@ -78,21 +105,22 @@ class AllMetricApiView(APIView):
 class MetricApiView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: ModelHubPaginatedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, model_id, *args, **kwargs):
         sort_order = request.query_params.get("sort_order")
         search_query = request.query_params.get("search_query")
 
-        organization = get_request_organization(self.request)
-        try:
-            ai_model = AIModel.objects.get(id=model_id, organization=organization)
-        except AIModel.DoesNotExist:
-            return Response(
-                {"error": "Model with given id not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        ai_model = _get_scoped_model(request, model_id)
+        if not ai_model:
+            return GeneralMethods().not_found("Model with given id not found.")
 
         # Add default ordering to the queryset
-        all_metrics = Metric.objects.filter(model=model_id).order_by("-created_at")
+        all_metrics = Metric.objects.filter(model=ai_model).order_by("-created_at")
 
         if search_query:
             pattern = rf"(?i){re.escape(search_query)}"
@@ -125,10 +153,13 @@ class CreateMetricApiView(APIView):
     permission_classes = [IsAuthenticated]
     gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=CustomMetricMutationRequestSerializer,
+        responses={200: ModelHubStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
-        user_organization = get_request_organization(self.request)
-
-        data = request.data
+        data = request.validated_data
 
         try:
             # Check if a non-deleted PromptChecker with the specified user prompt and no ambiguity exists
@@ -167,19 +198,22 @@ class CreateMetricApiView(APIView):
             #             status=400,
             #         )
 
-            ai_model = AIModel.objects.get(
-                id=data["model_id"], organization=user_organization
-            )
+            ai_model = _get_scoped_model(request, data["model_id"])
+            if not ai_model:
+                return GeneralMethods().not_found("AI model not found")
 
-            valid, msg = check_valid_metrics(data["evaluation_type"], data["model_id"])
+            valid, msg = check_valid_metrics(data["evaluation_type"], ai_model.id)
             if not valid:
                 return GeneralMethods().bad_request(msg)
+            metric_type = _get_metric_type(data["metric_type"])
+            if metric_type is None:
+                return GeneralMethods().bad_request("Invalid metric_type")
 
             created_metric = Metric(
                 name=data["name"],
                 text_prompt=data["prompt"],
                 model=ai_model,
-                metric_type=Metric.MetricTypes.get_metric_type(data["metric_type"]),
+                metric_type=metric_type,
                 datasets=data["datasets"],
                 evaluation_type=get_evaluation_type(data["evaluation_type"]),
                 criteria_breakdown=[],
@@ -188,21 +222,28 @@ class CreateMetricApiView(APIView):
 
             return Response({"status": "success"})
 
-        except AIModel.DoesNotExist:
-            return Response(
-                {"status": "error", "message": "AI model not found"}, status=404
-            )
+        except KeyError as exc:
+            return GeneralMethods().bad_request(f"{exc.args[0]} is required")
 
 
 class EditMetricApiView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=CustomMetricMutationRequestSerializer,
+        responses={200: ModelHubStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
-        data = request.data
+        data = request.validated_data
 
         try:
-            metric = Metric.objects.get(
-                id=data["id"],
+            metric = (
+                _scoped_metric_queryset(request)
+                .select_related("model")
+                .get(
+                    id=data["id"],
+                )
             )
 
             # Check if a non-deleted PromptChecker with the specified user prompt and no ambiguity exists
@@ -249,12 +290,16 @@ class EditMetricApiView(APIView):
             #     "evaluation_type":get_evaluation_type(data["evaluation_type"]),
             # }
 
+            metric_type = _get_metric_type(data["metric_type"])
+            if metric_type is None:
+                return GeneralMethods().bad_request("Invalid metric_type")
+
             new_metric_data = {
                 "name": data["name"],
                 "text_prompt": data["prompt"],
                 "criteria_breakdown": [],
                 "model": metric.model,
-                "metric_type": Metric.MetricTypes.get_metric_type(data["metric_type"]),
+                "metric_type": metric_type,
                 "datasets": data["datasets"],
                 "evaluation_type": get_evaluation_type(data["evaluation_type"]),
             }
@@ -286,24 +331,28 @@ class EditMetricApiView(APIView):
             return Response({"status": "success"})
 
         except Metric.DoesNotExist:
-            return Response(
-                {"status": "error", "message": "Metric not found"}, status=404
-            )
+            return GeneralMethods().not_found("Metric not found")
 
 
 class GetMetricTagOptions(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: MetricTagOptionSerializer(many=True),
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, metric_id, *args, **kwargs):
-        metric = Metric.objects.filter(id=metric_id).values("tags")
+        metric = (
+            _scoped_metric_queryset(request).filter(id=metric_id).values("tags").first()
+        )
 
-        if metric[0] is None:
-            return Response(
-                {"status": "error", "message": "Metric not found"}, status=404
-            )
+        if metric is None:
+            return GeneralMethods().not_found("Metric not found")
 
         tags = sorted(
-            [{"label": tag, "value": tag} for tag in metric[0]["tags"]],
+            [{"label": tag, "value": tag} for tag in metric["tags"]],
             key=lambda d: d["value"],
         )
 
@@ -316,8 +365,18 @@ class GetMetricTagOptions(APIView):
 
 
 class TestMetric(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        request_serializer=CustomMetricTestRequestSerializer,
+        responses={
+            200: CustomMetricTestResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
-        data = request.data
+        data = request.validated_data
 
         try:
             # Check if a non-deleted PromptChecker with the specified user prompt and no ambiguity exists
@@ -372,7 +431,7 @@ class TestMetric(APIView):
                 )
             return Response({"status": "success", "prompts": ai_prompt})
 
-        except AIModel.DoesNotExist:
-            return Response(
-                {"status": "error", "message": "AI model not found"}, status=404
-            )
+        except APIException:
+            raise
+        except Exception as exc:
+            return GeneralMethods().bad_request(str(exc))

@@ -25,6 +25,9 @@ import { createCachePrimaryFilter, getCachePrimaryFilter } from "../common";
 import { useAuthContext } from "src/auth/hooks";
 import { AdvanceNumberFilterOperators } from "src/utils/constants";
 import { handleNumericInput } from "src/components/ComplexFilter/common";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
+
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 const LeftControl = ({
   onGraphConfigChange,
@@ -500,7 +503,7 @@ const LeftControl = ({
     (operator, value, value2) => {
       if (!selectedOption) return;
 
-      const isBetweenOp = ["between", "not_in_between"].includes(operator);
+      const isBetweenOp = RangeOperators.has(operator);
 
       // Store values for UI persistence (operator and values separately for form restoration)
       setSelectedGraphAttributes({
@@ -530,8 +533,8 @@ const LeftControl = ({
         id: selectedOption.id,
         type: selectedOption.type,
         output_type: selectedOption.output_type,
-        filterOp: operator,
-        filterValue: filterValue,
+        filter_op: operator,
+        filter_value: filterValue,
       };
 
       if (selectedOption.type === "EVAL") {
@@ -572,13 +575,13 @@ const LeftControl = ({
         <li {...props}>
           <Box
             sx={{
-              fontWeight: "bold",
+              fontWeight: "600",
               color: "text.primary",
               backgroundColor: "background.default",
               width: "100%",
               px: 2,
               py: 1,
-              fontSize: 14,
+              fontSize: 12,
               cursor: "default",
             }}
           >
@@ -642,7 +645,7 @@ const LeftControl = ({
               handleNumberFilterChange(currentOperator, value, currentValue2);
             }}
           />
-          {["between", "not_in_between"].includes(currentOperator) && (
+          {RangeOperators.has(currentOperator) && (
             <>
               <Typography
                 typography="s2"
@@ -845,7 +848,7 @@ const LeftControl = ({
             "& .MuiAutocomplete-paper li[aria-disabled='true'][value$='-header']":
               {
                 color: "text.primary !important",
-                fontWeight: "bold !important",
+                fontWeight: "600 !important",
                 backgroundColor: "background.default !important",
                 opacity: "1 !important",
                 cursor: "default !important",

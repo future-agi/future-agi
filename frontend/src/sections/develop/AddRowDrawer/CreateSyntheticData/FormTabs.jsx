@@ -4,18 +4,18 @@ import React from "react";
 import Iconify from "src/components/iconify";
 
 const tabTextColor = {
-  completed: "green.500",
-  active: "blue.500",
+  completed: "status.success.fg",
+  active: "status.info.fg",
   pending: "text.secondary",
 };
 const tabBackgroundColor = {
-  completed: "green.o10",
-  active: "blue.o10",
+  completed: "status.success.bg",
+  active: "status.info.bg",
   pending: "background.neutral",
 };
 const tabBorderColor = {
-  completed: "green.500",
-  active: "blue.500",
+  completed: "status.success.solid",
+  active: "status.info.solid",
   pending: "divider",
 };
 
@@ -49,11 +49,14 @@ const FormTabs = ({ tabList, handleTabChange }) => {
                 alignItems: "center",
                 width: "28px",
                 height: "28px",
-                borderRadius: "2px",
+                borderRadius: "4px",
               }}
             >
               {status === "completed" ? (
-                <Iconify icon="qlementine-icons:success-16" color="green.700" />
+                <Iconify
+                  icon="qlementine-icons:success-16"
+                  color="status.success.fg"
+                />
               ) : (
                 index + 1
               )}

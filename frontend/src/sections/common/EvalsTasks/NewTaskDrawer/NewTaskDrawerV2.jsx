@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   useForm,
   useWatch,
@@ -24,7 +24,7 @@ import {
 } from "src/sections/develop-detail/AccordianElements";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import NewTaskFilterBox from "./NewTaskFilterBox";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "./ScheduledRuns";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
@@ -32,19 +32,20 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getNewTaskFilters, NewTaskValidationSchema } from "./validation";
+import { NewTaskValidationSchema } from "./validation";
 import { enqueueSnackbar } from "src/components/snackbar";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { objectCamelToSnake } from "src/utils/utils";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 // ── Configured Eval Card ──
 
 const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
-  const theme = useTheme();
   const name =
     evalItem?.name ||
     evalItem?.eval_template?.name ||
@@ -62,10 +63,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
         borderRadius: 1,
         border: "1px solid",
         borderColor: "divider",
-        bgcolor:
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -77,11 +75,9 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   bgcolor: "action.hover",
                   "& .MuiChip-label": { px: 0.5 },
                 }}
@@ -92,8 +88,6 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
                 label={`+${mappedKeys.length - 3}`}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -106,7 +100,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
         onClick={onRemove}
         sx={{ p: 0.25, color: "text.secondary" }}
       >
-        <Iconify icon="mingcute:close-line" width={16} />
+        <Iconify icon="solar:close-linear" width={16} />
       </IconButton>
     </Box>
   );
@@ -167,12 +161,6 @@ const NewTaskDrawerV2 = ({
   const { errors } = useFormState({ control });
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
-  const formValues = useWatch({ control });
-
-  const filtersWithoutDate = useMemo(() => {
-    return getNewTaskFilters(formValues, project, true).filters || [];
-  }, [formValues, project]);
-
   // Fetch pre-configured evals for the project
   const { data: configuredEvalList } = useQuery({
     queryKey: ["configured-evals", project],
@@ -226,6 +214,7 @@ const NewTaskDrawerV2 = ({
       rowType,
       spansLimit,
       samplingRate,
+      samplingPolicy,
       evalsDetails,
       startDate,
       endDate,
@@ -239,6 +228,7 @@ const NewTaskDrawerV2 = ({
         ? { spans_limit: spansLimit }
         : {}),
       sampling_rate: samplingRate,
+      ...(samplingPolicy ? { sampling_policy: samplingPolicy } : {}),
       evals_details: evalsDetails,
       start_date: startDate,
       end_date: endDate,
@@ -246,18 +236,14 @@ const NewTaskDrawerV2 = ({
     createEvalTask(payload);
   };
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
-        },
-      }),
-    select: (data) => data.data?.result,
+  const {
+    sourceColumns,
+    attributeFields: evalAttributes,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useTaskEvalAttributeInventory({
+    projectId: project,
+    rowType,
     enabled: isProjectSelected,
   });
 
@@ -269,16 +255,6 @@ const NewTaskDrawerV2 = ({
       }),
     select: (data) => data.data?.result?.projects,
   });
-
-  // Format eval attributes as source columns for EvalPickerDrawer
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Handle adding eval from the new picker
   const handleEvalAdded = useCallback(
@@ -335,16 +311,18 @@ const NewTaskDrawerV2 = ({
     [project, addEval],
   );
 
+  const covered = useDrawerCovered(open);
   return (
     <>
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         variant="temporary"
         onClose={handleClose}
         PaperProps={{
           sx: {
-            width: { xs: "100%", sm: "100%", md: "590px" },
+            width: { xs: "100%", sm: "100%", md: "640px" },
             height: "100vh",
             position: "fixed",
             zIndex: 10,
@@ -392,13 +370,13 @@ const NewTaskDrawerV2 = ({
                 color="primary"
                 target="_blank"
                 rel="noopener noreferrer"
-                sx={{ fontSize: "13px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Learn more
               </Link>
             </Box>
             <IconButton onClick={handleClose} sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Box>
 
@@ -475,18 +453,14 @@ const NewTaskDrawerV2 = ({
                   <Accordion defaultExpanded>
                     <AccordionSummary>Filters</AccordionSummary>
                     <AccordionDetails>
-                      <NewTaskFilterBox
-                        attributes={
-                          Array.isArray(evalAttributes)
-                            ? evalAttributes.map((attr) => ({
-                                label: attr,
-                                value: attr,
-                              }))
-                            : []
-                        }
-                        getValues={getValues}
-                        setValue={setValue}
+                      <TaskFilterBar
                         control={control}
+                        setValue={setValue}
+                        projectId={project}
+                        isSimulator={String(rowType || "")
+                          .toLowerCase()
+                          .startsWith("voice")}
+                        rowType={rowType}
                       />
                     </AccordionDetails>
                   </Accordion>
@@ -518,11 +492,9 @@ const NewTaskDrawerV2 = ({
                         disabled={!isProjectSelected}
                         onClick={() => setEvalPickerOpen(true)}
                         startIcon={
-                          <Iconify icon="mingcute:add-line" width={16} />
+                          <Iconify icon="solar:add-linear" width={16} />
                         }
                         sx={{
-                          textTransform: "none",
-                          fontWeight: 500,
                           alignSelf: "flex-start",
                         }}
                       >
@@ -570,7 +542,7 @@ const NewTaskDrawerV2 = ({
                             <Typography
                               variant="body2"
                               color="text.disabled"
-                              sx={{ fontSize: "13px" }}
+                              sx={{ fontSize: "12px" }}
                             >
                               No evaluations added yet
                             </Typography>
@@ -610,7 +582,11 @@ const NewTaskDrawerV2 = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
+        sourceId={project || ""}
+        sourceRowType={rowType}
         sourceColumns={sourceColumns}
+        onSourceColumnSearchChange={onSourceColumnSearchChange}
+        sourceColumnInventoryControls={sourceColumnInventoryControls}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />

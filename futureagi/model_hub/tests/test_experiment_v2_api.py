@@ -4,6 +4,7 @@ Test cases for V2 Experiment API endpoints: Stop, Suggest Name, and Validate Nam
 Run with: pytest model_hub/tests/test_experiment_v2_api.py -v
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -23,6 +24,7 @@ from model_hub.models.choices import (
     StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 
 # ==================== Fixtures ====================
@@ -134,6 +136,31 @@ def experiment_dataset(db, experiment, output_column):
     )
     edt.columns.add(output_column)
     return edt
+
+
+@pytest.fixture
+def eval_template(db, organization, workspace):
+    return EvalTemplate.objects.create(
+        name="test-eval-template",
+        organization=organization,
+        workspace=workspace,
+        criteria="Evaluate: {{output}}",
+        model="gpt-4",
+        config={"output": "score"},
+    )
+
+
+@pytest.fixture
+def eval_metric(db, dataset, organization, workspace, eval_template):
+    return UserEvalMetric.objects.create(
+        name="Test Eval",
+        dataset=dataset,
+        organization=organization,
+        workspace=workspace,
+        template=eval_template,
+        status=StatusType.COMPLETED.value,
+        config={},
+    )
 
 
 # ==================== ExperimentStopV2View Tests ====================
@@ -254,6 +281,70 @@ class TestExperimentStopV2View:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()["result"]
         assert data["workflows_cancelled"]["reruns"] == 3
+
+
+# ==================== ExperimentEvaluationStatsView V2 Tests ====================
+
+
+@pytest.mark.django_db
+class TestExperimentEvaluationStatsV2View:
+    """Tests for GET /experiments/v2/<id>/evaluations/<id>/stats/."""
+
+    def test_v2_eval_stats_reads_fk_experiment_datasets(
+        self,
+        auth_client,
+        experiment,
+        experiment_dataset,
+        snapshot_dataset,
+        row,
+        eval_metric,
+    ):
+        experiment.user_eval_template_ids.add(eval_metric)
+        eval_column = Column.objects.create(
+            name="quality-score",
+            dataset=snapshot_dataset,
+            data_type=DataTypeChoices.FLOAT.value,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=f"{experiment_dataset.id}-sourceid-{eval_metric.id}",
+            status=StatusType.COMPLETED.value,
+        )
+        experiment_dataset.columns.add(eval_column)
+        Cell.objects.create(
+            dataset=snapshot_dataset,
+            column=eval_column,
+            row=row,
+            value="0.8",
+            value_infos=json.dumps(
+                {
+                    "metadata": {
+                        "usage": {
+                            "completion_tokens": 4,
+                            "prompt_tokens": 6,
+                            "total_tokens": 10,
+                        },
+                        "response_time": 20,
+                    }
+                }
+            ),
+            status=CellStatus.PASS.value,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/experiments/v2/{experiment.id}/"
+            f"evaluations/{eval_metric.id}/stats/",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["result"]
+        assert data["experiment_id"] == str(experiment.id)
+        assert data["evaluation_id"] == str(eval_metric.id)
+        assert len(data["evaluation_columns"]) == 1
+        stats = data["evaluation_columns"][0]
+        assert stats["column_id"] == str(eval_column.id)
+        assert stats["total_rows"] == 1
+        assert stats["success_rate"] == 100
+        assert stats["avg_response_time"] == 20
+        assert stats["token_usage"]["total_tokens"] == 10
 
 
 # ==================== ExperimentNameSuggestionView Tests ====================

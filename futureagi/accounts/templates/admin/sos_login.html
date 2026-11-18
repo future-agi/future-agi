@@ -1,0 +1,173 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h2>{{ title }}</h2>
+
+<div class="sos-warning">
+  🚨 <strong>SOS login signs you in as the selected user.</strong> You will have their full
+  permissions inside the product. Every action is recorded against <em>their</em> account, not
+  yours. Use it to reproduce and diagnose — avoid making changes on their behalf.
+</div>
+
+<form method="get" class="sos-search">
+  <input type="text" name="q" value="{{ query }}" placeholder="Search by email, name or organization…" autofocus>
+  <button type="submit" class="sos-btn-search">Search</button>
+  {% if query %}<a href="?" class="sos-clear">Clear</a>{% endif %}
+</form>
+
+{% if query %}
+  <p class="sos-count">
+    Showing {{ users|length }} of {{ total_count }} matching user{{ total_count|pluralize }}.
+    {% if truncated %}<strong>Result list is capped at {{ limit }} — refine your search to see the rest.</strong>{% endif %}
+  </p>
+
+  <table class="sos-table">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Name</th>
+        <th>Organization</th>
+        <th>Role</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+        <tr>
+          <td><strong>{{ user.email }}</strong></td>
+          <td>{{ user.name|default:"—" }}</td>
+          <td>{{ user.organization.name|default:"—" }}</td>
+          <td>{{ user.organization_role|default:"—" }}</td>
+          <td class="sos-actions">
+            <form method="post" action="{% url 'admin:accounts_sosloginproxy_login' %}" target="_blank"
+                  onsubmit="return confirm('Start an SOS session as {{ user.email|escapejs }}?')">
+              {% csrf_token %}
+              <input type="hidden" name="user_id" value="{{ user.id }}">
+              <button type="submit" class="sos-btn-login">SOS Login</button>
+            </form>
+            <button type="button" class="sos-btn-copy"
+                    data-user-id="{{ user.id }}" data-email="{{ user.email }}">Copy Link</button>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="sos-empty">No active users match “{{ query }}”.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="sos-count">Search for a user above to start an SOS session.</p>
+{% endif %}
+
+<style>
+  .sos-warning { background:#f39c1222; border-left:4px solid #f39c12; color:var(--body-fg,#e0e0e0);
+                 padding:12px 16px; margin-bottom:20px; border-radius:4px; line-height:1.5; }
+  .sos-search { display:flex; gap:8px; align-items:center; margin-bottom:16px; }
+  .sos-search input { flex:1; max-width:480px; padding:8px 12px; border-radius:4px;
+                      border:1px solid var(--border-color,#333); background:var(--darkened-bg,#1a1a2e);
+                      color:var(--body-fg,#e0e0e0); }
+  .sos-btn-search { padding:8px 16px; border-radius:4px; border:1px solid #3498db; background:none;
+                    color:#3498db; font-weight:bold; cursor:pointer; }
+  .sos-btn-search:hover { background:#3498db; color:#fff; }
+  .sos-clear { color:var(--header-color,#a0a0b0); font-size:0.85rem; }
+  .sos-count { color:var(--header-color,#a0a0b0); font-size:0.85rem; margin-bottom:12px; }
+  .sos-table { width:100%; border-collapse:collapse; border-radius:4px; overflow:hidden; }
+  .sos-table th, .sos-table td { padding:10px 16px; text-align:left;
+                                 border-bottom:1px solid var(--border-color,#333); }
+  .sos-table th { background:var(--darkened-bg,#1a1a2e); color:var(--header-color,#a0a0b0);
+                  text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
+  .sos-table td { color:var(--body-fg,#e0e0e0); }
+  .sos-table tr:hover td { background:var(--darkened-bg,#1a1a2e); }
+  .sos-btn-login { cursor:pointer; background:none; border:1px solid #f39c12; color:#f39c12;
+                   font-weight:bold; padding:4px 12px; border-radius:4px; }
+  .sos-btn-login:hover { background:#f39c12; color:#fff; }
+  .sos-actions { display:flex; gap:8px; align-items:center; }
+  .sos-btn-copy { cursor:pointer; background:none; border:1px solid #3498db; color:#3498db;
+                  font-weight:bold; padding:4px 12px; border-radius:4px; white-space:nowrap; }
+  .sos-btn-copy:hover:not(:disabled) { background:#3498db; color:#fff; }
+  .sos-btn-copy:disabled { opacity:0.6; cursor:default; }
+  .sos-empty { text-align:center; padding:20px; }
+</style>
+
+<script>
+(function () {
+  var csrfToken = "{{ csrf_token }}";
+  var copyLinkUrl = "{% url 'admin:accounts_sosloginproxy_copy_link' %}";
+
+  function writeClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(area);
+      return ok ? resolve() : reject(new Error("Clipboard write blocked"));
+    });
+  }
+
+  document.querySelectorAll(".sos-btn-copy").forEach(function (button) {
+    button.addEventListener("click", function () {
+      if (!window.confirm("Mint a fresh SOS link for " + button.dataset.email + "?")) {
+        return;
+      }
+
+      var original = button.textContent;
+      button.disabled = true;
+      button.textContent = "Minting…";
+
+      var restore = function () {
+        window.setTimeout(function () {
+          button.disabled = false;
+          button.textContent = original;
+        }, 2000);
+      };
+
+      fetch(copyLinkUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": csrfToken,
+        },
+        body: new URLSearchParams({ user_id: button.dataset.userId }),
+      })
+        .then(function (response) {
+          return response.json().then(function (payload) {
+            if (!response.ok) {
+              throw new Error(payload.error || "Request failed");
+            }
+            return payload.url;
+          });
+        })
+        .then(function (url) {
+          return writeClipboard(url).then(
+            function () {
+              button.textContent = "Copied ✓";
+              restore();
+            },
+            function () {
+              button.textContent = "Copy manually";
+              window.prompt("Copy the SOS link:", url);
+              restore();
+            }
+          );
+        })
+        .catch(function (error) {
+          button.textContent = "Failed";
+          window.alert("Could not mint SOS link: " + error.message);
+          restore();
+        });
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -32,7 +32,7 @@ def add_one_day_in_date(date_str):
 
 def sql_query_to_get_count(query):
     clickhouse_client = ClickHouseClientSingleton()
-    raw_data_points = clickhouse_client.execute(query)
+    raw_data_points = clickhouse_client.execute_read(query, max_result_rows=1)
     total_count = int(raw_data_points[0][0])
 
     return total_count
@@ -517,9 +517,7 @@ def calculate_column_average(column_id, row_ids=None):
                                             scores = json.loads(
                                                 cell.value.replace("'", '"')
                                             )
-                                            if isinstance(
-                                                scores, (float, int)
-                                            ):  # noqa: UP038
+                                            if isinstance(scores, (float, int)):  # noqa: UP038
                                                 scores = {"single_score": scores}
                                         except json.JSONDecodeError:
                                             if cell.value in ["Passed", "Failed"]:
@@ -546,8 +544,7 @@ def calculate_column_average(column_id, row_ids=None):
                                                 sum(cell_scores) / len(cell_scores)
                                             )
                             except Exception as e:
-                                logger.error(f"Error processing cell: {str(e)}")
-                                traceback.print_exc()
+                                logger.warning(f"Error processing cell: {str(e)}")
                                 continue
                         if valid_scores:
                             stats["average"] = round(
@@ -605,7 +602,7 @@ def calculate_column_average(column_id, row_ids=None):
                             stats["success_rate"] = stats["average"]
 
                 except UserEvalMetric.DoesNotExist:
-                    logger.error(
+                    logger.warning(
                         f"UserEvalMetric does not exist for column {column_id}"
                     )
                     stats["average"] = None

@@ -1,10 +1,30 @@
-import { alpha, Box, Divider, Typography } from "@mui/material";
+import { Box, Divider, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 
 const ToolsHoverState = ({ tools, disableHover }) => {
   if (disableHover) {
     return "Tools";
+  }
+  if (!tools || tools.length === 0) {
+    return (
+      <Box
+        sx={{
+          marginTop: "-10px",
+          padding: "8px",
+          backgroundColor: "background.paper",
+          borderRadius: "8px",
+        }}
+      >
+        <Typography
+          variant="s3"
+          fontWeight={"fontWeightMedium"}
+          color="text.primary"
+        >
+          No tools
+        </Typography>
+      </Box>
+    );
   }
   return (
     <Box
@@ -16,8 +36,6 @@ const ToolsHoverState = ({ tools, disableHover }) => {
         display: "flex",
         flexDirection: "column",
         gap: "4px",
-        boxShadow: (theme) =>
-          `4px 4px 16px 0px ${alpha(theme.palette.common.black, 0.1)}`,
       }}
     >
       <Box

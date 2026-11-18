@@ -19,10 +19,11 @@ The sandboxed process communicates results via stdout JSON.
 If it crashes, times out, or produces invalid output, the parent returns an error.
 """
 
+import errno
 import json
 import os
-import resource
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -31,56 +32,122 @@ import time
 from typing import Any
 
 import structlog
+import urllib.error
 import urllib.request
+from django.conf import settings
+
+from tfc.ee_loader import is_cloud_env
 
 logger = structlog.get_logger(__name__)
 
 # Code executor service URL (nsjail-based sandbox container)
 CODE_EXECUTOR_URL = os.environ.get("CODE_EXECUTOR_URL", "http://code-executor:8060")
 
+# Connection errors that mean the executor was never reached.
+_UNREACHABLE_ERRNOS = frozenset(
+    {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH}
+)
+
+# Setup errors: this install cannot run the eval at all, and the message says
+# so. They are returned with "setup_error": True, but custom_code_eval shows
+# only these exact texts to users: the executor returns an eval script's own
+# result as is, so the script could set that flag on any text.
+EXECUTOR_UNAVAILABLE_MESSAGE = (
+    "Code executor unavailable: the code-executor service could not be reached"
+)
+# code-executor/server.py's NO_NODE_MESSAGE, word for word
+# (tests/test_default_install_packaging.py compares the two).
+EXECUTOR_NO_NODE_MESSAGE = (
+    "JavaScript evals need Node.js, which this sandbox does not have. In "
+    "Standalone, set COMPOSE_PROFILES=sandbox in .env and run "
+    "docker compose up -d: the nsjail sandbox it adds runs them."
+)
+# The local JavaScript runner's (CODE_EXECUTOR_LOCAL_FALLBACK) without Node.js.
+LOCAL_NO_NODE_MESSAGE = "Node.js is not available for JavaScript execution"
+SETUP_ERROR_MESSAGES = frozenset(
+    {EXECUTOR_UNAVAILABLE_MESSAGE, EXECUTOR_NO_NODE_MESSAGE, LOCAL_NO_NODE_MESSAGE}
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 DEFAULT_TIMEOUT_SECONDS = 30
-MAX_MEMORY_BYTES = 1024 * 1024 * 1024  # 1 GB virtual address space (nltk/numpy/scipy reserve a lot of VM)
+MAX_MEMORY_BYTES = (
+    1024 * 1024 * 1024
+)  # 1 GB virtual address space (nltk/numpy/scipy reserve a lot of VM)
 MAX_OUTPUT_BYTES = 1 * 1024 * 1024  # 1 MB stdout limit
-MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1 MB — allow stdout writes, but no large file creation
+MAX_EXECUTOR_RESPONSE_BYTES = 2 * MAX_OUTPUT_BYTES  # result plus JSON envelope
+MAX_FILE_SIZE_BYTES = (
+    1 * 1024 * 1024
+)  # 1 MB — allow stdout writes, but no large file creation
 MAX_PROCESSES = 50  # Python/Node need internal threads
 
 # Python modules safe to import inside the sandbox
 SAFE_MODULES = [
-    "json", "re", "math", "collections", "itertools", "functools",
-    "string", "datetime", "decimal", "statistics", "copy", "difflib",
-    "textwrap", "hashlib", "base64", "uuid", "enum", "dataclasses",
-    "typing", "operator", "numbers",
+    "json",
+    "re",
+    "math",
+    "collections",
+    "itertools",
+    "functools",
+    "string",
+    "datetime",
+    "decimal",
+    "statistics",
+    "copy",
+    "difflib",
+    "textwrap",
+    "hashlib",
+    "base64",
+    "uuid",
+    "enum",
+    "dataclasses",
+    "typing",
+    "operator",
+    "numbers",
     "os.path",  # Path manipulation only (basename, dirname, splitext, join)
-    "struct",   # Binary data packing/unpacking
-    "io",       # StringIO, BytesIO (in-memory streams)
-    "csv",      # CSV parsing
-    "html",     # HTML escaping
+    "struct",  # Binary data packing/unpacking
+    "io",  # StringIO, BytesIO (in-memory streams)
+    "csv",  # CSV parsing
+    "html",  # HTML escaping
     "urllib.parse",  # URL parsing only
     # Data processing libraries (no network/filesystem/process risk)
-    "PIL", "PIL.Image", "PIL.ImageStat",  # Image processing
-    "numpy",    # Numerical computing
-    "pandas",   # Data analysis
+    "PIL",
+    "PIL.Image",
+    "PIL.ImageStat",  # Image processing
+    "numpy",  # Numerical computing
+    "pandas",  # Data analysis
     # NLP / similarity libraries (used by system code evals)
     "Levenshtein",  # Edit distance
-    "nltk", "nltk.translate", "nltk.translate.bleu_score",  # BLEU score
+    "nltk",
+    "nltk.translate",
+    "nltk.translate.bleu_score",  # BLEU score
     "rouge_score",  # ROUGE score
-    "scipy", "scipy.spatial", "scipy.spatial.distance",  # Cosine/euclidean distance
-    "sklearn", "sklearn.metrics",  # ML metrics
+    "scipy",
+    "scipy.spatial",
+    "scipy.spatial.distance",  # Cosine/euclidean distance
+    "sklearn",
+    "sklearn.metrics",  # ML metrics
     "jinja2",  # Template rendering
 ]
+
 
 # os module with dangerous functions removed
 def _build_safe_os_module():
     """Create a restricted os module — only safe path/string functions."""
     import os as _real_os
     import types
+
     safe_os = types.ModuleType("os")
     # Only expose safe attributes
     SAFE_OS_ATTRS = [
-        "sep", "linesep", "devnull", "curdir", "pardir", "extsep", "altsep",
+        "sep",
+        "linesep",
+        "devnull",
+        "curdir",
+        "pardir",
+        "extsep",
+        "altsep",
     ]
     for attr in SAFE_OS_ATTRS:
         if hasattr(_real_os, attr):
@@ -89,17 +156,49 @@ def _build_safe_os_module():
     safe_os.path = _real_os.path
     return safe_os
 
+
 _SAFE_OS = _build_safe_os_module()
 
 # JS modules blocked (everything dangerous)
 JS_BLOCKED_MODULES = [
-    "fs", "child_process", "net", "http", "https", "dgram", "tls",
-    "cluster", "worker_threads", "os", "path", "vm", "v8",
-    "stream", "dns", "readline", "repl", "inspector", "perf_hooks",
-    "async_hooks", "crypto", "zlib", "url", "querystring", "module",
-    "fs/promises", "timers", "diagnostics_channel", "trace_events",
-    "wasi", "node:fs", "node:child_process", "node:net", "node:http",
-    "node:os", "node:path", "node:vm", "node:crypto",
+    "fs",
+    "child_process",
+    "net",
+    "http",
+    "https",
+    "dgram",
+    "tls",
+    "cluster",
+    "worker_threads",
+    "os",
+    "path",
+    "vm",
+    "v8",
+    "stream",
+    "dns",
+    "readline",
+    "repl",
+    "inspector",
+    "perf_hooks",
+    "async_hooks",
+    "crypto",
+    "zlib",
+    "url",
+    "querystring",
+    "module",
+    "fs/promises",
+    "timers",
+    "diagnostics_channel",
+    "trace_events",
+    "wasi",
+    "node:fs",
+    "node:child_process",
+    "node:net",
+    "node:http",
+    "node:os",
+    "node:path",
+    "node:vm",
+    "node:crypto",
 ]
 
 
@@ -111,7 +210,7 @@ def _build_python_sandbox_script(user_code: str, input_data: dict) -> str:
     safe_modules_json = json.dumps(SAFE_MODULES)
     input_json = json.dumps(input_data, default=str)
 
-    return textwrap.dedent(f'''\
+    return textwrap.dedent(f"""\
 import json
 import sys
 import inspect
@@ -308,7 +407,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-''')
+""")
 
 
 def _build_js_sandbox_single_file(user_code: str, input_data: dict) -> str:
@@ -324,7 +423,12 @@ def _build_js_sandbox_single_file(user_code: str, input_data: dict) -> str:
     """
     input_json = json.dumps(input_data, default=str)
     # Escape for embedding in a JS string literal
-    escaped_code = user_code.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
+    escaped_code = (
+        user_code.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
 
     return f"""'use strict';
 
@@ -402,6 +506,12 @@ def _set_resource_limits():
     - Closes all file descriptors except stdin/stdout/stderr
     - Clears all environment variables
     """
+    # Imported here, not at module scope: `resource` is POSIX-only, and this
+    # module is loaded at Django startup (via SETUP_ERROR_MESSAGES), so a
+    # module-level import made the whole backend unimportable where it is
+    # missing. Only the forked child ever needs it.
+    import resource
+
     # Memory limit — skip on emulated architectures (Rosetta/QEMU)
     # where even RLIMIT_DATA breaks mmap. On native Linux production,
     # Docker --memory flag or cgroups handle this at container level.
@@ -409,13 +519,17 @@ def _set_resource_limits():
 
     # CPU time limit (seconds)
     try:
-        resource.setrlimit(resource.RLIMIT_CPU, (DEFAULT_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS + 5))
+        resource.setrlimit(
+            resource.RLIMIT_CPU, (DEFAULT_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS + 5)
+        )
     except (ValueError, resource.error):
         pass
 
     # No file creation/writes
     try:
-        resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_BYTES))
+        resource.setrlimit(
+            resource.RLIMIT_FSIZE, (MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_BYTES)
+        )
     except (ValueError, resource.error):
         pass
 
@@ -434,8 +548,7 @@ def _set_resource_limits():
     # Close all file descriptors beyond stdin/stdout/stderr
     # This prevents reading any open files from the parent process
     try:
-        import resource as _res
-        max_fd = _res.getrlimit(_res.RLIMIT_NOFILE)[0]
+        max_fd = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
         for fd in range(3, min(max_fd, 1024)):
             try:
                 os.close(fd)
@@ -451,19 +564,51 @@ def _set_resource_limits():
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def _call_executor_service(code: str, input_data: dict, language: str, timeout: int) -> dict | None:
-    """Call the nsjail code-executor service via HTTP. Returns None if unavailable."""
+def _executor_unreachable(reason: object) -> bool:
+    """Whether a URLError reason means the request never reached the executor."""
+    if isinstance(reason, socket.gaierror):
+        return True
+    return isinstance(reason, OSError) and reason.errno in _UNREACHABLE_ERRNOS
+
+
+def _executor_error(language: str, message: str, error: str) -> dict:
+    logger.warning("code_executor_service_error", language=language, error=error)
+    return {"status": "error", "data": f"Code executor error: {message}"}
+
+
+def _call_executor_service(
+    code: str, input_data: dict, language: str, timeout: int
+) -> dict | None:
+    """Call the nsjail code-executor service via HTTP.
+
+    Returns None only when the executor cannot be reached (DNS failure,
+    connection refused, no route) or none is configured (empty
+    CODE_EXECUTOR_URL). Any answer from it, including an HTTP error, a timeout
+    or an unusable body, is returned as a result.
+    """
+    if not CODE_EXECUTOR_URL.strip():
+        # Not deployed (the Helm chart with codeExecutor.enabled=false): the
+        # same as an executor that cannot be reached.
+        logger.warning(
+            "code_executor_service_unavailable",
+            language=language,
+            error="CODE_EXECUTOR_URL is empty",
+        )
+        return None
     try:
         # default=str so non-JSON-native types coming through trace/span column
         # mapping (Decimal from clickhouse-driver, datetime, UUID) serialize
         # cleanly. The eval body still gets a string for those keys, which
         # matches what `str(kwargs.get(...))` already expects in every system eval.
-        payload = json.dumps({
-            "code": code,
-            "input_data": input_data,
-            "language": language,
-            "timeout": timeout,
-        }, default=str).encode("utf-8")
+        payload = json.dumps(
+            {
+                "code": code,
+                "input_data": input_data,
+                "language": language,
+                "timeout": timeout,
+            },
+            default=str,
+        ).encode("utf-8")
 
         req = urllib.request.Request(
             f"{CODE_EXECUTOR_URL}/execute",
@@ -472,39 +617,108 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            logger.info("code_executor_service_used", language=language, status=result.get("status"))
-            return result
+            body = resp.read(MAX_EXECUTOR_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as e:
+        return _executor_error(language, f"HTTP {e.code}", str(e))
+    except urllib.error.URLError as e:
+        if _executor_unreachable(e.reason):
+            logger.warning(
+                "code_executor_service_unavailable",
+                language=language,
+                error=str(e.reason),
+            )
+            return None
+        if isinstance(e.reason, TimeoutError):
+            return _executor_error(language, "timed out", str(e.reason))
+        return _executor_error(language, "request failed", str(e.reason))
+    except TimeoutError as e:
+        return _executor_error(language, "timed out", str(e))
     except Exception as e:
-        logger.debug("code_executor_service_unavailable", error=str(e))
-        return None  # Fall back to local sandbox
+        return _executor_error(language, "request failed", str(e))
+
+    if len(body) > MAX_EXECUTOR_RESPONSE_BYTES:
+        return _executor_error(language, "response too large", f"{len(body)} bytes")
+    try:
+        result = json.loads(body.decode("utf-8"))
+    except ValueError as e:
+        return _executor_error(language, "invalid response", str(e))
+    if not isinstance(result, dict) or "status" not in result:
+        return _executor_error(language, "invalid response", "no status in response")
+
+    logger.info(
+        "code_executor_service_used", language=language, status=result.get("status")
+    )
+    return result
 
 
-def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+def _local_fallback_allowed(language: str) -> bool:
+    """Whether eval code may run in this worker because the executor is unreachable.
+
+    Only self-hosted installs that set CODE_EXECUTOR_LOCAL_FALLBACK get the
+    local runner. Future AGI Cloud always runs the code executor, so it
+    refuses it whatever CODE_EXECUTOR_LOCAL_FALLBACK says.
+    """
+    if not getattr(settings, "CODE_EXECUTOR_LOCAL_FALLBACK", False):
+        return False
+    deployment = str(getattr(settings, "CLOUD_DEPLOYMENT", "") or "")
+    if is_cloud_env(deployment):
+        logger.warning(
+            "code_executor_local_fallback_refused",
+            language=language,
+            cloud_deployment=deployment,
+        )
+        return False
+    logger.warning("code_executor_local_fallback", language=language)
+    return True
+
+
+def execute_sandboxed_python(
+    code: str, input_data: dict, timeout: int = DEFAULT_TIMEOUT_SECONDS
+) -> dict:
     """
     Execute Python code in a production-grade sandbox.
 
-    Tries the nsjail code-executor service first (Tier 1: full namespace isolation).
-    Falls back to RestrictedPython subprocess sandbox (Tier 2).
+    Runs on the nsjail code-executor service (Tier 1: full namespace isolation).
+    Uses the RestrictedPython subprocess sandbox (Tier 2) only when the executor
+    is unreachable and the local fallback is enabled.
     """
-    # Try nsjail executor service first
     result = _call_executor_service(code, input_data, "python", timeout)
     if result is not None:
         return result
+    if not _local_fallback_allowed("python"):
+        return {
+            "status": "error",
+            "data": EXECUTOR_UNAVAILABLE_MESSAGE,
+            "setup_error": True,
+        }
     script = _build_python_sandbox_script(code, input_data)
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="sandbox_") as f:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False, prefix="sandbox_"
+    ) as f:
         f.write(script)
         script_path = f.name
 
     try:
         result = subprocess.run(
-            [sys.executable, "-I", script_path],  # -I: isolated mode (no user site, no PYTHONPATH)
+            [
+                sys.executable,
+                "-I",
+                script_path,
+            ],  # -I: isolated mode (no user site, no PYTHONPATH)
             capture_output=True,
             text=True,
             timeout=timeout,
             preexec_fn=_set_resource_limits,
-            env={"PYTHONDONTWRITEBYTECODE": "1"},  # Minimal env — no PATH, no HOME
+            # Numeric libraries may otherwise start one thread per host CPU and
+            # exhaust the sandbox's RLIMIT_NPROC before user code can execute.
+            env={
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "NUMEXPR_NUM_THREADS": "1",
+            },
             cwd="/tmp",
         )
 
@@ -512,19 +726,34 @@ def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT
         if not stdout:
             stderr = result.stderr.strip()[:500]
             if result.returncode == -signal.SIGKILL:
-                return {"status": "error", "data": "Process killed — likely exceeded memory limit (128MB)"}
+                return {
+                    "status": "error",
+                    "data": "Process killed — likely exceeded memory limit (128MB)",
+                }
             if result.returncode == -signal.SIGXCPU:
-                return {"status": "error", "data": f"CPU time limit exceeded ({timeout}s)"}
-            return {"status": "error", "data": f"No output from sandbox. Exit code: {result.returncode}. Stderr: {stderr}"}
+                return {
+                    "status": "error",
+                    "data": f"CPU time limit exceeded ({timeout}s)",
+                }
+            return {
+                "status": "error",
+                "data": f"No output from sandbox. Exit code: {result.returncode}. Stderr: {stderr}",
+            }
 
         # Limit output size
         if len(stdout) > MAX_OUTPUT_BYTES:
-            return {"status": "error", "data": f"Output too large ({len(stdout)} bytes, max {MAX_OUTPUT_BYTES})"}
+            return {
+                "status": "error",
+                "data": f"Output too large ({len(stdout)} bytes, max {MAX_OUTPUT_BYTES})",
+            }
 
         try:
             return json.loads(stdout)
         except json.JSONDecodeError:
-            return {"status": "error", "data": f"Invalid JSON from sandbox: {stdout[:200]}"}
+            return {
+                "status": "error",
+                "data": f"Invalid JSON from sandbox: {stdout[:200]}",
+            }
 
     except subprocess.TimeoutExpired:
         return {"status": "error", "data": f"Execution timed out ({timeout}s)"}
@@ -538,17 +767,25 @@ def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT
             pass
 
 
-def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+def execute_sandboxed_javascript(
+    code: str, input_data: dict, timeout: int = DEFAULT_TIMEOUT_SECONDS
+) -> dict:
     """
     Execute JavaScript code in a sandboxed subprocess.
 
-    Tries the nsjail code-executor service first (Tier 1).
-    Falls back to local Function() sandbox (Tier 2).
+    Runs on the nsjail code-executor service (Tier 1). Uses the local
+    Function() sandbox (Tier 2) only when the executor is unreachable and the
+    local fallback is enabled.
     """
-    # Try nsjail executor service first
     result = _call_executor_service(code, input_data, "javascript", timeout)
     if result is not None:
         return result
+    if not _local_fallback_allowed("javascript"):
+        return {
+            "status": "error",
+            "data": EXECUTOR_UNAVAILABLE_MESSAGE,
+            "setup_error": True,
+        }
 
     # Fallback: local sandbox
     """
@@ -561,14 +798,16 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
             break
 
     if not node_path:
-        return {"status": "error", "data": "Node.js is not available for JavaScript execution"}
+        return {"status": "error", "data": LOCAL_NO_NODE_MESSAGE, "setup_error": True}
 
     script = _build_js_sandbox_single_file(code, input_data)
 
     script_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False, prefix="sandbox_") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, prefix="sandbox_"
+        ) as f:
             f.write(script)
             script_path = f.name
 
@@ -592,10 +831,16 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
         stdout = result.stdout.strip()
         if not stdout:
             stderr = result.stderr.strip()[:500]
-            return {"status": "error", "data": f"No output. Exit code: {result.returncode}. Stderr: {stderr}"}
+            return {
+                "status": "error",
+                "data": f"No output. Exit code: {result.returncode}. Stderr: {stderr}",
+            }
 
         if len(stdout) > MAX_OUTPUT_BYTES:
-            return {"status": "error", "data": f"Output too large ({len(stdout)} bytes)"}
+            return {
+                "status": "error",
+                "data": f"Output too large ({len(stdout)} bytes)",
+            }
 
         try:
             return json.loads(stdout)
@@ -603,7 +848,10 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
             return {"status": "error", "data": f"Invalid JSON: {stdout[:200]}"}
 
     except subprocess.TimeoutExpired:
-        return {"status": "error", "data": f"JavaScript execution timed out ({timeout}s)"}
+        return {
+            "status": "error",
+            "data": f"JavaScript execution timed out ({timeout}s)",
+        }
     except Exception as e:
         logger.error("js_sandbox_failed", error=str(e))
         return {"status": "error", "data": f"JavaScript sandbox error: {e}"}

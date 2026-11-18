@@ -1,5 +1,6 @@
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo } from "react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
@@ -31,8 +32,8 @@ const getColumnConfig = (columnConfig) => {
           valueGetter: (params) => {
             return {
               title: params.data?.trial,
-              improvement: params.data?.scorePercentageChange,
-              isBest: params.data?.isBest,
+              improvement: params.data?.score_percentage_change,
+              isBest: params.data?.is_best,
             };
           },
         };
@@ -52,9 +53,9 @@ const getColumnConfig = (columnConfig) => {
         };
 
       default:
-        // Eval columns - data is already in { score, percentageChange } format
+        // Eval columns - values live under data.eval_scores keyed by column.id
+        // each value is { score, percentage_change }.
         return {
-          field: column?.id,
           headerName: column?.name,
           minWidth: 170,
           colId: column?.id,
@@ -62,6 +63,7 @@ const getColumnConfig = (columnConfig) => {
           headerComponent: OptimizeResultHeader,
           isVisible: true,
           id: column?.id,
+          valueGetter: (params) => params.data?.eval_scores?.[column?.id],
         };
     }
   });
@@ -73,7 +75,6 @@ const defaultColDef = {
   filter: false,
   resizable: true,
   suppressMenu: true,
-  suppressMultiSort: true,
 };
 
 /**
@@ -94,8 +95,8 @@ const DatasetOptimizationResultGrid = ({ optimizationId, onTrialClick }) => {
   });
 
   const columnDefs = useMemo(() => {
-    return getColumnConfig(optimizationData?.columnConfig);
-  }, [optimizationData?.columnConfig]);
+    return getColumnConfig(optimizationData?.column_config);
+  }, [optimizationData?.column_config]);
 
   const rowData = useMemo(() => {
     return optimizationData?.table ?? [];

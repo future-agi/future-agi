@@ -16,6 +16,7 @@ import CompareDrawerSkeleton from "./Common/CompareDrawerSkeleton";
 import { useNavigate } from "react-router";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import CompareDatasetSummaryIcon from "./DatasetSummaryTab/CompareDatasetSummaryIcon";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const BaseColumnDrawer = ({
   baseColumnDrawerVisible,
@@ -40,12 +41,6 @@ const BaseColumnDrawer = ({
 
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (selectedDatasets && selectedDatasets.length > 0) {
-      getBaseColumn();
-    }
-  }, [selectedDatasets]);
-
   const { mutate: getBaseColumn } = useMutation({
     mutationFn: () => {
       setLoading(true);
@@ -64,7 +59,7 @@ const BaseColumnDrawer = ({
       });
     },
     onSuccess: (data) => {
-      const baseColumns = data?.data?.result?.baseColumns || [];
+      const baseColumns = data?.data?.result?.base_columns || [];
       setBaseColumnsData(baseColumns);
       setIsDataLoaded(true);
       setLoading(false);
@@ -76,15 +71,24 @@ const BaseColumnDrawer = ({
     },
   });
 
+  const selectedDatasetIdsKey = selectedDatasets?.join(",") || "";
+
+  useEffect(() => {
+    if (!baseColumnDrawerVisible || !selectedDatasetIdsKey) return;
+    getBaseColumn();
+  }, [baseColumnDrawerVisible, selectedDatasetIdsKey, getBaseColumn]);
+
   // Filter base columns based on search query
   const filteredBaseColumns = baseColumnsData.filter((column) =>
     column.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
+  const covered = useDrawerCovered(baseColumnDrawerVisible);
   return (
     <Drawer
       anchor="right"
       open={baseColumnDrawerVisible}
+      sx={coveredDrawerSx(covered)}
       onClose={onBaseColumnDrawerClose}
       variant="persistent"
       PaperProps={{
@@ -93,8 +97,7 @@ const BaseColumnDrawer = ({
           height: "100vh",
           position: "fixed",
           zIndex: 20,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           overflow: "hidden",
           display: "flex",
@@ -124,13 +127,13 @@ const BaseColumnDrawer = ({
           <IconButton
             onClick={() => {
               onBaseColumnDrawerClose();
-              onCompareDatasetDrawerClose();
+              onCompareDatasetDrawerClose?.();
               compareFromOutside
                 ? setSelectedValueBase(null)
-                : setSelectedValue(null);
+                : setSelectedValue?.(null);
             }}
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         {selectedDatasetsValues?.length > 0 && (
@@ -190,7 +193,7 @@ const BaseColumnDrawer = ({
               marginTop: 3,
               marginBottom: 2,
               "& .MuiOutlinedInput-root": {
-                borderRadius: "5px",
+                borderRadius: "6px",
               },
             }}
             searchQuery={searchQuery}
@@ -241,7 +244,7 @@ const BaseColumnDrawer = ({
                       sx={{
                         color: "text.primary",
                         fontWeight: 400,
-                        fontSize: "14px",
+                        fontSize: "12px",
                       }}
                     >
                       {val}
@@ -253,16 +256,16 @@ const BaseColumnDrawer = ({
                   sx={{
                     marginTop: "16px",
                     borderRadius: "4px",
-                    backgroundColor: "blue.o5",
+                    backgroundColor: "status.info.bg",
                     border: "1px solid",
-                    borderColor: "blue.200",
+                    borderColor: "status.info.border",
                     padding: "12px",
                   }}
                 >
                   <Typography
                     typography={"s1"}
                     fontWeight={"fontWeightSemiBold"}
-                    color="blue.500"
+                    color="status.info.fg"
                   >
                     There are no common columns to compare
                   </Typography>
@@ -304,17 +307,14 @@ const BaseColumnDrawer = ({
             <Button
               sx={{
                 width: "49%",
-                height: "36px",
-                fontSize: "12px",
                 color: "text.secondary",
-                borderRadius: "8px",
               }}
               variant="outlined"
               onClick={() => {
                 onBaseColumnDrawerClose();
                 compareFromOutside
                   ? setSelectedValueBase(null)
-                  : setSelectedValue(null);
+                  : setSelectedValue?.(null);
               }}
             >
               Back
@@ -322,9 +322,6 @@ const BaseColumnDrawer = ({
             <Button
               sx={{
                 width: "49%",
-                height: "36px",
-                fontSize: "12px",
-                borderRadius: "8px",
                 marginLeft: "2%",
               }}
               variant="contained"

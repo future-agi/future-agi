@@ -1,20 +1,29 @@
-import { format, formatISO } from "date-fns";
+import { format } from "date-fns";
 import React, { useCallback, useEffect, useRef } from "react";
 import { palette } from "src/theme/palette";
 
 import { extractJinjaVariables } from "./jinjaVariables";
-import { logger } from "./logger";
 
 export const colorPalette = [
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#846EFF", graphBgColor: "#D7D0FF" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#FDEEE2", textColor: "#F17F2B", graphBgColor: "#FBD8BF" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E0F7EC", textColor: "#26BD78", graphBgColor: "#B3EAD1" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E8F3FE", textColor: "#559FF7", graphBgColor: "#CFE5FD" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#F9E8FD", textColor: "#D65EEC", graphBgColor: "#F2D1FA" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#573FCC", graphBgColor: "#B8AFFF" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#FDEEE2", textColor: "#B5520A", graphBgColor: "#F8B98A" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E0F7EC", textColor: "#007C3E", graphBgColor: "#80DBB3" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E8F3FE", textColor: "#276DBD", graphBgColor: "#A3CDFB" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#9F46B5", graphBgColor: "#E8A9F5" },
 ];
 
@@ -233,9 +242,7 @@ export function getRandomColor() {
   return color;
 }
 
-export function getRandomId() {
-  return Math.random().toString(36).substr(2, 9);
-}
+export { getRandomId } from "./getRandomId";
 
 export const getScorePercentage = (s, decimalPlaces = 0) => {
   if (s <= 0) {
@@ -245,18 +252,7 @@ export const getScorePercentage = (s, decimalPlaces = 0) => {
   return Number(score.toFixed(decimalPlaces));
 };
 
-export async function copyToClipboard(text) {
-  try {
-    // Serialize objects/arrays to JSON to avoid "[object Object]" from .toString()
-    const value =
-      typeof text === "object" && text !== null
-        ? JSON.stringify(text, null, 2)
-        : text;
-    await navigator.clipboard.writeText(value);
-  } catch (err) {
-    logger.error("Failed to copy text: ", err);
-  }
-}
+export { copyToClipboard } from "./copyToClipboard";
 
 export const isMouseInBound = (e, rect) => {
   let ret = false;
@@ -392,9 +388,6 @@ export function stringAvatar(name) {
   if (!name || typeof name !== "string") {
     // Handle invalid input by returning default values
     return {
-      sx: {
-        bgcolor: "#cccccc", // Default background color
-      },
       children: "?", // Default placeholder character
     };
   }
@@ -406,25 +399,10 @@ export function stringAvatar(name) {
       : `${nameParts[0][0]}`; // First letter of a single word
 
   return {
-    sx: {
-      bgcolor: stringToColor(name),
-    },
     children: initials.toUpperCase(),
   };
 }
 
-export function stringToColor(string) {
-  let hash = 0;
-  for (let i = 0; i < string.length; i++) {
-    hash = string.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  let color = "#";
-  for (let i = 0; i < 3; i++) {
-    const value = (hash >> (i * 8)) & 0xff;
-    color += `00${value.toString(16)}`.slice(-2);
-  }
-  return color;
-}
 export function formatEvalType(str) {
   // Handle empty or non-string input
   if (!str || typeof str !== "string") {
@@ -497,7 +475,7 @@ export const useThrottle = (callback, delay) => {
   return [throttledFn, stop, resume];
 };
 
-// Converts a camelCase string to snake_case. Used by objectCamelToSnake for filter serialization.
+// Converts a camelCase string to snake_case for narrow, explicit call sites.
 export const camelToSnakeCase = (str, strict = false) => {
   if (!strict) {
     return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -528,16 +506,22 @@ export const getMarkColor = (weight, isOverlap = false, alpha = 0.5) => {
   let baseColor = "";
 
   if (weight > 0 && weight < 0.2) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#FA9B78";
   } else if (weight > 0.2 && weight < 0.4) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#fa8f7e";
   } else if (weight > 0.4 && weight < 0.6) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#f98881";
   } else if (weight > 0.6 && weight < 0.8) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#f78185";
   } else if (weight > 0.8 && weight < 1) {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#F57B8A";
   } else {
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#F57B8A";
   }
 
@@ -574,9 +558,7 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-export const formatISOCustom = (date) => {
-  return formatISO(date).split("+")[0] + ".000Z";
-};
+export { formatISOCustom } from "./formatISOCustom";
 
 // Start Generation Here
 export const throttle = (func, limit) => {
@@ -650,7 +632,7 @@ export const customizeAgGridPopup = (theme, targetText, iconPath) => {
       // Basic styling
       element.style.fontWeight = 400;
       element.style.color = theme.palette.text.primary;
-      element.style.fontSize = "14px";
+      element.style.fontSize = "12px";
       element.style.fontFamily = "Inter, sans-serif";
       element.style.paddingLeft = "14px";
       element.style.paddingTop = "14px";
@@ -742,6 +724,28 @@ export function extractVariables(content, templateFormat = "mustache") {
     : [];
 }
 
+// Union of variables across a single instructions string plus every content
+// in a multi-turn messages array. Used by LLM eval surfaces where the user
+// can put a {{var}} in any of System / User / Assistant turns.
+export function extractVariablesFromMessages(
+  instructions,
+  messages,
+  templateFormat = "mustache",
+) {
+  const seen = new Set();
+  extractVariables(instructions || "", templateFormat).forEach((v) =>
+    seen.add(v),
+  );
+  if (Array.isArray(messages)) {
+    for (const m of messages) {
+      extractVariables(m?.content || "", templateFormat).forEach((v) =>
+        seen.add(v),
+      );
+    }
+  }
+  return [...seen];
+}
+
 export function sanitizeContent(content) {
   // Check if content consists only of newline characters
   if (/^\n+$/.test(content)) {
@@ -751,25 +755,16 @@ export function sanitizeContent(content) {
   return content;
 }
 
-export function mergeRefs(...refs) {
-  return (node) => {
-    refs.forEach((ref) => {
-      if (typeof ref === "function") {
-        ref(node);
-      } else if (ref != null) {
-        ref.current = node;
-      }
-    });
-  };
-}
+export { mergeRefs } from "./mergeRefs";
 
 // ---------------------------------------------------------------------------
 // canonicalKeys / canonicalEntries / canonicalValues
 //
-// Legacy cached objects and older call sites can still contain both a
-// snake_case key and a camelCase alias for the same value. Those aliases are
-// plain enumerable own-properties, so `Object.keys(obj)` returns both keys and
-// dynamic UI lists can render duplicate fields.
+// Some client-side objects can contain both a snake_case key and a camelCase
+// key for the same value, especially data built outside generated contracts
+// (for example imported JSON, local cache, or developer tooling payloads).
+// Those duplicate keys are plain enumerable own-properties, so `Object.keys`
+// returns both and dynamic UI lists can render duplicate fields.
 //
 // These helpers only de-dupe an object that already has both keys. They do
 // not add aliases or mutate response payloads.
@@ -808,26 +803,6 @@ export const canonicalValues = (obj) => {
   return canonicalKeys(obj).map((key) => obj[key]);
 };
 
-export const objectCamelToSnake = (obj) => {
-  if (obj === null || obj === undefined) {
-    return obj;
-  }
-
-  if (Array.isArray(obj)) {
-    return obj.map((item) => objectCamelToSnake(item));
-  }
-
-  if (typeof obj !== "object") {
-    return obj;
-  }
-
-  return Object.keys(obj).reduce((acc, key) => {
-    const snakeKey = camelToSnakeCase(key);
-    acc[snakeKey] = objectCamelToSnake(obj[key]);
-    return acc;
-  }, {});
-};
-
 // Converts object keys from snake_case to camelCase
 export const objectSnakeToCamel = (obj) => {
   if (obj === null || obj === undefined) return obj;
@@ -847,8 +822,10 @@ export const paramsSerializer = () => {
 
       Object.entries(params).forEach(([key, value]) => {
         if (Array.isArray(value)) {
-          value.forEach((v) => searchParams.append(key, v));
-        } else if (value !== undefined) {
+          value
+            .filter((v) => v !== undefined && v !== null)
+            .forEach((v) => searchParams.append(key, v));
+        } else if (value !== undefined && value !== null) {
           searchParams.append(key, value);
         }
       });
@@ -1017,12 +994,12 @@ export function interpolateColorTokenBasedOnScore(
   } else if (factor < 60) {
     return {
       bgcolor: palette("light").orange.o5,
-      color: palette("light").orange[500] ?? "#A64B00",
+      color: palette("light").orange[500],
     };
   } else if (factor < 80) {
     return {
-      bgcolor: palette("light").yellow[50],
-      color: palette("light").yellow[800],
+      bgcolor: "var(--eval-score-yellow-bg)",
+      color: "var(--eval-score-yellow-text)",
     };
   } else if (factor < 99) {
     return {
@@ -1099,20 +1076,33 @@ export const formatStartTimeByRequiredFormat = (startTime, dateFormat) => {
  */
 export const normalizeRecordings = (recordings) => {
   if (!recordings)
-    return { stereo: "", assistant: "", customer: "", combined: "", mono: "" };
+    return {
+      stereo: "",
+      assistant: "",
+      customer: "",
+      combined: "",
+      mono: "",
+      stereoChannels: null,
+    };
+  // Which speaker each stereo channel carries, e.g. { left: "customer",
+  // right: "assistant" }, when the backend sends it.
+  const stereoChannels = recordings.stereo_channels ?? null;
 
-  // Check if it's nested format (has mono object or stereoUrl)
-  const isNestedFormat = recordings.mono || recordings.stereoUrl;
+  // Nested format: backend sends snake_case (stereo_url / mono.*_url);
+  // keep camelCase fallback for the aliased/main response shape.
+  const isNestedFormat =
+    recordings.mono || recordings.stereo_url || recordings.stereoUrl;
 
   if (isNestedFormat) {
     const mono = recordings.mono || {};
-    const combined = mono.combinedUrl || "";
+    const combined = mono.combined_url || mono.combinedUrl || "";
     return {
-      stereo: recordings.stereoUrl || "",
-      assistant: mono.assistantUrl || "",
-      customer: mono.customerUrl || "",
+      stereo: recordings.stereo_url || recordings.stereoUrl || "",
+      assistant: mono.assistant_url || mono.assistantUrl || "",
+      customer: mono.customer_url || mono.customerUrl || "",
       combined,
       mono: combined, // alias for AudioDownloadButton
+      stereoChannels,
     };
   }
 
@@ -1124,6 +1114,7 @@ export const normalizeRecordings = (recordings) => {
     customer: recordings.customer || "",
     combined,
     mono: combined, // alias for AudioDownloadButton
+    stereoChannels,
   };
 };
 
@@ -1351,3 +1342,15 @@ export const stripAttributePathPrefix = (key) =>
   String(key ?? "")
     .replace(/^observation_span\.\d+\.(?:span_attributes\.)?/, "")
     .replace(/(^|\.)span_attributes\./g, "$1");
+
+export const pluralize = (word, count) => {
+  if (count === 1) return word;
+  if (/[^aeiou]y$/i.test(word)) return word.replace(/y$/i, "ies");
+  if (/(s|x|z|ch|sh)$/i.test(word)) return `${word}es`;
+  return `${word}s`;
+};
+
+export const getVersionLabel = (templateVersion) => {
+  const tv = String(templateVersion ?? "");
+  return tv.startsWith("v") ? tv : `v${tv}`;
+};

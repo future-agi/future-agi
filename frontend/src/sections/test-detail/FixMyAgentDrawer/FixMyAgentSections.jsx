@@ -7,15 +7,15 @@ import NonFixableRecommendations from "./NonFixableRecommendations";
 
 const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
   const agentLevelFixableRecommendations =
-    optimizerAnalysis?.response?.agentLevel?.actionableRecommendations ?? [];
+    optimizerAnalysis?.response?.agent_level?.actionable_recommendations ?? [];
   const domainLevelFixableRecommendations =
-    optimizerAnalysis?.response?.domainLevel?.actionableRecommendations ?? [];
+    optimizerAnalysis?.response?.domain_level?.actionable_recommendations ?? [];
   const fixableActionableRecommendations = [
     ...(agentLevelFixableRecommendations ?? []),
     ...(domainLevelFixableRecommendations ?? []),
   ];
   const notFixableActionableRecommendations =
-    optimizerAnalysis?.response?.systemLevel?.actionableRecommendations || [];
+    optimizerAnalysis?.response?.system_level?.actionable_recommendations || [];
 
   const lastUpdated =
     optimizerAnalysis?.last_updated ?? optimizerAnalysis?.lastUpdated;
@@ -60,8 +60,8 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
 
             <NonFixableRecommendations
               humanComparisonSummary={
-                optimizerAnalysis?.response?.systemLevel
-                  ?.humanComparisonSummary ?? ""
+                optimizerAnalysis?.response?.system_level
+                  ?.human_comparison_summary ?? ""
               }
               notFixableActionableRecommendations={
                 notFixableActionableRecommendations

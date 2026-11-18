@@ -3,32 +3,32 @@ import { useGetValidatedFilters } from "./use-get-validated-filters";
 
 const reverseFilter = (filterConfig) => {
   const fil = { ...filterConfig };
-  switch (filterConfig.filterOp) {
+  switch (filterConfig.filter_op) {
     case "equals":
     case "not_equals":
-      fil.filterValue = 100 - filterConfig.filterValue;
+      fil.filter_value = 100 - filterConfig.filter_value;
       break;
     case "greater_than":
-      fil.filterOp = "less_than";
-      fil.filterValue = 100 - filterConfig.filterValue;
+      fil.filter_op = "less_than";
+      fil.filter_value = 100 - filterConfig.filter_value;
       break;
     case "less_than":
-      fil.filterOp = "greater_than";
-      fil.filterValue = 100 - filterConfig.filterValue;
+      fil.filter_op = "greater_than";
+      fil.filter_value = 100 - filterConfig.filter_value;
       break;
     case "greater_than_or_equal":
-      fil.filterOp = "less_than_or_equal";
-      fil.filterValue = 100 - filterConfig.filterValue;
+      fil.filter_op = "less_than_or_equal";
+      fil.filter_value = 100 - filterConfig.filter_value;
       break;
     case "less_than_or_equal":
-      fil.filterOp = "greater_than_or_equal";
-      fil.filterValue = 100 - filterConfig.filterValue;
+      fil.filter_op = "greater_than_or_equal";
+      fil.filter_value = 100 - filterConfig.filter_value;
       break;
     case "between":
-    case "not_in_between":
-      fil.filterValue = [
-        100 - filterConfig.filterValue[1],
-        100 - filterConfig.filterValue[0],
+    case "not_between":
+      fil.filter_value = [
+        100 - filterConfig.filter_value[1],
+        100 - filterConfig.filter_value[0],
       ];
       break;
     default:
@@ -47,11 +47,11 @@ const useReverseEvalFilters = (
 
   const reverseEvalFilters = useMemo(() => {
     return validatedFilters.map((filter) => {
-      if (reverseEvalColumnIds.includes(filter.columnId)) {
+      if (reverseEvalColumnIds.includes(filter.column_id)) {
         return {
           ...filter,
-          filterConfig: {
-            ...reverseFilter(filter.filterConfig),
+          filter_config: {
+            ...reverseFilter(filter.filter_config),
           },
         };
       }

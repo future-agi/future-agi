@@ -35,40 +35,48 @@ class PromptGenerateLLMResponse(BaseModel):
     explanation: str
     ambiguous: bool
 
+
 class PromptSuggestion(BaseModel):
     prompt_suggestion: str
     explanation: str
     ambiguous: bool
+
 
 class Planning(BaseModel):
     planning: str
     explanation: str
     ambiguous: bool
 
+
 class PlanningValidation(BaseModel):
     planning_validation: str
     explanation: str
     ambiguous: bool
+
 
 class InitialDraftPrompt(BaseModel):
     initial_draft_prompt: str
     explanation: str
     ambiguous: bool
 
+
 class RefinedPrompt(BaseModel):
     refined_prompt: str
     explanation: str
     ambiguous: bool
+
 
 class OptimizedPrompt(BaseModel):
     optimized_prompt: str
     explanation: str
     ambiguous: bool
 
+
 class OptimizedPromptValidation(BaseModel):
     optimized_prompt_validation: str
     explanation: str
     ambiguous: bool
+
 
 class FinalPrompt(BaseModel):
     final_prompt: str

@@ -57,7 +57,7 @@ const CustomMetric = () => {
       id,
     ],
     queryFn: () =>
-      axios.get(`${endpoints.customMetric.list}${id}/`, {
+      axios.get(endpoints.customMetric.list(id), {
         params: {
           page: paginationModel.page + 1,
           sort_order: sortModel?.[0]?.sort,
@@ -92,7 +92,8 @@ const CustomMetric = () => {
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="eva:search-fill"
+                  icon="solar:magnifier-linear"
+                  width={16}
                   sx={{ color: "primary.main" }}
                 />
               </InputAdornment>

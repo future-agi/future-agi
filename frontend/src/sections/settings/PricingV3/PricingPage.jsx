@@ -9,6 +9,7 @@
  * - Live cost calculator
  */
 
+import PageHeader from "src/components/page-header";
 import React, { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +22,7 @@ import {
   Typography,
   Stack,
   Paper,
+  Alert,
   Button,
   Chip,
   Divider,
@@ -41,6 +43,7 @@ import {
   ListItemText,
   Tooltip,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 import ConfirmDowngrade from "src/pages/dashboard/settings/ConfirmDowngrade";
@@ -73,15 +76,13 @@ function TierCard({ tier, isCurrent, onUpgrade }) {
   const isFree = tier.key === "free";
 
   return (
-    <Paper
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         p: 3,
         flex: 1,
-        borderRadius: 2,
-        borderColor: isCurrent ? "primary.main" : "divider",
-        borderWidth: isCurrent ? 2 : 1,
         position: "relative",
+        borderColor: isCurrent ? "text.primary" : "divider",
       }}
     >
       {isCurrent && (
@@ -93,7 +94,7 @@ function TierCard({ tier, isCurrent, onUpgrade }) {
         />
       )}
 
-      <Typography variant="h6" fontWeight={700} mb={0.5}>
+      <Typography variant="h6" fontWeight={600} mb={0.5}>
         {tier.display_name}
       </Typography>
 
@@ -117,7 +118,7 @@ function TierCard({ tier, isCurrent, onUpgrade }) {
           Current plan
         </Button>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -146,7 +147,7 @@ function AddonCard({
   onRemove,
   onReinstate,
 }) {
-  const iconName = ADDON_ICONS[addon.key] || "mdi:star";
+  const iconName = ADDON_ICONS[addon.key] || "solar:star-bold";
   const monthlyFee = addon.platform_fee_monthly;
   const annualFee = monthlyFee * 12 * 0.8; // 20% discount for annual
   const displayFee = isAnnual ? annualFee / 12 : monthlyFee;
@@ -157,18 +158,16 @@ function AddonCard({
       : "Upgrade to Pay-as-you-go to enable add-ons.";
 
   return (
-    <Paper
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         p: 2.5,
         flex: 1,
         minHeight: 280,
-        borderRadius: 2,
-        borderColor: isCurrent ? "primary.main" : "divider",
-        borderWidth: isCurrent ? 2 : 1,
         position: "relative",
         display: "flex",
         flexDirection: "column",
+        borderColor: isCurrent ? "text.primary" : "divider",
       }}
     >
       {isCurrent && (
@@ -196,14 +195,14 @@ function AddonCard({
             bgcolor: "action.hover",
           }}
         >
-          <Iconify icon={iconName} width={22} sx={{ color: "primary.main" }} />
+          <Iconify icon={iconName} width={20} sx={{ color: "primary.main" }} />
         </Box>
         <Box>
-          <Typography variant="subtitle1" fontWeight={700}>
+          <Typography variant="subtitle1" fontWeight={600}>
             {addon.display_name}
           </Typography>
           <Stack direction="row" alignItems="baseline" spacing={0.5}>
-            <Typography variant="h5" fontWeight={800}>
+            <Typography variant="h5" fontWeight={600}>
               {fCurrency(displayFee)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
@@ -300,7 +299,7 @@ function AddonCard({
           </Button>
         )}
       </Box>
-    </Paper>
+    </Section>
   );
 }
 
@@ -363,8 +362,8 @@ function BooleanFeatureList({ features, isRemove }) {
         <ListItem key={key} disableGutters sx={{ py: 0.25 }}>
           <ListItemIcon sx={{ minWidth: 28 }}>
             <Iconify
-              icon={isRemove ? "mdi:close" : "mdi:check"}
-              width={18}
+              icon={isRemove ? "solar:close-linear" : "solar:check-linear"}
+              width={16}
               sx={{ color: isRemove ? "error.main" : "success.main" }}
             />
           </ListItemIcon>
@@ -429,7 +428,7 @@ function FeatureMatrix({ plansData }) {
         <TableHead>
           <TableRow sx={{ bgcolor: "background.neutral" }}>
             <TableCell
-              sx={{ fontWeight: 700, minWidth: 200, py: 2, fontSize: "1rem" }}
+              sx={{ fontWeight: 600, minWidth: 200, py: 2, fontSize: "1rem" }}
             >
               Feature
             </TableCell>
@@ -437,7 +436,7 @@ function FeatureMatrix({ plansData }) {
               <TableCell
                 key={p}
                 align="center"
-                sx={{ fontWeight: 700, minWidth: 100, py: 2, fontSize: "1rem" }}
+                sx={{ fontWeight: 600, minWidth: 100, py: 2, fontSize: "1rem" }}
               >
                 {planLabels[p]}
               </TableCell>
@@ -452,9 +451,9 @@ function FeatureMatrix({ plansData }) {
                   colSpan={6}
                   sx={{
                     bgcolor: "action.hover",
-                    fontWeight: 700,
+                    fontWeight: 600,
                     fontSize: "0.75rem",
-                    textTransform: "uppercase",
+                    textTransform: "none",
                     letterSpacing: 0.5,
                     py: 1,
                   }}
@@ -475,7 +474,7 @@ function FeatureMatrix({ plansData }) {
                       return (
                         <TableCell key={p} align="center">
                           <Iconify
-                            icon="mdi:check"
+                            icon="solar:check-linear"
                             width={20}
                             sx={{ color: "success.main" }}
                           />
@@ -488,13 +487,13 @@ function FeatureMatrix({ plansData }) {
                         <TableCell key={p} align="center">
                           {val ? (
                             <Iconify
-                              icon="mdi:check"
+                              icon="solar:check-linear"
                               width={20}
                               sx={{ color: "success.main" }}
                             />
                           ) : (
                             <Iconify
-                              icon="mdi:close"
+                              icon="solar:close-linear"
                               width={16}
                               sx={{ color: "error.main", opacity: 0.7 }}
                             />
@@ -591,7 +590,7 @@ export default function PricingPage() {
 
   const upgradeMutation = useMutation({
     mutationFn: async () => {
-      const res = await axios.post(endpoints.settings.v2.upgradeToPayg);
+      const res = await axios.post(endpoints.settings.v2.upgradeToPayg, {});
       const checkoutUrl = res.data?.result?.checkout_url;
       if (!checkoutUrl) throw new Error("Failed to create checkout session");
       // Redirect to Stripe Checkout — user enters card on Stripe's hosted page
@@ -652,7 +651,7 @@ export default function PricingPage() {
   });
 
   const downgradeMutation = useMutation({
-    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree),
+    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree, {}),
     onSuccess: () => {
       enqueueSnackbar("Downgraded to Free plan", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
@@ -714,7 +713,13 @@ export default function PricingPage() {
   }
 
   const currentPlan = data?.current_plan || "free";
-  const isCustomPricing = data?.is_custom_pricing || false;
+  const isCustomPricing =
+    data?.isCustomPricing ?? data?.is_custom_pricing ?? false;
+  const planChangeLocked =
+    data?.planChangeLocked ?? data?.plan_change_locked ?? false;
+  const planChangeLockedReason =
+    data?.planChangeLockedReason ?? data?.plan_change_locked_reason ?? "";
+  const customDetails = data?.customDetails ?? data?.custom_details ?? null;
   const tiers = data?.tiers || [];
   const addons = data?.addons || [];
   const currentAddon = addons.find((a) => a.key === currentPlan);
@@ -729,31 +734,25 @@ export default function PricingPage() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={700} mb={0.5}>
-        Plans & Pricing
-      </Typography>
-      <Typography variant="body2" color="text.secondary" mb={3}>
-        Start free or pay as you go. Add Boost, Scale, or Enterprise for
-        advanced features and higher limits.
-      </Typography>
+      <PageHeader
+        title="Plans & pricing"
+        description="Start free or pay as you go. Add Boost, Scale, or Enterprise for advanced features and higher limits."
+        sx={{ mb: 3 }}
+      />
+
+      {planChangeLocked && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          {planChangeLockedReason}
+        </Alert>
+      )}
 
       {/* Custom pricing banner + details */}
       {isCustomPricing && (
         <>
-          <Paper
-            variant="outlined"
-            sx={(theme) => ({
-              p: 3,
-              mb: 3,
-              borderRadius: 2,
-              border: "1px solid",
-              ...(theme.palette.mode === "light"
-                ? { bgcolor: "info.lighter", borderColor: "info.light" }
-                : {
-                    bgcolor: alpha(theme.palette.info.main, 0.08),
-                    borderColor: alpha(theme.palette.info.main, 0.2),
-                  }),
-            })}
+          <Alert
+            severity="info"
+            icon={false}
+            sx={{ mb: 3, "& .MuiAlert-message": { width: 1 } }}
           >
             <Stack direction="row" alignItems="center" spacing={2}>
               <Iconify
@@ -762,13 +761,13 @@ export default function PricingPage() {
                 sx={{ color: "info.main" }}
               />
               <Box>
-                <Typography variant="subtitle1" fontWeight={700}>
+                <Typography variant="subtitle1" fontWeight={600}>
                   Custom Pricing
-                  {data?.custom_details?.platform_fee > 0 && (
+                  {customDetails?.platform_fee > 0 && (
                     <Chip
-                      label={`${fCurrency(data.custom_details.per_charge_amount)}/${
+                      label={`${fCurrency(customDetails.per_charge_amount)}/${
                         { 1: "mo", 3: "qtr", 6: "half", 12: "yr" }[
-                          data.custom_details.platform_fee_billing_cycle
+                          customDetails.platform_fee_billing_cycle
                         ] || "mo"
                       }`}
                       size="small"
@@ -782,21 +781,18 @@ export default function PricingPage() {
                 </Typography>
               </Box>
             </Stack>
-          </Paper>
+          </Alert>
 
           {/* Custom plan features */}
-          {data?.custom_details?.features && (
+          {customDetails?.features && (
             <>
               <Typography variant="subtitle1" fontWeight={600} mb={2}>
                 Your plan features
               </Typography>
-              <Paper
-                variant="outlined"
-                sx={{ borderRadius: 2, mb: 3, overflow: "hidden" }}
-              >
+              <Section variant="panel" sx={{ p: 0, mb: 3, overflow: "hidden" }}>
                 <Table size="small">
                   <TableBody>
-                    {canonicalEntries(data.custom_details.features)
+                    {canonicalEntries(customDetails.features)
                       .filter(
                         ([key]) =>
                           !SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p)),
@@ -814,11 +810,18 @@ export default function PricingPage() {
                               {FEATURE_LABELS[key] || key}
                             </Typography>
                           </TableCell>
-                          <TableCell align="right" sx={{ py: 1 }}>
+                          <TableCell
+                            align="right"
+                            sx={{ fontVariantNumeric: "tabular-nums", py: 1 }}
+                          >
                             {typeof v === "boolean" ? (
                               <Iconify
-                                icon={v ? "mdi:check" : "mdi:close"}
-                                width={18}
+                                icon={
+                                  v
+                                    ? "solar:check-linear"
+                                    : "solar:close-linear"
+                                }
+                                width={20}
                                 sx={{
                                   color: v ? "success.main" : "error.main",
                                 }}
@@ -833,13 +836,13 @@ export default function PricingPage() {
                       ))}
                   </TableBody>
                 </Table>
-              </Paper>
+              </Section>
             </>
           )}
 
           {/* Custom pricing tiers */}
-          {data?.custom_details?.pricing &&
-            Object.keys(data.custom_details.pricing).length > 0 && (
+          {customDetails?.pricing &&
+            Object.keys(customDetails.pricing).length > 0 && (
               <>
                 <Typography variant="subtitle1" fontWeight={600} mb={1}>
                   Your pricing tiers
@@ -855,12 +858,12 @@ export default function PricingPage() {
                   <Table size="small">
                     <TableHead>
                       <TableRow sx={{ "& th": { py: 2 } }}>
-                        <TableCell sx={{ fontWeight: 700 }}>
+                        <TableCell sx={{ fontWeight: 600 }}>
                           Dimension
                         </TableCell>
                         <TableCell
                           sx={{
-                            fontWeight: 700,
+                            fontWeight: 600,
                             borderLeft: "1px solid",
                             borderLeftColor: "divider",
                           }}
@@ -869,7 +872,7 @@ export default function PricingPage() {
                         </TableCell>
                         <TableCell
                           sx={{
-                            fontWeight: 700,
+                            fontWeight: 600,
                             borderLeft: "1px solid",
                             borderLeftColor: "divider",
                           }}
@@ -879,7 +882,7 @@ export default function PricingPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {canonicalEntries(data.custom_details.pricing).flatMap(
+                      {canonicalEntries(customDetails.pricing).flatMap(
                         ([dimKey, dim]) =>
                           dim.tiers.map((tier, idx) => (
                             <TableRow key={`${dimKey}-${idx}`}>
@@ -893,6 +896,7 @@ export default function PricingPage() {
                               )}
                               <TableCell
                                 sx={{
+                                  fontVariantNumeric: "tabular-nums",
                                   borderLeft: "1px solid",
                                   borderLeftColor: "divider",
                                 }}
@@ -922,25 +926,15 @@ export default function PricingPage() {
       )}
 
       {/* Current plan status */}
-      {currentPlan !== "free" && !isCustomPricing && (
-        <Paper
-          variant="outlined"
-          sx={(theme) => ({
-            p: 2,
-            mb: 3,
-            borderRadius: 2,
-            border: "1px solid",
-            ...(theme.palette.mode === "light"
-              ? { bgcolor: "success.lighter", borderColor: "success.light" }
-              : {
-                  bgcolor: alpha(theme.palette.success.main, 0.08),
-                  borderColor: alpha(theme.palette.success.main, 0.2),
-                }),
-          })}
+      {currentPlan !== "free" && !isCustomPricing && !planChangeLocked && (
+        <Alert
+          severity="success"
+          icon={false}
+          sx={{ mb: 3, "& .MuiAlert-message": { width: 1 } }}
         >
           <Stack direction="row" alignItems="center" spacing={2}>
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={24}
               sx={{ color: "success.main" }}
             />
@@ -964,11 +958,11 @@ export default function PricingPage() {
               )}
             </Box>
           </Stack>
-        </Paper>
+        </Alert>
       )}
 
       {/* Tiers: Free / PAYG (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <>
           <Typography variant="subtitle1" fontWeight={600} mb={1.5}>
             Choose your tier
@@ -994,7 +988,7 @@ export default function PricingPage() {
       )}
 
       {/* Add-ons: Boost / Scale / Enterprise (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <Stack direction="column" mb={1.5}>
           <Stack
             direction="row"
@@ -1023,9 +1017,6 @@ export default function PricingPage() {
                     sx={{
                       bgcolor: "success.lighter",
                       color: "success.dark",
-                      fontWeight: 600,
-                      fontSize: "0.75rem",
-                      borderRadius: 1,
                     }}
                   />
                 </Stack>
@@ -1066,7 +1057,7 @@ export default function PricingPage() {
       )}
 
       {/* Feature comparison (hidden for custom pricing) */}
-      {!isCustomPricing && (
+      {!isCustomPricing && !planChangeLocked && (
         <>
           <Divider sx={{ my: 3 }} />
           <Typography variant="subtitle1" fontWeight={600} mb={2}>
@@ -1097,13 +1088,13 @@ export default function PricingPage() {
                 <TableHead>
                   <TableRow sx={{ "& th": { py: 2 } }}>
                     <TableCell
-                      sx={{ fontWeight: 700, width: 200, fontSize: "1rem" }}
+                      sx={{ fontWeight: 600, width: 200, fontSize: "1rem" }}
                     >
                       Dimension
                     </TableCell>
                     <TableCell
                       sx={{
-                        fontWeight: 700,
+                        fontWeight: 600,
                         fontSize: "1rem",
                         borderLeft: "1px solid",
                         borderLeftColor: "divider",
@@ -1113,7 +1104,7 @@ export default function PricingPage() {
                     </TableCell>
                     <TableCell
                       sx={{
-                        fontWeight: 700,
+                        fontWeight: 600,
                         fontSize: "1rem",
                         borderLeft: "1px solid",
                         borderLeftColor: "divider",
@@ -1216,15 +1207,15 @@ export default function PricingPage() {
         preTitleIcon={
           ADDON_ICONS[addonDialog.plan] ||
           (addonDialog.action === "add"
-            ? "mdi:plus-circle"
-            : "mdi:alert-circle")
+            ? "solar:add-circle-linear"
+            : "solar:danger-circle-linear")
         }
       >
         <DialogContent sx={{ px: 0 }}>
           {addonDialog.action === "add" && (
             <Box
               sx={{
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 bgcolor: (theme) => alpha(theme.palette.info.main, 0.06),
                 border: (theme) =>
                   `1px solid ${alpha(theme.palette.info.main, 0.12)}`,
@@ -1244,7 +1235,7 @@ export default function PricingPage() {
           {addonDialog.action === "remove" && (
             <Box
               sx={{
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 bgcolor: (theme) => alpha(theme.palette.warning.main, 0.06),
                 border: (theme) =>
                   `1px solid ${alpha(theme.palette.warning.main, 0.12)}`,

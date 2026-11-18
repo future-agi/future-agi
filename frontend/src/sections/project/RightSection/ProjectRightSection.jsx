@@ -38,9 +38,6 @@ const ProjectRightSection = ({ isObserve }) => {
         sx={{
           color: "text.primary",
           borderColor: "divider",
-          padding: 1.5,
-          fontSize: "14px",
-          height: "38px",
         }}
         startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
         component="a"
@@ -57,20 +54,12 @@ const ProjectRightSection = ({ isObserve }) => {
         <Button
           variant="contained"
           color="primary"
-          sx={{
-            px: "24px",
-            borderRadius: (theme) => theme.spacing(1),
-            height: "38px",
-          }}
           startIcon={
             <Iconify
               // @ts-ignore
-              icon="octicon:plus-24"
+              icon="solar:add-linear"
               color="background.paper"
-              sx={{
-                width: "20px",
-                height: "20px",
-              }}
+              width="20px"
             />
           }
           onClick={() => {

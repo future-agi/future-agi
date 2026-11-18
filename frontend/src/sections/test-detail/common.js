@@ -7,7 +7,8 @@ import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
 import ScenarioCellRenderer from "./CellRenderers/ScenarioCellRenderer";
 import { useQuery } from "@tanstack/react-query";
-import { canonicalKeys, objectCamelToSnake } from "src/utils/utils";
+import { canonicalKeys } from "src/utils/utils";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { getAnnotationMetricFilterDefinition } from "src/utils/prototypeObserveUtils";
 import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRenderer";
 import { getLabel } from "./PerformanceMetrics/common";
@@ -24,6 +25,7 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 import useKpis from "src/hooks/useKpis";
 import { useMemo } from "react";
 import { LoadingHeader } from "./CellRenderers/ScenarioCellRenderer";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
 const menuOrder = [
   "Pin Column",
@@ -398,6 +400,15 @@ export const getTestRunDetailGridColumnDefs = (columnOrder) => {
   return config;
 };
 
+export const getColumnDefsSignature = (colDefs = []) =>
+  colDefs
+    .map((colDef) =>
+      colDef?.children
+        ? `${colDef.id}:[${getColumnDefsSignature(colDef.children)}]`
+        : String(colDef?.id ?? colDef?.field ?? ""),
+    )
+    .join(",");
+
 export const getTestRunDetailColumnQuery = (
   executionId,
   pageNumber,
@@ -419,7 +430,7 @@ export const getTestRunDetailColumnQuery = (
           page: pageNumber + 1,
           limit: 30,
           search: debouncedSearchQuery,
-          filters: JSON.stringify(validatedFilters?.map(objectCamelToSnake)),
+          filters: JSON.stringify(stripUiFilterKeys(validatedFilters)),
           ...(pageSize && { limit: pageSize }),
         },
       }),
@@ -568,7 +579,7 @@ export const getTestRunDetailFilterDefinition = (columns) => {
       };
     }
     scenarioFilters.push({
-      propertyId: `scenario_${col.scenario_id}_dataset_${col.id}`,
+      propertyId: col.id,
       propertyName: col.column_name,
       filterType: filterType,
       ...extra,
@@ -666,6 +677,13 @@ const IGNORED_KEYS = [
   "scenario_graphs",
   "calls_attempted",
   "failed_calls",
+  // Left out of all three buckets, next to its sibling `failed_calls`. It has
+  // no label, icon or filter mapping, so routing it into `callDetails` would
+  // paint an iconless card on the product's run-detail page that looks
+  // clickable and filters nothing; letting it fall through to `evalMetrics`
+  // would paint a phantom eval. The simulate harness reads
+  // `kpis.completed_calls` directly and never comes through here.
+  "completed_calls",
   "avg_response",
   "avg_user_interruption_count",
   "avg_ai_interruption_rate",
@@ -701,12 +719,9 @@ export const extractKpis = (data, agentType) => {
     : [...IGNORED_KEYS, ...AGENT_METRICS.VOICE, ...DETAILS_KEYS.VOICE];
   const detailsKeys = isVoice ? DETAILS_KEYS.VOICE : DETAILS_KEYS.CHAT;
 
-  // Process data keys. Iterate canonical snake_case keys only — the axios
-  // interceptor adds enumerable camelCase aliases on every response, and
-  // a plain `Object.keys` walk would double-count every metric AND slip
-  // alias keys past the snake_case filter lists (IGNORED_KEYS /
-  // AGENT_METRICS), causing entries like "scenarioGraphs" and "avgScore"
-  // to render as extra eval cards.
+  // Process data keys. Iterate canonical snake_case keys only so legacy
+  // objects carrying both snake_case and camelCase keys do not double-count
+  // metrics or slip alias keys past the snake_case filter lists.
   canonicalKeys(data || {}).forEach((key) => {
     // Categorize by key type
     if (relevantMetrics.includes(key)) {
@@ -827,14 +842,12 @@ export const getSelectedCallExecutionIdsFilter = () => {
   if (selectedCallExecutionIds.length > 0) {
     // if we have any selected call execution ids from fix my agent we need to add it to filter
     return [
-      {
-        column_id: "call_execution_id",
-        filter_config: {
-          filter_op: "in",
-          filter_type: "list",
-          filter_value: selectedCallExecutionIds,
-        },
-      },
+      buildApiFilterFromPanelRow({
+        field: "call_execution_id",
+        fieldType: "categorical",
+        operator: "in",
+        value: selectedCallExecutionIds,
+      }),
     ];
   }
 
@@ -883,12 +896,22 @@ export const columnOptions = [
 
 // tabs.ts
 
-export const getTabsBasedOnAgentType = ({ agentType, testId, executionId }) => {
+export const getTabsBasedOnAgentType = ({
+  agentType,
+  testId,
+  executionId,
+  basePath,
+}) => {
+  // Default keeps the legacy absolute prefix so the standalone
+  // `/simulate/test/**` route is byte-for-byte unchanged; when the execution
+  // detail is mounted elsewhere (the environment workspace) the caller passes
+  // its own base so the tab links stay inside that shell.
+  const base = basePath ?? `/dashboard/simulate/test/${testId}/${executionId}`;
   const tabs = [
     {
       id: "runs",
       title: agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
-      path: `/dashboard/simulate/test/${testId}/${executionId}/call-details`,
+      path: `${base}/call-details`,
       icon:
         agentType === AGENT_TYPES.CHAT
           ? "/assets/icons/ic_chat_single.svg"
@@ -897,13 +920,13 @@ export const getTabsBasedOnAgentType = ({ agentType, testId, executionId }) => {
     {
       id: "analytics",
       title: "Analytics",
-      path: `/dashboard/simulate/test/${testId}/${executionId}/analytics`,
+      path: `${base}/analytics`,
       icon: "/assets/icons/usage-summary/ic_bar_signal.svg",
     },
     {
       id: "optimization_runs",
       title: "Optimization Runs",
-      path: `/dashboard/simulate/test/${testId}/${executionId}/optimization_runs`,
+      path: `${base}/optimization_runs`,
       icon: "/assets/icons/navbar/ic_optimize.svg",
     },
   ];

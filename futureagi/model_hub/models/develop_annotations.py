@@ -231,8 +231,14 @@ class AnnotationsLabels(BaseModel):
                         raise ValidationError(f"{field} cannot be null")
                     if not isinstance(self.settings.get(field), int | float):
                         raise ValidationError(f"{field} must be an float")
+                if self.settings["min"] < 0:
+                    raise ValidationError("min cannot be negative")
+                if self.settings["max"] < 0:
+                    raise ValidationError("max cannot be negative")
                 if self.settings["min"] >= self.settings["max"]:
                     raise ValidationError("min must be less than max")
+                if self.settings["step_size"] <= 0:
+                    raise ValidationError("step_size must be greater than 0")
                 if not isinstance(
                     self.settings.get("display_type"), str
                 ) or self.settings["display_type"] not in ["slider", "button"]:
@@ -284,6 +290,14 @@ class AnnotationsLabels(BaseModel):
                         raise ValidationError(
                             "Each option must be a dictionary with a 'label' field"
                         )
+                option_labels = [
+                    str(option.get("label") or "").strip().casefold()
+                    for option in self.settings["options"]
+                ]
+                if any(not label for label in option_labels):
+                    raise ValidationError("Option labels cannot be empty")
+                if len(option_labels) != len(set(option_labels)):
+                    raise ValidationError("Categorical option labels must be unique")
                 if len(self.settings["options"]) < 2:
                     raise ValidationError("There must be at least two options")
                 if not isinstance(self.settings["multi_choice"], bool):

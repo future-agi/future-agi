@@ -24,6 +24,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from accounts.models import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from model_hub.models.choices import StatusType
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
@@ -40,7 +41,10 @@ from simulate.views.prompt_simulation import (
     PromptSimulationScenariosView,
 )
 from tfc.constants.roles import OrganizationRoles
-from tfc.middleware.workspace_context import clear_workspace_context, set_workspace_context
+from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    set_workspace_context,
+)
 
 User = get_user_model()
 
@@ -72,11 +76,13 @@ class E2EPromptSimulationTestCase(TestCase):
             is_default=True,
             created_by=self.user,
         )
-        self.organization_membership = OrganizationMembership.no_workspace_objects.create(
-            user=self.user,
-            organization=self.org,
-            role=OrganizationRoles.OWNER,
-            is_active=True,
+        self.organization_membership = (
+            OrganizationMembership.no_workspace_objects.create(
+                user=self.user,
+                organization=self.org,
+                role=OrganizationRoles.OWNER,
+                is_active=True,
+            )
         )
         WorkspaceMembership.no_workspace_objects.create(
             workspace=self.workspace,
@@ -481,7 +487,10 @@ class E2EPromptSimulationTestCase(TestCase):
         print("FLOW 4: Simulation Execution Tests")
         print("=" * 60)
 
-        # Create simulation
+        # Create simulation with completed scenario
+        self.scenario.status = "Completed"
+        self.scenario.save()
+
         simulation = RunTest.objects.create(
             name="Execution Test Simulation",
             source_type="prompt",
@@ -489,6 +498,8 @@ class E2EPromptSimulationTestCase(TestCase):
             prompt_version=self.prompt_version,
             organization=self.org,
         )
+        self.scenario.status = StatusType.COMPLETED.value
+        self.scenario.save(update_fields=["status"])
         simulation.scenarios.add(self.scenario)
 
         # Mock the TestExecutor to avoid actual execution
