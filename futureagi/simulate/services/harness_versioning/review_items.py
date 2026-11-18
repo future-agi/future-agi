@@ -13,7 +13,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, NotRequired, Required, TypedDict
 
 import jsonpatch
 
@@ -40,6 +40,83 @@ LISTED = {
 }
 # Files whose whole content is read as items above, never as a file of its own.
 _ITEM_DOCUMENTS = frozenset({"contract.json", *LISTED})
+
+
+Decision = Literal["accepted", "rejected"]
+# One RFC 6902 operation; `from` is a keyword, hence the functional form.
+JsonPatchOp = TypedDict(
+    "JsonPatchOp",
+    {"op": Required[str], "path": Required[str], "value": Any, "from": str},
+    total=False,
+)
+
+
+class WorldRowCounts(TypedDict):
+    """One table's rows a world store change adds, removes and changes."""
+
+    table: str
+    added: int
+    removed: int
+    changed: int
+
+
+class SourceAgent(TypedDict, total=False):
+    kind: Required[str]
+    user_id: str
+    on_behalf_of: str
+
+
+class SourceUsed(TypedDict):
+    kind: str
+    id: str
+
+
+class ChangeSource(TypedDict):
+    """Where a change came from: who, through what, when, at which draft revision, and what it used."""
+
+    origin: str
+    agent: SourceAgent
+    at: str
+    draft_revision: int
+    used: NotRequired[list[SourceUsed]]
+
+
+class ReviewChange(TypedDict):
+    """One item a draft changes. The review fills in the keys after `summary` once it reads every change."""
+
+    id: str
+    kind: str
+    key: str
+    document: str
+    action: str
+    fields: list[str]
+    patch: list[JsonPatchOp]
+    base_digest: str | None
+    draft_digest: str | None
+    summary: str
+    rows: NotRequired[list[WorldRowCounts] | None]
+    piece: NotRequired[str]
+    sources: NotRequired[list[ChangeSource]]
+    decision: NotRequired[Decision | None]
+    # The scenario keys it touches, or `all`.
+    affects: NotRequired[list[str] | str]
+    depends_on: NotRequired[list[str]]
+    graded: NotRequired[bool]
+    revalidate: NotRequired[list[str]]
+
+
+class SavedChange(TypedDict):
+    """What a saved version keeps of one reviewed change."""
+
+    id: str
+    kind: str
+    key: str
+    action: str
+    summary: str
+    decision: Decision
+    affects: list[str] | str
+    graded: bool
+    revalidate: list[str]
 
 
 @dataclass(frozen=True)
@@ -398,28 +475,29 @@ def _world_tables(path: str, data: bytes | None) -> dict[str, dict[str, str]] | 
 
 def world_rows(
     path: str, before: bytes | None, after: bytes | None
-) -> list[dict[str, Any]] | None:
+) -> list[WorldRowCounts] | None:
     """Per table, how many rows a world store change adds, removes and changes, keyed by primary key; None when either
     side cannot be read as tables."""
     old, new = _world_tables(path, before), _world_tables(path, after)
     if old is None or new is None:
         return None
-    out = []
+    out: list[WorldRowCounts] = []
     for table in sorted(set(old) | set(new)):
         was, now = old.get(table, {}), new.get(table, {})
-        counts = {
-            "added": len(set(now) - set(was)),
-            "removed": len(set(was) - set(now)),
-            "changed": sum(was[key] != now[key] for key in set(was) & set(now)),
-        }
-        if any(counts.values()):
-            out.append({"table": table, **counts})
+        counts = WorldRowCounts(
+            table=table,
+            added=len(set(now) - set(was)),
+            removed=len(set(was) - set(now)),
+            changed=sum(was[key] != now[key] for key in set(was) & set(now)),
+        )
+        if counts["added"] or counts["removed"] or counts["changed"]:
+            out.append(counts)
     return out
 
 
-def _tested(before: Any, patch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _tested(before: Any, patch: list[JsonPatchOp]) -> list[JsonPatchOp]:
     """The patch with a `test` on each value it replaces or removes, so it applies only to what was read."""
-    tests = []
+    tests: list[JsonPatchOp] = []
     for op in patch:
         if op["op"] in ("replace", "remove"):
             pointer = jsonpatch.JsonPointer(op["path"])
@@ -450,12 +528,14 @@ def _summary(action: str, item: Item, fields: list[str]) -> str:
     return f"{verb} {noun} {name}"
 
 
-def _rows_said(rows: list[dict[str, Any]] | None) -> str:
+def _rows_said(rows: list[WorldRowCounts] | None) -> str:
     """Each table's row counts, e.g. "orders 1 row added, 2 changed"; empty when they could not be read."""
     said = []
     for table in rows or []:
         counts = [
-            (table.get(what) or 0, what) for what in ("added", "removed", "changed")
+            (table["added"], "added"),
+            (table["removed"], "removed"),
+            (table["changed"], "changed"),
         ]
         counts = [(count, what) for count, what in counts if count]
         if counts:
@@ -468,11 +548,11 @@ def _rows_said(rows: list[dict[str, Any]] | None) -> str:
 
 def compute_changes(
     default: Mapping[str, bytes], draft: Mapping[str, bytes]
-) -> list[dict[str, Any]]:
+) -> list[ReviewChange]:
     """The draft's changes against the default, one per item, in review order."""
     whole = whole_documents(default, draft)
     before, after = item_index(default, whole), item_index(draft, whole)
-    changes = []
+    changes: list[ReviewChange] = []
     for item_id in sorted(set(before) | set(after)):
         old, new = before.get(item_id), after.get(item_id)
         if old is not None and new is not None and old.digest == new.digest:
@@ -482,7 +562,7 @@ def compute_changes(
             continue
         action = "added" if old is None else "removed" if new is None else "changed"
         if item.raw is not None or (old is not None and old.raw is not None):
-            patch: list[dict[str, Any]] = []
+            patch: list[JsonPatchOp] = []
         elif old is None:
             patch = [{"op": "add", "path": "", "value": item.value}]
         elif new is None:
@@ -498,21 +578,21 @@ def compute_changes(
         summary = _summary(action, item, fields)
         if _rows_said(rows):
             summary = f"{summary}: {_rows_said(rows)}"
-        changes.append(
-            {
-                "id": item_id,
-                "kind": item.kind,
-                "key": item.key,
-                "document": item.document,
-                "action": action,
-                "fields": fields,
-                "patch": patch,
-                "base_digest": old.digest if old else None,
-                "draft_digest": new.digest if new else None,
-                "summary": summary,
-                **({"rows": rows} if item.kind == "world_state" else {}),
-            }
+        change = ReviewChange(
+            id=item_id,
+            kind=item.kind,
+            key=item.key,
+            document=item.document,
+            action=action,
+            fields=fields,
+            patch=patch,
+            base_digest=old.digest if old else None,
+            draft_digest=new.digest if new else None,
+            summary=summary,
         )
+        if item.kind == "world_state":
+            change["rows"] = rows
+        changes.append(change)
     changes.sort(key=lambda one: (KINDS.index(one["kind"]), one["key"]))
     return changes
 
@@ -521,7 +601,7 @@ def compute_changes(
 _UNGRADED_SCENARIO_FIELDS = frozenset({"name", "title"})
 
 
-def graded(change: Mapping[str, Any]) -> bool:
+def graded(change: ReviewChange) -> bool:
     """Whether a change alters what a trial is graded on: every change except a scenario's rename (fields the diff
     ignores never become changes at all)."""
     if change["kind"] == "scenario" and change["action"] == "changed":

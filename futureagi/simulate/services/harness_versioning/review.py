@@ -5,7 +5,7 @@ draft passes before Validate or Save.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from simulate.services.harness_versioning import archives
 from simulate.services.harness_versioning.draft_pieces import (
@@ -17,13 +17,17 @@ from simulate.services.harness_versioning.draft_pieces import (
     prepare_tree,
     version_error,
 )
-from simulate.services.harness_versioning.references import ALL, affects, depends_on
+from simulate.services.harness_versioning.references import affects, depends_on
 from simulate.services.harness_versioning.review_compose import (
     ReviewRefused,
     compose_accepted,
     review_digest,
 )
 from simulate.services.harness_versioning.review_items import (
+    ChangeSource,
+    Decision,
+    ReviewChange,
+    SavedChange,
     compute_changes,
     graded,
     index_in_step,
@@ -35,7 +39,46 @@ from simulate.services.hosted_harness import HostedHarnessError
 DECISIONS = ("accepted", "rejected")
 
 
-def _decisions(draft: Any) -> dict[str, dict[str, Any]]:
+class RecordedDecision(TypedDict):
+    """A decision as a draft keeps it: only while the item is still at `draft_digest` does it hold."""
+
+    decision: Decision
+    draft_digest: str | None
+
+
+class DecisionRequest(TypedDict, total=False):
+    """One decision a person sends: on one change (`id`), a whole `kind`, or every `remaining` one."""
+
+    id: str
+    kind: str
+    remaining: bool
+    decision: str
+
+
+class DraftRef(TypedDict):
+    id: str
+    revision: int
+    parent_id: str
+
+
+class ReviewCounts(TypedDict):
+    total: int
+    accepted: int
+    rejected: int
+    undecided: int
+
+
+class DraftReview(TypedDict):
+    """Every change the open drafts make, with the decisions, and what Validate and Save check it against."""
+
+    drafts: dict[str, DraftRef]
+    changes: list[ReviewChange]
+    counts: ReviewCounts
+    review_digest: str
+    can_save: bool
+
+
+def _decisions(draft: Any) -> dict[str, RecordedDecision]:
     return dict(((draft.documents or {}).get("review") or {}).get("decisions") or {})
 
 
@@ -91,11 +134,14 @@ def heal_suite_index(locked: Any) -> None:
     draft.save()
 
 
-def _piece_changes(environment: Any, piece: str, draft: Any) -> list[dict[str, Any]]:
+def _piece_changes(environment: Any, piece: str, draft: Any) -> list[ReviewChange]:
 
     before = piece_files(environment, piece, draft.parent) if draft.parent_id else {}
     after = draft_files(environment, piece, draft)
-    return [{**change, "piece": piece} for change in compute_changes(before, after)]
+    changes = compute_changes(before, after)
+    for change in changes:
+        change["piece"] = piece
+    return changes
 
 
 def _scenarios(environment: Any, *, base: bool = False) -> dict[str, dict[str, Any]]:
@@ -140,35 +186,38 @@ def _saved_actors(environment: Any) -> dict[str, dict[str, Any]]:
     }
 
 
-def draft_review(environment: Any) -> dict[str, Any]:
+def draft_review(environment: Any) -> DraftReview:
     """Every change the open drafts make, each with the decision taken on it.
 
     A decision holds only for the content it was taken on: once the draft changes that item again, the item is
     undecided until someone decides it again.
     """
 
-    drafts: dict[str, dict[str, Any]] = {}
-    changes: list[dict[str, Any]] = []
+    drafts: dict[str, DraftRef] = {}
+    changes: list[ReviewChange] = []
     decided: dict[str, str] = {}
     defaults: list[str] = []
     for piece in DRAFT_PIECES:
         draft = open_draft(environment, piece)
         if draft is None:
             continue
-        drafts[piece] = {
-            "id": str(draft.id),
-            "revision": draft.revision,
-            "parent_id": str(draft.parent_id or ""),
-        }
+        drafts[piece] = DraftRef(
+            id=str(draft.id),
+            revision=draft.revision,
+            parent_id=str(draft.parent_id or ""),
+        )
         defaults.append(str(getattr(draft.parent, "hash", "") or ""))
         recorded = _decisions(draft)
-        sources = (draft.documents or {}).get("provenance") or {}
+        sources: dict[str, list[ChangeSource]] = (draft.documents or {}).get(
+            "provenance"
+        ) or {}
         for change in _piece_changes(environment, piece, draft):
             change["sources"] = list(reversed(sources.get(change["id"]) or []))
-            entry = recorded.get(change["id"]) or {}
+            entry = recorded.get(change["id"])
             decision = (
-                entry.get("decision")
-                if entry.get("draft_digest") == change["draft_digest"]
+                entry["decision"]
+                if entry is not None
+                and entry.get("draft_digest") == change["draft_digest"]
                 else None
             )
             change["decision"] = decision
@@ -188,30 +237,33 @@ def draft_review(environment: Any) -> dict[str, Any]:
             change, changes, scenarios, base, base_actors=actors
         )
         change["graded"] = graded(change)
-        touched = sorted(scenarios) if change["affects"] == ALL else change["affects"]
+        named = change["affects"]
+        touched = sorted(scenarios) if isinstance(named, str) else named
         change["revalidate"] = touched if change["graded"] else []
-    counts = {
-        "total": len(changes),
-        "accepted": sum(one["decision"] == "accepted" for one in changes),
-        "rejected": sum(one["decision"] == "rejected" for one in changes),
-    }
-    counts["undecided"] = counts["total"] - counts["accepted"] - counts["rejected"]
-    return {
-        "drafts": drafts,
-        "changes": changes,
-        "counts": counts,
-        "review_digest": review_digest("|".join(defaults), changes, decided),
-        "can_save": bool(changes) and counts["undecided"] == 0,
-    }
+    accepted = sum(one["decision"] == "accepted" for one in changes)
+    rejected = sum(one["decision"] == "rejected" for one in changes)
+    counts = ReviewCounts(
+        total=len(changes),
+        accepted=accepted,
+        rejected=rejected,
+        undecided=len(changes) - accepted - rejected,
+    )
+    return DraftReview(
+        drafts=drafts,
+        changes=changes,
+        counts=counts,
+        review_digest=review_digest("|".join(defaults), changes, decided),
+        can_save=bool(changes) and counts["undecided"] == 0,
+    )
 
 
 def record_decisions(
     environment: Any,
-    decisions: list[dict[str, Any]],
+    decisions: list[DecisionRequest],
     *,
     expected_revisions: dict[str, int],
     user: Any,
-) -> dict[str, Any]:
+) -> DraftReview:
     """Store accept or reject on changes, by id, by kind, or for every remaining one, and return the review.
 
     A decision is kept with the content it was taken on. A draft that moved since the person looked refuses the
@@ -276,10 +328,10 @@ def record_decisions(
                     == change["draft_digest"]
                 ):
                     continue
-                recorded[change["id"]] = {
-                    "decision": decision,
-                    "draft_digest": change["draft_digest"],
-                }
+                recorded[change["id"]] = RecordedDecision(
+                    decision="accepted" if decision == "accepted" else "rejected",
+                    draft_digest=change["draft_digest"],
+                )
                 review = {
                     **((draft.documents or {}).get("review") or {}),
                     "decisions": recorded,
@@ -300,7 +352,7 @@ def review_stale() -> HostedHarnessError:
     )
 
 
-def _index_mismatches(environment: Any, changes: list[dict[str, Any]]) -> list[str]:
+def _index_mismatches(environment: Any, changes: list[ReviewChange]) -> list[str]:
     """The scenario changes about to be saved whose suite index entry disagrees with their scenario document."""
     draft = open_draft(environment, "suite")
     if draft is None:
@@ -318,7 +370,7 @@ def _index_mismatches(environment: Any, changes: list[dict[str, Any]]) -> list[s
 
 
 def check_review(
-    review: Mapping[str, Any],
+    review: DraftReview,
     expected_review_digest: str | None,
     *,
     digest_required: bool,
@@ -369,35 +421,29 @@ def check_review(
         )
 
 
-_KEPT_CHANGE_FIELDS = (
-    "id",
-    "kind",
-    "key",
-    "action",
-    "summary",
-    "decision",
-    "affects",
-    "graded",
-    "revalidate",
-)
-
-
-def review_changes(review: Mapping[str, Any], piece: str) -> list[dict[str, Any]]:
+def review_changes(review: DraftReview, piece: str) -> list[SavedChange]:
     """What the person decided on one piece's changes, kept with the version it becomes, so its summary, its proofs
     and the run warning follow the approved changes. A change saved with nothing decided is saved as it stands, so it
     reads as accepted."""
     return [
-        {
-            **{name: one[name] for name in _KEPT_CHANGE_FIELDS},
-            "decision": one["decision"] or "accepted",
-        }
+        SavedChange(
+            id=one["id"],
+            kind=one["kind"],
+            key=one["key"],
+            action=one["action"],
+            summary=one["summary"],
+            decision=one["decision"] or "accepted",
+            affects=one["affects"],
+            graded=one["graded"],
+            revalidate=one["revalidate"],
+        )
         for one in review["changes"]
         if one["piece"] == piece
     ]
 
 
 def composed_files(
-    locked: Any, piece: str, draft: Any, review: Mapping[str, Any]
+    locked: Any, piece: str, draft: Any, review: DraftReview
 ) -> dict[str, bytes]:
     """A drafted piece's files with exactly the accepted changes: the saved version plus those changes when any of
     the piece's changes was rejected, else the draft's own files."""
