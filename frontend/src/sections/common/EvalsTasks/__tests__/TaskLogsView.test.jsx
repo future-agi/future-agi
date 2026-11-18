@@ -95,6 +95,22 @@ describe("TaskLogsView totals", () => {
     },
   );
 
+  it("offers Re-run, not Resume, when the create closed before evaluation", async () => {
+    const reason =
+      "The workflow ended before evaluation began. Your task is saved.";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        total_count: 0,
+        error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+      }),
+    );
+    renderView("failed", true);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(`${reason} Choose Re-run to try again.`);
+    expect(alert).not.toHaveTextContent(/resume/i);
+  });
+
   it("does not suggest a replacement for an unconfirmed start", async () => {
     const reason =
       "We couldn't confirm this task started. We'll keep checking.";

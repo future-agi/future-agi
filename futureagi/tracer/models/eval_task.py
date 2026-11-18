@@ -183,6 +183,10 @@ class InstantEvalResume(models.Model):
             pk=task_id, admitted_run_id__isnull=True
         )
 
+    @classmethod
+    def outstanding_token(cls, task_id):
+        return cls.outstanding(task_id).values_list("token", flat=True).first()
+
 
 class EvalTaskLogger(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -185,6 +185,9 @@ def test_resume_redacts_private_runs_at_both_count_checks(
     paused = _run(
         observe_project, user, "My paused question", status=EvalTaskStatus.PAUSED
     )
+    # The caller paused after the worker picked its first page of rows.
+    paused.hash_cursor = "12345"
+    paused.save(update_fields=["hash_cursor"])
     user.name = "Private runner"
     user.save(update_fields=["name"])
     private = [

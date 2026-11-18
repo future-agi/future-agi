@@ -537,13 +537,15 @@ const withCredentialRemedy = (group) => {
 
 // ── Main Component ──
 
-const START_FAILED =
-  "The run couldn't start after an automatic retry. Your task is saved.";
+const CLOSED_START_REASONS = new Set([
+  "The run couldn't start after an automatic retry. Your task is saved.",
+  "The workflow ended before evaluation began. Your task is saved.",
+]);
 
 const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   const theme = useTheme();
 
-  const { data, isLoading, isFetching, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isPaused, isError, refetch } = useQuery({
     queryKey: ["eval-task-logs", evalTaskId],
     queryFn: ({ signal }) =>
       readEvalTaskLogs(
@@ -672,15 +674,17 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   // this group. It isn't an evaluator error; don't attach generic retry tips.
   const startReason =
     data.total_count === 0 && errorGroups.length === 1 && errorGroups[0].raw;
+  const closedStart = CLOSED_START_REASONS.has(startReason);
   const showStartReason =
     startReason &&
-    (startReason !== START_FAILED ||
+    (!closedStart ||
       (effectiveStatus?.toLowerCase() === "failed" &&
         (!taskStatus || taskStatus.toLowerCase() === "failed") &&
         !isError &&
+        !isPaused &&
         !isFetching));
   const suggestRerun =
-    startReason === START_FAILED &&
+    closedStart &&
     taskStatus?.toLowerCase() === "failed" &&
     canRerun;
   const hasWarnings = warningGroups.length > 0;

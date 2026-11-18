@@ -5,7 +5,7 @@ from datetime import datetime
 from django.db import router, transaction
 from django.utils import timezone
 
-from tracer.models.eval_task import EvalTask, RunType
+from tracer.models.eval_task import EvalTask, EvalTaskStartRequest, RunType
 
 
 def continuous_coverage_floor(task: EvalTask, *, now: datetime) -> datetime:
@@ -86,6 +86,9 @@ def update_task_configuration(task: EvalTask, changes: dict) -> EvalTask:
                         if current.last_run is None
                         else min(current.last_run, floor)
                     )
+        if "status" in updates:
+            # A status write supersedes create even if a later edit restores Pending.
+            EvalTaskStartRequest.void_for_tasks([current.pk])
         for field, value in updates.items():
             setattr(current, field, value)
         current.save(using=using)

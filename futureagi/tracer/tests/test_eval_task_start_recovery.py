@@ -153,7 +153,12 @@ def test_reconcile_unconfirmed_create(
         check(intent, "exhausted", 1)
         assert intent.last_outcome == "execution_closed_without_progress"
         assert task.status == "failed"
-        assert "ended before evaluation began" in service.start_request_error(task)
+        reason = service.start_request_error(task)
+        assert "ended before evaluation began" in reason and "Resume" not in reason
+        refused = auth_client.post(
+            f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}"
+        )
+        assert refused.status_code == 400 and "Re-run" in refused.json()["result"]
     else:
         check(intent, "accepted", expected_calls)
         assert task.status == "pending"  # the fake worker hasn't begun
@@ -677,6 +682,7 @@ def test_admission_is_watched_until_work_or_confirmed_closure(
         assert logs.status_code == 200, logs.content
         groups = logs.json()["result"]["error_groups"]
         assert "ended before evaluation began" in groups[0]["sample"]
+        assert service.resume_block_reason(tasks.get()) is None
     else:
         if next_event == "cursor":
             tasks.update(continuous_cursor=timezone.now())
@@ -860,6 +866,25 @@ def test_user_action_itself_voids_start(
     check(intent, "void", 0)
     assert tick() == {"candidates": 0}
     describe.assert_not_called()
+
+
+def test_detail_status_round_trip_revokes_create_before_the_next_tick(
+    auth_client, project, custom_eval_config, transport
+):
+    start, describe = transport
+    start.side_effect = TimeoutError()
+    intent = create(auth_client, project, custom_eval_config)
+    for status in ("paused", "pending"):
+        response = auth_client.patch(
+            f"{_CREATE}{intent.pk}/", {"status": status}, format="json"
+        )
+        assert response.status_code == 200, response.content
+        assert EvalTask.objects.get(pk=intent.pk).status == status
+        check(intent, "void", 1)
+    assert not service.admit_start(intent.pk, str(uuid4()))
+    assert tick() == {"candidates": 0}
+    describe.assert_not_called()
+    start.assert_called_once()
 
 
 def test_detail_delete_locks_task_before_results(intent, auth_client):

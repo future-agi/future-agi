@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import structlog
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, F, OuterRef, Q
 from django.db.models.functions import Now
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -48,7 +48,7 @@ _MESSAGES = {
         "The workflow completed. Contact support if the task status doesn't update."
     ),
     "execution_closed_without_progress": (
-        "The workflow ended before evaluation began. Resume to try again."
+        "The workflow ended before evaluation began. Your task is saved."
     ),
     "unconfirmed_beyond_history": (
         "No workflow history is available to confirm what happened. We did not "
@@ -97,8 +97,10 @@ def resume_block_reason(task):
     state = _requests().filter(pk=task.pk).values_list("state", flat=True).first()
     if state == State.START_FAILED:
         return START_FAILURE_MESSAGE
-    if state == State.EXHAUSTED or has_recorded_work(task):
+    if has_recorded_work(task):
         return None
+    if state == State.EXHAUSTED:
+        return "This start request is closed. Use Re-run to make a new start request."
     if state not in (None, State.VOID):
         return "No previous run could be confirmed for this task."
     # A void create can be RUNNING at its gate, or COMPLETED with start_fenced.
@@ -203,8 +205,74 @@ def start_request_error(task):
 
 
 @transaction.atomic(using="default")
+def _fail_instant_resume(task_id, token):
+    """A matching close/rejection loses to admission or a newer handoff."""
+    task = (
+        EvalTask.objects.using("default").select_for_update().filter(pk=task_id).first()
+    )
+    removed, _ = InstantEvalResume.outstanding(task_id).filter(token=token).delete()
+    if removed and task and task.status == EvalTaskStatus.PENDING:
+        task.status = EvalTaskStatus.FAILED
+        task.save(update_fields=["status", "updated_at"])
+    return bool(removed)
+
+
+def reconcile_instant_resume(task_id, token):
+    """Only a terminal describe carrying this handoff's token can settle it."""
+    try:
+        history = _call(
+            client.describe_eval_task_workflow_sync,
+            task_id,
+            timeout=5,
+            resume_token=str(token),
+        )
+    except _TransportUnavailable:
+        return False
+    return history == client.WF_RESUME_CLOSED and _fail_instant_resume(task_id, token)
+
+
+def queue_instant_resume(task, run):
+    """Both Resume endpoints hold the run (if any), then the task lock here."""
+    from temporalio.service import RPCError, RPCStatusCode
+
+    if InstantEvalResume.outstanding(task.pk).exists():
+        return False
+    token = uuid4()
+    InstantEvalResume.objects.using("default").update_or_create(
+        task=task, defaults={"token": token, "admitted_run_id": None}
+    )
+    if run is not None:
+        InstantEvalRun.objects.using("default").filter(pk=run.pk).update(
+            answers_version=F("answers_version") + 1
+        )
+    task.status = EvalTaskStatus.PENDING
+    task.save(update_fields=["status", "updated_at"])
+    EvalTaskStartRequest.void_for_tasks([task.pk])
+
+    def send():
+        try:
+            client.start_eval_task_workflow_sync(
+                task, replace_existing=True, resume_token=str(token)
+            )
+        except Exception as exc:
+            logger.warning(
+                "instant_eval_resume_send_failed", error_type=type(exc).__name__
+            )
+            # A lost reply may still have a live worker. Never resend automatically.
+            if isinstance(exc, RPCError) and exc.status in (
+                RPCStatusCode.INVALID_ARGUMENT,
+                RPCStatusCode.PERMISSION_DENIED,
+                RPCStatusCode.UNAUTHENTICATED,
+            ):
+                _fail_instant_resume(task.pk, token)
+
+    transaction.on_commit(send, using="default")
+    return True
+
+
+@transaction.atomic(using="default")
 def admit_instant_resume(task_id, token, run_id):
-    """Only the worker for this handoff can settle it, even after a lost reply."""
+    """Only the worker for this handoff can admit it, even after a lost reply."""
     task = _live_tasks(task_id).select_for_update(of=("self",)).first()
     rows = InstantEvalResume.objects.using("default").filter(pk=task_id, token=token)
     resume = rows.select_for_update().first()

@@ -1557,8 +1557,17 @@ def test_two_instant_resumes_issue_one_replacement(
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "plain_first", [False, True], ids=["instant-first", "plain-first"]
+)
 def test_second_resume_after_commit_before_temporal_admission(
-    auth_client, observe_project, answered_run, started, monkeypatch, no_new_usage
+    auth_client,
+    observe_project,
+    answered_run,
+    started,
+    monkeypatch,
+    no_new_usage,
+    plain_first,
 ):
     from tracer.services.eval_tasks.start_requests import admit_instant_resume
     from tracer.utils.eval_tasks import _bridge_retired_dispatcher
@@ -1575,13 +1584,24 @@ def test_second_resume_after_commit_before_temporal_admission(
         "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
         lambda *args, **kwargs: "closed",  # still the old execution
     )
+
+    def plain():
+        return auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task.pk}"
+        )
+
+    def instant():
+        return _control(auth_client, observe_project, task, "resume")
+
     before = len(started)
-    assert _control(auth_client, observe_project, task, "resume").status_code == 200
+    first, second = (plain, instant) if plain_first else (instant, plain)
+    assert first().status_code == 200
     task.refresh_from_db()
     run.refresh_from_db()
     assert (task.status, run.answers_version) == (EvalTaskStatus.PENDING, version + 1)
     # This request reads the *new* version; version comparison alone passes.
-    assert _control(auth_client, observe_project, task, "resume").status_code == 400
+    assert second().status_code == 400
+    assert instant().status_code == 400
     assert _bridge_retired_dispatcher(task)  # an orphan must not send either
     assert len(started) == before
     (send,) = queued
@@ -1597,6 +1617,60 @@ def test_second_resume_after_commit_before_temporal_admission(
     assert admit_instant_resume(task.pk, token, run_id)  # redelivered activity
     assert not admit_instant_resume(task.pk, token, str(uuid.uuid4()))
     assert not InstantEvalResume.outstanding(task.pk).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("admitted", [False, True])
+def test_only_confirmed_closure_of_the_outstanding_resume_releases_it(
+    auth_client,
+    observe_project,
+    answered_run,
+    started,
+    monkeypatch,
+    no_new_usage,
+    admitted,
+):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client
+    from tracer.services.instant_eval_run import _workflow_gone
+
+    task, _ = answered_run
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.PAUSED)
+    before = len(started)
+    assert _control(auth_client, observe_project, task, "resume").status_code == 200
+    task.refresh_from_db()
+    token = InstantEvalResume.outstanding_token(task.pk)
+    describe = Mock(
+        side_effect=[
+            client.WF_CLOSED,  # a different execution under the same task ID
+            TimeoutError(),
+            client.WF_ABSENT,  # includes expired history
+            client.WF_PROGRESSING,
+        ]
+    )
+    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+    for _ in range(4):
+        assert not _workflow_gone(task)
+        assert InstantEvalResume.outstanding_token(task.pk) == token
+        assert EvalTask.objects.get(pk=task.pk).status == EvalTaskStatus.PENDING
+
+    def matching_close(task_id, **kwargs):
+        from tracer.services.eval_tasks.start_requests import admit_instant_resume
+
+        if admitted:  # The worker recorded admission while the probe was in flight.
+            assert admit_instant_resume(
+                task_id, kwargs["resume_token"], str(uuid.uuid4())
+            )
+        return client.WF_RESUME_CLOSED
+
+    describe.side_effect = matching_close
+    assert _workflow_gone(task) is not admitted
+    describe.assert_called_with(task.pk, timeout=5, resume_token=str(token))
+    assert not InstantEvalResume.outstanding(task.pk).exists()
+    expected = EvalTaskStatus.PENDING if admitted else EvalTaskStatus.FAILED
+    assert EvalTask.objects.get(pk=task.pk).status == expected
+    assert len(started) == before + 1  # observation never starts another execution
 
 
 @pytest.mark.django_db
@@ -1617,6 +1691,10 @@ def test_resume_only_releases_handoff_on_confirmed_rejection(
     send = Mock(side_effect=error)
     monkeypatch.setattr(
         "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync", send
+    )
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        Mock(side_effect=TimeoutError()),
     )
     response = _control(auth_client, observe_project, task, "resume")
     task.refresh_from_db()

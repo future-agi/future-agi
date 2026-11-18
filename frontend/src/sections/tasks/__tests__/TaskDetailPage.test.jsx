@@ -321,6 +321,16 @@ describe("TaskDetailPage", () => {
       expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
   });
 
+  it("withholds the Logs Re-run hint while the cached Failed status is refreshing", () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "failed" }),
+      isFetching: true,
+    });
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(screen.getByText("logs")).toHaveAttribute("data-can-rerun", "false");
+  });
+
   it("offers no Resume for a completed task", () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({ status: "completed" }),
@@ -385,7 +395,8 @@ describe("TaskDetailPage", () => {
     );
   });
 
-  it("submits the same mutation Save uses when Re-run is confirmed", async () => {
+  it.each([true, false])("refreshes both reads (lost: %s)", async (lost) => {
+    if (lost) axiosPatchMock.mockRejectedValue(new Error("timeout"));
     useGetTaskData.mockReturnValue({
       data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
       isLoading: false,
@@ -395,6 +406,8 @@ describe("TaskDetailPage", () => {
     const logsKey = ["eval-task-logs", "task-1"];
     const { queryClient } = renderTaskDetail("task-1");
     queryClient.setQueryData(logsKey, { status: "failed" });
+    const detailsKey = ["taskDetails", "task-1"];
+    queryClient.setQueryData(detailsKey, { status: "failed" });
     fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
 
     await screen.findByText("Re-run Task");
@@ -406,6 +419,7 @@ describe("TaskDetailPage", () => {
 
     await waitFor(() => {
       expect(queryClient.getQueryState(logsKey).isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(detailsKey).isInvalidated).toBe(true);
       expect(axiosPatchMock).toHaveBeenCalledWith(
         "/tracer/eval-task/update_eval_task/",
         expect.objectContaining({

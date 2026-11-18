@@ -63,6 +63,7 @@ from tracer.models.eval_task import (
     RowType,
     RunType,
 )
+from tracer.models.instant_eval import InstantEvalRun
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.selectors.eval_tasks.scope import (
@@ -99,7 +100,9 @@ from tracer.services.eval_tasks.sampling.policy import (
     population_changed,
 )
 from tracer.services.eval_tasks.start_requests import (
+    RESUME_OUTSTANDING,
     dispatch_start_request,
+    queue_instant_resume,
     resume_block_reason,
     start_request_error,
 )
@@ -107,6 +110,7 @@ from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
 )
+from tracer.services.instant_eval_run import is_instant_task, with_primary_evals
 from tracer.services.postgres_read_policy import application_postgres_reads
 from tracer.utils.eval import (
     GROUND_TRUTH_NOT_APPLIED_MESSAGE,
@@ -2945,12 +2949,24 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Eval task ID is required")
 
             with transaction.atomic(using="default"):
+                tasks = self._scope_eval_task_queryset(EvalTask.objects).filter(
+                    pk=eval_task_id
+                )
+                # Match Instant control's lock order, including cancellation and
+                # the version checked by an overlapping Instant Resume.
+                run = (
+                    InstantEvalRun.objects.select_for_update(of=("self",))
+                    .filter(eval_task__in=tasks)
+                    .first()
+                )
                 try:
-                    eval_task = self._scope_eval_task_queryset(
-                        EvalTask.objects.select_for_update(of=("self",))
-                    ).get(id=eval_task_id)
+                    eval_task = with_primary_evals(
+                        tasks.select_for_update(of=("self",))
+                    ).get()
                 except EvalTask.DoesNotExist:
                     return self._gm.bad_request("Eval task not found")
+                if run and run.cancelled_at:
+                    return self._gm.bad_request("This run was cancelled.")
                 if eval_task.status not in RESUMABLE_TASK_STATUSES:
                     return self._gm.bad_request(
                         f"Cannot unpause eval task with status '{eval_task.status}'. "
@@ -2963,13 +2979,21 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     eval_task_id=str(eval_task.id),
                     status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
                 ).count()
-                eval_task.status = EvalTaskStatus.PENDING
-                eval_task.save(update_fields=["status"])
-                EvalTaskStartRequest.void_for_tasks([eval_task.pk])
+                instant = run is not None or is_instant_task(eval_task)
+                if instant:
+                    if not queue_instant_resume(eval_task, run):
+                        return self._gm.bad_request(RESUME_OUTSTANDING)
+                else:
+                    eval_task.status = EvalTaskStatus.PENDING
+                    eval_task.save(update_fields=["status"])
+                    EvalTaskStartRequest.void_for_tasks([eval_task.pk])
 
-            # Pause exits the workflow; resuming starts a fresh run that picks up
-            # the remaining pending/running entries.
-            start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            if instant:
+                eval_task.refresh_from_db(using="default", fields=["status"])
+                if eval_task.status == EvalTaskStatus.FAILED:
+                    return self._gm.bad_request("The run could not be resumed.")
+            else:
+                start_eval_task_workflow_sync(eval_task, replace_existing=True)
             # Counts and the previous status only — never an entry payload or
             # any tenant-identifying value.
             logger.info(
@@ -2978,9 +3002,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 undrained_entries=undrained,
             )
 
-            return self._gm.success_response(
-                {"message": "Eval task unpaused successfully"}
+            message = (
+                "Resume requested." if instant else "Eval task unpaused successfully"
             )
+            return self._gm.success_response({"message": message})
 
         except Exception as exc:
             logger.exception(

@@ -20,7 +20,7 @@ from django.db.models import Prefetch
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.instant_eval import InstantEvalRun
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
@@ -161,6 +161,16 @@ def with_primary_evals(tasks):
     )
 
 
+def is_instant_task(task) -> bool:
+    """An Ask task, or a historical task with only Instant eval questions."""
+    if (task.filters or {}).get(rows_service.RUN_MARKER):
+        return True
+    if task.run_type != RunType.HISTORICAL:
+        return False
+    configs = list(task.evals.all())  # prefetched from the primary by both views
+    return bool(configs) and all((c.config or {}).get("instant_eval") for c in configs)
+
+
 def _run_of(task):
     return (
         InstantEvalRun.objects.filter(eval_task=task)
@@ -251,10 +261,14 @@ def _workflow_gone(task) -> bool:
     )
 
     from tracer.models.eval_task import EvalTaskStartRequest, InstantEvalResume
-    from tracer.services.eval_tasks.start_requests import has_recorded_work
+    from tracer.services.eval_tasks.start_requests import (
+        has_recorded_work,
+        reconcile_instant_resume,
+    )
 
-    if InstantEvalResume.outstanding(task.pk).exists():
-        return False
+    token = InstantEvalResume.outstanding_token(task.pk)
+    if token:
+        return reconcile_instant_resume(task.pk, token)
     requests = EvalTaskStartRequest.objects.using("default").filter(pk=task.pk)
     unadmitted = (
         requests.filter(admitted_run_id__isnull=True)

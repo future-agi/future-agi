@@ -106,6 +106,7 @@ const TaskDetailPage = () => {
     isError,
     error,
     isFetching,
+    isPaused,
     refetch,
   } = useGetTaskData(taskId, {
     enabled: !!taskId,
@@ -155,14 +156,19 @@ const TaskDetailPage = () => {
       // A fresh run archives/replaces the cohort. Do not leave its old audit
       // visible while the current cohort is being fetched or has not frozen.
       queryClient.resetQueries({ queryKey: ["samplingAudit", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["eval-task-logs", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar(
         mode === "rerun" ? "Re-run started" : "Task updated successfully",
         { variant: "success" },
       );
     },
+    // The server may have committed even when its reply was lost. Keep the
+    // mutation pending until both active reads have reconciled.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["eval-task-logs", taskId] }),
+        queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] }),
+      ]),
     onError: (err, { mode }) => {
       enqueueSnackbar(
         getSafeActionErrorMessage(
@@ -663,7 +669,13 @@ const TaskDetailPage = () => {
               <TaskLogsView
                 evalTaskId={taskId}
                 taskStatus={taskDetails?.status}
-                canRerun={!rerunBlockedReason && !isUpdating && !isError}
+                canRerun={
+                  !rerunBlockedReason &&
+                  !isUpdating &&
+                  !isFetching &&
+                  !isPaused &&
+                  !isError
+                }
               />
             </Box>
           )}
