@@ -228,7 +228,7 @@ def test_livekit_target_probe_reports_rejected_credentials(status):
 
     assert result is not None and result.ok is False
     assert result.message == (
-        "LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET " f"(HTTP {status})"
+        f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})"
     )
     assert [method for method, _ in calls] == ["CreateRoom"]
 
@@ -410,7 +410,9 @@ def test_the_elevenlabs_probe_checks_each_name_supplied(request, statuses, ok, m
 
     [result] = [
         result
-        for result in probe_all({"ELEVEN_API_KEY": "eleven-key", "ELEVENLABS_API_KEY": "labs-key"})
+        for result in probe_all(
+            {"ELEVEN_API_KEY": "eleven-key", "ELEVENLABS_API_KEY": "labs-key"}
+        )
         if result.provider == "elevenlabs"
     ]
 
@@ -423,7 +425,9 @@ def test_the_elevenlabs_probe_checks_each_name_supplied(request, statuses, ok, m
         # Every rejected name is named, so the form points at each row to fix.
         rejected = tuple(
             name
-            for name, status in zip(("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"), statuses, strict=True)
+            for name, status in zip(
+                ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"), statuses, strict=True
+            )
             if status != 200
         )
         assert result.aliases == rejected
@@ -438,7 +442,9 @@ def test_the_same_elevenlabs_key_under_both_names_is_checked_once(request, statu
 
     [result] = [
         result
-        for result in probe_all({"ELEVEN_API_KEY": "one-key", "ELEVENLABS_API_KEY": "one-key"})
+        for result in probe_all(
+            {"ELEVEN_API_KEY": "one-key", "ELEVENLABS_API_KEY": "one-key"}
+        )
         if result.provider == "elevenlabs"
     ]
 

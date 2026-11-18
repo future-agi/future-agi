@@ -39,6 +39,7 @@ from simulate.services.hosted_harness import (
     canonical_digest,
     hash_secret,
 )
+from simulate.services.hosted_harness_validation import validate_jsonb_strings
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -195,6 +196,13 @@ def settle_stop_only_queue(conversation: HostedHarnessConversation) -> bool:
     return True
 
 
+def _command_ids(turn: HostedHarnessConversationEvent) -> list[str]:
+    """The command a turn ran, as an ``id__in`` list: empty when the turn names none, so
+    the lookup finds nothing (as ``id=None`` did)."""
+    command_id = (turn.payload or {}).get("command_message_id")
+    return [str(command_id)] if command_id else []
+
+
 def _platform_check_checkpoint(
     turn: HostedHarnessConversationEvent | None,
 ) -> HostedHarnessConversationEvent | None:
@@ -204,7 +212,7 @@ def _platform_check_checkpoint(
         return None
     command = HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation_id=turn.conversation_id,
-        id=(turn.payload or {}).get("command_message_id"),
+        id__in=_command_ids(turn),
         role=HostedHarnessConversationMessage.Role.USER,
     ).first()
     if (
@@ -272,7 +280,7 @@ def record_platform_landing_refused(conversation_id: str, turn_sequence: int) ->
     try:
         committed = _platform_check_checkpoint(
             HostedHarnessConversationEvent.no_workspace_objects.filter(
-                conversation_id=conversation_id,
+                conversation__id=conversation_id,
                 kind="turn_completed",
                 sequence=turn_sequence,
             ).first()
@@ -315,13 +323,13 @@ def start_chat_after_platform_landing(conversation_id: str, turn_sequence: int) 
 
     try:
         turn = HostedHarnessConversationEvent.no_workspace_objects.filter(
-            conversation_id=conversation_id,
+            conversation__id=conversation_id,
             kind="turn_completed",
             sequence=turn_sequence,
         ).first()
         command = (
             HostedHarnessConversationMessage.no_workspace_objects.filter(
-                id=(turn.payload or {}).get("command_message_id"),
+                id__in=_command_ids(turn),
                 role=HostedHarnessConversationMessage.Role.USER,
             ).first()
             if turn is not None
@@ -924,7 +932,7 @@ def issue_conversation_capability(
         return None
     base = endpoint_base_url.rstrip("/")
     prefix = f"{base}/simulate/api/harness/conversations/{conversation.id}"
-    document = {
+    document: dict[str, Any] = {
         "schema_version": CONVERSATION_SCHEMA_VERSION,
         "conversation_id": str(conversation.id),
         "job_id": str(conversation.job_id),
@@ -952,6 +960,11 @@ def issue_conversation_capability(
             "overview": f"{prefix}/overview/",
         },
     }
+    from simulate.services import evidence_drafts
+
+    if evidence_drafts.is_drafting_job(conversation.job):
+        for name in evidence_drafts.UNOFFERED_ENDPOINTS:
+            document["endpoints"].pop(name, None)
     return ConversationCapability(
         lease=lease, token=token, fence=fence, document=document
     )
@@ -1061,6 +1074,10 @@ def append_provider_transcript(
     subpath: str,
     entries: list[dict[str, Any]],
 ) -> dict[str, int]:
+    validate_jsonb_strings(entries, field="entries")
+    validate_jsonb_strings(
+        [project_key, provider_session_id, subpath], field="transcript key"
+    )
     with transaction.atomic():
         HostedHarnessConversation.no_workspace_objects.select_for_update().only(
             "id"
@@ -1199,6 +1216,8 @@ def ingest_conversation_events(
     acknowledged_through: int,
     events: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    # Validate the entire raw batch before digest encoding or acknowledgement writes.
+    validate_jsonb_strings(events, field="events")
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -1243,7 +1262,7 @@ def ingest_conversation_events(
                 state=HostedHarnessConversationMessage.State.QUEUED,
             ).update(state=HostedHarnessConversationMessage.State.DELIVERED)
         for event in events:
-            _ingest_event(conversation, event)
+            _ingest_event(conversation, event, chat_only=lease.attempt_id is None)
         lease.command_watermark = max(
             lease.command_watermark, conversation.command_acked_through
         )
@@ -1278,7 +1297,10 @@ def ingest_conversation_events(
 
 
 def _ingest_event(
-    conversation: HostedHarnessConversation, event: dict[str, Any]
+    conversation: HostedHarnessConversation,
+    event: dict[str, Any],
+    *,
+    chat_only: bool = False,
 ) -> None:
     canonical = {key: value for key, value in event.items() if key != "digest"}
     if canonical_digest(canonical) != event["digest"]:
@@ -1338,6 +1360,13 @@ def _ingest_event(
                 event["sequence"],
                 event["emitted_at"],
             )
+        )
+    if chat_only and event["kind"] == "turn_completed":
+        from simulate.services.harness_usage import bill_builder_turn
+
+        # A turn in a chat sandbox of its own: no attempt's ledger covers its spend.
+        transaction.on_commit(
+            partial(bill_builder_turn, str(conversation.id), event.get("payload") or {})
         )
     _project_event(conversation, event)
 
@@ -1471,6 +1500,17 @@ def _project_event(
         ):
             conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
+        if command_id:
+            from simulate.services import evidence_drafts
+
+            transaction.on_commit(
+                partial(
+                    evidence_drafts.turn_ended,
+                    str(conversation.id),
+                    str(command_id),
+                    str(payload.get("outcome") or ""),
+                )
+            )
         # Only a finished turn leaves a complete suite; checkpoints taken mid-turn are scratch.
         if payload.get("outcome") == "success":
             conversation_id, sequence = str(conversation.id), event["sequence"]
@@ -1925,10 +1965,13 @@ def start_conversation_run(
     operation_id: str = "",
 ) -> dict[str, Any]:
     """Run the scenarios the chat names by tab number, the way the Scenarios tab does."""
+    from simulate.services.evidence_drafts import refuse_run
     from simulate.services.harness_usage import require_harness_call_usage
+    from simulate.services.harness_versioning.rebuild import turn_command
     from simulate.services.hosted_harness import create_selected_harness_run
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
+    refuse_run(turn_command(conversation))
     job = conversation.job
     environment = job.environment or job
     wanted = _numbers_meant(numbers, ranges)
@@ -2016,7 +2059,7 @@ def promote_turn_checkpoint(
 
     command = HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation=conversation,
-        id=(turn.payload or {}).get("command_message_id"),
+        id__in=_command_ids(turn),
         role=HostedHarnessConversationMessage.Role.USER,
     ).first()
     nudge = rebuild.nudge_for_command(command)
@@ -2188,7 +2231,7 @@ def promote_conversation_checkpoint(
 
     Only a completed environment is published to; while authoring runs, its pipeline owns
     these. A checkpoint older than the published one is ignored, so a late delivery never
-    rolls the environment back.
+    rolls the environment back. A fix's request for variations lands in the fix instead.
     """
     from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.harness_versioning import drafts, rebuild
@@ -2214,6 +2257,18 @@ def promote_conversation_checkpoint(
             status_code=409,
         )
     archive = _authoring_archive(checkpoint)
+    from simulate.services import agent_fix_variations, evidence_drafts
+
+    if command is not None and evidence_drafts.is_evidence_command(command):
+        # An evidence turn read untrusted production text: its saves never reach
+        # the environment; its scenarios become proposals on the import.
+        evidence_drafts.land(environment, conversation, archive, command)
+        return environment
+    if command is not None and agent_fix_variations.is_fix_command(command):
+        # A fix's variations land in the fix's own suite version, never in the
+        # environment's drafts or defaults.
+        agent_fix_variations.land(environment, conversation, archive, command)
+        return environment
     content_revision = authoring_content_digest(archive)
     checkpoint_basis = authoring_basis(checkpoint)
     outputs = {

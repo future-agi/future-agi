@@ -73,7 +73,7 @@ def load_price_schedule(
             raise PriceScheduleError(
                 f"The dated price file {path} entry {key!r} has no rows."
             )
-        parsed = []
+        parsed: list[tuple[datetime, dict[str, float]]] = []
         for index, row in enumerate(rows):
             where = f"The dated price file {path} entry {key!r} row {index}"
             if not isinstance(row, dict):

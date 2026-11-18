@@ -542,6 +542,71 @@ def _start_runtime(conversation_id: str) -> None:
     schedule_conversation_runtime(conversation_id, _public_base_url(None))
 
 
+def hand_back_chat(
+    environment_id: str,
+    fence: tuple[Any, str] | None = None,
+    *,
+    lost: str = "",
+) -> tuple[str, str, bool] | None:
+    """End the turn the environment's chat is running for a platform message that was
+    withdrawn: its sandbox lease expires, so the sandbox can post nothing more, and the
+    reply it was streaming is closed. The conversation's id, the sandbox's provider ref
+    (blank without one) and whether other messages wait for a new sandbox; None without a
+    conversation. The caller stops the sandbox and starts one for the waiting messages.
+    With ``fence``, a lease claimed anew since the close saw it is left alone. With
+    ``lost`` (a rebuild that ended on our side), the sandbox's ending is recorded as ours
+    unless it was live and busy with the person's own turn."""
+    from simulate.services.hosted_harness_conversation import (
+        _ACTIVE_CONVERSATION_STATES,
+        _unacked_commands,
+        runtime_is_live,
+        settle_interrupted_turn,
+    )
+
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            .filter(job_id=environment_id)
+            .first()
+        )
+        if conversation is None:
+            return None
+        lease = _chat_lease(conversation) if lost else None
+        # A live sandbox was busy with the person's own turn; one still starting has
+        # taken no turn at all.
+        ours = bool(lost) and not runtime_is_live(lease, now=timezone.now())
+        ref = _expire_chat_lease(conversation, fence)
+        if ref and ours:
+            from simulate.services.sandbox_usage import record_sandbox_end_reason
+
+            # The rebuild never got going in this sandbox, or was lost waiting on it:
+            # the ending is ours, unless the sandbox had already lived to its lifetime
+            # limit.
+            if not record_sandbox_end_reason(
+                provider_ref=ref,
+                reason=lost,
+                failure_domain="infrastructure",
+                last_seen=getattr(lease, "heartbeat_at", None),
+            ):
+                # Fencing the lease without its ending would lose the ending: the chat
+                # is handed back on a later pass instead.
+                raise RuntimeError("sandbox ending not recorded")
+        waiting = _unacked_commands(conversation).exists()
+        if conversation.state in _ACTIVE_CONVERSATION_STATES:
+            # The withdrawn message's turn (or its sandbox's start) is over.
+            settle_interrupted_turn(conversation)
+            conversation.state = (
+                HostedHarnessConversation.State.STARTING
+                if waiting
+                else HostedHarnessConversation.State.COLD
+            )
+            conversation.active_invocation_id = None
+            conversation.save(
+                update_fields=["state", "active_invocation_id", "updated_at"]
+            )
+    return str(conversation.id), ref, waiting
+
+
 def _after_close(
     environment_id: str,
     *,
@@ -550,76 +615,31 @@ def _after_close(
     fence: tuple[Any, str] | None = None,
 ) -> None:
     """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
-    from simulate.services.hosted_harness_conversation import (
-        _ACTIVE_CONVERSATION_STATES,
-        _unacked_commands,
-        runtime_is_live,
-        settle_interrupted_turn,
-    )
     from simulate.tasks import harness_nudges as tasks
 
     try:
         if dispatched:
-            with transaction.atomic():
-                conversation = (
-                    HostedHarnessConversation.no_workspace_objects.select_for_update()
-                    .filter(job_id=environment_id)
-                    .first()
-                )
-                if conversation is None:
-                    return
-                lease = _chat_lease(conversation) if lost else None
-                # A live sandbox was busy with the person's own turn; one still starting
-                # has taken no turn at all.
-                ours = bool(lost) and not runtime_is_live(lease, now=timezone.now())
-                ref = _expire_chat_lease(conversation, fence)
-                if ref and ours:
-                    from simulate.services.sandbox_usage import (
-                        record_sandbox_end_reason,
-                    )
-
-                    # The rebuild never got going in this sandbox, or was lost waiting on
-                    # it: the ending is ours, unless the sandbox had already lived to its
-                    # lifetime limit.
-                    if not record_sandbox_end_reason(
-                        provider_ref=ref,
-                        reason=lost,
-                        failure_domain="infrastructure",
-                        last_seen=getattr(lease, "heartbeat_at", None),
-                    ):
-                        # Fencing the lease without its ending would lose the ending:
-                        # the chat is handed back on a later pass instead.
-                        raise RuntimeError("sandbox ending not recorded")
-                waiting = _unacked_commands(conversation).exists()
-                if conversation.state in _ACTIVE_CONVERSATION_STATES:
-                    # The rebuild's turn (or its sandbox's start) is over.
-                    settle_interrupted_turn(conversation)
-                    conversation.state = (
-                        HostedHarnessConversation.State.STARTING
-                        if waiting
-                        else HostedHarnessConversation.State.COLD
-                    )
-                    conversation.active_invocation_id = None
-                    conversation.save(
-                        update_fields=["state", "active_invocation_id", "updated_at"]
-                    )
+            handed = hand_back_chat(environment_id, fence, lost=lost)
+            if handed is None:
+                return
+            conversation_id, ref, waiting = handed
             if ref:
                 try:
-                    tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                    tasks.schedule_sandbox_stop(conversation_id, ref)
                 except Exception:  # noqa: BLE001 - the sandbox still dies at its idle limit
                     logger.exception(
                         "harness_nudge_sandbox_stop_failed conversation=%s",
-                        conversation.id,
+                        conversation_id,
                     )
             if nudges._head(environment_id) is None:
                 return
             if waiting:
                 try:
-                    _start_runtime(str(conversation.id))
+                    _start_runtime(conversation_id)
                 except Exception:  # noqa: BLE001 - the recovery sweep starts it
                     logger.exception(
                         "harness_nudge_runtime_schedule_failed conversation=%s",
-                        conversation.id,
+                        conversation_id,
                     )
         if nudges._head(environment_id) is not None:
             tasks.schedule_nudge_check_task(environment_id)
@@ -1661,7 +1681,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=False
+            )
         ],
     )
     report: dict[str, Any] = {

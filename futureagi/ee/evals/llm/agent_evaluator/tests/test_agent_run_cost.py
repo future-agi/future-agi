@@ -35,11 +35,15 @@ def _run(monkeypatch, gateway_cost, starts=RUN_STARTS, ends=RUN_ENDS):
         clock["at"] = ends
         return dict(AGENT_RESULT)
 
-    agent = MagicMock()
-    agent.run = AsyncMock(side_effect=run)
     client = MagicMock()
     client.last_oversized_attempt = None
     client._gateway_cost = gateway_cost
+    agent = MagicMock()
+    agent.run = AsyncMock(side_effect=run)
+    # The loop keeps its token totals and its client on itself.
+    agent.total_input_tokens = AGENT_RESULT["input_tokens"]
+    agent.total_output_tokens = AGENT_RESULT["output_tokens"]
+    agent.llm_client = client
 
     evaluator = AgentEvaluator(
         rule_prompt="check that the response is correct",

@@ -15,4 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      # Only the release scripts' own tests. The other scripts' tests run in their own
+      # workflows, which provide what they need (ruff, MYPY_BIN); this job has neither.
+      - run: python3 -m unittest -v test_release_error_feed_worker test_verify_platform_image_tags
+        working-directory: scripts

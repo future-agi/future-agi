@@ -59,7 +59,7 @@ export default function EmailAlertsCard() {
           alignItems="center"
           mb={2}
         >
-          <Typography variant="h6" fontSize={13}>
+          <Typography variant="h6" fontSize={12}>
             Email Alerts
           </Typography>
           <Button

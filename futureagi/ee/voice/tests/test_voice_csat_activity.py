@@ -95,7 +95,9 @@ def scenario(db, organization, workspace, dataset_for_scenario, agent_definition
 
 
 @pytest.fixture
-def run_test_obj(db, organization, workspace, agent_definition, scenario, simulator_agent):
+def run_test_obj(
+    db, organization, workspace, agent_definition, scenario, simulator_agent
+):
     rt = RunTest.objects.create(
         name="Test Run",
         description="desc",
@@ -307,9 +309,7 @@ async def test_evaluator_runtime_failure_falls_back_to_success_evaluation(
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-async def test_no_recording_no_success_eval_returns_skipped(
-    test_execution, scenario
-):
+async def test_no_recording_no_success_eval_returns_skipped(test_execution, scenario):
     """With neither a recording nor a successEvaluation the activity
     returns ``skipped=True`` cleanly (no exception)."""
 
