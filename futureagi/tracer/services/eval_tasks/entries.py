@@ -29,6 +29,7 @@ from tracer.selectors.eval_tasks.row_resolver import (
 )
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
+from tracer.services.eval_tasks.selection_failure import SelectionFailure
 
 if TYPE_CHECKING:
     from django.db.models import QuerySet
@@ -47,10 +48,6 @@ _TARGET_TYPE = {
 
 _MATERIALIZE_BATCH = 5_000
 _FK_CHUNK = 1000
-_SAFE_AMBIGUOUS_SPAN_MESSAGE = (
-    "Evaluation task row selection could not safely distinguish one or more "
-    "spans. Narrow the filters and retry."
-)
 
 # Set to the materialized entry's id while the engine runs one entry; the eval
 # core's result write then lands on that entry instead of creating a new row.
@@ -549,7 +546,7 @@ def _resolve_entry_fks(
                     # EvalLogger stores only observation_span_id. If another
                     # trace in this project reuses the OTel ID, materializing
                     # either row would make the eventual target arbitrary.
-                    raise EvalTaskSelectionRejected(_SAFE_AMBIGUOUS_SPAN_MESSAGE)
+                    raise EvalTaskSelectionRejected(SelectionFailure.AMBIGUOUS_SPAN)
             fks.update(
                 {
                     str(span["id"]): {

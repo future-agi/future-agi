@@ -1610,8 +1610,11 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         return self._ok(task, "Paused. Answers already being read will still land.")
 
     def _restart(self, task):
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
+        EvalTask.objects.filter(id=task.id).update(
+            status=EvalTaskStatus.PENDING, failure_reason=None
+        )
         task.status = EvalTaskStatus.PENDING
+        task.failure_reason = None
         _start_workflow_on_commit(task, replace=True)
 
     def _resume(self, request, task, run, data):

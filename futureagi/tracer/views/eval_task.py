@@ -2137,6 +2137,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     "start_time",
                     "end_time",
                     "status",
+                    "failure_reason",
                     "run_type",
                     "row_type",
                 )
@@ -2247,6 +2248,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # and the fetch that first sees "completed" already carries the
                 # final tallies — no off-by-one-tick stale count.
                 "status": eval_task.status,
+                "failure_reason": eval_task.failure_reason
+                if eval_task.status == EvalTaskStatus.FAILED
+                else None,
                 # Duration is only meaningful for historical runs (which finalize
                 # with an end_time). Continuous tasks never end, so the frontend
                 # hides the Duration card based on this.
@@ -2929,7 +2933,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
             ).count()
             eval_task.status = EvalTaskStatus.PENDING
-            eval_task.save(update_fields=["status"])
+            eval_task.failure_reason = None
+            eval_task.save(update_fields=["status", "failure_reason"])
 
             # Pause exits the workflow; resuming starts a fresh run that picks up
             # the remaining pending/running entries.

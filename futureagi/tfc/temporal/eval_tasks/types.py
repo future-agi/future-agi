@@ -164,6 +164,7 @@ class SetStatusInput:
     # Optional atomic guard: only change the row if it is currently this status
     # (so a concurrent pause/delete is never clobbered). None = unconditional.
     expected_status: str | None = None
+    failure_reason: str | None = None
 
 
 @dataclass
