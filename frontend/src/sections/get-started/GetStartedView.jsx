@@ -1,5 +1,5 @@
 import Box from "@mui/material/Box/Box";
-import React, { Suspense, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import GetStartedHeaderView from "./GetStartedHeaderView";
 import SetupStepsView from "./setup-steps/SetupStepsView";
 import { useAuthContext } from "src/auth/hooks";
@@ -18,6 +18,10 @@ const TryOutFeatures = React.lazy(
 );
 const _GetStartedDemoVideo = React.lazy(() => import("./GetStartedDemoVideo"));
 
+// The query selector stays pure: React Query may run it while rendering (for
+// example with cached data), so it must not navigate or update state.
+const selectSetupStatus = (response) => response?.data?.result;
+
 const GetStartedView = () => {
   const { menusList, keySelector } = menuesConstant;
   const [currentLabel, setQueryParamState] = useSearchParams({
@@ -28,39 +32,44 @@ const GetStartedView = () => {
   const { contactUs: _contactUs, getStartedVideo: _getStartedVideo } =
     getStartedPage;
 
-  const labelData = (data) => {
-    const label = data?.data?.result;
-    const menuCopy = [...menusList]; // clone only if you plan to mutate, otherwise avoid
-    for (const item of menuCopy) {
-      if (!label?.[keySelector[item.label]]) {
-        setCurrentLabel(item.label);
-        break;
-      }
-    }
-
-    if (label && !Object.values(label).some(Boolean)) {
-      if (sessionStorage.getItem("videoShows") !== "yes") {
-        sessionStorage.setItem("videoShows", "yes");
-        setShowDemoModal(true);
-      }
-    }
-    trackEvent(Events.demoVideoPageLoaded, { [PropertyName.status]: "Loaded" });
-    return label;
+  const setCurrentLabel = (label) => {
+    setQueryParamState({ tab: label });
   };
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["currentLabel"],
     queryFn: () => axios.get(endpoints.getStarted.getTabs),
     staleTime: 2 * 1000,
-    select: labelData,
+    select: selectSetupStatus,
   });
+
+  // After the setup status loads or changes, open the first incomplete step.
+  // A tab the user picks is kept until the status itself changes.
+  useEffect(() => {
+    if (!data) return;
+    const firstIncomplete = menusList.find(
+      (item) => !data?.[keySelector[item.label]],
+    );
+    if (firstIncomplete) setCurrentLabel(firstIncomplete.label);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  // The demo prompt and page-load event happen once per visit.
+  const announced = useRef(false);
+  useEffect(() => {
+    if (!data || announced.current) return;
+    announced.current = true;
+    if (!Object.values(data).some(Boolean)) {
+      if (sessionStorage.getItem("videoShows") !== "yes") {
+        sessionStorage.setItem("videoShows", "yes");
+        setShowDemoModal(true);
+      }
+    }
+    trackEvent(Events.demoVideoPageLoaded, { [PropertyName.status]: "Loaded" });
+  }, [data]);
 
   const _handleClose = () => {
     setShowDemoModal(false);
-  };
-
-  const setCurrentLabel = (label) => {
-    setQueryParamState({ tab: label });
   };
 
   return (
