@@ -12,7 +12,12 @@ that keep the issue stream clean and safe:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import pytest
+from google.auth.exceptions import MalformedError, RefreshError
+from google.oauth2 import service_account
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.scope import global_event_processors
 
 from tfc.logging.sentry import (
@@ -24,6 +29,7 @@ from tfc.logging.sentry import (
     _scrub_deployment_telemetry_event,
     _scrub_event,
 )
+from tfc.tests.sentry_capture import sentry_capture
 
 before_send = _get_before_send()
 
@@ -127,7 +133,11 @@ def test_keeps_messages_that_only_resemble_expected_outcomes():
 
 
 def test_only_drops_litellm_credential_records_from_its_own_logger():
-    error = ValueError("Could not deserialize key data.")
+    with pytest.raises(MalformedError, match="missing fields token_uri") as caught:
+        service_account.Credentials.from_service_account_info(
+            {"type": "service_account", "client_email": "test@example.invalid"}
+        )
+    error = caught.value
     msg = (
         "Failed to load vertex credentials. Check to see if credentials "
         f"containing partial/invalid information. Error: {error}"
@@ -144,6 +154,78 @@ def test_only_drops_litellm_credential_records_from_its_own_logger():
     for name in ("model_hub.utils.utils", "LiteLLM Router", "LiteLLM.child", "litellm"):
         event = {"logger": name, "message": msg}
         assert before_send(event, _log_hint(name, error, msg)) is event
+
+
+@pytest.mark.parametrize(
+    ("endpoint_result", "error_type", "match", "event_count"),
+    [
+        pytest.param(
+            (
+                True,
+                {"access_token": "test-token", "expires_in": "not an integer"},
+                False,
+            ),
+            ValueError,
+            "not an integer",
+            1,
+            id="malformed-expires-in",
+        ),
+        pytest.param(
+            (
+                False,
+                {"error": "invalid_grant", "error_description": "Token revoked"},
+                False,
+            ),
+            RefreshError,
+            "invalid_grant",
+            0,
+            id="invalid-grant",
+        ),
+        pytest.param(
+            (False, {"error": "server_error"}, True),
+            RefreshError,
+            "server_error",
+            1,
+            id="server-error",
+        ),
+        pytest.param(
+            RuntimeError("unexpected token endpoint failure"),
+            RuntimeError,
+            "unexpected token endpoint failure",
+            1,
+            id="unexpected-runtime-error",
+        ),
+    ],
+)
+def test_vertex_token_endpoint_sentry_events(
+    monkeypatch, endpoint_result, error_type, match, event_count
+):
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
+
+    # Explicit authorized-user data goes through google-auth's real refresh
+    # flow without using application default credentials or a signing key.
+    credentials = {
+        "type": "authorized_user",
+        "client_id": "test-id",
+        "client_secret": "test-secret",
+        "refresh_token": "test-refresh-token",
+    }
+    with patch("google.oauth2._client._token_endpoint_request_no_throw") as endpoint:
+        if isinstance(endpoint_result, Exception):
+            endpoint.side_effect = endpoint_result
+        else:
+            endpoint.return_value = endpoint_result
+        with sentry_capture(
+            LoggingIntegration(), include_local_variables=False
+        ) as capture:
+            with pytest.raises(error_type, match=match):
+                VertexBase().get_access_token(credentials, project_id="test-project")
+    endpoint.assert_called_once()
+    assert len(capture.events) == event_count
+    for event in capture.events:
+        assert event["logger"] == "LiteLLM"
+        assert event["exception"]["values"][-1]["type"] == error_type.__name__
 
 
 def test_expected_outcome_loggers_are_dropped_by_before_send_alone():

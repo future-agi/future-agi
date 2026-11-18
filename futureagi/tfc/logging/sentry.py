@@ -370,6 +370,46 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     return event
 
 
+def _expected_vertex_credential_error(error: object) -> bool:
+    # Import only for the matching LiteLLM record; Sentry startup does not
+    # require the optional provider SDK.
+    try:
+        from google.auth.exceptions import MalformedError, RefreshError
+    except ImportError:
+        return False
+
+    if isinstance(error, RefreshError):
+        # google.oauth2._client attaches the token endpoint's decoded response
+        # as the second argument. Never infer a refusal from its free-form text.
+        response = error.args[1] if len(error.args) > 1 else None
+        return (
+            not error.retryable
+            and isinstance(response, dict)
+            and response.get("error") in ("invalid_grant", "invalid_client")
+        )
+
+    if isinstance(error, MalformedError):
+        message = str(error)
+        return (
+            message.startswith(
+                "Service account info was not in the expected format, missing fields "
+            )
+            or message
+            == "The private_key field was not found in the service account info."
+        )
+
+    # The key loader, credential-shape validation and token-response parser all
+    # raise plain ValueError. Match only known credential validation diagnostics.
+    return type(error) is ValueError and str(error).startswith(
+        (
+            "Unable to load PEM file.",
+            "Could not deserialize key data.",
+            "Authorized user info was not in the expected format, missing fields ",
+            "Invalid credentials type: <class '",
+        )
+    )
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
@@ -402,8 +442,7 @@ def _get_before_send() -> Callable:
         if record_name in EXPECTED_OUTCOME_LOGGERS:
             return None
         # VertexBase.get_access_token logs and re-raises *all* load_auth
-        # failures. Model validation handles malformed key data (ValueError);
-        # dependency and transport failures at this same site remain issues.
+        # failures. Only malformed credentials and known refusals are expected.
         if record_name == "LiteLLM":
             msg = getattr(record, "msg", None)
             exc_info = getattr(record, "exc_info", None)
@@ -415,7 +454,7 @@ def _get_before_send() -> Callable:
                 )
                 and isinstance(exc_info, tuple)
                 and len(exc_info) == 3
-                and isinstance(exc_info[1], ValueError)
+                and _expected_vertex_credential_error(exc_info[1])
             ):
                 return None
 
