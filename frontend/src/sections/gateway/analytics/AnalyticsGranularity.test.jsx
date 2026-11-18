@@ -48,10 +48,12 @@ const CHARTS = [
 ];
 
 const RANGES = [
+  ["1h", 1, "minute"],
   ["6h", 6, "minute"],
   ["24h", 24, "hour"],
   ["7d", 7 * 24, "hour"],
   ["30d", 30 * 24, "day"],
+  ["90d", 90 * 24, "day"],
 ];
 
 describe("Gateway analytics chart granularity", () => {
