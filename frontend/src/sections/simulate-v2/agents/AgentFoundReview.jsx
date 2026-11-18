@@ -46,7 +46,6 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
   const givenAtConnect = givenEnv.length > 0 || givenFiles.length > 0;
 
   const tools = values.tools || [];
-  const open = FOUND_FACTS.filter((f) => !status[f.id]);
 
   const save = () => {
     const corrected = Object.fromEntries(
@@ -106,7 +105,6 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
                   : null
           }
           status={status[f.id]}
-          onConfirm={() => setStatus((s) => ({ ...s, [f.id]: "confirmed" }))}
           onCorrect={(next) => {
             /* Saving the "Unknown" the field was prefilled with isn't a model. */
             const clean =
@@ -282,9 +280,7 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
         }}
       >
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-          {open.length
-            ? `Confirm or correct ${open.map((f) => f.label.toLowerCase()).join(", ")} to save.`
-            : "Everything is confirmed or corrected."}
+          Fix anything that&apos;s wrong with the pencil, then confirm.
         </Typography>
         <Button
           size="small"
@@ -293,14 +289,8 @@ export default function AgentFoundReview({ agent, onSave, onCancel }) {
         >
           Cancel
         </Button>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={open.length > 0}
-          onClick={save}
-        >
-          Save
+        <Button size="small" variant="contained" color="primary" onClick={save}>
+          Confirm all
         </Button>
       </Stack>
     </Box>

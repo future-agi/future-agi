@@ -247,9 +247,11 @@ export function FactRow({
           direction="row"
           alignItems="center"
           spacing={0.25}
-          sx={{ flexShrink: 0, minWidth: 120, justifyContent: "flex-end" }}
+          sx={{ flexShrink: 0, justifyContent: "flex-end" }}
         >
-          {status ? (
+          {/* One Confirm for the whole drawer (its footer): a row only says
+              when it was corrected. */}
+          {status === "corrected" || (status && onConfirm) ? (
             <Stack
               direction="row"
               alignItems="center"
@@ -268,7 +270,7 @@ export function FactRow({
                 {status === "corrected" ? "Corrected" : "Confirmed"}
               </Typography>
             </Stack>
-          ) : (
+          ) : onConfirm ? (
             <Button
               variant="outlined"
               size="small"
@@ -277,7 +279,7 @@ export function FactRow({
             >
               Confirm
             </Button>
-          )}
+          ) : null}
           {fact.fixed ? (
             /* Same width as the pencil, so every row's Confirm lines up. */
             <Tooltip
