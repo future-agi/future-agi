@@ -214,8 +214,10 @@ def _project_trace_counts(project_ids):
             if pid in counts:
                 counts[pid] = int(row["trace_count"])
         return counts
-    except Exception as e:
-        logger.warning(f"project trace counts unavailable from ClickHouse: {e}")
+    except Exception:
+        # Best effort at the ClickHouse boundary: the caller keeps the
+        # PostgreSQL count when the rollup cannot be read.
+        logger.warning("project_trace_counts_unavailable", exc_info=True)
         return None
 
 
