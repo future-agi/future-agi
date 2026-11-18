@@ -8,9 +8,9 @@ from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel, NoWorkspaceFilterManager
 
-# The certification plan caps in-flight cases at four; stored per campaign so a
-# later policy change does not rewrite history.
-DEFAULT_MAX_ACTIVE_CASES = 4
+# Keep half of the production simulation runner's four activity slots available
+# for user simulations. The value is stored per campaign for replay stability.
+DEFAULT_MAX_ACTIVE_CASES = 2
 
 
 class CertificationCampaign(BaseModel):
@@ -86,6 +86,11 @@ class CertificationCampaign(BaseModel):
             models.UniqueConstraint(
                 fields=["organization", "idempotency_key"],
                 name="uniq_cert_campaign_org_idempotency",
+            ),
+            models.UniqueConstraint(
+                fields=["organization"],
+                condition=models.Q(state__in=("pending", "running", "canceling")),
+                name="uniq_active_cert_campaign_org",
             ),
         ]
         indexes = [
@@ -182,6 +187,10 @@ class CertificationNotification(BaseModel):
         STABLE_ASSERTION_FAILURE = (
             "stable_assertion_failure",
             "Stable assertion failure",
+        )
+        EXPLORATORY_EVALUATION_FAILURE = (
+            "exploratory_evaluation_failure",
+            "Exploratory evaluation failure",
         )
         CAMPAIGN_COMPLETED = "campaign_completed", "Campaign completed"
 

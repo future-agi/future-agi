@@ -11,7 +11,10 @@ import pytest
 from temporalio.service import RPCError, RPCStatusCode
 
 from simulate.temporal import client as temporal_client
-from simulate.temporal.client import _cancel_with_retries
+from simulate.temporal.client import (
+    _cancel_hosted_harness_gateway_workflow_async,
+    _cancel_with_retries,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -115,3 +118,35 @@ async def test_retry_stops_when_status_turns_permanent(sleeps):
     assert await _cancel_with_retries(client, "workflow-id") is False
     assert handle.cancel.await_count == 2
     assert sleeps == [2]
+
+
+async def test_hosted_gateway_signal_ignores_already_closed_workflow(monkeypatch):
+    handle = Mock()
+    handle.signal = AsyncMock(
+        side_effect=_rpc_error(RPCStatusCode.NOT_FOUND, "workflow closed")
+    )
+    client = Mock()
+    client.get_workflow_handle.return_value = handle
+    get_client = AsyncMock(return_value=client)
+    monkeypatch.setattr("tfc.temporal.common.client.get_client", get_client)
+
+    await _cancel_hosted_harness_gateway_workflow_async("job-1")
+
+    client.get_workflow_handle.assert_called_once_with("hosted-harness-job-1")
+    handle.signal.assert_awaited_once_with("cancel")
+
+
+async def test_hosted_gateway_signal_reraises_other_rpc_errors(monkeypatch):
+    error = _rpc_error(RPCStatusCode.PERMISSION_DENIED)
+    handle = Mock()
+    handle.signal = AsyncMock(side_effect=error)
+    client = Mock()
+    client.get_workflow_handle.return_value = handle
+    monkeypatch.setattr(
+        "tfc.temporal.common.client.get_client", AsyncMock(return_value=client)
+    )
+
+    with pytest.raises(RPCError) as raised:
+        await _cancel_hosted_harness_gateway_workflow_async("job-1")
+
+    assert raised.value is error
