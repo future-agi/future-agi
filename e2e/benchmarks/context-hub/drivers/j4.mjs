@@ -126,26 +126,23 @@ export async function createDriver({ jobId, runId, registration }) {
         if (!(await ack(reviewer).isChecked())) await operator.click(ack(reviewer), name);
         await expect(ack(reviewer)).toBeChecked();
       };
-      // (UX iteration 3, REV7; iteration 4, REV4/REV9) The permission fingerprints sit under "What was compared"; the renewal's kept-result IDs under
-      // "Technical details"; an evidence ID and its exact grading counts under that row's Inspect; the share confirmation's record IDs are one hover away. The same visibility assertions run once the disclosure is open; the disclosure is read inside the inspection body,
-      // not counted as an operator primitive, so the measured action counts do not rise. The target configuration digest stays one hover away.
+      // Opening a disclosure or inspecting an evidence row is a real operator click.
       const reveal = async (scope, name) => {
         const toggle = scope.getByRole('button', { name, exact: true }).first();
-        if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+        if ((await toggle.getAttribute('aria-expanded')) !== 'true') await op.click(toggle, name === 'Technical details' ? 'open-renewal-technical-details' : 'open-compared-fingerprints');
       };
-      // Opens the Inspect view of the result row whose evidence ID is `id` (the row itself shows its outcome once; the ID
-      // and the exact grading counts are read in Inspect). Not an operator primitive, like `reveal`.
       const inspectResult = async (scope, id) => {
         const inspectors = scope.getByRole('button', { name: 'Inspect', exact: true });
         const total = await inspectors.count();
         for (let index = 0; index < total; index += 1) {
           if (await scope.getByTitle(id, { exact: true }).first().isVisible().catch(() => false)) return;
-          await inspectors.nth(index).click();
+          await op.click(inspectors.nth(index), `inspect-evidence-row-${index + 1}`);
         }
       };
       const attempt = async (reviewer, operator, name) => {
-        await attestIfRequired(reviewer, operator, `${name}-acknowledge`);
         await operator.click(reviewer.getByRole('button', { name: /^Move production to v\d+$/ }), `${name}-open-release`);
+        const dialog = reviewer.getByRole('dialog');
+        if (await ack(dialog).isVisible()) await attestIfRequired(dialog, operator, `${name}-acknowledge`);
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
         await operator.click(reviewer.getByRole('button', { name: 'Move production', exact: true }), `${name}-move`);
         const result = await response;
@@ -224,7 +221,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const dialog = admin.getByRole('dialog');
           const chooser = admin.waitForEvent('filechooser');
           await op.click(dialog.getByRole('button', { name: 'Choose config file', exact: true }), 'choose-runtime-manifest');
-          await (await chooser).setFiles(input.manifestPath);
+          await op.configurationEdit('select-runtime-manifest-file', async () => (await chooser).setFiles(input.manifestPath));
           await expect(dialog.getByText('refund_agent.app:invoke', { exact: true })).toBeVisible();
           // The visible name defaults from the build entrypoint; nothing typed.
           await expect(dialog.getByLabel('App name', { exact: true })).toHaveValue('refund_agent');
@@ -446,7 +443,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(reviewer.getByTitle(remaining.source_id, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText(`${outcome.graded}/${outcome.planned} attempts graded · ${outcome.incomplete} incomplete · ${outcome.regressions} regressions`, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
-            await expect(ack(reviewer)).toBeEnabled();
+            await expect(reviewer.getByText('Approved. Confirm the move to release it.', { exact: true })).toBeVisible();
           }, renewed.decision);
           await shot(reviewer, 'renewed-review');
           await stamp('renewed-review', await read(`release-requests/${submitted.id}/`, signal), renewed.decision);
@@ -454,8 +451,8 @@ export async function createDriver({ jobId, runId, registration }) {
         }
         if (stage.id === 'authorized-release') {
           const decision = decisionFor(detail);
-          await attestIfRequired(reviewer, op, 'acknowledge-final-release');
           await op.click(reviewer.getByRole('button', { name: /^Move production to v\d+$/ }), 'prepare-authorized-release');
+          await attestIfRequired(reviewer.getByRole('dialog'), op, 'acknowledge-final-release');
           const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
           await op.approve('authorize-exact-transition', ['release-packet'], () => reviewer.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
           const result = await response;

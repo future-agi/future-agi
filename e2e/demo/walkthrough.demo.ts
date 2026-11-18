@@ -539,8 +539,8 @@ test('skills walkthrough', async ({ browser, request }) => {
       const reviewer = page.getByLabel('Assigned reviewer');
       await click(reviewer, 500);
       await click(page.getByRole('option', { name: /^Priya Shah/ }), 600);
-      await hide(() => page.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true }).check());
-      const send = page.getByRole('button', { name: 'Send review request', exact: true });
+      await hide(() => page.getByRole('checkbox', { name: "I've checked this version, where it's going and the evidence I'm attaching.", exact: true }).check());
+      const send = page.getByRole('button', { name: 'Send request', exact: true });
       await glide(send);
       await loading(page.getByText(/support-agent · production v1 → v2/), async () => { await send.click(); await page.waitForURL(/mine=1/); });
       await point(page.getByText(/support-agent · production v1 → v2/));
@@ -555,7 +555,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       const inboxRow = page.getByRole('button', { name: 'support-agent', exact: true }).first();
       await goto('/dashboard/skills/reviews', inboxRow);
       await noPlaceholders();
-      const ack = page.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
+      const ack = page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/, exact: true });
       await glide(inboxRow);
       await loading(ack, () => inboxRow.click());
       await expect(ack).toBeEnabled();
@@ -568,7 +568,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       await hide(() => ack.check());
       await quick(async () => {
         await click(page.getByRole('button', { name: 'Approve release', exact: true }), 1200);
-        if (!(await ack.isChecked())) await ack.check();
+        await expect(page.getByText('You checked this release when you approved it.', { exact: true })).toBeVisible();
         await glide(page.getByRole('button', { name: /^Move production to v\d+$/ }));
         await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
       });

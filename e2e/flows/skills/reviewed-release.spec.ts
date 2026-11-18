@@ -157,6 +157,7 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
         await select(page, 'Task model', 'gpt-4o-mini');
         await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('1');
         await page.getByRole('button', { name: 'Preview answer check', exact: true }).click();
+        await page.getByRole('button', { name: 'Technical details', exact: true }).click();
         await expect(page.getByText('3 test cases × 2 versions × 1 attempt per version = 6 attempts', { exact: true })).toBeVisible({ timeout: UI_READY });
         const consent = page.getByRole('checkbox', {name: /^Send (?:this file|these \d+ files) and 3 test cases to .+, up to \$[0-9.]+\. (?:It contains|They contain) no answer keys or grading material\.$/});
         await consent.check();

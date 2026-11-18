@@ -108,6 +108,7 @@ try {
       page.on('pageerror', (error) => errors.push(String(error)));
       await page.goto(`${origin}/dashboard/skills/contexts?theme=${theme}`);
       await page.getByRole('button', { name: 'support-policy' }).click();
+      await page.getByRole('tab', { name: 'Source', exact: true }).click();
       await page.getByLabel('AGENTS.md read-only source').waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: path.join(output, `context-${theme}-${width}.png`) });
@@ -115,23 +116,23 @@ try {
       await page.getByText('No apps connected yet').waitFor();
       await page.screenshot({ path: path.join(output, `consumers-${theme}-${width}.png`) });
       await page.getByRole('tab', { name: 'Reviews', exact: true }).click();
-      await page.getByText('No assigned reviews').waitFor();
+      await page.getByText('No requests waiting for you').waitFor();
       await page.screenshot({ path: path.join(output, `reviews-${theme}-${width}.png`) });
-      await page.getByRole('tab', { name: 'Workspace allowance', exact: true }).click();
+      await page.getByRole('button', { name: 'More Skills pages' }).click();
+      await page.getByRole('menuitem', { name: 'Workspace allowance', exact: true }).click();
       await page.getByLabel('Monthly allowance (USD)').waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({ path: path.join(output, `allowance-${theme}-${width}.png`) });
       for (const kind of ['agent_context', 'skill']) {
         await page.goto(`${origin}/dashboard/skills/reviews?theme=${theme}&reviewKind=${kind}`);
         await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
-        const acknowledge = page.getByRole('checkbox', { name: /I've checked this version/ });
+        const acknowledge = page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ });
         await acknowledge.check();
         await page.getByRole('button', { name: 'Approve release' }).click();
         // Approval changes the server request status and remounts acknowledgment;
         // wait for that transition rather than racing the previous checked box.
-        await page.waitForFunction(() => document.querySelector('input[type="checkbox"]')?.checked === false);
-        await acknowledge.check();
         await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
+        await page.getByRole('dialog').getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ }).check();
         await page.getByRole('button', { name: 'Move production', exact: true }).click();
         await page.waitForFunction(() => window.__reviewEvents.some((event) => event.url.endsWith('/execute/')));
         const events = await page.evaluate(() => window.__reviewEvents.filter((event) => /\/(decisions|execute)\/$/.test(event.url)));
@@ -143,8 +144,8 @@ try {
         await page.screenshot({ path: path.join(output, `approved-${kind}-${theme}-${width}.png`) });
         await page.goto(`${origin}/dashboard/skills/reviews?theme=${theme}&reviewKind=${kind}&stale=1`);
         await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
-        await page.getByText(/Review is stale or unavailable/).waitFor();
-        assert.equal(await page.getByRole('checkbox', { name: /I've checked this version/ }).isDisabled(), true);
+        await page.getByText('Approval no longer applies. See what changed and renew the request.').waitFor();
+        assert.equal(await page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ }).isDisabled(), true);
         assert.equal(await page.getByRole('button', { name: 'Approve release' }).isDisabled(), true);
       }
       await page.close();

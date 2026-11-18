@@ -327,7 +327,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         await reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click();
         // The acknowledgement is keyed to the exact packet revision and fingerprint, so it carries
         // across pending -> approved for the unchanged revision; any renewal clears it (J4).
-        await expect(reviewed).toBeChecked();
+        await expect(reviewerPage.getByText('You checked this release when you approved it.', { exact: true })).toBeVisible();
         await reviewerPage.getByRole('button', { name: /^Move production to v\d+$/ }).click();
         await reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click();
         await expect(reviewerPage.getByText('Release receipt', { exact: true })).toBeVisible();
