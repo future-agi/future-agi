@@ -24,7 +24,8 @@ TABLE = 'tracer_eval_task'
 ENTRY = next(row for row in p.load_high_volume_registry()
              if row['database']=='postgres' and row['table']==TABLE)
 ARGS = dict(namespace='task-reference-source', email='task-reference@example.test', rows=100000,
-    organization_id=str(uuid.UUID(int=1)), workspace_id=str(uuid.UUID(int=2)))
+    organization_id=str(uuid.UUID(int=1)), workspace_id=str(uuid.UUID(int=2)), source_version='v1.58.0')
+LATEST_SOURCE = 'v1.59.0'
 CONTEXT = dict(user_id=str(uuid.UUID(int=3)), historical_at='2025-01-01T00:00:00+00:00')
 
 
@@ -58,8 +59,9 @@ class FakeApp:
         raise AssertionError('unexpected app operation')
 
 
-def driver_for(fake=None, cls=s.ShippingRehearsal):
+def driver_for(fake=None, cls=s.ShippingRehearsal, *, version=ARGS['source_version']):
     driver=object.__new__(cls)
+    driver.row=SimpleNamespace(release=SimpleNamespace(version=version))
     driver.witnesses=SimpleNamespace(namespaces={'source':dict(namespace=ARGS['namespace'],
         account={'email':ARGS['email'],'password':'DO-NOT-FORWARD'}, headers={
             'X-Organization-Id':ARGS['organization_id'],'X-Workspace-Id':ARGS['workspace_id'],
@@ -69,8 +71,8 @@ def driver_for(fake=None, cls=s.ShippingRehearsal):
     return driver
 
 
-def payload_env():
-    env={'a':copy.deepcopy(ARGS)}
+def payload_env(version=ARGS['source_version']):
+    env={'a':dict(ARGS,source_version=version)}
     exec(t.ROWS,env)
     return env
 
@@ -109,14 +111,14 @@ class Query(TraceQuery):
             self.model.records[obj.id].update({key:getattr(obj,key) for key in fields})
 
 
-def orm_env():
-    env=payload_env()
+def orm_env(version=ARGS['source_version']):
+    env=payload_env(version)
     for alias,name in [('Project','Project'),('Template','EvalTemplate'),('Config','CustomEvalConfig'),
             ('Task','EvalTask'),('Membership','EvalTask_evals'),('Log','EvalLogger'),('Run','EvalTaskLogger')]:
         def init(self, **kwargs): self.__dict__.update(copy.deepcopy(kwargs))
         model=type(name,(),{'records':{},'fail_insert':False,'__init__':init,'pk':property(lambda obj:obj.id)})
         fields={key:SimpleNamespace(attname=key+('_id' if spec[3] else ''))
-                for key,spec in t.SOURCE_FIELDS.get(name,{}).items()}
+                for key,spec in env['SOURCE_FIELDS'].get(name,{}).items()}
         model._meta=SimpleNamespace(object_name=name,get_field=fields.__getitem__)
         model.all_objects=model.objects=Query(model)
         env[alias]=model
@@ -143,13 +145,14 @@ def execute(env, source):
     return json.loads(output.getvalue()) if output.getvalue() else None
 
 
-def schema_env():
+def schema_env(version=ARGS['source_version']):
     """Contract double, not an observation of PostgreSQL or installed source."""
+    source_fields=payload_env(version)['SOURCE_FIELDS']
     class Unique:
         def __init__(self, **kwargs): self.__dict__.update(kwargs)
         def __eq__(self, other): return type(other) is Unique and vars(self)==vars(other)
     cascade=object()
-    env={'SOURCE_FIELDS':copy.deepcopy(t.SOURCE_FIELDS),
+    env={'SOURCE_FIELDS':copy.deepcopy(source_fields),
         'models':SimpleNamespace(UniqueConstraint=Unique,CASCADE=cascade),'Q':lambda **kw:kw}
     labels={'Project':('tracer.Project','tracer_project'),
         'Template':('model_hub.EvalTemplate','model_hub_evaltemplate'),
@@ -166,7 +169,7 @@ def schema_env():
     for alias,(label,table) in labels.items():
         model=env[alias]
         fields={}
-        for name,(kind,nullable,length,remote) in t.SOURCE_FIELDS[model.__name__].items():
+        for name,(kind,nullable,length,remote) in source_fields[model.__name__].items():
             field=SimpleNamespace(name=name,column=name+('_id' if remote else ''),null=nullable,
                 max_length=length,get_internal_type=lambda kind=kind:kind,
                 unique=name in ('id','simulation_agent'),primary_key=name=='id',
@@ -193,6 +196,8 @@ def schema_env():
         for constraint in model._meta.constraints:
             actual[constraint.name]=dict(unique=True,columns=[model._meta.get_field(f).column for f in constraint.fields])
         if alias=='Membership': actual['pair_unique']=dict(unique=True,columns=['evaltask_id','customevalconfig_id'])
+        if alias=='Project' and version==LATEST_SOURCE:
+            actual['tracer_project_analysis_source_generation_check']=dict(check=True,columns=['analysis_source_generation'])
         constraints[table]=actual
     task_fields=env['Task']._meta.get_field.__self__
     task_fields['evals']=SimpleNamespace(name='evals',many_to_many=True,
@@ -209,7 +214,23 @@ def schema_env():
     env['Log']=SimpleNamespace(_meta=SimpleNamespace(get_field=lambda name:SimpleNamespace(get_internal_type=lambda:'CharField')))
     env['Run']=SimpleNamespace(_meta=SimpleNamespace(get_field=lambda name:SimpleNamespace(
         get_internal_type=lambda:'ForeignKey',remote_field=SimpleNamespace(model=env['Task']))))
-    env['connection']=SimpleNamespace(vendor='postgresql',cursor=mock.MagicMock(),introspection=SimpleNamespace(
+    env['physical_types']={TABLE:{'sampling_policy':'jsonb'},'tracer_project':{
+        'analysis_source_generation':'bigint','sampling_contact_attribute':'character varying(200)'}}
+    env['check_definition']=(True,'CHECK ((analysis_source_generation >= 0))')
+    cursor=mock.MagicMock()
+    def physical_types():
+        sql,(table,names)=cursor.execute.call_args.args
+        assert 'FROM pg_attribute' in sql
+        return [(name,env['physical_types'][table][name]) for name in names]
+    def check_definition():
+        sql,args=cursor.execute.call_args.args
+        assert 'FROM pg_constraint' in sql and args==('tracer_project','tracer_project_analysis_source_generation_check')
+        return env['check_definition']
+    cursor.fetchall.side_effect=physical_types
+    cursor.fetchone.side_effect=check_definition
+    context=mock.MagicMock()
+    context.return_value.__enter__.return_value=cursor
+    env['connection']=SimpleNamespace(vendor='postgresql',cursor=context,introspection=SimpleNamespace(
         get_table_description=lambda cursor,table:columns[table],get_constraints=lambda cursor,table:constraints[table]))
     return env,columns,constraints
 
@@ -233,6 +254,7 @@ class EvalTaskReferenceTests(unittest.TestCase):
 
     def test_full_plan_geometry_relations_and_nonrunnable_payloads(self):
         env=payload_env()
+        source_fields=env['SOURCE_FIELDS']
         projects,templates,configs=env['support_payloads'](CONTEXT)
         self.assertEqual(tuple(map(len,(projects,templates,configs))),(3,2,6))
         config_by_id={row['id']:row for row in configs}
@@ -255,7 +277,7 @@ class EvalTaskReferenceTests(unittest.TestCase):
                 self.assertLess(row['start_time'],row['created_at'])
                 self.assertLessEqual(row['created_at'],row['updated_at'])
                 self.assertTrue(0<row['sampling_rate']<=100)
-                self.assertEqual(set(row),{key+('_id' if spec[3] else '') for key,spec in t.SOURCE_FIELDS['EvalTask'].items()})
+                self.assertEqual(set(row),{key+('_id' if spec[3] else '') for key,spec in source_fields['EvalTask'].items()})
             for pair in members:
                 self.assertEqual(task_by_id[pair['evaltask_id']]['project_id'],
                     config_by_id[pair['customevalconfig_id']]['project_id'])
@@ -269,10 +291,10 @@ class EvalTaskReferenceTests(unittest.TestCase):
         self.assertNotEqual(env['identity']('task',0),other['identity']('task',0))
         for model,rows in zip(('Project','EvalTemplate','CustomEvalConfig'),(projects,templates,configs)):
             self.assertTrue(all(set(row)=={key+('_id' if spec[3] else '')
-                for key,spec in t.SOURCE_FIELDS[model].items()} for row in rows))
-        self.assertNotIn('analysis_source_generation',t.SOURCE_FIELDS['Project'])
+                for key,spec in source_fields[model].items()} for row in rows))
+        self.assertNotIn('analysis_source_generation',source_fields['Project'])
 
-    def test_both_pinned_source_objects_match_inventory_and_nonrunnable_contract(self):
+    def test_pinned_source_objects_match_inventory_and_nonrunnable_contract(self):
         # Unit CI fetches full tag history. Read source as AST only; never import
         # historical application code or infer its inventory from the target.
         root=Path(__file__).resolve().parents[2]
@@ -284,11 +306,11 @@ class EvalTaskReferenceTests(unittest.TestCase):
             'EvalTemplate':'model_hub.EvalTemplate','Organization':'accounts.Organization',
             'Workspace':'accounts.Workspace','User':'accounts.User',
             'KnowledgeBaseFile':'model_hub.KnowledgeBaseFile','EvalGroup':'model_hub.EvalGroup'}
-        revisions=('6840e44914cf7c85cd0ae65d98761f7728b8afcc','28e729aab169d75a2ca856fb4ed67fd1dda5901a')
         paths={'EvalTask':'tracer/models/eval_task.py','Project':'tracer/models/project.py',
             'CustomEvalConfig':'tracer/models/custom_eval_config.py','EvalTemplate':'model_hub/models/evals_metric.py'}
-        selection=[]
-        for revision in revisions:
+        self.assertLessEqual(t.SOURCE_FIELD_OVERRIDES.keys(),t.SOURCE_REVISIONS.keys())
+        for version,revision in t.SOURCE_REVISIONS.items():
+            source_fields=payload_env(version)['SOURCE_FIELDS']
             base=cls(tree(revision,'tfc/utils/base_model.py'),'BaseModel')
             for name,path in paths.items():
                 declarations=base.body+cls(tree(revision,path),name).body
@@ -306,7 +328,7 @@ class EvalTaskReferenceTests(unittest.TestCase):
                         remote=labels[call.args[0].id] if isinstance(call.args[0],ast.Name) else ast.literal_eval(call.args[0])
                     actual[node.targets[0].id]=(kind,options.get('null',False),
                         32 if kind=='UUIDField' else options.get('max_length'),remote)
-                self.assertEqual(actual,t.SOURCE_FIELDS[name],(revision,name))
+                self.assertEqual(actual,source_fields[name],(revision,name))
             stranded=tree(revision,'tracer/selectors/eval_tasks/stranded.py')
             sweepable=next(n.value for n in stranded.body if isinstance(n,ast.Assign)
                 and any(isinstance(v,ast.Name) and v.id=='_SWEEPABLE' for v in n.targets))
@@ -314,24 +336,64 @@ class EvalTaskReferenceTests(unittest.TestCase):
             select=next(n for n in stranded.body if isinstance(n,ast.FunctionDef) and n.name=='find_stranded_tasks')
             self.assertIn('eval_task_id__in',ast.unparse(select))
             self.assertIn('status__in=_UNDRAINED',ast.unparse(select))
+            cursor_reads=[node for node in ast.walk(select) if isinstance(node,ast.Call)
+                and any(kw.arg=='continuous_cursor__lt' for kw in node.keywords)]
+            self.assertEqual(len(cursor_reads),1 if version==LATEST_SOURCE else 0)
+            for read in cursor_reads:
+                keywords={kw.arg:ast.unparse(kw.value) for kw in read.keywords}
+                self.assertEqual(keywords['run_type'],'RunType.CONTINUOUS')
+                self.assertEqual(keywords['status__in'],'sweepable_statuses()')
             activities=tree(revision,'tfc/temporal/eval_tasks/activities.py')
             state=next(n for n in activities.body if isinstance(n,ast.FunctionDef) and n.name=='_get_task_state_sync')
             inactive=next(n.value for n in ast.walk(state) if isinstance(n,ast.Assign)
                 and any(isinstance(v,ast.Name) and v.id=='inactive' for v in n.targets))
             self.assertEqual({n.attr for n in inactive.elts},{'PAUSED','DELETED','FAILED'})
-            selection.append((ast.dump(select),ast.dump(state)))
-        self.assertEqual(selection[0],selection[1])
+
+    def test_latest_source_columns_are_preserved_and_target_columns_are_ignored(self):
+        legacy=payload_env()
+        env=orm_env(LATEST_SOURCE)
+        legacy_tasks,members=legacy['payloads'](CONTEXT,0,2500)
+        tasks,latest_members=env['payloads'](CONTEXT,0,2500)
+        self.assertEqual(latest_members,members)
+        self.assertEqual([{k:v for k,v in row.items() if k!='sampling_policy'} for row in tasks],legacy_tasks)
+        self.assertEqual(sum(row['sampling_policy'] is not None for row in tasks),25)
+        for row in tasks:
+            policy=row['sampling_policy']
+            if policy is not None:
+                self.assertEqual((row['status'],row['run_type']),('completed','historical'))
+                self.assertEqual(policy,dict(version=1,sampling_unit=row['row_type'][:-1],mode='closed',
+                    window=dict(start=row['start_time'].isoformat(),end=row['end_time'].isoformat()),default=dict(rate=25)))
+        projects,templates,configs=legacy['support_payloads'](CONTEXT)
+        self.assertEqual(env['support_payloads'](CONTEXT),(
+            [dict(row,analysis_source_generation=index,sampling_contact_attribute='contact_id' if index else '')
+                for index,row in enumerate(projects)],templates,configs))
+        execute(env,t.CHUNK_BODY)
+        task=env['Task'].records[tasks[0]['id']]
+        task.update(failure_reason='target-only',workflow_generation=uuid.UUID(int=9))
+        env['matching'](env['Task'],tasks)
+        task['sampling_policy']=None
+        with self.assertRaisesRegex(AssertionError,'incompatible existing EvalTask'):
+            env['matching'](env['Task'],tasks)
+        project=env['Project'].records[projects[1]['id']]
+        for field,default in [('analysis_source_generation',0),('sampling_contact_attribute','')]:
+            before=project[field]
+            project[field]=default
+            with self.subTest(field=field),self.assertRaisesRegex(AssertionError,'incompatible existing Project'):
+                env['check_context'](CONTEXT)
+            project[field]=before
 
     def test_schema_fail_closed_before_prepare(self):
-        env,columns,constraints=schema_env()
-        exec(t.SCHEMA_CHECK,env)
+        for version in t.SOURCE_REVISIONS:
+            with self.subTest(version=version):
+                env,_,_=schema_env(version)
+                exec(t.SCHEMA_CHECK,env)
         cases=[('engine',lambda e,c,k:setattr(e['connection'],'vendor','sqlite')),
             ('column',lambda e,c,k:c[TABLE].pop()),
             ('nullability',lambda e,c,k:setattr(c[TABLE][0],'null_ok',True)),
             ('pk',lambda e,c,k:k[TABLE].pop('pk')),
             ('fk',lambda e,c,k:k[TABLE].pop('fk_project_id')),
             ('pair uniqueness',lambda e,c,k:k['tracer_eval_task_evals'].pop('pair_unique')),
-            ('extra check',lambda e,c,k:k[TABLE].update(extra={'check':True})),
+            ('extra check',lambda e,c,k:k[TABLE].update(extra={'check':True,'columns':['sampling_rate']})),
             ('wrong relation',lambda e,c,k:setattr(e['Task']._meta.get_field('project'),'db_constraint',False)),
             ('wrong type',lambda e,c,k:setattr(e['Task']._meta.get_field('sampling_rate'),'get_internal_type',lambda:'IntegerField')),
             ('wrong choices',lambda e,c,k:setattr(e['Task']._meta.get_field('status'),'flatchoices',[('pending','Pending')])),
@@ -340,6 +402,39 @@ class EvalTaskReferenceTests(unittest.TestCase):
             env,columns,constraints=schema_env(); change(env,columns,constraints)
             with self.subTest(name=name),self.assertRaises(AssertionError): exec(t.SCHEMA_CHECK,env)
         self.assertLess(t.PREPARE.index('PostgreSQL required'),t.PREPARE.index('with transaction.atomic():'))
+
+    def test_schema_rejects_wrong_source_inventory_and_latest_check_drift(self):
+        for version in ('v1.58.0','v1.59.1'):
+            env,_,_=schema_env(LATEST_SOURCE)
+            env['SOURCE_FIELDS']=payload_env(version)['SOURCE_FIELDS']
+            with self.subTest(version=version),self.assertRaisesRegex(AssertionError,'field inventory drift'):
+                exec(t.SCHEMA_CHECK,env)
+        env,_,_=schema_env(LATEST_SOURCE)
+        env['Task']._meta.concrete_fields.append(SimpleNamespace(name='failure_reason'))
+        with self.assertRaisesRegex(AssertionError,'field inventory drift EvalTask'):
+            exec(t.SCHEMA_CHECK,env)
+        for change in ('missing check','wrong column','extra check'):
+            env,_,constraints=schema_env(LATEST_SOURCE)
+            checks=constraints['tracer_project']
+            name='tracer_project_analysis_source_generation_check'
+            if change=='missing check': checks.pop(name)
+            if change=='wrong column': checks[name]['columns']=['sampling_contact_attribute']
+            if change=='extra check': checks['extra']=dict(check=True,columns=['analysis_source_generation'])
+            with self.subTest(change=change),self.assertRaisesRegex(AssertionError,'physical check drift'):
+                exec(t.SCHEMA_CHECK,env)
+        for table,field,kind in ((TABLE,'sampling_policy','json'),
+                ('tracer_project','sampling_contact_attribute','character varying(10)'),
+                ('tracer_project','analysis_source_generation','integer')):
+            env,_,_=schema_env(LATEST_SOURCE)
+            env['physical_types'][table][field]=kind
+            with self.subTest(field=field),self.assertRaisesRegex(AssertionError,'physical sampling/generation type drift'):
+                exec(t.SCHEMA_CHECK,env)
+        for definition in ((False,'CHECK ((analysis_source_generation >= 0))'),
+                (True,'CHECK ((analysis_source_generation >= -1))')):
+            env,_,_=schema_env(LATEST_SOURCE)
+            env['check_definition']=definition
+            with self.subTest(definition=definition),self.assertRaisesRegex(AssertionError,'generation check definition drift'):
+                exec(t.SCHEMA_CHECK,env)
 
     def test_actual_chunks_replay_and_refuse_partial_payload_membership_or_work_conflicts(self):
         for start in (0,50000,70000,90000):
@@ -442,18 +537,21 @@ class EvalTaskReferenceTests(unittest.TestCase):
         driver=driver_for(); del driver.witnesses.namespaces['source']['account']
         with self.assertRaises(p.ManualRelease): driver.seed_eval_task_reference(100000)
         self.assertFalse(driver.app_python.calls)
-        fake=FakeApp(scale=2); driver=driver_for(fake); driver.seed_eval_task_reference(100001)
+        fake=FakeApp(scale=2); driver=driver_for(fake,version='v1.57.0'); driver.seed_eval_task_reference(100001)
         self.assertEqual(len(fake.committed),80)
 
     def test_retained_verification_is_read_only_and_not_a_product_api_witness(self):
-        fake=FakeApp(); driver=driver_for(fake)
+        fake=FakeApp(); driver=driver_for(fake,version=LATEST_SOURCE)
         t.verify_eval_task_reference(driver,prefix=s.DJANGO_PREFIX,producer=p)
         self.assertFalse(fake.calls)
         driver.seed_eval_task_reference(100000)
         before=len(fake.calls)
+        # Reads after bootstrap and restore still use the original source contract.
+        driver.row.release.version='v1.59.1'
         for phase in ('before backup','after bootstrap','after restore'):
             t.verify_eval_task_reference(driver,prefix=s.DJANGO_PREFIX,producer=p)
         self.assertEqual([program for program,args in fake.calls[before:]],[s.DJANGO_PREFIX+t.VERIFY]*3)
+        self.assertTrue(all(args['source_version']==LATEST_SOURCE for program,args in fake.calls))
         self.assertEqual(driver.corpus['eval_task_reference_preservation_reads'],3)
         fake.alter_verified=lambda r:dict(r,memberships=150001)
         with self.assertRaises(p.ManualRelease): t.verify_eval_task_reference(driver,prefix=s.DJANGO_PREFIX,producer=p)
@@ -509,7 +607,7 @@ class EvalTaskReferenceTests(unittest.TestCase):
             self.assertFalse(any(isinstance(n,ast.keyword) and n.arg=='ignore_conflicts' for n in ast.walk(tree)))
             self.assertFalse(any(isinstance(n,ast.Attribute) and n.attr in
                 ('delete','schema_editor','migrate','delay','apply_async') for n in ast.walk(tree)))
-            for forbidden in ('ANALYZE','pg_stat','start_eval_task_workflow','InstantEval','analysis_source_generation'):
+            for forbidden in ('ANALYZE','pg_stat','start_eval_task_workflow','InstantEval','failure_reason','workflow_generation'):
                 self.assertNotIn(forbidden,program)
         tree=ast.parse(t.VERIFY)
         self.assertFalse(any(isinstance(n,ast.Attribute) and n.attr in ('bulk_create','bulk_update','update','save') for n in ast.walk(tree)))
