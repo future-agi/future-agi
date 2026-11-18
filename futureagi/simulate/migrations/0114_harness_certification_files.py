@@ -5,6 +5,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("simulate", "0104_hosted_job_capability_snapshot"),
+        ("simulate", "0113_merge_actors_and_evidence_import"),
     ]
 
     operations = [
