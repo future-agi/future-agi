@@ -17,8 +17,12 @@ const oneLine = (text) =>
     .replace(/\s*\n+\s*/g, " · ")
     .trim();
 
+const refusalWords = (call) =>
+  call.refused ? C.refusalWords[call.reason] ?? null : null;
+
 const outputText = (call) => {
-  if (call.refused) return C.refused(call.reason);
+  if (call.refused) return C.refused(refusalWords(call));
+  if (call.outputOmitted) return C.notKept;
   const output = call.output;
   if (output == null) return C.noResponse;
   if (typeof output !== "object") return readable(output);
@@ -42,12 +46,12 @@ const toolStep = (call, from, turn) => ({
   outputOmitted: call.outputOmitted,
   bad: !!call.failed && !call.refused,
   refused: !!call.refused,
-  reason: call.refused ? call.reason : null,
+  reason: refusalWords(call),
   key: call.key,
   spanId: call.spanId ?? null,
   traceId: call.traceId ?? null,
   durMs: call.durationMs,
-  looseParent: !!call.looseParent,
+  parentKey: call.parentKey ?? null,
   answer: null,
 });
 
@@ -66,6 +70,14 @@ const answerOf = (w, start, turnEnd) => {
     at: w.endedAt ?? (turnEnd != null ? turnEnd - 0.05 : null),
     timed: w.endedAt != null,
   };
+  if (w.state === "stopped")
+    return {
+      ...missing,
+      bad: false,
+      stopped: true,
+      label: C.stoppedByUser,
+      full: C.stoppedByUserFull,
+    };
   if (w.state === "cut_off")
     return {
       ...missing,
@@ -165,6 +177,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       fullShown: w.taskShown,
       turn: t.n,
       key: w.key,
+      parentKey: w.parentKey ?? null,
       spanId: w.spanId,
       traceId: w.traceId,
       endState: w.endState,
@@ -232,16 +245,33 @@ const foldQuietTurns = (sorted) => {
   return steps;
 };
 
-const settleAnswers = (steps) => {
-  // A hand-off's answer can't come back before its own tool calls and sub-hand-offs.
+const settleAnswers = (steps, coordId) => {
+  // Each step sits under the step the record files it under (its `parent` key). A hand-off or the coordinator's
+  // own call at the top of a turn sits under that turn's message; a worker's call filed under nothing, under nothing.
+  const byKey = new Map(
+    steps.filter((s) => s.kind !== "message").map((s) => [s.key, s]),
+  );
+  const turnMessage = (turn) =>
+    steps.find(
+      (x) =>
+        x.kind === "message" &&
+        x.from === USER_LANE &&
+        (x.turn === turn || x.turnNums?.includes(turn)),
+    );
+  steps.forEach((s) => {
+    if (s.kind === "message") s.parent = null;
+    else if (s.parentKey != null) s.parent = byKey.get(s.parentKey)?.n ?? null;
+    else if (s.kind === "handoff" || s.from === coordId)
+      s.parent = turnMessage(s.turn)?.n ?? null;
+    else s.parent = null;
+  });
+  // Durations are the record's own times; the answer row is only placed below its own children.
+  steps.forEach((s) => {
+    s.endAt = s.answer?.at ?? null;
+  });
   [...steps].reverse().forEach((s) => {
     if (s.kind !== "handoff" || s.answer?.at == null) return;
-    const again = steps.find(
-      (x) => x.n > s.n && x.kind === "handoff" && x.to === s.to,
-    );
-    const kids = steps.filter(
-      (x) => x.n > s.n && x.from === s.to && (!again || x.n < again.n),
-    );
+    const kids = steps.filter((x) => x.parent === s.n);
     s.answer = {
       ...s.answer,
       at: Math.max(
@@ -250,22 +280,17 @@ const settleAnswers = (steps) => {
       ),
     };
   });
-  steps.forEach((s, i) => {
-    const before = steps.slice(0, i).reverse();
-    const parent =
-      before.find((x) => x.kind !== "tool" && x.to === s.from) || null;
-    s.parent = s.from === USER_LANE || s.looseParent ? null : parent?.n ?? null;
-  });
   steps.forEach((s) => {
     if (s.kind === "tool") s.dur = s.durMs != null ? s.durMs / 1000 : null;
     else if (
       s.at != null &&
-      s.answer?.at != null &&
+      s.endAt != null &&
       s.answer.kind !== "took" &&
       s.answer.timed !== false
     )
-      s.dur = Math.max(0, s.answer.at - s.at);
+      s.dur = Math.max(0, s.endAt - s.at);
     else s.dur = null;
+    delete s.endAt;
     s.tools = steps.filter((x) => x.kind === "tool" && x.parent === s.n).length;
   });
 };
@@ -506,7 +531,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
   });
   const sorted = [...raw].sort((a, b) => a._k - b._k || a._i - b._i);
   const steps = foldQuietTurns(sorted);
-  settleAnswers(steps);
+  settleAnswers(steps, coord.id);
 
   const laneOrder = [USER_LANE, coord.id];
   steps.forEach((s) => {

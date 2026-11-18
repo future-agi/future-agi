@@ -52,7 +52,9 @@ export default function HoverCard({ seq, row: r, step: s }) {
           r.type === "none"
             ? s.answer?.cut
               ? ` · ${C.recordCut}`
-              : " · No reply came back"
+              : s.answer?.stopped
+                ? ` · ${C.stoppedByUser}`
+                : " · No reply came back"
             : k
               ? ` · ${KIND_WORDS[k]}`
               : ""

@@ -175,5 +175,6 @@ export const TRIAL_ROUTES_COPY = {
     pending: "Not compared: its record isn't read yet",
     not_finished: "Not compared: the trial didn't finish",
     unreadable: "Not compared: its record couldn't be read",
+    no_evidence: "Not compared: nothing was recorded for its participants",
   },
 };

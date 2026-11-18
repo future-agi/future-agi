@@ -40,11 +40,9 @@ describe("CallWorkersPanel", () => {
         isError: false,
       };
       render(<CallWorkersPanel callExecutionId="c1" />);
-      const about = screen
-        .getByTestId("participants-recorded")
-        .getAttribute("aria-label");
-      expect(about).toContain(C.supportedBoundary);
-      expect(about.includes(C.beyondBoundary)).toBe(shown);
+      // Said in plain text under the summary, never only on hover.
+      expect(screen.getByText(C.supportedBoundary)).toBeVisible();
+      expect(screen.queryByText(C.beyondBoundary) !== null).toBe(shown);
     },
   );
   it("says when the record was built without the app's traces, and not otherwise", () => {
@@ -54,10 +52,8 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     };
-    const about = () =>
-      screen.getByTestId("participants-recorded").getAttribute("aria-label");
     const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(about()).toContain(note);
+    expect(screen.getByText(note)).toBeVisible();
     unmount();
     result = {
       data: { ...TIMELINE, spans_received: true },
@@ -65,7 +61,7 @@ describe("CallWorkersPanel", () => {
       isError: false,
     };
     render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(about()).not.toContain(note);
+    expect(screen.queryByText(note)).toBeNull();
   });
   it("says why there is no record when the read failed or the attempt was kept before records were", () => {
     for (const state of ["unreadable", "not_kept"]) {

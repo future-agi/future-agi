@@ -187,7 +187,8 @@ export default function VoiceCallDrawer({
                     onOpenTrial={onOpenTrial}
                     callStatus={task.status}
                     callerName={task.persona}
-                    callStartedAt={data?.started_at ?? null}
+                    // The call detail serves the recording's start as `start_time`.
+                    callStartedAt={data?.start_time ?? null}
                     onShowInTranscript={({ at }) => {
                       if (at != null) seekTo(at);
                       setChosenTab("transcript");

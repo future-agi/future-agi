@@ -13,6 +13,16 @@ export const SEQUENCE_COPY = {
   noAnswer: "No answer came back",
   noAnswerFull: "No answer came back.",
   recordCut: "Record ends before an answer",
+  stoppedByUser: "Stopped by the user",
+  stoppedByUserFull: "The user stopped the call before an answer came back.",
+  notKept: "Not kept: this call's record reached its size limit",
+  // The world's refusal codes in plain words; one not listed reads only as "Refused".
+  refusalWords: {
+    not_permitted: "not permitted",
+    deadline_passed: "past its deadline",
+    approval_missing: "needs approval",
+    egress_blocked: "network access blocked",
+  },
   recordCutFull:
     "The record was cut short here, so it can't say whether an answer came back.",
   notObserved: (names) => `Declared, no events sent: ${names}`,

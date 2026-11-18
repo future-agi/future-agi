@@ -80,9 +80,16 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
 vi.mock("../CallWorkersPanel", async () => {
   const { useState } = await import("react");
   return {
-    default: function WorkersPanelStub({ callExecutionId }) {
+    default: function WorkersPanelStub({ callExecutionId, callStartedAt }) {
       const [mountedFor] = useState(callExecutionId);
-      return <div data-testid="workers-panel">{mountedFor}</div>;
+      return (
+        <div
+          data-testid="workers-panel"
+          data-call-started={callStartedAt ?? ""}
+        >
+          {mountedFor}
+        </div>
+      );
     },
   };
 });
@@ -623,6 +630,34 @@ describe("CallDrawer — chat evals that have no verdict", () => {
 });
 
 describe("CallDrawer — voice branch", () => {
+  it("times a voice call's participants from the call's start, so a step seeks the recording to its moment", async () => {
+    const user = userEvent.setup();
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "v-start",
+        transcript: [],
+        evaluations: [],
+        start_time: "2026-09-29T11:35:29.394000Z",
+      },
+      isPending: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    render(
+      <CallDrawer
+        task={{ id: "v-start", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "choose participants" }),
+    );
+    expect(screen.getByTestId("workers-panel")).toHaveAttribute(
+      "data-call-started",
+      "2026-09-29T11:35:29.394000Z",
+    );
+  });
+
   it("keeps a multi-agent call's width while the next call's record loads", () => {
     useCallExecutionV3Detail.mockReturnValue({
       data: { id: "v1", transcript: [], evaluations: [] },
