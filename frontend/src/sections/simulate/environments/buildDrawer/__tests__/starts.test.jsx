@@ -161,6 +161,20 @@ describe("Build from scratch", () => {
     expect(button("Build environment")).toBeDisabled();
   });
 
+  it("replaces a file's row when a file with the same name is picked again", () => {
+    render();
+    click(/Build from scratch/);
+    const pick = (body) =>
+      fireEvent.change(screen.getByTestId("describe-files"), {
+        target: { files: [new File([body], "orders.csv")] },
+      });
+    pick("a,b");
+    pick("a,b\n1,2");
+    const list = screen.getByRole("list", { name: "Attached files" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText("7 Bytes")).toBeInTheDocument();
+  });
+
   it("shows the Falcon AI bar and says drafting isn't wired, without drafting", () => {
     render();
     click(/Build from scratch/);
@@ -356,6 +370,13 @@ describe.skip("MCP world", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Server URL" }), {
       target: { value: "https://mcp.acme.com/sse" },
     });
+    expect(button("Build environment")).toBeDisabled();
+    fireEvent.change(
+      screen.getByRole("textbox", {
+        name: "What should this environment test?",
+      }),
+      { target: { value: "Refunds over the limit" } },
+    );
     click("Build environment");
     expectUiOnlyToast();
   });
