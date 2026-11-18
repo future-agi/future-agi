@@ -1687,32 +1687,6 @@ class TestReviewFollowUps:
         assert files["tools"] == TOOLS
         cache.delete(cache_key)
 
-    def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
-        import hashlib
-
-        from simulate.services.harness_readiness import evidence
-
-        key = "harness-sealed/stream/busy.tar.gz"
-        cache_key = (
-            f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
-            + hashlib.sha256(key.encode()).hexdigest()
-        )
-        cache.add(cache_key + ":reading", 1)
-        read = ({"tools": TOOLS, "actions": []}, True)
-
-        def first_reader_finishes(_seconds):
-            cache.set(cache_key, read)
-
-        with (
-            patch.object(evidence.time, "sleep", side_effect=first_reader_finishes),
-            patch.object(evidence.archives, "stream_members") as streamed,
-        ):
-            files = evidence._read_once(key)
-
-        assert files == read
-        assert streamed.call_count == 0
-        cache.delete(cache_key + ":reading")
-
     def test_a_stored_bundle_keeps_its_certification_files_on_its_row(
         self, user, workspace, storage
     ):
@@ -1777,17 +1751,25 @@ class TestReviewFollowUps:
             ACTIONS,
         )
 
-    def test_an_older_bundle_is_read_once_then_keeps_its_files(
+    def test_an_older_bundle_keeps_its_files_on_a_recheck_never_on_a_read(
         self, user, workspace, storage
     ):
         from simulate.services.harness_readiness import evidence
+        from simulate.services.harness_readiness.evidence import (
+            keep_certification_files,
+        )
 
         environment = _environment(user, workspace, storage, "rd-backfill-files")
         _certify(environment, storage)
         cache.clear()
 
+        before = _bundle(environment).certification_files
         first = _report(environment)
         bundle = _bundle(environment)
+        # A read writes nothing: the row keeps its files only once a recheck runs.
+        assert bundle.certification_files == before
+        keep_certification_files(bundle, bundle.object_key)
+        bundle.refresh_from_db()
         assert bundle.certification_files == {
             "object_key": bundle.object_key,
             "tools": TOOLS,
@@ -1816,34 +1798,41 @@ class TestReviewFollowUps:
         streamed.assert_not_called()
         assert _rows(second) == _rows(first)
 
-    def test_a_reader_that_waits_too_long_is_told_to_retry_not_to_download(
-        self, storage
+    def test_a_second_reader_reads_unreadable_at_once_never_held_or_refused(
+        self, user, workspace, storage, auth_client
     ):
+        """While another request reads the archive, the readiness GET answers 200 with the
+        pairing marked unreadable just now, which the Run dialog already shows."""
         import hashlib
 
         from simulate.services.harness_readiness import evidence
 
-        key = "harness-sealed/stream/slow.tar.gz"
+        environment = _environment(user, workspace, storage, "rd-busy-reader")
+        _certify(environment, storage)
+        bundle = _bundle(environment)
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certification_files=None
+        )
+        cache.clear()
         reading = (
             f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
-            + hashlib.sha256(key.encode()).hexdigest()
+            + hashlib.sha256(bundle.object_key.encode()).hexdigest()
             + ":reading"
         )
         cache.add(reading, 1)
         try:
-            with (
-                patch.object(evidence.time, "sleep"),
-                patch.object(evidence.archives, "stream_members") as streamed,
-                pytest.raises(HostedHarnessError) as refused,
-            ):
-                evidence._read_once(key)
+            with patch.object(evidence.archives, "stream_members") as streamed:
+                response = auth_client.get(
+                    f"/simulate/api/harness-environments/{environment.id}/capabilities/"
+                )
         finally:
             cache.delete(reading)
 
         streamed.assert_not_called()
-        assert refused.value.status_code == 503
-        assert refused.value.retryable is True
-        assert refused.value.as_dict()["retry_after"] > 0
+        assert response.status_code == 200, response.content
+        body = response.json()
+        body = body.get("result", body)
+        assert body["pairing"]["evidence_unreadable"] is True
 
     def test_recheck_needs_build_usage_unless_already_certified(
         self, user, workspace, storage, auth_client
@@ -3904,3 +3893,59 @@ def test_a_fault_on_a_tool_the_build_found_out_of_the_door_s_reach_is_held_back(
         _needs_a_missing_door(fault, _door_reach(_in_process_pairing([unreached])))
         is True
     )
+
+
+@pytest.mark.parametrize("moved", ["organization", "agent_definition"])
+def test_an_agent_version_of_another_organization_or_agent_is_not_this_environments(
+    user, workspace, storage, moved
+):
+    """Readiness, a run's pick and validation scope a requested agent version by one rule."""
+    from accounts.models import Organization
+    from simulate.models import AgentDefinition, AgentVersion
+    from simulate.services.harness_readiness.report import require_environments_agent
+    from simulate.services.harness_versioning.read import agent_in_lineage
+    from simulate.services.hosted_harness import agent_version_pickable
+
+    environment, a2 = _with_a2(user, workspace, storage, f"rv-scope-{moved}")
+    assert agent_in_lineage(environment, a2.id)
+    if moved == "organization":
+        other = Organization.objects.create(name="another organization")
+        AgentVersion.no_workspace_objects.filter(id=a2.id).update(organization=other)
+    else:
+        definition = AgentDefinition.no_workspace_objects.get(id=a2.agent_definition_id)
+        definition.pk = None
+        definition.save()
+        AgentVersion.no_workspace_objects.filter(id=a2.id).update(
+            agent_definition=definition
+        )
+
+    assert not agent_in_lineage(environment, a2.id)
+    assert not agent_version_pickable(environment, a2.id)
+    with pytest.raises(HostedHarnessError) as refused:
+        require_environments_agent(environment, a2.id)
+    assert refused.value.code == "version_not_pickable"
+
+
+@pytest.mark.parametrize(
+    "metadata, validation_job",
+    [({"certify_only": True}, True), ({}, False), ({"certify_only": None}, False)],
+)
+def test_one_rule_tells_a_validation_job_apart_in_queries_and_in_memory(
+    user, workspace, storage, metadata, validation_job
+):
+    from simulate.models import HostedHarnessJob
+    from simulate.selectors.runs import user_runs, validation_jobs
+    from simulate.services.harness_versioning.validation import certify_only
+
+    job = _environment(
+        user, workspace, storage, f"kind-{validation_job}-{len(metadata)}"
+    )
+    payload = {**(job.payload or {}), "metadata": metadata}
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
+    job.refresh_from_db()
+
+    jobs = HostedHarnessJob.no_workspace_objects.filter(id=job.id)
+    assert certify_only(job) is validation_job
+    assert jobs.filter(validation_jobs()).exists() is validation_job
+    assert jobs.filter(~validation_jobs()).exists() is not validation_job
+    assert jobs.filter(user_runs()).exists() is not validation_job

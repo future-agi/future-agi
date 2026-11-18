@@ -194,9 +194,15 @@ def draft_content(
     }
 
 
-def discard_version(draft: Any, *, user: Any = None, **documents: Any) -> None:
+def discard_version(
+    draft: Any,
+    *,
+    user: Any = None,
+    reason: DiscardReason = DiscardReason.USER,
+    **documents: Any,
+) -> None:
     draft.status = VersionStatus.DISCARDED
-    draft.discard_reason = DiscardReason.USER
+    draft.discard_reason = reason
     fields = ["status", "discard_reason", "updated_at"]
     if user is not None:
         draft.last_edited_by = user

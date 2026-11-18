@@ -7,76 +7,57 @@ simulator prompt has no scenario that cites it yet, so it touches every scenario
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping, Sequence
+from typing import Any
 
-if TYPE_CHECKING:
-    from simulate.services.harness_versioning.review_items import ReviewChange
+from simulate.services.harness_scenarios import actor_ids_named
+from simulate.services.harness_versioning.review_items import ReviewChange, graded
+from simulate.services.scenario_refs import (
+    arrives_on_tool,
+    fault_actions,
+    on_tool_triggers,
+    path_tools,
+)
 
 ALL = "all"
 
 
-def _steps(value: Any) -> Iterable[Mapping[str, Any]]:
-    if isinstance(value, Mapping):
-        yield value
-    elif isinstance(value, list):
-        for one in value:
-            yield from _steps(one)
-
-
 def triggered_on(record: Mapping[str, Any]) -> str | None:
     """The tool an actor (or a scenario's entry for one) is brought in on, when it joins `on_tool`."""
-    for trigger in (
-        record.get("trigger"),
-        (record.get("activation") or {}).get("trigger")
-        if isinstance(record.get("activation"), Mapping)
-        else None,
-    ):
-        if isinstance(trigger, Mapping) and trigger.get("kind") == "on_tool":
-            tool = trigger.get("tool")
-            if tool:
-                return str(tool)
-    return None
+    return arrives_on_tool(record, record)
 
 
-def scenario_uses(scenario: Mapping[str, Any]) -> dict[str, set[str]]:
-    """The tools, sub-goals and actors one scenario names; actors wherever the scenario names one (its actors, pre-run
-    sessions and event start). Its tools are those its solution and alternatives call, those its faults are set on,
-    and those its actors are brought in on."""
-    tools = {
-        str(step.get("tool") or step.get("name"))
-        for field in ("solution", "alternatives")
-        for step in _steps(scenario.get(field))
-        if step.get("tool") or step.get("name")
-    }
-    tools |= {
-        str(fault.get("action") or fault.get("tool"))
-        for fault in scenario.get("faults") or []
-        if isinstance(fault, Mapping) and (fault.get("action") or fault.get("tool"))
-    }
-    tools |= {
-        tool
-        for one in scenario.get("actors") or []
-        if isinstance(one, Mapping) and (tool := triggered_on(one))
-    }
+def scenario_uses(
+    scenario: Mapping[str, Any],
+    actors: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, set[str]]:
+    """The tools, sub-goals and actors one scenario names, as ALK's schema spells them (``scenario_refs``): the tools
+    its paths call, its faults act on and its actors are set going by (an entry with no trigger of its own inherits
+    the actor's activation from ``actors``); its sub-goals; and every actor it names."""
+    tools = path_tools(scenario) | fault_actions(scenario)
+    for entry in scenario.get("actors") or []:
+        if isinstance(entry, Mapping):
+            tools |= on_tool_triggers(entry, (actors or {}).get(str(entry.get("id"))))
     sub_goals = {
-        str(one.get("name") if isinstance(one, Mapping) else one)
+        str(one)
         for one in scenario.get("sub_goals") or []
-        if (one.get("name") if isinstance(one, Mapping) else one)
+        if isinstance(one, str) and one
     }
-    from simulate.services.harness_scenarios import actor_ids_named
-
-    actors = actor_ids_named(dict(scenario))
-    return {"tool": tools, "sub_goal": sub_goals, "actor": actors}
+    return {
+        "tool": tools,
+        "sub_goal": sub_goals,
+        "actor": actor_ids_named(dict(scenario)),
+    }
 
 
 def affects(
     change: ReviewChange,
     scenarios: Mapping[str, Mapping[str, Any]],
     base: Mapping[str, Mapping[str, Any]] | None = None,
+    actors: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[str] | str:
     """The scenario keys a change touches, or `all` when nothing says which ones. A scenario that names the item in
-    the saved suite (``base``) or in the draft is touched."""
+    the saved suite (``base``) or in the draft is touched; an actor entry inherits its activation from ``actors``."""
     kind, key = change["kind"], change["key"]
     if kind == "scenario":
         return [key]
@@ -86,7 +67,7 @@ def affects(
                 name
                 for side in (scenarios, base or {})
                 for name, scenario in side.items()
-                if key in scenario_uses(scenario)[kind]
+                if key in scenario_uses(scenario, actors)[kind]
             }
         )
     return ALL
@@ -122,7 +103,9 @@ def depends_on(
             if (
                 other["kind"] == "scenario"
                 and change["key"]
-                in scenario_uses((base or {}).get(other["key"]) or {})[change["kind"]]
+                in scenario_uses((base or {}).get(other["key"]) or {}, base_actors)[
+                    change["kind"]
+                ]
             )
             or (
                 change["kind"] == "tool"
@@ -133,11 +116,9 @@ def depends_on(
         )
     if change["kind"] != "scenario" or change["action"] == "removed":
         return index
-    from simulate.services.harness_versioning.review_items import graded
-
     # A rename grades nothing, so it needs no definition; a graded edit may rely on how a named definition changed.
     wanted = ("added", "changed") if graded(change) else ("added",)
-    uses = scenario_uses(scenarios.get(change["key"]) or {})
+    uses = scenario_uses(scenarios.get(change["key"]) or {}, base_actors)
     return sorted(
         index
         + [

@@ -39,4 +39,10 @@ def user_runs(path: str = "") -> Q:
             # An evidence import's drafting job holds a chat turn only, never a run.
             f"{path}evidence_drafting__isnull": True,
         }
-    ) & ~Q(**{f"{path}payload__contains": {"metadata": {"certify_only": True}}})
+    ) & ~validation_jobs(path)
+
+
+def validation_jobs(path: str = "") -> Q:
+    """A pairing's validation jobs: their payload marks them certify-only. Every query that keeps or leaves out
+    validation jobs uses this one form; ``validation.certify_only`` is its in-memory twin."""
+    return Q(**{f"{path}payload__contains": {"metadata": {"certify_only": True}}})

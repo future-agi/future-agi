@@ -9,7 +9,7 @@ SCENARIOS = {
     "refund-in-window": {
         "solution": [{"tool": "get_order"}, {"tool": "issue_refund"}],
         "alternatives": [[{"tool": "get_order"}, {"tool": "escalate"}]],
-        "sub_goals": ["one_refund", {"name": "explains_policy"}],
+        "sub_goals": ["one_refund", "explains_policy"],
         "actors": [{"id": "manager"}],
     },
     "status-only": {
@@ -221,3 +221,26 @@ def test_removing_a_tool_an_actor_is_brought_in_on_needs_that_actor_s_edit():
     )
 
     assert needed == ["actor:manager"]
+
+
+def test_a_scenario_uses_what_alks_schema_names_and_nothing_else():
+    """Scheduled actions and an actor's own activation set it going on a tool; an approval fault waits on its action;
+    keys ALK's schema does not have (a step's `name`, a fault's `tool`, a sub-goal object) name nothing."""
+    from simulate.services.harness_versioning.references import scenario_uses
+
+    scenario = {
+        "solution": [{"tool": "lookup"}, {"name": "not_a_tool_key"}],
+        "faults": [{"action": "refund", "approval": "approve_refund"}, {"tool": "ignored"}],
+        "sub_goals": ["paid", {"name": "not_alks_shape"}],
+        "actors": [
+            {"id": "manager", "actions": [{"trigger": {"kind": "on_tool", "tool": "escalate"}}]},
+            {"id": "auditor"},
+        ],
+    }
+    actors = {"auditor": {"activation": {"trigger": {"kind": "on_tool", "tool": "audit"}}}}
+
+    uses = scenario_uses(scenario, actors)
+
+    assert uses["tool"] == {"lookup", "refund", "approve_refund", "escalate", "audit"}
+    assert uses["sub_goal"] == {"paid"}
+    assert uses["actor"] == {"manager", "auditor"}

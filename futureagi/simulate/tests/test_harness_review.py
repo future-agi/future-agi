@@ -421,20 +421,24 @@ def _rule_and_tool():
     return default, draft, compute_changes(default, draft)
 
 
-def test_accepted_rule_keeps_its_amendment():
+def test_an_accepted_rule_keeps_its_amendment_line_when_another_change_is_rejected():
+    """The line names the rule in ALK's format, so it follows the rule's decision."""
     default, draft, changes = _rule_and_tool()
     rule = next(one["id"] for one in changes if one["kind"] == "rule")
-    composed = json.loads(
+    partly = json.loads(
         compose_accepted(
             default, draft, changes, {rule: "accepted", "tool:issue_refund": "rejected"}
         )["contract.json"]
     )
-    assert composed["hard_constraints"] == [RULE]
-    assert composed["amendments"] == [
-        "tool removed \u2014 old_tool: no seam",
-        AMENDMENT,
-    ]
-    assert composed["tools"] == TOOLS
+    assert partly["hard_constraints"] == [RULE]
+    assert partly["amendments"] == ["tool removed \u2014 old_tool: no seam", AMENDMENT]
+    assert partly["tools"] == TOOLS
+    every = json.loads(
+        compose_accepted(
+            default, draft, changes, {rule: "accepted", "tool:issue_refund": "accepted"}
+        )["contract.json"]
+    )
+    assert every["amendments"] == ["tool removed \u2014 old_tool: no seam", AMENDMENT]
 
 
 def test_rejected_rule_leaves_no_amendment():

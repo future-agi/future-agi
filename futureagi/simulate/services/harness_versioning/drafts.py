@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -289,6 +289,119 @@ def require_chat_idle(environment: HostedHarnessJob) -> None:
             409,
             conversation_id=str(conversation.id),
         )
+
+
+def require_idle(locked: HostedHarnessJob, piece: str) -> None:
+    """Refuse a Save, a Validate or a promotion while the environment builds, an update
+    rebuilds it, or its builder chat is working."""
+    require_not_busy(locked, piece)
+    require_no_rebuild(locked, piece=piece)
+    require_chat_idle(locked)
+
+
+def open_drafts(
+    locked: HostedHarnessJob, pieces: Iterable[str] | None = None
+) -> dict[str, Any]:
+    """The locked environment's open drafts by piece, locked. Refuses `draft_not_found`
+    for a named piece with no draft, or when no piece has one."""
+    wanted = [piece for piece in DRAFT_PIECES if pieces is None or piece in pieces]
+    opened: dict[str, Any] = {}
+    for piece in wanted:
+        draft = open_draft(locked, piece, lock=True)
+        if draft is None:
+            if pieces is not None:
+                raise version_error(
+                    "draft_not_found", "No unsaved changes", 404, piece=piece
+                )
+            continue
+        opened[piece] = draft
+    if not opened:
+        raise version_error("draft_not_found", "No unsaved changes", 404)
+    return opened
+
+
+def require_fresh(locked: HostedHarnessJob, opened: Mapping[str, Any]) -> None:
+    """Refuse a draft the defaults moved under (`draft_stale`), and a suite draft whose
+    scenario keys are retired or taken."""
+    for piece, draft in opened.items():
+        if is_stale(draft, locked):
+            logger.info(
+                "harness_draft_stale environment=%s piece=%s replaced=false",
+                locked.id,
+                piece,
+            )
+            raise version_error(
+                "draft_stale",
+                "The environment changed since you started editing; discard "
+                "or re-apply in chat",
+                409,
+                piece=piece,
+            )
+        if piece == "suite":
+            # A case archived after the draft opened is held back by the run, not refused here.
+            refuse_scenario_keys(
+                locked,
+                (draft.documents or {}).get("scenarios") or [],
+                origin="manual",
+                exempt=exempted_keys(draft) | live_archived_tokens(locked),
+            )
+
+
+def live_archived_tokens(locked: HostedHarnessJob) -> set[str]:
+    """Tokens of archived cases the saved suite still holds: archiving changes no draft."""
+    from simulate.models import HarnessSuiteMember, HostedHarnessScenario
+    from simulate.services.harness_starting_records import scenario_token
+
+    live = {
+        scenario_token(key)
+        for key in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=locked.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    }
+    return {
+        scenario_token(key)
+        for key in HostedHarnessScenario.no_workspace_objects.filter(
+            job=locked, deleted=False, archived_at__isnull=False
+        ).values_list("scenario_key", flat=True)
+    } & live
+
+
+def edits_moved(piece: str) -> HostedHarnessError:
+    """A draft the person read moved before they acted on it."""
+    return version_error(
+        "draft_changed",
+        "Someone changed these edits a moment ago; review them and try again",
+        409,
+        piece=piece,
+    )
+
+
+def require_saveable(
+    locked: HostedHarnessJob,
+    opened: Mapping[str, Any],
+    *,
+    expected_revisions: Mapping[str, int | None],
+) -> None:
+    """Everything a Save, a Validate and a promotion check before any version moves:
+    the environment is idle, each draft is fresh, and each is at the revision the person
+    read (a missing revision is not checked)."""
+    require_idle(locked, next(iter(opened)))
+    require_fresh(locked, opened)
+    require_revisions(opened, expected_revisions)
+
+
+def require_revisions(
+    opened: Mapping[str, Any],
+    expected_revisions: Mapping[str, int | None],
+    *,
+    required: bool = False,
+) -> None:
+    """Refuse a draft that is no longer at the revision the person read; with
+    ``required``, also one whose revision was not sent."""
+    for piece, draft in opened.items():
+        expected = expected_revisions.get(piece)
+        if (expected is not None or required) and expected != draft.revision:
+            raise edits_moved(piece)
 
 
 def retire_chat_runtime(
@@ -1235,23 +1348,55 @@ def activate_drafts(
             draft.nudge = nudge
         draft.save()
         result[piece] = (draft, True)
+    suite, suite_created = result.get("suite", (None, False))
+    make_defaults(
+        locked,
+        targets,
+        pair=pair,
+        payload=payload,
+        metadata=metadata,
+        created_suite=suite if suite_created else None,
+        moved={
+            piece
+            for piece in DRAFT_PIECES
+            if targets[piece].id != getattr(current[piece], "id", None)
+        },
+        outgoing_agent_version_id=outgoing_agent,
+        carry_proofs=True,
+    )
+    return result
+
+
+def make_defaults(
+    locked: HostedHarnessJob,
+    targets: Mapping[str, Any],
+    *,
+    pair: Any,
+    payload: dict[str, Any],
+    metadata: dict[str, Any],
+    created_suite: Any,
+    moved: set[str],
+    outgoing_agent_version_id: Any,
+    carry_proofs: bool = False,
+) -> None:
+    """Make ``targets`` (each piece's version) the environment's defaults with ``pair``
+    as their runnable archive: the one step a Save and a validated promotion share. A
+    Save (``carry_proofs``) carries its unchanged cases' proofs; a promotion records the
+    proofs its validation made."""
     for version in (targets["environment"], targets["suite"]):
         note_revision(version, pair.revision)
-    suite, suite_created = result.get("suite", (None, False))
-    if suite_created:
+    if created_suite is not None:
         # Paired while the old suite is still the default, as a recorded save pairs.
-        paired = member_rows(locked, (suite.documents or {}).get("scenarios") or [])
-        add_members(suite, paired)
-        # A Save proves nothing new: its unchanged cases keep their proofs on this version,
-        # and an edited case has none until it is validated (section 4.10).
-        carried = _carried_proofs(targets["environment"], paired)
-        if carried:
-            record_proofs(suite, targets["environment"], carried, locked)
-    moved = {
-        piece
-        for piece in DRAFT_PIECES
-        if targets[piece].id != getattr(current[piece], "id", None)
-    }
+        paired = member_rows(
+            locked, (created_suite.documents or {}).get("scenarios") or []
+        )
+        add_members(created_suite, paired)
+        if carry_proofs:
+            # A Save proves nothing new: its unchanged cases keep their proofs on this
+            # version, and an edited case has none until it is validated.
+            carried = _carried_proofs(targets["environment"], paired)
+            if carried:
+                record_proofs(created_suite, targets["environment"], carried, locked)
     set_defaults(
         locked,
         payload,
@@ -1260,9 +1405,8 @@ def activate_drafts(
         targets["suite"],
         pair,
         pieces=moved,
-        outgoing_agent_version_id=outgoing_agent,
+        outgoing_agent_version_id=outgoing_agent_version_id,
     )
-    return result
 
 
 def _replayed(locked: HostedHarnessJob, saved: Mapping[str, Any]) -> dict[str, Any]:
@@ -1386,10 +1530,7 @@ def save_drafts(
         replayed = replayed_save(locked, idempotency_key, pieces)
         if replayed is not None:
             return replayed
-        first = next(piece for piece in DRAFT_PIECES if piece in pieces)
-        require_not_busy(locked, first)
-        require_no_rebuild(locked, piece=first)
-        require_chat_idle(locked)
+        require_idle(locked, next(piece for piece in DRAFT_PIECES if piece in pieces))
         expected_review_digest = next(
             (
                 one.expected_review_digest
@@ -1404,47 +1545,22 @@ def save_drafts(
                 "Validate these changes first, then save the validated versions",
                 409,
             )
-        for piece in DRAFT_PIECES:
-            if piece not in pieces:
-                continue
-            draft = open_draft(locked, piece, lock=True)
-            if draft is None:
-                raise version_error(
-                    "draft_not_found", "No unsaved changes", 404, piece=piece
-                )
-            if is_stale(draft, locked):
-                logger.info(
-                    "harness_draft_stale environment=%s piece=%s replaced=false",
-                    locked.id,
-                    piece,
-                )
-                raise version_error(
-                    "draft_stale",
-                    "The environment changed since you started editing; discard "
-                    "or re-apply in chat",
-                    409,
-                    piece=piece,
-                )
-            request = requests[piece]
-            if str(request.expected_parent_id or "") != str(draft.parent_id or "") or (
-                request.expected_revision is not None
-                and request.expected_revision != draft.revision
+        opened = open_drafts(locked, pieces)
+        require_saveable(
+            locked,
+            opened,
+            expected_revisions={
+                piece: request.expected_revision for piece, request in requests.items()
+            },
+        )
+        for piece, draft in opened.items():
+            if str(requests[piece].expected_parent_id or "") != str(
+                draft.parent_id or ""
             ):
-                raise version_error(
-                    "draft_changed",
-                    "Someone changed these edits a moment ago; review them and save "
-                    "again",
-                    409,
-                    piece=piece,
-                )
-            if piece == "suite":
-                draft = drop_archived(locked, draft, user=user)
-                refuse_scenario_keys(
-                    locked,
-                    (draft.documents or {}).get("scenarios") or [],
-                    origin="manual",
-                    exempt=exempted_keys(draft),
-                )
+                raise edits_moved(piece)
+        if "suite" in opened:
+            # A case archived while the draft was open leaves the saved suite.
+            drop_archived(locked, opened["suite"], user=user)
         apply_review(locked, pieces, expected_review_digest=expected_review_digest)
         drafts = {
             piece: open_draft(locked, piece).id

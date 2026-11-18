@@ -19,9 +19,8 @@ from simulate.models import (
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
-from simulate.models.harness_versioning import VersionStatus
+from simulate.selectors.runs import validation_jobs
 from simulate.services.canonical_json import canonical_digest
-from simulate.services.harness_agent_versions import lineage_version_ids
 from simulate.services.harness_readiness.catalogue import (
     AREAS,
     CATALOG_VERSION,
@@ -41,6 +40,7 @@ from simulate.services.harness_readiness.evidence import (
     Evidence,
     agent_tools,
     certified,
+    keep_certification_files,
     pair_bundle,
     read_evidence,
     recent_runs,
@@ -60,17 +60,17 @@ from simulate.services.harness_readiness.workers import (
 from simulate.services.harness_usage import require_harness_authoring
 from simulate.services.harness_versioning import validation
 from simulate.services.harness_versioning.read import (
-    _agent_definition_id,
-    in_workspace,
+    agent_in_lineage,
     require_versioning,
     version_refs,
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
-    _load_ids,
-    _not_pickable,
-    _pin_ids,
     agent_version_pickable,
+    load_ids,
+    not_pickable,
+    pin_ids,
+    require_active_pick,
 )
 
 logger = structlog.get_logger(__name__)
@@ -121,23 +121,14 @@ def resolve_pairing(
             "this environment has no versions yet",
             status_code=404,
         )
-    defaults = _pin_ids(environment)
+    defaults = pin_ids(environment)
     picked = (agent_version_id, environment_version_id, suite_version_id)
     ids = tuple(pick or default for pick, default in zip(picked, defaults, strict=True))
-    for piece, model, pick, default in (
-        ("environment", HarnessEnvironmentVersion, ids[1], defaults[1]),
-        ("suite", HarnessSuiteVersion, ids[2], defaults[2]),
-    ):
-        if (
-            str(pick) != str(default)
-            and not model.no_workspace_objects.filter(
-                job=environment, id=pick, status=VersionStatus.ACTIVE
-            ).exists()
-        ):
-            raise _not_pickable(piece)
+    require_active_pick(environment, "environment", ids[1], defaults[1])
+    require_active_pick(environment, "suite", ids[2], defaults[2])
     if ids[0] and str(ids[0]) != str(defaults[0]):
-        _require_environments_agent(environment, ids[0])
-    agent_version, environment_version, suite_version, runtime = _load_ids(
+        require_environments_agent(environment, ids[0])
+    agent_version, environment_version, suite_version, runtime = load_ids(
         environment, ids
     )
     return Pairing(
@@ -149,24 +140,15 @@ def resolve_pairing(
     )
 
 
-def _require_environments_agent(environment: HostedHarnessJob, agent_id: Any) -> None:
-    definition_id = _agent_definition_id(environment)
-    found = (
-        definition_id is not None
-        and AgentVersion.no_workspace_objects.filter(
-            in_workspace(environment),
-            id=agent_id,
-            organization_id=environment.organization_id,
-            agent_definition_id=definition_id,
-        ).exists()
-    )
-    allowed = lineage_version_ids(environment, definition_id) if found else None
+def require_environments_agent(environment: HostedHarnessJob, agent_id: Any) -> None:
+    """Refuse an agent version that is not this environment's, or that was discarded; unlike a run's pick, one
+    whose check failed or has not finished is this environment's."""
     discarded = HarnessAgentVersionRuntime.no_workspace_objects.filter(
         agent_version_id=agent_id,
         preflight_status=HarnessAgentVersionRuntime.PreflightStatus.DISCARDED,
     ).exists()
-    if not found or discarded or (allowed is not None and str(agent_id) not in allowed):
-        raise _not_pickable("agent")
+    if discarded or not agent_in_lineage(environment, agent_id):
+        raise not_pickable("agent")
 
 
 def _validation(
@@ -177,7 +159,7 @@ def _validation(
     as the run gate reads it: a bundle an ordinary run failed reads ``retry``."""
     job = (
         HostedHarnessJob.no_workspace_objects.filter(
-            assembled_bundle_id=bundle.id, payload__metadata__certify_only=True
+            validation_jobs(), assembled_bundle_id=bundle.id
         )
         .order_by("-created_at")
         .first()
@@ -258,6 +240,10 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
         )
     ):
         require_harness_authoring(str(pairing.environment.organization_id))
+    if bundle is not None and certified(bundle) and bundle.object_key:
+        # A recheck is a write: an older bundle keeps its certification files here, so the
+        # readiness read never writes.
+        keep_certification_files(bundle, bundle.object_key)
     started = (
         validation.start_validation(
             pairing.environment,
@@ -286,8 +272,7 @@ def readiness_report(
     bundle: HarnessAssembledBundle | None = None,
     evidence: Evidence | None = None,
 ) -> ReadinessReport:
-    """The pairing's readiness, computed now from its evidence. Writes nothing but an
-    older row's certification files, kept once read.
+    """The pairing's readiness, computed now from its evidence. Writes nothing.
 
     ``bundle`` is the pairing's bundle when the caller holds it already (a run's own);
     otherwise it is looked up as a run of the pairing would. ``evidence`` is the
@@ -320,7 +305,7 @@ def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
     agent_id = getattr(pairing.agent_version, "id", None)
     check = (
         HostedHarnessJob.no_workspace_objects.filter(
-            assembled_bundle_id=bundle.id, payload__metadata__certify_only=True
+            validation_jobs(), assembled_bundle_id=bundle.id
         )
         .order_by("-created_at")
         .values_list("id", "state", "updated_at")
