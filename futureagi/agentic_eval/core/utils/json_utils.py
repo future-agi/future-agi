@@ -80,6 +80,7 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
     )
 
     decoder = json.JSONDecoder()
+    fallback = None
     end = 0
     while (start := json_str.find("{", end)) != -1:
         if not _OBJECT_START.match(json_str, start):
@@ -90,20 +91,31 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
             value, _ = decoder.raw_decode(json_str, start)
         except json.JSONDecodeError:
             recovered, end = _recover_object(json_str, start)
-            for candidate in (recovered, recovered.replace("'", '"')):
+            try:
+                value = json.loads(recovered)
+            except json.JSONDecodeError:
+                # Keep a single-quoted mapping as a last resort; a later JSON
+                # answer takes precedence over a Python-style rubric or example.
                 try:
-                    value = json.loads(candidate)
-                    break
+                    repaired = json.loads(recovered.replace("'", '"'))
                 except json.JSONDecodeError:
-                    continue
-            else:
-                try:
-                    value = JsonHelper.extract_json_from_text(recovered)
-                except ValueError:
-                    continue  # Try the next object, not the intervening prose.
+                    # An apostrophe in prose may have hidden the closing brace
+                    # from the string-aware scan. Don't repair the next answer.
+                    end = _skip_placeholder(json_str, start, decoder)
+                    try:
+                        repaired = JsonHelper.extract_json_from_text(
+                            json_str[start:end]
+                        )
+                    except ValueError:
+                        continue
+                if fallback is None and isinstance(repaired, dict):
+                    fallback = repaired
+                continue
         if not isinstance(value, dict):
             raise ValueError("Extracted string is not valid Response.")
         return value
+    if fallback is not None:
+        return fallback
     raise ValueError("Failed to load JSON from text")
 
 

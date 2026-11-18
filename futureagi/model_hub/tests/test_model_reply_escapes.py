@@ -24,6 +24,8 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
         ('Template: {{"result":"Fail","explanation":"example"}}. Answer: ', "", ""),
         ('Using {rubric: {"scale":"binary"}}, here is the answer: ', "", ""),
         ("Using {'reviewer's notes'} to grade: ", r"\t", ""),
+        ("Using {'scale':'binary'} to grade: ", "", ""),
+        ("""Using {"rubric": reviewer's scale} to grade: """, r"\t", ""),
     ],
     ids=[
         "plain",
@@ -34,6 +36,8 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
         "wrapped-example",
         "nested-rubric",
         "quoted-placeholder",
+        "python-style-rubric",
+        "apostrophe-in-rubric-value",
     ],
 )
 def test_custom_judge_preserves_explanation(monkeypatch, prefix, indent, suffix):
