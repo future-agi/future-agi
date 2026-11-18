@@ -35,6 +35,7 @@ import {
 } from "../drawerStyles";
 import BuildFilesField from "./shared/BuildFilesField";
 import BuildTestField from "./shared/BuildTestField";
+import { BUILD_TEST_MIN } from "./shared/buildFiles";
 
 /*
   The pieces every setup form in the Build environment drawer is made of,
@@ -858,16 +859,20 @@ export function FormCard({
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const countOk = isValidScenarioCount(scenarioCount);
+  // Only a UI-only build waits on it; a wired build never receives it.
+  const testOk = !uiOnly || testRequest.trim().length >= BUILD_TEST_MIN;
   const footerHint = connect
     ? hint || null
     : hint ||
-      (!countOk
-        ? `Scenarios to generate: 1 to ${MAX_SCENARIOS.toLocaleString()}`
-        : !build.readyToSubmit
-          ? build.status === "done" || build.status === "error"
-            ? "Fix what preflight found, then run it again"
-            : "Run preflight first"
-          : null);
+      (!testOk
+        ? "Say what this environment should test"
+        : !countOk
+          ? `Scenarios to generate: 1 to ${MAX_SCENARIOS.toLocaleString()}`
+          : !build.readyToSubmit
+            ? build.status === "done" || build.status === "error"
+              ? "Fix what preflight found, then run it again"
+              : "Run preflight first"
+            : null);
   const disabled = !!footerHint;
 
   return (
@@ -896,6 +901,7 @@ export function FormCard({
           {!connect && (
             <>
               <BuildTestField
+                required={uiOnly}
                 flagged={!uiOnly}
                 value={testRequest}
                 onChange={setTestRequest}

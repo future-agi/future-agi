@@ -15,6 +15,7 @@ import Iconify from "src/components/iconify";
 import { MONO, PreflightRow, useUiOnlyBuild } from "../forms/formBits";
 import BuildFilesField from "../forms/shared/BuildFilesField";
 import BuildTestField from "../forms/shared/BuildTestField";
+import { BUILD_TEST_MIN } from "../forms/shared/buildFiles";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { BTN_SX, INPUT_SX, T12, T13, T14, focusRing } from "../drawerStyles";
 import { envNameFor } from "./startUtils";
@@ -101,7 +102,7 @@ function DialogBody({ agent, onClose, subtitle }) {
 
   const blocked = !name.trim()
     ? "Name it first"
-    : !testRequest.trim()
+    : testRequest.trim().length < BUILD_TEST_MIN
       ? "Say what this environment should test"
       : !countOk
         ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`

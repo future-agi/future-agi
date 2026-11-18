@@ -11,6 +11,7 @@ import {
   SegmentedToggle,
 } from "../forms/formBits";
 import BuildFilesField from "../forms/shared/BuildFilesField";
+import { BUILD_TEST_MIN } from "../forms/shared/buildFiles";
 import BuildTestField from "../forms/shared/BuildTestField";
 import AgentPicker, { useWorldAgents } from "./AgentPicker";
 import { StartFooter, TagChip } from "./startBits";
@@ -54,9 +55,10 @@ export default function McpForm() {
   const [testRequest, setTestRequest] = useState("");
   const [files, setFiles] = useState([]);
   const countOk = isValidScenarioCount(scenarioCount);
+  const testOk = testRequest.trim().length >= BUILD_TEST_MIN;
   const canGo =
     !!agent &&
-    !!testRequest.trim() &&
+    testOk &&
     countOk &&
     (source === "gateway" ? !!gwPick : !!target.trim());
 
@@ -159,12 +161,12 @@ export default function McpForm() {
         hint={
           !agent
             ? "Pick the agent this environment is for"
-            : source === "gateway" && !gwPick
-              ? "Pick a server from your Gateway"
-              : source === "url" && !target.trim()
-                ? "Add the server"
-                : !testRequest.trim()
-                  ? "Say what this environment should test"
+            : !testOk
+              ? "Say what this environment should test"
+              : source === "gateway" && !gwPick
+                ? "Pick a server from your Gateway"
+                : source === "url" && !target.trim()
+                  ? "Add the server"
                   : "Scenarios to generate: 1 to 1,000"
         }
         onClick={() => uiOnlyToast("building from an MCP server")}

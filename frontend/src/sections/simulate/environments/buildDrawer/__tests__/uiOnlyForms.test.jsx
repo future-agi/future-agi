@@ -58,10 +58,16 @@ const TAB = {
   hosted: /^Hosted platforms/,
   other: /^Other ways/,
 };
-/** Opens a way's setup from its catalog row. */
+/** Opens a way's setup from its catalog row and says what it should test. */
 const open = (tab, name) => {
   fireEvent.click(screen.getByRole("tab", { name: TAB[tab] }));
   fireEvent.click(screen.getByRole("button", { name: `Connect ${name}` }));
+  const test = screen.queryByRole("textbox", {
+    name: "What should this environment test?",
+  });
+  if (test) {
+    fireEvent.change(test, { target: { value: "Refunds over the limit" } });
+  }
 };
 // Back slides the setup out; it leaves the page once the slide ends.
 const back = () => {
