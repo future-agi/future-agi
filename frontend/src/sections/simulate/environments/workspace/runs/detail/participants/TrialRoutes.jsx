@@ -1,5 +1,16 @@
 import PropTypes from "prop-types";
-import { Box, Collapse, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  Collapse,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useTrialRoutes } from "src/api/simulate-environments/runDetail";
 import { TRIAL_ROUTES_COPY as C } from "../callTraces.constants";
@@ -179,36 +190,23 @@ export default function TrialRoutes({
             transition: "opacity 150ms",
           }}
         >
-          <Box
-            component="table"
+          <Table
+            size="small"
             sx={{
-              borderCollapse: "collapse",
-              minWidth: "100%",
-              "& th, & td": {
-                px: 0.75,
-                py: 0.625,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                textAlign: "left",
-                whiteSpace: "nowrap",
-              },
+              "& th, & td": { px: 0.75, whiteSpace: "nowrap" },
               "& th": {
-                typography: "s3",
-                fontWeight: 600,
-                color: "text.disabled",
                 maxWidth: 150,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
               },
             }}
           >
-            <thead>
-              <tr>
-                <th>{C.trial}</th>
-                <th>{C.result}</th>
+            <TableHead>
+              <TableRow>
+                <TableCell>{C.trial}</TableCell>
+                <TableCell>{C.result}</TableCell>
                 {columns.map((column) => (
-                  <Box
-                    component="th"
+                  <TableCell
                     key={column.key}
                     sx={
                       column.key === split?.key ? { bgcolor: tint } : undefined
@@ -227,18 +225,18 @@ export default function TrialRoutes({
                         {labelOf(column)}
                       </Box>
                     </Tooltip>
-                  </Box>
+                  </TableCell>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {trials.map((one) => {
                 // Named and coloured as the run's calls table names a call's outcome.
                 const { label, color } = runOutcome(one.result);
                 const isCurrent = one.call_execution_id === currentId;
                 return (
-                  <tr key={one.call_execution_id}>
-                    <td>
+                  <TableRow key={one.call_execution_id}>
+                    <TableCell>
                       <Box
                         component="button"
                         type="button"
@@ -266,19 +264,18 @@ export default function TrialRoutes({
                         />
                         {C.trialN(one.number)}
                       </Box>
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <Typography
                         component="span"
                         sx={{ typography: "s3", fontWeight: 600, color }}
                       >
                         {label}
                       </Typography>
-                    </td>
+                    </TableCell>
                     {one.cells ? (
                       columns.map((column, index) => (
-                        <Box
-                          component="td"
+                        <TableCell
                           key={column.key}
                           sx={
                             column.key === split?.key
@@ -294,23 +291,23 @@ export default function TrialRoutes({
                               onOpen(one.call_execution_id, step)
                             }
                           />
-                        </Box>
+                        </TableCell>
                       ))
                     ) : (
-                      <td colSpan={columns.length}>
+                      <TableCell colSpan={columns.length}>
                         <Typography
                           component="span"
                           sx={{ typography: "s3", color: "text.tertiary" }}
                         >
                           {C.notCompared[one.route] ?? one.route}
                         </Typography>
-                      </td>
+                      </TableCell>
                     )}
-                  </tr>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </Box>
+            </TableBody>
+          </Table>
         </Box>
       </Collapse>
     </Box>
