@@ -333,17 +333,31 @@ def _compute_cost_details(entry):
             model_info and model_info.get("mode") == "image_generation"
         )
 
-        if (
-            not prompt_tokens
-            and not completion_tokens
-            and input_characters is None
-            and output_characters is None
-            and not audio_seconds
-            and not (images_generated or 0)
-            and not num_images
-            and not is_image_model
+        if not any(
+            (
+                prompt_tokens,
+                completion_tokens,
+                input_characters,
+                output_characters,
+                audio_seconds,
+                images_generated,
+                num_images,
+                is_image_model,
+            )
         ):
-            continue
+            # No positive usage: a reported character zero is evidence only for
+            # the side charged by this model, not for missing tokens or audio.
+            pricing = (model_info or {}).get("pricing") or {}
+            if not (
+                input_characters == 0
+                and (
+                    "input_per_1M_characters" in pricing
+                    or "input_per_1k_characters" in pricing
+                )
+                or output_characters == 0
+                and "output_per_1k_characters" in pricing
+            ):
+                continue
 
         token_usage: dict[str, Any] = {
             "prompt_tokens": prompt_tokens,

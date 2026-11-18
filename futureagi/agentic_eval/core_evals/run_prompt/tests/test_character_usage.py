@@ -136,6 +136,39 @@ def test_raw_invalid_input_characters_use_token_estimate(invalid):
     assert result["total_cost"] == 0.000210
 
 
+@pytest.mark.parametrize("path", ["calculator", "formatter"])
+@pytest.mark.parametrize(
+    ("input_usage", "amount", "source"),
+    [
+        ({"input_characters": "not-a-count"}, 0.000210, "default"),
+        ({}, 0.000210, "default"),
+        ({"input_characters": 0}, 0, "available_models"),
+        ({"input_characters": 1000}, 0.015, "available_models"),
+    ],
+)
+def test_tts_cost_requires_billable_input_characters(path, input_usage, amount, source):
+    model = "openai/tts-1"
+    usage = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 100,
+        "total_tokens": 1100,
+        "output_characters": 50,
+        **input_usage,
+    }
+    if path == "calculator":
+        cost = calculate_total_cost(model, usage)
+    else:
+        response = ModelResponse(
+            model=model,
+            choices=[{"message": {"role": "assistant", "content": "Synthetic reply"}}],
+            usage=usage,
+        )
+        reply, info = ResponseFormatter.format_llm_response(response, model, 0)
+        assert reply == "Synthetic reply"
+        cost = info["metadata"]["cost"]
+    assert (cost["total_cost"], cost["pricing_source"]) == (amount, source)
+
+
 def test_response_formatter_token_only_usage_is_labelled_estimate():
     response = SimpleNamespace(
         model="gemini-1.5-pro",

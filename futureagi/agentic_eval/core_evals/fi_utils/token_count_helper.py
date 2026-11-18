@@ -304,11 +304,15 @@ def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool
     # Character-based pricing (TTS models)
     elif "input_per_1M_characters" in pricing:
         input_cost_per_1M_chars = pricing["input_per_1M_characters"]
-        if not _is_nonnegative_number(input_cost_per_1M_chars):
+        input_characters = token_usage.get("input_characters")
+        if not _is_nonnegative_number(input_cost_per_1M_chars) or (
+            input_cost_per_1M_chars != 0
+            and not _is_nonnegative_number(input_characters)
+        ):
             return 0.0, 0.0, False
-        input_characters = token_usage.get("input_characters") or 0
-
-        prompt_cost = round((input_characters / 1_000_000) * input_cost_per_1M_chars, 6)
+        prompt_cost = round(
+            ((input_characters or 0) / 1_000_000) * input_cost_per_1M_chars, 6
+        )
         completion_cost = 0.0  # TTS doesn't have completion cost
 
     # Character rates require actual counts for every priced side. Missing

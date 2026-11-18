@@ -20,6 +20,10 @@ def persist_cost(organization, metadata, expected_source="default", **usage):
         **usage,
         "metadata": {"org_id": str(organization.id), **metadata},
     }
+    return assert_stored_cost(entry, expected_source)
+
+
+def assert_stored_cost(entry, expected_source):
     adapter_cost = _compute_cost_details(entry)
     assert ingest_request_logs([entry]) == 1
     stored = AgentccRequestLog.no_workspace_objects.get(request_id=entry["request_id"])
@@ -106,6 +110,44 @@ def test_character_only_embedding_persists_zero_or_unavailable(
         prompt_tokens=0,
         completion_tokens=0,
     ) == Decimal("0")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("model", "metadata", "tokens", "source", "amount"),
+    [
+        ("embed-english-v3.0", {"input_characters": 0}, {}, "unavailable", "0"),
+        ("embed-english-v3.0", {}, {}, "unavailable", "0"),
+        (
+            "embed-english-v3.0",
+            {"input_characters": 0},
+            {"prompt_tokens": 1_000_000},
+            "available_models",
+            "0.10",
+        ),
+        (
+            "openai/tts-1",
+            {"input_characters": "not-a-count", "output_characters": 0},
+            {},
+            "unavailable",
+            "0",
+        ),
+        ("openai/tts-1", {"output_characters": 0}, {}, "unavailable", "0"),
+        ("openai/tts-1", {"input_characters": 0}, {}, "available_models", "0"),
+        ("openai/tts-1", {"input_characters": 1000}, {}, "available_models", "0.015"),
+    ],
+)
+def test_zero_only_counts_on_the_priced_side(
+    organization, model, metadata, tokens, source, amount
+):
+    entry = {
+        "request_id": "unit-specific-zero",
+        "model": model,
+        "status_code": 200,
+        "metadata": {"org_id": str(organization.id), **metadata},
+        **tokens,
+    }
+    assert assert_stored_cost(entry, source) == Decimal(amount)
 
 
 @pytest.mark.django_db
