@@ -333,3 +333,20 @@ def test_dropped_and_restored_cases_are_served_with_why_and_whether_proved_again
 
     _record(environment, dict.fromkeys(KEYS, PROVED))
     assert listed()["restored"][0]["proved"] is True
+
+
+def test_kept_as_written_runs_labelled_as_not_proved(user, workspace, storage):
+    """Decision of 18 Nov: a case kept as written runs, and every read says it is not proved and why."""
+    environment = _base(user, workspace, storage, "lt-kept-label")
+    _record(environment, {**dict.fromkeys(KEYS, PROVED), CASE: KEPT})
+
+    view = scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+    )[CASE]
+
+    assert runnable(view)
+    assert view["proof"]["proved"] is False
+    assert view["warning"] == "solution_assumed"
+    assert view["warning_text"].startswith("Kept as written:")

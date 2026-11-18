@@ -27,6 +27,9 @@ from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
 
 LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "archived"]
+# The states a run may pick (decision of 18 Nov): Active, and Kept as written, which runs labelled as not proved so a
+# case the harness cannot prove (an agent-bound tool) can still be run. Tighten here if product asks.
+RUNNABLE_STATES: frozenset[LifecycleState] = frozenset({"active", "kept_as_written"})
 LANE_CODES = frozenset(
     {"proof_deferred", "solution_assumed", "control_not_run", "judged_only"}
 )
@@ -243,8 +246,7 @@ def runnable(view: LifecycleView | None) -> bool:
     if view is None:
         return True
     return (
-        view["state"] in ("active", "kept_as_written")
-        or view["reason"] == "validation_unavailable"
+        view["state"] in RUNNABLE_STATES or view["reason"] == "validation_unavailable"
     )
 
 
