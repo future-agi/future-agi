@@ -155,6 +155,7 @@ from simulate.services.harness_evals import (
 )
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.kept_harness_entry import pending_placeholder
 from simulate.services.run_regrade import (
     HarnessRegradeNoCompletedCall,
     HarnessRegradeNoRuns,
@@ -5338,6 +5339,129 @@ class UpdateEvalConfigView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    # The fields an edit can change; a run=true request without any of them is
+    # a bare re-run.
+    _EDIT_FIELDS = (
+        "config",
+        "mapping",
+        "model",
+        "error_localizer",
+        "kb_id",
+        "template_id",
+        "name",
+    )
+
+    def _regrade_on_harness_run(self, run_test, test_execution, eval_config):
+        """Grade one eval again on a harness run, as "Re-run evals" does.
+
+        ``regrade_run_evals`` keeps a harness verdict under each placeholder,
+        claims the run only if it is still COMPLETED (so two requests can't
+        both dispatch), and marks only completed calls. A run whose harness
+        job is still finishing is refused first: teardown would write over
+        EVALUATING mid-grade. The edit itself is already saved. Refusals carry
+        #3428's codes at this route's declared 400; moving the ones the run's
+        state causes to 409 is a follow-up with the environments route.
+        """
+        execution_id = str(test_execution.id)
+        response_ids = {
+            "eval_config_id": str(eval_config.id),
+            "run_test_id": str(run_test.id),
+            "test_execution_id": execution_id,
+        }
+
+        def refuse(code, message):
+            logger.info(
+                "eval_edit_regrade_refused",
+                code=code,
+                run_test_id=str(run_test.id),
+                test_execution_id=execution_id,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST, message, code=code
+            )
+
+        try:
+            regrade_still_finishing([execution_id], harness_run=True)
+        except RegradeStillFinishing as still_finishing:
+            return refuse("rerun_evals_still_finishing", str(still_finishing))
+
+        # Read after the job check, for the teardown reason it gives.
+        test_execution.refresh_from_db(fields=["status"])
+        if test_execution.status != TestExecution.ExecutionStatus.COMPLETED:
+            return refuse(
+                "rerun_evals_run_not_completed",
+                "Evals can be re-run only on a run that completed. "
+                f"This run is {test_execution.status}.",
+            )
+        completed_calls = [
+            str(call_id)
+            for call_id in CallExecution.objects.filter(
+                test_execution=test_execution,
+                status=CallExecution.CallStatus.COMPLETED,
+            ).values_list("id", flat=True)
+        ]
+        no_completed_call = "Nothing to grade again: no call of this run completed."
+        if not completed_calls:
+            return refuse("rerun_evals_no_completed_call", no_completed_call)
+
+        try:
+            stamped = regrade_run_evals(
+                run_test,
+                [execution_id],
+                {execution_id: test_execution.status},
+                [str(eval_config.id)],
+                harness_run=True,
+                call_execution_ids=completed_calls,
+            )
+        except RegradeStillFinishing as still_finishing:
+            return refuse("rerun_evals_still_finishing", str(still_finishing))
+        except (RegradeEvalNotFound, RegradeRefused, RegradeNothingToGrade) as refused:
+            return refuse(
+                "rerun_evals_nothing_to_grade",
+                str(refused)
+                or "This evaluation is scored by the harness during the call. "
+                "Only rerunning the call refreshes it.",
+            )
+        except (RegradeNoCompletedCall, RegradeNoCalls) as refused:
+            return refuse(
+                "rerun_evals_no_completed_call", str(refused) or no_completed_call
+            )
+        except RegradeAlreadyRunning:
+            return refuse(
+                "rerun_evals_already_running", "Grading is already running on this run."
+            )
+        except RegradeDispatchFailed as dispatch_failed:
+            return Response(
+                EvalConfigUpdateResponseSerializer(
+                    {
+                        **response_ids,
+                        "message": (
+                            "Evaluation config updated. The re-grade may not have "
+                            "started: dispatch failed. The earlier results are back, "
+                            "and it is safe to retry."
+                            if dispatch_failed.put_back
+                            else "Evaluation config updated. The re-grade may not "
+                            "have started: dispatch failed, and the run will be "
+                            "put back shortly."
+                        ),
+                        "call_execution_count": dispatch_failed.call_execution_count,
+                    }
+                ).data,
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            EvalConfigUpdateResponseSerializer(
+                {
+                    **response_ids,
+                    "message": "Evaluation config updated and rerun triggered successfully",
+                    "call_execution_count": len(stamped),
+                    "note": f"{len(stamped)} calls will be graded again",
+                }
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
@@ -5392,26 +5516,33 @@ class UpdateEvalConfigView(APIView):
                 deleted=False,
             )
 
+            run = validated.get("run", False)
+            # A re-run that changes no field only grades the column again.
+            bare_rerun = run and not any(
+                field in validated for field in self._EDIT_FIELDS
+            )
+
             # Refused before anything is written, so a harness verdict is
             # never overwritten by a "pending" placeholder and a re-grade.
             harness_run = is_harness_run_test(run_test.id)
-            refusal = harness_column_refusal(eval_config, harness_run=harness_run)
+            refusal = harness_column_refusal(
+                eval_config, harness_run=harness_run, bare_rerun=bare_rerun
+            )
             if refusal is not None:
                 return self._gm.bad_request(refusal)
             name = eval_config.name or "This evaluation"
 
-            run = validated.get("run", False)
-
-            try:
-                update_eval_config(
-                    eval_config,
-                    validated,
-                    organization=user_organization,
-                    workspace=getattr(request, "workspace", None),
-                    before_save=keeps_own_mapping(name) if harness_run else None,
-                )
-            except EvalConfigEditRefused as refused:
-                return self._gm.bad_request(str(refused))
+            if not bare_rerun:
+                try:
+                    update_eval_config(
+                        eval_config,
+                        validated,
+                        organization=user_organization,
+                        workspace=getattr(request, "workspace", None),
+                        before_save=keeps_own_mapping(name) if harness_run else None,
+                    )
+                except EvalConfigEditRefused as refused:
+                    return self._gm.bad_request(str(refused))
 
             # If run is True, trigger rerun on the specified test execution
             # (Phase 0.2: test_execution_id required check moved to EvalConfigUpdateRequestSerializer.validate())
@@ -5424,6 +5555,11 @@ class UpdateEvalConfigView(APIView):
                     id=test_execution_id,
                     run_test=run_test,
                 )
+
+                if harness_run:
+                    return self._regrade_on_harness_run(
+                        run_test, test_execution, eval_config
+                    )
 
                 # Verify test execution is COMPLETED
                 if test_execution.status not in [
@@ -5479,10 +5615,14 @@ class UpdateEvalConfigView(APIView):
                     if not call_execution.eval_outputs:
                         call_execution.eval_outputs = {}
 
-                    # Set placeholder values for the eval config that will be rerun
-                    call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending"
-                    }
+                    # Set placeholder values for the eval config that will be rerun.
+                    # A harness verdict is kept under it, so a grade that fails, is
+                    # skipped or times out hands it back.
+                    call_execution.eval_outputs[str(eval_config.id)] = (
+                        pending_placeholder(
+                            call_execution.eval_outputs.get(str(eval_config.id))
+                        )
+                    )
 
                     call_executions_list.append(call_execution)
 
