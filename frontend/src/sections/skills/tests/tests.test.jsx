@@ -1533,6 +1533,10 @@ describe("skill Tests sub-tabs", () => {
     fireEvent.click(within(visiblePanel()).getByRole("button", { name: "Run a test" }));
     expect(screen.getByRole("tab", { name: "Run a test" })).toHaveAttribute("aria-selected", "true");
     expect(within(visiblePanel()).getByRole("button", { name: "Preview answer check" })).toBeVisible();
+    // The same section name and version wording as the context form.
+    expect(within(visiblePanel()).getByText("Check answers")).toBeVisible();
+    expect(within(visiblePanel()).getByLabelText("Version to test")).toBeInTheDocument();
+    expect(within(visiblePanel()).queryByText("Compare approved test cases")).not.toBeInTheDocument();
     expect(within(visiblePanel()).getByRole("checkbox", { name: `Select ${testCase.title}` })).toBeChecked();
     openTab("Cases");
     expect(within(visiblePanel()).getByRole("table", { name: "Saved test cases" })).toBeVisible();

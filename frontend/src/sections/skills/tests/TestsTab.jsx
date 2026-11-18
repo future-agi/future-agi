@@ -407,12 +407,12 @@ function TestsContent({ skill }) {
             ))}
           </Stack>
         </Section>
-        <Section title={<Typography component="span" variant="m3">Compare approved test cases</Typography>}>
+        <Section title={<Typography component="span" variant="m3">Check answers</Typography>}>
           <Stack spacing={2}>
             <TextField
               size="small"
               select
-              label="Candidate"
+              label="Version to test"
               value={candidateKind}
               onChange={(event) => setCandidateKind(event.target.value)}
             >

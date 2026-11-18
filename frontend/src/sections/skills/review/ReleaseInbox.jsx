@@ -225,7 +225,7 @@ export default function ReleaseInbox({
     <Box sx={skillsRouteSx}>
       <PageHeader
         title="Reviews"
-        description="Review changes before they reach production."
+        description="Release requests for every label. Nothing moves until a request is approved and released."
         sx={{ mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root + .MuiStack-root': { ml: { xs: 0, sm: 2 } } }}
         actions={scopeKey && !["off", "denied", "forbidden", "unavailable"].includes(state) && <>
           {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request release</Button>}

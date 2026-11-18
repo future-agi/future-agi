@@ -787,7 +787,7 @@ export default function TestRunSetup({
       <Box>
         <Button
           color="primary"
-          variant={plan ? "outlined" : "contained"}
+          variant={compact || plan ? "outlined" : "contained"}
           disabled={!valid || locked}
           onClick={preview}
         >
