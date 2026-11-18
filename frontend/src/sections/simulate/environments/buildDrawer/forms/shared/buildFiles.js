@@ -1,5 +1,8 @@
 // Files picked on a build form, kept as plain rows.
 
+// A build that asks what to test waits for at least this many characters.
+export const BUILD_TEST_MIN = 10;
+
 export const BUILD_FILES_ACCEPT = ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf";
 
 export const extOf = (name) =>

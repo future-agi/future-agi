@@ -355,6 +355,17 @@ describe.skip("MCP world", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Billing line" }));
     expect(
+      screen.getByText("Say what this environment should test"),
+    ).toBeInTheDocument();
+    const test = screen.getByRole("textbox", {
+      name: "What should this environment test?",
+    });
+    fireEvent.change(test, { target: { value: "Refunds" } });
+    expect(
+      screen.getByText("Say what this environment should test"),
+    ).toBeInTheDocument();
+    fireEvent.change(test, { target: { value: "Refunds over the limit" } });
+    expect(
       screen.getByText("Pick a server from your Gateway"),
     ).toBeInTheDocument();
     expect(button(/Linear/)).toBeDisabled();
@@ -370,13 +381,6 @@ describe.skip("MCP world", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Server URL" }), {
       target: { value: "https://mcp.acme.com/sse" },
     });
-    expect(button("Build environment")).toBeDisabled();
-    fireEvent.change(
-      screen.getByRole("textbox", {
-        name: "What should this environment test?",
-      }),
-      { target: { value: "Refunds over the limit" } },
-    );
     click("Build environment");
     expectUiOnlyToast();
   });
