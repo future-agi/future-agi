@@ -179,9 +179,14 @@ def snapshot(version_id: Any) -> StepOutcome:
                     code="archive_source_not_found",
                     message="The upload expired; upload the folder again",
                 )
+            _warm_compare(runtime)
             return StepOutcome("done")
         _body, commit = acquire_source_archive(
-            runtime.organization_id, runtime.workspace_id, source, label=str(version_id)
+            runtime.organization_id,
+            runtime.workspace_id,
+            source,
+            label=str(version_id),
+            require_stored=True,
         )
     except HostedHarnessError as exc:
         if exc.retryable:
@@ -193,7 +198,14 @@ def snapshot(version_id: Any) -> StepOutcome:
             if locked is not None and not (locked.source or {}).get("commit_sha"):
                 locked.source = {**(locked.source or {}), "commit_sha": commit}
                 locked.save(update_fields=["source", "updated_at"])
+    _warm_compare(runtime)
     return StepOutcome("done")
+
+
+def _warm_compare(runtime: HarnessAgentVersionRuntime) -> None:
+    from simulate.services.agent_code_compare import warm_compare
+
+    warm_compare(runtime.agent_version)
 
 
 def _same_code(
@@ -389,6 +401,7 @@ def check_failure(runtime: HarnessAgentVersionRuntime | None) -> dict[str, Any] 
             "code": "credentials_missing",
             "message": "Missing credentials: " + ", ".join(missing),
             "retryable": False,
+            "missing": missing,
         }
     failed = next(
         (

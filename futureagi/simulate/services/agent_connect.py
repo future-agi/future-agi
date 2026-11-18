@@ -36,6 +36,7 @@ SOURCE_KEYS = (
     "ref",
     "commit_sha",
     "subfolder",
+    "entry",
     "visibility",
     "installation_id",
     "repository_id",
@@ -93,6 +94,10 @@ def _check_source(
                 " private repository",
                 status_code=422,
             )
+        checked["repository_id"] = _installation_repository_id(
+            str(source.get("installation_id") or ""),
+            str(source.get("repository") or ""),
+        )
     if source.get("kind") == "archive":
         from simulate.services.harness_versioning.archives import archive_exists
         from simulate.services.hosted_harness_gateway import _source_object_key
@@ -106,6 +111,39 @@ def _check_source(
                 status_code=422,
             )
     return checked
+
+
+def _installation_repository_id(installation_id: str, repository: str) -> int:
+    from integrations.services.github_app import GitHubAppError, list_repositories
+
+    wanted = repository.lower()
+    page = 1
+    try:
+        while page is not None:
+            listed = list_repositories(installation_id, query=repository, page=page)
+            for candidate in listed.repositories:
+                if candidate.full_name.lower() == wanted:
+                    return candidate.id
+            page = listed.next_page
+    except GitHubAppError as exc:
+        raise HostedHarnessError(
+            "source_unreachable",
+            "GitHub could not list the installation's repositories; try again",
+            status_code=503,
+            retryable=exc.retryable,
+            details={"status": exc.code},
+        ) from exc
+    logger.info(
+        "agent_connect_private_repository_not_found",
+        installation_id=installation_id,
+        repository=repository,
+    )
+    raise HostedHarnessError(
+        "github_repository_not_found",
+        "The GitHub App can't read that repository; add it to the installation on"
+        " GitHub",
+        status_code=422,
+    )
 
 
 def _require_public_repository(
@@ -179,14 +217,26 @@ def connect_lock_name(
             f"github:{str(source.get('repository') or '').lower()}"
             f":{source.get('subfolder') or ''}"
         )
-    return f"agent-connect:{organization_id}:{workspace_id}:{identity}"
+    return (
+        f"agent-connect:{organization_id}:{workspace_id}:{identity}"
+        f":{source.get('entry') or ''}"
+    )
+
+
+def _picked(
+    source: Mapping[str, Any], agent_payload: Mapping[str, Any]
+) -> tuple[str, str]:
+    return (
+        str(source.get("subfolder") or ""),
+        str(agent_payload.get("entry") or ""),
+    )
 
 
 def existing_connected_agent(
     organization_id: Any, workspace_id: Any, source: Mapping[str, Any]
 ) -> tuple[AgentDefinition, AgentVersion] | None:
-    """The agent already connected from this repository and folder (or upload) in
-    the workspace, with its first version."""
+    """The agent already connected from this repository and folder (or upload) and
+    entry file in the workspace, with its first version."""
     rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
         organization_id=organization_id,
         workspace_id=workspace_id,
@@ -199,20 +249,20 @@ def existing_connected_agent(
             source_kind=SourceKind.ARCHIVE,
             source__archive_artifact_id=str(source.get("archive_artifact_id")),
         )
-        match = rows.order_by("created_at").first()
     else:
-        wanted = str(source.get("subfolder") or "")
-        match = next(
-            (
-                row
-                for row in rows.filter(
-                    source_kind=SourceKind.GITHUB,
-                    source__repository__iexact=str(source.get("repository") or ""),
-                ).order_by("created_at")
-                if str((row.source or {}).get("subfolder") or "") == wanted
-            ),
-            None,
+        rows = rows.filter(
+            source_kind=SourceKind.GITHUB,
+            source__repository__iexact=str(source.get("repository") or ""),
         )
+    wanted = _picked(source, source)
+    match = next(
+        (
+            row
+            for row in rows.order_by("created_at")
+            if _picked(row.source or {}, row.agent_payload or {}) == wanted
+        ),
+        None,
+    )
     if match is None:
         return None
     return match.agent_definition, match.agent_version
@@ -269,6 +319,7 @@ def connect_agent(
                 "connector": "auto",
                 "config": {},
                 "definition_owner": CONNECTED_OWNER,
+                **({"entry": cleaned["entry"]} if cleaned.get("entry") else {}),
             },
             secret_values=dict(env_values or {}) or None,
             trigger=Trigger.CONNECT,
@@ -280,6 +331,7 @@ def connect_agent(
         version_id=str(version.id),
         kind=cleaned.get("kind"),
         subfolder=cleaned.get("subfolder") or "",
+        entry=cleaned.get("entry") or "",
     )
     return Connected(definition, version, created=True)
 

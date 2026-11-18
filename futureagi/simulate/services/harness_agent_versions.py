@@ -63,6 +63,7 @@ _WAIT_LIMIT = timedelta(hours=1)
 # Kept per version, never inherited by a child.
 # The environments a version was offered to.
 OFFERED_KEY = "offered_to_environments"
+PRODUCTION_REQUESTS_KEY = "requested_by_production"
 _OWN_PAYLOAD_KEYS = (
     "legacy_secret_refs",
     "secret_refs",
@@ -74,6 +75,7 @@ _OWN_PAYLOAD_KEYS = (
     "discarded_by",
     "prompt_from_parent",
     OFFERED_KEY,
+    PRODUCTION_REQUESTS_KEY,
 )
 _PROVIDER_ALIASES = {
     ProviderType.VAPI: CONNECTOR_ALIASES["vapi"],
@@ -1210,6 +1212,7 @@ def _schedule_preflight(version_id: Any) -> None:
     its workflow (read, then checked); any other is checked at once."""
     from simulate.services.agent_version_steps import (
         document_reading_applies_to,
+        fail,
         workflow_applies_to,
     )
     from simulate.tasks.harness_agent_versions import (
@@ -1217,6 +1220,7 @@ def _schedule_preflight(version_id: Any) -> None:
         schedule_agent_preflight,
     )
 
+    started = False
     try:
         if workflow_applies_to(version_id):
             from simulate.temporal.client import start_agent_version_workflow
@@ -1224,10 +1228,18 @@ def _schedule_preflight(version_id: Any) -> None:
             start_agent_version_workflow(str(version_id))
         else:
             schedule_agent_preflight(version_id)
+            started = True
             if document_reading_applies_to(version_id):
                 schedule_agent_document_reading(version_id)
     except Exception:  # noqa: BLE001 - a retry starts it again
         logger.exception("could not start the agent preflight version=%s", version_id)
+        if not started:
+            fail(
+                version_id,
+                code="check_not_started",
+                message="The check could not be started; retry it",
+                retryable=True,
+            )
 
 
 # --- preflight ----------------------------------------------------------------------
@@ -1727,16 +1739,17 @@ def _turned_down(
     if current is not None and current.agent_definition_id == (
         version.agent_definition_id
     ):
-        # The environment's later request stands; by number when either has no time.
+        # The environment's later request stands; by number when this one has no
+        # time, and a timed request beats a default that was never asked for.
         asked = parse_datetime(str(asked_at or ""))
         current_asked = parse_datetime(
             str(_requested_at(locked.agent_version_id).get(environment_id) or "")
         )
-        if (
-            current_asked > asked
-            if asked is not None and current_asked is not None
-            else (current.version_number or 0) > (version.version_number or 0)
-        ):
+        if asked is None:
+            superseded = (current.version_number or 0) > (version.version_number or 0)
+        else:
+            superseded = current_asked is not None and current_asked > asked
+        if superseded:
             return "superseded"
     recorded = payload.get("requested_defaults") or {}
     if (
@@ -1783,11 +1796,13 @@ def _activate_on(
     explicit: bool = False,
     user: Any = None,
     expected_default_id: Any = None,
+    production: bool = False,
 ) -> str:
     """Move one environment that asked for ``version`` to it, unless a newer version
     of the agent is already its default or the default was moved since; an
     ``explicit`` request moves it from any default, or only from
-    ``expected_default_id`` when it names one."""
+    ``expected_default_id`` when it names one. A ``production`` move needs the
+    environment still following and the version still production."""
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.versions import move_agent
     from simulate.services.hosted_harness import agent_version_pickable
@@ -1805,6 +1820,16 @@ def _activate_on(
                 # Asked for again by hand: an earlier request never replaces it.
                 record_hand_move(locked, user, version.id)
             return "already_default"
+        if production:
+            if environment_policy(locked) != POLICY_FOLLOW:
+                return "pinned"
+            lock_agent_production(version.agent_definition_id)
+            if not AgentVersion._base_manager.filter(
+                id=version.id,
+                status=AgentVersion.StatusChoices.ACTIVE,
+                deleted=False,
+            ).exists():
+                return "superseded"
         if (
             expected_default_id is not None
             and locked.agent_version_id != expected_default_id
@@ -1883,16 +1908,22 @@ def _activate(
     *,
     explicit: bool = False,
     user: Any = None,
+    by_production: Iterable[Any] = (),
 ) -> list[Any]:
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
 
+    production = {str(one) for one in by_production}
     moved = []
     outcomes: dict[str, str] = {}
     errors: list[Exception] = []
     for environment_id in environment_ids:
         try:
             outcome = _activate_on(
-                environment_id, version, explicit=explicit, user=user
+                environment_id,
+                version,
+                explicit=explicit,
+                user=user,
+                production=str(environment_id) in production,
             )
         except Exception as exc:  # noqa: BLE001 - never blocks the others
             logger.warning(
@@ -1920,7 +1951,7 @@ def _activate(
                 environment_id,
                 outcome,
             )
-        if outcome in _OFFERED:
+        if outcome in _OFFERED or outcome == "pinned":
             schedule_environment_nudge(environment_id, version.id, default_moved=False)
     _record_activation(version.id, outcomes)
     if errors:
@@ -2011,7 +2042,7 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
         record_offers(version.id, others)
     for environment_id in others:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
-    return _activate(version, requested)
+    return _activate(version, requested, by_production=production_requests(version.id))
 
 
 def record_offers(version_id: Any, environment_ids: Iterable[Any]) -> None:
@@ -2393,15 +2424,31 @@ def _activate_production(
             )
             return []
         if following:
-            _request_for(version.id, following)
+            _request_for(version.id, following, production=True)
         _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
     for environment_id in [*pinned, *offered]:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
-    return _activate(version, following)
+    return _activate(version, following, by_production=following)
+
+
+def production_requests(version_id: Any) -> set[str]:
+    """The environments whose latest request for this version was a production move."""
+    runtime = _side_row(version_id)
+    payload = (runtime.agent_payload or {}) if runtime is not None else {}
+    asked = payload.get("requested_at") or {}
+    return {
+        environment_id
+        for environment_id, at in (payload.get(PRODUCTION_REQUESTS_KEY) or {}).items()
+        if asked.get(environment_id) == at
+    }
 
 
 def _note_request(
-    version_id: Any, environment_ids: list[str], *, waiting: bool
+    version_id: Any,
+    environment_ids: list[str],
+    *,
+    waiting: bool,
+    production: bool = False,
 ) -> None:
     asked_at = timezone.now().isoformat()
     with transaction.atomic():
@@ -2422,13 +2469,20 @@ def _note_request(
                     [*(stored.get("requested_by_environments") or []), *environment_ids]
                 )
             )
+        if production:
+            payload[PRODUCTION_REQUESTS_KEY] = {
+                **(stored.get(PRODUCTION_REQUESTS_KEY) or {}),
+                **dict.fromkeys(environment_ids, asked_at),
+            }
         runtime.agent_payload = payload
         runtime.save(update_fields=["agent_payload", "updated_at"])
 
 
-def _request_for(version_id: Any, environment_ids: list[str]) -> None:
+def _request_for(
+    version_id: Any, environment_ids: list[str], *, production: bool = False
+) -> None:
     """Add environments to the ones waiting for this version, keeping earlier ones."""
-    _note_request(version_id, environment_ids, waiting=True)
+    _note_request(version_id, environment_ids, waiting=True, production=production)
 
 
 def stamp_requested_at(version_id: Any, environment_id: Any) -> None:

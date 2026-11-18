@@ -25,17 +25,27 @@ def _tools(document: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
 
 
 _WORDING_KEYS = frozenset({"description", "title", "examples", "example"})
+_NAME_MAP_KEYS = frozenset({"properties", "patternProperties", "$defs", "definitions"})
 
 
 def _shape(schema: Any) -> Any:
     """A parameter schema without its wording: types, enums, formats, bounds and
     nesting stay, so any of them changing counts as a changed tool."""
     if isinstance(schema, Mapping):
-        return {
-            str(key): _shape(value)
-            for key, value in sorted(schema.items(), key=lambda item: str(item[0]))
-            if key not in _WORDING_KEYS
-        }
+        shaped = {}
+        for key, value in sorted(schema.items(), key=lambda item: str(item[0])):
+            if key in _WORDING_KEYS:
+                continue
+            if key in _NAME_MAP_KEYS and isinstance(value, Mapping):
+                shaped[str(key)] = {
+                    str(name): _shape(sub)
+                    for name, sub in sorted(
+                        value.items(), key=lambda item: str(item[0])
+                    )
+                }
+            else:
+                shaped[str(key)] = _shape(value)
+        return shaped
     if isinstance(schema, list):
         return [_shape(value) for value in schema]
     return schema

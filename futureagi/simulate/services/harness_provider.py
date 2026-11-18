@@ -113,14 +113,13 @@ def _validate_github_installation(
         )
 
 
-def _connected_build_source(
+def _connected_build_runtime(
     organization_id: Any, workspace_id: Any, payload: dict[str, Any]
-) -> dict[str, Any] | None:
-    """The source a creation from an agent connected on the Agents page builds:
-    the named version's, else production's, with its stored GitHub access. None
-    for any other creation, which keeps the source it sent."""
+) -> Any:
+    """The version a creation from an agent connected on the Agents page builds:
+    the named one, else production. None for any other creation, which keeps the
+    source it sent."""
     from simulate.models import HarnessAgentVersionRuntime
-    from simulate.services.agent_reading_sandbox import version_source
     from simulate.services.harness_agent_versions import connected_agent
 
     metadata = payload.get("metadata") or {}
@@ -147,6 +146,12 @@ def _connected_build_source(
         HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
     ):
         return None
+    return runtime
+
+
+def _connected_build_source(runtime: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    from simulate.services.agent_reading_sandbox import version_source
+
     return {**(payload.get("source") or {}), **version_source(runtime)}
 
 
@@ -667,14 +672,18 @@ def _preflight_source_connectors(organization, payload, workspace_id=None):
     return detected, required_files, scanned
 
 
-def _validate_required_credential_files(organization, payload, workspace_id=None):
-    """Refuse a launch whose source explicitly requires an absent credential file."""
+def _validate_required_credential_files(
+    organization, payload, workspace_id=None, available_names=()
+):
+    """Refuse a launch whose source explicitly requires an absent credential file:
+    one neither its refs nor ``available_names`` (a connected version's) hold."""
     from simulate.services.hosted_harness import HostedHarnessError
 
     analysis = _preflight_source_connectors(organization, payload, workspace_id)
     required_files = analysis[1] if len(analysis) == 3 else []
     present = {
-        str(alias).upper() for alias in (payload["agent"].get("secret_refs") or {})
+        str(alias).upper()
+        for alias in (*(payload["agent"].get("secret_refs") or {}), *available_names)
     }
     missing = sorted(set(required_files) - present)
     if missing:
@@ -1444,14 +1453,24 @@ class HostedHarnessProvider:
         # Definitive launch validation runs again after vault resolution.
         workspace = request_workspace(request)
         try:
-            connected_source = _connected_build_source(
+            connected_runtime = _connected_build_runtime(
                 organization.id, getattr(workspace, "id", None), payload
             )
+            if connected_runtime is not None:
+                payload["source"] = _connected_build_source(connected_runtime, payload)
         except (ValueError, ValidationError):
-            connected_source = None
-        connected_build = connected_source is not None
+            connected_runtime = None
+        connected_build = connected_runtime is not None
+        available_names: list[str] = []
         if connected_build:
-            payload["source"] = connected_source
+            from simulate.services.harness_agent_versions import (
+                version_credential_names,
+            )
+
+            available_names = [
+                *version_credential_names(connected_runtime),
+                *secret_values,
+            ]
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
@@ -1490,7 +1509,10 @@ class HostedHarnessProvider:
             raise
         try:
             source_analysis = _validate_required_credential_files(
-                organization, payload, getattr(workspace, "id", None)
+                organization,
+                payload,
+                getattr(workspace, "id", None),
+                available_names=available_names,
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

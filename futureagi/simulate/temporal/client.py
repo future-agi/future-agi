@@ -720,10 +720,27 @@ async def _start_agent_version_workflow_async(version_id: str) -> str:
 
 def cancel_agent_version_workflow(version_id: str) -> None:
     """Ask a version's workflow to stop between steps; nothing when it has none."""
+    from temporalio.service import RPCError, RPCStatusCode
+
     try:
         async_to_sync(_cancel_agent_version_workflow_async)(version_id)
-    except Exception:  # noqa: BLE001 - a workflow already over has nothing to stop
-        logger.info("agent_version_workflow_not_cancelled", version_id=str(version_id))
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            logger.info(
+                "agent_version_workflow_not_running", version_id=str(version_id)
+            )
+            return
+        logger.warning(
+            "agent_version_workflow_cancel_failed",
+            version_id=str(version_id),
+            exc_info=True,
+        )
+    except Exception:  # noqa: BLE001 - the discard is committed; never undo it here
+        logger.warning(
+            "agent_version_workflow_cancel_failed",
+            version_id=str(version_id),
+            exc_info=True,
+        )
 
 
 async def _cancel_agent_version_workflow_async(version_id: str) -> None:

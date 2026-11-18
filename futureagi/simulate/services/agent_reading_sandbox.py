@@ -20,6 +20,7 @@ from django.utils import timezone
 from simulate.models import (
     AgentDefinition,
     AgentScan,
+    AgentVersion,
     HarnessAgentVersionRuntime,
 )
 from simulate.models.agent_setup import AgentVersionSetup
@@ -574,6 +575,16 @@ def _store_reading(
             if current.agent_type != channel:
                 AgentDefinition.no_workspace_objects.filter(id=definition.id).update(
                     agent_type=channel, updated_at=timezone.now()
+                )
+            version = (
+                AgentVersion.no_workspace_objects.select_for_update()
+                .only("id", "configuration_snapshot")
+                .get(id=locked.agent_version_id)
+            )
+            snapshot = version.configuration_snapshot or {}
+            if snapshot.get("agent_type") != channel:
+                AgentVersion.no_workspace_objects.filter(id=version.id).update(
+                    configuration_snapshot={**snapshot, "agent_type": str(channel)}
                 )
         elif current.agent_type != channel:
             message = (

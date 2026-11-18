@@ -1547,6 +1547,10 @@ class TestFlagsAndDeletion:
         assert gh.calls == []
 
 
+def _checked(repository, ref="main"):
+    return changes._checked_key((repository, ref), changes.FALLBACK_SCOPE)
+
+
 def _source(ref, repository="acme/agent", n=0):
     return WatchedSource(
         environment_id=uuid.UUID(int=n + 1),
@@ -1633,7 +1637,7 @@ class TestRefsAndBudget:
     def test_a_skipped_push_is_polled_first(self, skipped_by):
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(12)]
         for n, one in enumerate(sources):
-            cache.set(changes._checked_key(one.repository, "main"), 100 + n, 60)
+            cache.set(_checked(one.repository), 100 + n, 60)
         read = []
 
         def head(repository, ref, **kwargs):
@@ -1672,7 +1676,7 @@ class TestRefsAndBudget:
             for n in range(5)
         ]
         for n, one in enumerate(others + busy):
-            cache.set(changes._checked_key(one.repository, "main"), 100 + n, 60)
+            cache.set(_checked(one.repository), 100 + n, 60)
         read = []
 
         def head(repository, ref, **kwargs):
@@ -1714,13 +1718,13 @@ class TestRefsAndBudget:
             for _ in range(2):
                 receive_push("acme/agent", "refs/heads/main", "main")
 
-        assert cache.get(changes._checked_key("acme/agent", "main")) == -1
+        assert cache.get(_checked("acme/agent")) == -1
 
     def test_any_pair_can_be_polled_first(self):
         pairs = [(f"owner{n}/agent", "main") for n in range(6)]
         for pair in pairs:
-            changes._poll_first(pair)
-        assert all(cache.get(changes._checked_key(*p)) == -1 for p in pairs)
+            changes._poll_first(pair, changes.FALLBACK_SCOPE)
+        assert all(cache.get(_checked(*p)) == -1 for p in pairs)
 
     def test_a_rate_limited_pair_is_skipped_and_the_tick_goes_on(self):
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(4)]
@@ -1785,6 +1789,7 @@ class TestRefsAndBudget:
         with (
             patch.object(changes, "watched_sources", return_value=sources),
             patch.object(changes, "read_credential", credential),
+            patch.object(changes, "_workspace_installation", return_value=None),
             patch.object(changes, "read_head", side_effect=head),
             patch.object(changes, "observe_repository_head", return_value={}),
         ):
@@ -1895,8 +1900,8 @@ def test_organizations_take_turns_at_the_poll():
         _source("main", "acme/agent", 20), organization_id=uuid.UUID(int=2)
     )
     for n, one in enumerate(busy):
-        cache.set(changes._checked_key(one.repository, "main"), 100 + n, 60)
-    cache.set(changes._checked_key(other.repository, "main"), 500, 60)
+        cache.set(_checked(one.repository), 100 + n, 60)
+    cache.set(_checked(other.repository), 500, 60)
     read = []
 
     def head(repository, ref, **kwargs):
@@ -1945,7 +1950,9 @@ class TestConnectedAgents:
 
     def test_a_new_head_makes_one_version_for_the_agent(self, connected):
         agent, environments = connected
-        heads = {("acme/agent", "main"): HeadResult("ok", HEAD_Y)}
+        heads = {
+            (("acme/agent", "main"), changes.FALLBACK_SCOPE): HeadResult("ok", HEAD_Y)
+        }
 
         with patch.object(
             changes, "_observe_one", side_effect=AssertionError("environment path")
@@ -1960,7 +1967,9 @@ class TestConnectedAgents:
 
     def test_a_head_already_made_makes_nothing(self, connected):
         agent, environments = connected
-        heads = {("acme/agent", "main"): HeadResult("ok", HEAD_Y)}
+        heads = {
+            (("acme/agent", "main"), changes.FALLBACK_SCOPE): HeadResult("ok", HEAD_Y)
+        }
         observe_repository_head(agent.id, heads=dict(heads))
 
         outcomes = observe_repository_head(agent.id, heads=dict(heads))
@@ -2041,6 +2050,117 @@ class TestConnectedAgentsWithNoEnvironment:
         assert gh.calls == []
         [row] = _push_versions(agent.id)
         assert row.source["commit_sha"] == HEAD_Y
+
+
+_READS = {
+    "poll": lambda: poll_repository_heads(budget=10),
+    "push": lambda: receive_push("acme/agent", "refs/heads/main", "main", 77),
+}
+
+
+class TestHeadsPerInstallation:
+    @pytest.fixture
+    def other(self, organization, user):
+        from accounts.models.workspace import Workspace
+
+        return Workspace.objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+
+    @staticmethod
+    def _agent(organization, workspace, name):
+        return AgentDefinition.objects.create(
+            agent_name=name,
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+        )
+
+    @staticmethod
+    def _connection(agent, user, installation_id, status):
+        from integrations.models import IntegrationConnection, IntegrationPlatform
+        from integrations.services.credentials import CredentialManager
+
+        IntegrationConnection.no_workspace_objects.create(
+            organization=agent.organization,
+            workspace=agent.workspace,
+            created_by=user,
+            platform=IntegrationPlatform.GITHUB,
+            display_name="acme",
+            host_url="https://github.com",
+            encrypted_credentials=CredentialManager.encrypt(
+                {"installation_id": installation_id}
+            ),
+            external_project_name=installation_id,
+            status=status,
+            backfill_completed=True,
+        )
+
+    @pytest.mark.parametrize("read", sorted(_READS))
+    def test_a_paused_connection_gets_no_version_from_another_workspaces_read(
+        self, read, organization, workspace, other, user, gh
+    ):
+        from integrations.models import ConnectionStatus
+
+        kept = self._agent(organization, workspace, "kept")
+        paused = self._agent(organization, other, "paused")
+        for agent, status in (
+            (kept, ConnectionStatus.ACTIVE),
+            (paused, ConnectionStatus.PAUSED),
+        ):
+            self._connection(agent, user, "42", status)
+            TestConnectedAgentsWithNoEnvironment._production(
+                agent, visibility="private", installation_id="42", repository_id=77
+            )
+
+        with patch(
+            "integrations.services.github_app.branch_head", return_value=HEAD_Y
+        ) as head:
+            counts = _READS[read]()
+
+        assert counts == {"created": 1, "head_unavailable": 1}
+        assert [row.source["commit_sha"] for row in _push_versions(kept.id)] == [HEAD_Y]
+        assert _push_versions(paused.id) == []
+        assert head.call_count == 1
+        assert gh.calls == []
+
+    @pytest.mark.parametrize("read", sorted(_READS))
+    def test_a_source_with_no_credential_does_not_hold_back_a_connected_one(
+        self, read, organization, workspace, other, user, gh
+    ):
+        from integrations.models import ConnectionStatus
+
+        unconnected = self._agent(organization, workspace, "unconnected")
+        connected = self._agent(organization, other, "connected")
+        self._connection(connected, user, "55", ConnectionStatus.ACTIVE)
+        for agent in (unconnected, connected):
+            TestConnectedAgentsWithNoEnvironment._production(agent, repository_id=77)
+        gh.heads[("id:77", "main")] = HEAD_Y
+
+        with (
+            patch(
+                "integrations.services.github_app.fallback_read_token",
+                return_value=None,
+            ),
+            patch(
+                "integrations.services.github_app.installation_token",
+                return_value="test-token",
+            ) as token,
+            patch("integrations.services.github_app.revoke_installation_token"),
+        ):
+            counts = _READS[read]()
+
+        assert counts == {"created": 1, "head_unavailable": 1}
+        assert [row.source["commit_sha"] for row in _push_versions(connected.id)] == [
+            HEAD_Y
+        ]
+        assert _push_versions(unconnected.id) == []
+        assert {call.args for call in token.call_args_list} == {("55",)}
+        assert len(gh.calls) == 1
 
 
 class TestDisconnectedInstallation:

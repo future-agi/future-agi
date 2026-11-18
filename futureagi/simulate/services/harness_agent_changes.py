@@ -51,6 +51,7 @@ from simulate.services.harness_github import (
     GitHubResponse,
     ReadCredential,
     ReadStatus,
+    _workspace_installation,
     github_get,
     read_credential,
     read_refused,
@@ -355,6 +356,46 @@ def _pair(watched: WatchedSource) -> tuple[str, str | None]:
     if watched.repository_id is not None:
         name = f"{name}#{watched.repository_id}"
     return name, watched.ref
+
+
+Scope = tuple[str, ...]
+Read = tuple[tuple[str, str | None], Scope]
+FALLBACK_SCOPE: Scope = ("fallback",)
+
+
+def _scope(
+    watched: WatchedSource, known: dict[tuple[Any, Any, str | None], Scope]
+) -> Scope:
+    key = (watched.organization_id, watched.workspace_id, watched.installation_id)
+    if key not in known:
+        known[key] = _read_scope(watched)
+    return known[key]
+
+
+def _read_scope(watched: WatchedSource) -> Scope:
+    if watched.installation_id is None:
+        installation = _workspace_installation(
+            watched.organization_id, watched.workspace_id
+        )
+        return ("workspace", installation) if installation else FALLBACK_SCOPE
+    from integrations.services.github_app import installation_connected
+
+    if watched.installation_id and installation_connected(
+        organization_id=watched.organization_id,
+        workspace_id=watched.workspace_id,
+        installation_id=watched.installation_id,
+    ):
+        return ("private", watched.installation_id)
+    return (
+        "unavailable",
+        str(watched.organization_id),
+        str(watched.workspace_id),
+        watched.installation_id,
+    )
+
+
+def _read_name(pair: tuple[str, str | None], scope: Scope) -> str:
+    return f"{pair[0]}:{pair[1] or 'HEAD'}:{':'.join(scope)}"
 
 
 def _head_key(
@@ -707,15 +748,16 @@ def observe_repository_head(
     definition: AgentDefinition | Any,
     *,
     repository: str | None = None,
-    heads: dict[tuple[str, str | None], HeadResult] | None = None,
+    heads: dict[Read, HeadResult] | None = None,
     purpose: str = "poll",
 ) -> dict[str, str]:
     """Make the next agent version for each environment watching this definition's
     GitHub source whose head it has not observed; returns {environment_id: outcome},
     keyed by the definition id for a connected agent watched with no environment.
 
-    With ``heads`` only the (repository, ref) pairs it holds are looked at; without,
-    each pair's head is read once.
+    With ``heads`` only the (repository, ref) pairs it holds are looked at, each
+    for the sources read through the same installation; without, each pair's head
+    is read once per installation.
     """
     from simulate.services.harness_versioning.versions import versioning_enabled
 
@@ -726,16 +768,19 @@ def observe_repository_head(
     heads = {} if heads is None else heads
     outcomes: dict[str, str] = {}
     connected_outcomes: dict[Any, str] = {}
+    known: dict[tuple[Any, Any, str | None], Scope] = {}
+    checked: set[Any] = set()
     for watched in watched_sources(repository=repository, definition_id=definition_id):
-        pair = _pair(watched)
-        head = heads.get(pair)
+        read = (_pair(watched), _scope(watched, known))
+        head = heads.get(read)
         if head is None:
             if only_given:
                 continue
-            head = heads[pair] = read_head(watched, purpose=purpose)
+            head = heads[read] = read_head(watched, purpose=purpose)
         if head.status not in ("ok", "not_modified") or not head.sha:
             outcomes[_outcome_key(watched)] = "head_unavailable"
             continue
+        checked.add(watched.definition_id)
         if watched.connected and watched.definition_id in connected_outcomes:
             outcomes[_outcome_key(watched)] = connected_outcomes[watched.definition_id]
             continue
@@ -766,50 +811,71 @@ def observe_repository_head(
             purpose,
             getattr(version, "id", None),
         )
+    mark_source_checked(checked)
     return outcomes
 
 
-def _checked_key(repository: str, ref: str | None) -> str:
-    return f"harness:gh-checked:{repository}:{ref or 'HEAD'}"
+def mark_source_checked(definition_ids: Any) -> None:
+    """Record that GitHub answered for these agents' branches just now."""
+    ids = [one for one in definition_ids if one is not None]
+    if ids:
+        AgentDefinition.no_workspace_objects.filter(id__in=ids).update(
+            source_checked_at=timezone.now()
+        )
 
 
-def _poll_first(pair: tuple[str, str | None]) -> None:
-    """Have the poller read a pair first."""
-    cache.set(_checked_key(*pair), -1, _DAY)
+def poll_interval_seconds() -> int:
+    """How often the poller reads the branches it watches."""
+    from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
+
+    for schedule in SIMULATE_SCHEDULES:
+        if schedule.schedule_id == "harness-github-poll":
+            return int(schedule.interval_seconds)
+    return 0
+
+
+def _checked_key(pair: tuple[str, str | None], scope: Scope) -> str:
+    return f"harness:gh-checked:{_read_name(pair, scope)}"
+
+
+def _poll_first(pair: tuple[str, str | None], scope: Scope) -> None:
+    """Have the poller read a pair first, through this installation."""
+    cache.set(_checked_key(pair, scope), -1, _DAY)
 
 
 def poll_repository_heads(*, budget: int | None = None) -> dict[str, int]:
-    """One poller tick: the oldest-checked (repo, ref) pairs first, each read with
-    its workspace's credential; returns counts by outcome."""
+    """One poller tick: the oldest-checked (repo, ref) pairs first, each read once
+    per installation its sources are read through; returns counts by outcome."""
     from django.conf import settings
 
     from simulate.services.harness_versioning.versions import versioning_enabled
 
     if not versioning_enabled():
         return {}
-    groups: dict[tuple[str, str | None], list[WatchedSource]] = {}
+    groups: dict[Read, list[WatchedSource]] = {}
+    known: dict[tuple[Any, Any, str | None], Scope] = {}
     for watched in watched_sources():
-        groups.setdefault(_pair(watched), []).append(watched)
+        groups.setdefault((_pair(watched), _scope(watched, known)), []).append(watched)
     limit = (
         budget
         if budget is not None
-        else int(getattr(settings, "HARNESS_GITHUB_POLL_BUDGET", 5))
+        else int(getattr(settings, "HARNESS_GITHUB_POLL_BUDGET", 200))
     )
-    checked = {pair: float(cache.get(_checked_key(*pair)) or 0) for pair in groups}
+    checked = {read: float(cache.get(_checked_key(*read)) or 0) for read in groups}
     order = sorted(groups, key=checked.__getitem__)
     # Organizations take turns, each with the pairs a push asked for first, then the
     # oldest-checked: one organization's pushes can't hold every read.
     taken: Counter[Any] = Counter()
-    turn: dict[tuple[str, str | None], int] = {}
-    for pair in order:
-        turn[pair] = taken[groups[pair][0].organization_id]
-        taken[groups[pair][0].organization_id] += 1
-    order.sort(key=lambda pair: (turn[pair], checked[pair] >= 0))
+    turn: dict[Read, int] = {}
+    for read in order:
+        turn[read] = taken[groups[read][0].organization_id]
+        taken[groups[read][0].organization_id] += 1
+    order.sort(key=lambda read: (turn[read], checked[read] >= 0))
     counts: Counter[str] = Counter()
     with ExitStack() as held:
         credentials: dict[tuple[Any, Any], ReadCredential] = {}
-        for pair in order[:limit]:
-            sources = groups[pair]
+        for read in order[:limit]:
+            sources = groups[read]
             head = read_head(
                 sources[0],
                 purpose="poll",
@@ -818,12 +884,12 @@ def poll_repository_heads(*, budget: int | None = None) -> dict[str, int]:
             if head.status == "rate_limited":
                 counts[head.status] += 1
                 continue
-            cache.set(_checked_key(*pair), time.time(), _DAY)
+            cache.set(_checked_key(*read), time.time(), _DAY)
             for definition_id in dict.fromkeys(one.definition_id for one in sources):
                 for outcome in observe_repository_head(
                     definition_id,
                     repository=sources[0].repository,
-                    heads={pair: head},
+                    heads={read: head},
                     purpose="poll",
                 ).values():
                     counts[outcome] += 1
@@ -867,33 +933,32 @@ def receive_push(
         if (watched.ref == pushed or (watched.ref is None and on_default))
         and (repository_id is None or watched.repository_id in (None, repository_id))
     ]
-    heads: dict[tuple[str, str | None], HeadResult] = {}
-    seen: set[tuple[str, str | None]] = set()
+    heads: dict[Read, HeadResult] = {}
+    seen: set[Read] = set()
+    known: dict[tuple[Any, Any, str | None], Scope] = {}
     with ExitStack() as held:
         credentials: dict[tuple[Any, Any], ReadCredential] = {}
         for watched in matched:
-            pair = _pair(watched)
-            if pair in seen:
+            read = (_pair(watched), _scope(watched, known))
+            if read in seen:
                 continue
-            seen.add(pair)
+            seen.add(read)
             if not cache.add(
-                f"harness:gh-push-seen:{pair[0]}:{pair[1] or 'HEAD'}",
-                1,
-                _PUSH_COOLDOWN,
+                f"harness:gh-push-seen:{_read_name(*read)}", 1, _PUSH_COOLDOWN
             ):
                 # Read for a push just now: the poller reads it first.
-                _poll_first(pair)
+                _poll_first(*read)
                 continue
             cache.delete(
                 _head_key(watched.repository, watched.ref, watched.repository_id)
             )
-            heads[pair] = read_head(
+            heads[read] = read_head(
                 watched,
                 purpose="webhook",
                 credential=_held_credential(held, credentials, watched),
             )
-            if heads[pair].status == "rate_limited":
-                _poll_first(pair)
+            if heads[read].status == "rate_limited":
+                _poll_first(*read)
     counts: Counter[str] = Counter()
     for definition_id in dict.fromkeys(one.definition_id for one in matched):
         for outcome in observe_repository_head(

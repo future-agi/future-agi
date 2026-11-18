@@ -11,8 +11,10 @@ from __future__ import annotations
 import uuid
 
 import structlog
+from django.db.models import Q
 from django.utils import timezone
 
+from accounts.models.workspace import Workspace
 from simulate.models import AgentDefinition
 from simulate.services.agent_setup import agent_summary
 from tracer.models.project import Project
@@ -25,7 +27,10 @@ class ProductionProjectError(Exception):
 
 
 def link_production_project(
-    *, agent_definition: AgentDefinition, project_id: uuid.UUID | None
+    *,
+    agent_definition: AgentDefinition,
+    project_id: uuid.UUID | None,
+    workspace: Workspace | None,
 ) -> Project | None:
     """Point a code agent at an Observe project of its workspace, or clear the link."""
     if agent_summary(agent_definition.id).kind != "source":
@@ -43,6 +48,12 @@ def link_production_project(
         )
         if agent_definition.workspace_id is not None:
             projects = projects.filter(workspace_id=agent_definition.workspace_id)
+        elif workspace is not None and not workspace.is_default:
+            projects = projects.filter(workspace_id=workspace.id)
+        else:
+            projects = projects.filter(
+                Q(workspace__isnull=True) | Q(workspace__is_default=True)
+            )
         project = projects.first()
         if project is None:
             raise ProductionProjectError(

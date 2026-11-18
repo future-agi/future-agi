@@ -11,6 +11,7 @@ from simulate.models import (
     AgentVersion,
     HarnessAgentVersionRuntime,
 )
+from simulate.models.agent_definition import ProviderCredentials
 from simulate.models.agent_setup import AgentVersionSetup
 from simulate.services import agent_versions
 from simulate.services.agent_setup import AgentStoreError
@@ -141,6 +142,55 @@ class TestSecretFilter:
 
         assert kept == {"url": "https://hooks.example.com/a"}
 
+    def test_a_tools_parameter_names_are_kept(self):
+        profile = copy.deepcopy(VAPI)
+        profile["model"]["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "check_rooms",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "token": {"type": "string"},
+                            "apiKey": {"type": "string", "default": "sk-live-1"},
+                        },
+                        "required": ["token"],
+                    },
+                },
+                "server": {
+                    "url": "https://hooks.example.com/rooms?sig=abc",
+                    "secret": "s3cret",
+                    "headers": {"X-API-Key": "abc"},
+                },
+                "credentialId": "cred-1",
+            }
+        ]
+
+        kept = _safe(profile)
+        document = profile_document("vapi", "asst-1", kept, modality="voice")
+
+        tool = kept["model"]["tools"][0]
+        assert tool["function"]["parameters"] == {
+            "type": "object",
+            "properties": {
+                "token": {"type": "string"},
+                "apiKey": {"type": "string", "default": "[redacted]"},
+            },
+            "required": ["token"],
+        }
+        assert tool["server"] == {
+            "url": "https://hooks.example.com/rooms",
+            "secret": "[redacted]",
+            "headers": {"X-API-Key": "[redacted]"},
+        }
+        assert tool["credentialId"] == "[redacted]"
+        assert set(document["tools"][0]["parameters"]["properties"]) == {
+            "token",
+            "apiKey",
+        }
+        assert "sk-live-1" not in str(document)
+
     def test_a_max_tokens_change_moves_the_digest(self):
         more = copy.deepcopy(VAPI)
         more["model"]["maxTokens"] = 4000
@@ -220,3 +270,55 @@ class TestSync:
 
         assert again.version_number == 2
         assert _versions(agent) == [1, 2]
+
+
+@pytest.fixture
+def classic_agent(organization, workspace):
+    definition = AgentDefinition.objects.create(
+        agent_name="harbor classic",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        provider="vapi",
+        assistant_id="asst-1",
+        inbound=True,
+        organization=organization,
+        workspace=workspace,
+    )
+    version = definition.create_version(
+        description="Book rooms politely.", commit_message="v1", status="active"
+    )
+    ProviderCredentials.objects.create(
+        agent_version=version,
+        provider_type="vapi",
+        api_key="sk-vapi-key-123456",
+        assistant_id="asst-1",
+    )
+    return definition
+
+
+class TestSyncWithoutSideRow:
+    def test_a_change_at_the_provider_makes_a_provider_version(self, classic_agent):
+        first = _sync(classic_agent, VAPI)
+        assert first.version_number == 1
+        assert AgentVersionSetup.no_workspace_objects.filter(
+            agent_version=first
+        ).exists()
+        changed = copy.deepcopy(VAPI)
+        changed["model"]["messages"][0]["content"] = "Book rooms and upsell."
+
+        version = _sync(classic_agent, changed)
+
+        assert version.version_number == 2
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version=version
+        )
+        assert runtime.source_kind == HarnessAgentVersionRuntime.SourceKind.PROVIDER
+        assert runtime.source["provider"] == "vapi"
+        assert runtime.source["assistant_id"] == "asst-1"
+        assert runtime.source["profile_digest"] == profile_digest(_safe(changed))
+        assert runtime.agent_payload["connector"] == "vapi"
+        assert set(runtime.credential_fingerprints) == {"VAPI_API_KEY"}
+        assert (
+            ProviderCredentials.objects.get(agent_version=version).get_api_key()
+            == "sk-vapi-key-123456"
+        )
+        assert _versions(classic_agent) == [1, 2]

@@ -60,7 +60,7 @@ def store_commit_archive(
     repository: str,
     commit_sha: str,
     body: bytes,
-) -> None:
+) -> bool:
     key = f"code-archives/{organization_id}/{uuid.uuid4()}.tar.gz"
     client = get_storage_client()
     try:
@@ -74,7 +74,7 @@ def store_commit_archive(
         )
     except _STORAGE_ERRORS:
         logger.warning("code_archive_not_stored", repository=repository, exc_info=True)
-        return
+        return False
     identity = {
         "organization_id": organization_id,
         "workspace_id": workspace_id,
@@ -95,7 +95,7 @@ def store_commit_archive(
             )
             if existing is None:
                 CodeArchive.all_objects.create(**identity, **contents)
-                return
+                return True
             replaced_key = existing.object_key
             for field, value in contents.items():
                 setattr(existing, field, value)
@@ -103,6 +103,7 @@ def store_commit_archive(
     except IntegrityError:
         replaced_key = key
     _remove_object(client, replaced_key)
+    return True
 
 
 def _remove_object(client, key: str) -> None:

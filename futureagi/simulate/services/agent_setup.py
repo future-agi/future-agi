@@ -721,6 +721,11 @@ def _replace_agent(
         locked = AgentVersionSetup.all_objects.select_for_update().get(id=existing.id)
         if locked.setup_hash == agent["setup_hash"]:
             return
+        if (
+            locked.origin != AgentVersionSetup.Origin.READING
+            or locked.status != AgentVersionSetup.Status.STORED
+        ):
+            raise AgentStoreError("setup_outcome_already_stored")
         locked.behaviour_units.all().delete()
         locked.tools.all().delete()
         locked.telephony.all().delete()

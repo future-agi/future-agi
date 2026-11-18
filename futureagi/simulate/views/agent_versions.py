@@ -22,6 +22,7 @@ from simulate.serializers.response.agent_version import (
 )
 from simulate.services import agent_versions
 from simulate.services.agent_compatibility import environment_compatibility
+from simulate.services.agent_overview import version_list_context
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope, error_details
@@ -143,7 +144,13 @@ class AgentVersionChangeView(_AgentVersionView):
             "up_to_date": not change.created,
         }
         return Response(
-            AgentVersionChangeResponseSerializer(body).data,
+            AgentVersionChangeResponseSerializer(
+                body,
+                context={
+                    "request": request,
+                    **version_list_context([change.version]),
+                },
+            ).data,
             status=status.HTTP_202_ACCEPTED if change.created else status.HTTP_200_OK,
         )
 
@@ -169,7 +176,12 @@ class AgentVersionProductionView(_AgentVersionView):
             "version": version,
             "moved_environment_ids": [str(one) for one in moved],
         }
-        return Response(AgentVersionProductionResponseSerializer(body).data)
+        return Response(
+            AgentVersionProductionResponseSerializer(
+                body,
+                context={"request": request, **version_list_context([version])},
+            ).data
+        )
 
 
 class AgentVersionRetryView(_AgentVersionView):

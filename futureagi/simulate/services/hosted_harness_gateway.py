@@ -979,10 +979,12 @@ def acquire_source_archive(
     source: Mapping[str, Any],
     *,
     label: str,
+    require_stored: bool = False,
 ) -> tuple[bytes, str]:
     """The ``source/``-rooted tar.gz of a job's or a version's source, and the commit
     it stands at (empty for an upload). A GitHub commit the workspace already stored
-    is read from its archive; any other is cloned once and stored for it."""
+    is read from its archive; any other is cloned once and stored for it. With
+    ``require_stored`` a clone that could not be stored is refused, to be retried."""
     kind = source["kind"]
     if kind in {"remote", "provider"}:
         return _empty_source_archive(), ""
@@ -1069,13 +1071,20 @@ def acquire_source_archive(
                 status_code=413,
             )
         body = archive.getvalue()
-        store_commit_archive(
+        stored = store_commit_archive(
             organization_id=organization_id,
             workspace_id=workspace_id,
             repository=repository,
             commit_sha=commit_sha,
             body=body,
         )
+        if require_stored and not stored:
+            raise HostedHarnessError(
+                "code_archive_not_stored",
+                "The agent's code could not be stored; it is tried again",
+                status_code=503,
+                retryable=True,
+            )
         return body, commit_sha
 
 

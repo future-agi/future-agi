@@ -47,6 +47,7 @@ Status = HarnessAgentVersionRuntime.PreflightStatus
 
 # The provider a connector reads its agent from, when the two names differ.
 _SYNC_PROVIDERS = {"retell_chat": "retell"}
+_CONFIGURED_KINDS = {"livekit": SourceKind.LIVEKIT, "phone": SourceKind.PHONE}
 KIND_SYNC = "sync"
 KIND_UPLOAD = "upload"
 KIND_CREDENTIALS = "credentials"
@@ -142,7 +143,11 @@ def _source_gone() -> HostedHarnessError:
 
 
 def _branch_head(definition: AgentDefinition, source: dict[str, Any]) -> str:
-    return branch_head_of(definition.organization_id, definition.workspace_id, source)
+    from simulate.services.harness_agent_changes import mark_source_checked
+
+    head = branch_head_of(definition.organization_id, definition.workspace_id, source)
+    mark_source_checked([definition.id])
+    return head
 
 
 def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, Any]):
@@ -203,10 +208,15 @@ def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, An
 def sync_version(definition: AgentDefinition, *, user: Any = None) -> AgentVersion:
     """A version at the branch's current head, or the parent when it is at the head.
     A Vapi or Retell agent syncs from its provider instead."""
+    from simulate.services.provider_profile import PROVIDERS
+
     parent = _parent(definition)
     runtime = _runtime(parent)
     if runtime is not None and runtime.source_kind == SourceKind.PROVIDER:
-        return provider_sync(definition, parent, runtime, user=user)
+        return provider_sync(definition, parent, dict(runtime.source or {}), user=user)
+    connector = str(definition.provider or "")
+    if runtime is None and _SYNC_PROVIDERS.get(connector, connector) in PROVIDERS:
+        return provider_sync(definition, parent, None, user=user)
     head_sha = _branch_head(definition, _github_source(runtime))
     version, _created = version_at_head(
         definition, head_sha, trigger=Trigger.SYNC, user=user
@@ -214,15 +224,33 @@ def sync_version(definition: AgentDefinition, *, user: Any = None) -> AgentVersi
     return version
 
 
-def live_version_at(definition_id: Any, commit_sha: str) -> AgentVersion | None:
-    """The newest version of the agent made at ``commit_sha`` that still stands for
-    it: a failed check or a discarded version does not."""
+def live_version_at(
+    definition_id: Any,
+    commit_sha: str,
+    *,
+    credential_set_hash: str | None,
+    access: Mapping[str, Any],
+    failed_stands: bool = False,
+) -> AgentVersion | None:
+    """The newest version of the agent made at ``commit_sha``, with these credentials
+    and reached this way, that still stands for it: a discarded version does not,
+    and a failed check only when ``failed_stands``."""
+    not_standing = (
+        (Status.DISCARDED,)
+        if failed_stands
+        else (
+            Status.FAILED,
+            Status.DISCARDED,
+        )
+    )
     runtime = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_definition_id=definition_id,
             source__commit_sha__iexact=commit_sha,
+            credential_set_hash=credential_set_hash,
+            agent_payload__source_access=dict(access),
         )
-        .exclude(preflight_status__in=(Status.FAILED, Status.DISCARDED))
+        .exclude(preflight_status__in=not_standing)
         .select_related("agent_version")
         .defer("credential_blob", "diff")
         .order_by("-created_at")
@@ -259,11 +287,23 @@ def version_at_head(
     it: the parent when it is already there, a version Sync or the poller already
     made at it, else a new one. Sync and the poller both come here, so a commit gets
     one version whichever looks first."""
+    from simulate.services.harness_versioning.backfill import source_access
+
     parent = _parent(definition)
-    source = _github_source(_runtime(parent))
+    runtime = _runtime(parent)
+    source = _github_source(runtime)
     if head_sha.lower() == str(source.get("commit_sha") or "").lower():
         return parent, False
-    existing = live_version_at(definition.id, head_sha)
+    at_head = {
+        key: value for key, value in {**source, "commit_sha": head_sha}.items() if value
+    }
+    existing = live_version_at(
+        definition.id,
+        head_sha,
+        credential_set_hash=runtime.credential_set_hash,
+        access=source_access({"source": at_head}),
+        failed_stands=trigger == Trigger.PUSH,
+    )
     if existing is not None:
         _restart_stalled_check(existing)
         return existing, False
@@ -272,11 +312,7 @@ def version_at_head(
         definition,
         parent=parent,
         env=None,
-        source={
-            key: value
-            for key, value in {**source, "commit_sha": head_sha}.items()
-            if value
-        },
+        source=at_head,
         trigger=trigger,
         user=user,
     )
@@ -286,7 +322,7 @@ def version_at_head(
 def provider_sync(
     definition: AgentDefinition,
     parent: AgentVersion,
-    runtime: HarnessAgentVersionRuntime,
+    parent_source: Mapping[str, Any] | None,
     *,
     user: Any = None,
 ) -> AgentVersion:
@@ -308,7 +344,7 @@ def provider_sync(
         read_profile,
     )
 
-    source = dict(runtime.source or {})
+    source = dict(parent_source or {})
     connector = str(source.get("provider") or definition.provider or "")
     provider = _SYNC_PROVIDERS.get(connector, connector)
     if provider not in PROVIDERS:
@@ -368,6 +404,11 @@ def provider_sync(
         env=None,
         source={"kind": "provider", "profile_digest": digest},
         prompt=prompt or None,
+        agent_payload=(
+            {"connector": connector, "config": {"assistant_id": assistant_id}}
+            if parent_source is None
+            else None
+        ),
         trigger=Trigger.PROVIDER_SYNC,
         user=user,
     )
@@ -424,7 +465,7 @@ def upload_version(
             "The upload expired; upload the folder again",
             status_code=422,
         )
-    existing = _same_upload_version(definition, archive_artifact_id)
+    existing = _same_upload_version(definition, archive_artifact_id, runtime)
     if existing is not None:
         return existing
     version = create_agent_version(
@@ -442,13 +483,19 @@ _UPLOAD_COMPARE_LIMIT = 5
 
 
 def _same_upload_version(
-    definition: AgentDefinition, archive_artifact_id: Any
+    definition: AgentDefinition,
+    archive_artifact_id: Any,
+    parent_runtime: HarnessAgentVersionRuntime | None,
 ) -> AgentVersion | None:
     """The newest live upload version of the agent with the same files as this
-    upload, so the same folder again makes no version."""
+    upload and the parent's credentials, so the same folder again makes no version."""
+    if parent_runtime is None:
+        return None
     rows = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
-            agent_definition_id=definition.id, source_kind=SourceKind.ARCHIVE
+            agent_definition_id=definition.id,
+            source_kind=SourceKind.ARCHIVE,
+            credential_set_hash=parent_runtime.credential_set_hash,
         )
         .exclude(preflight_status__in=(Status.FAILED, Status.DISCARDED))
         .select_related("agent_version")
@@ -513,6 +560,29 @@ def credentials_version(
     return version
 
 
+def _configured_payload(
+    definition: AgentDefinition, parent: AgentVersion, connector: str
+) -> dict[str, Any]:
+    from simulate.models import ProviderCredentials
+
+    if connector == "livekit":
+        row = ProviderCredentials.objects.filter(agent_version_id=parent.id).first()
+        config = {
+            "agent_name": getattr(row, "agent_name", ""),
+            "url": getattr(row, "server_url", ""),
+        }
+    else:
+        config = {"phone_number": definition.contact_number}
+    config["target_speaks_first"] = definition.target_speaks_first
+    config["target_system_prompt"] = parent.description
+    return {
+        "connector": connector,
+        "config": {
+            name: value for name, value in config.items() if value not in (None, "")
+        },
+    }
+
+
 def manual_version(
     definition: AgentDefinition,
     *,
@@ -535,7 +605,8 @@ def manual_version(
             "A code agent's prompt lives in its source; sync or upload it instead",
             status_code=422,
         )
-    if runtime is None:
+    connector = str(definition.provider or "")
+    if runtime is None and connector not in _CONFIGURED_KINDS:
         if settings:
             raise HostedHarnessError(
                 "agent_change_unsupported",
@@ -553,9 +624,14 @@ def manual_version(
             trigger=Trigger.PROMPT,
             user=user,
         )
-    current = dict(runtime.agent_payload or {})
+    if runtime is None:
+        kind = _CONFIGURED_KINDS[connector]
+        current = _configured_payload(definition, parent, connector)
+    else:
+        kind = runtime.source_kind
+        current = dict(runtime.agent_payload or {})
     edit = edit_agent_config(
-        runtime.source_kind,
+        kind,
         current,
         description=parent.description or "",
         prompt=prompt,
@@ -565,7 +641,13 @@ def manual_version(
     if not edit.changed:
         return parent
     changes: dict[str, Any] = {}
-    if edit.config is not None:
+    if runtime is None:
+        changes["source"] = {}
+        changes["agent_payload"] = {
+            **current,
+            "config": edit.config if edit.config is not None else current["config"],
+        }
+    elif edit.config is not None:
         changes["agent_payload"] = {**current, "config": edit.config}
         changes["source"] = dict(runtime.source or {})
     return create_agent_version(

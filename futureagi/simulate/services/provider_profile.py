@@ -45,6 +45,9 @@ _SECRET_WORDS = frozenset(
     }
 )
 _VALUE_MAPS = frozenset({"headers", "query_params", "queryparams"})
+_SCHEMA_KEY = "parameters"
+_SCHEMA_MAPS = frozenset({"properties", "patternProperties", "$defs", "definitions"})
+_SCHEMA_SAMPLES = frozenset({"default", "examples", "const"})
 _SECRET_PAIRS = (("api", "key"), ("private", "key"), ("access", "key"))
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 MAIN_UNIT = "main"
@@ -70,7 +73,14 @@ def _safe(value: Any, key: str = "") -> Any:
     if isinstance(value, Mapping):
         if key.lower().replace("_", "") in _VALUE_MAPS:
             return {str(k): _REDACTED for k in value}
-        return {str(k): _safe(item, str(k)) for k, item in value.items()}
+        return {
+            str(k): (
+                _safe_schema(item)
+                if k == _SCHEMA_KEY and isinstance(item, Mapping)
+                else _safe(item, str(k))
+            )
+            for k, item in value.items()
+        }
     if isinstance(value, list):
         return [_safe(item, key) for item in value]
     if isinstance(value, str) and "://" in value:
@@ -84,6 +94,28 @@ def _safe(value: Any, key: str = "") -> Any:
                 (parsed.scheme, (parsed.hostname or "") + port, parsed.path, "", "")
             )
     return value
+
+
+def _safe_schema(value: Any, *, secret: bool = False) -> Any:
+    if isinstance(value, list):
+        return [_safe_schema(item, secret=secret) for item in value]
+    if not isinstance(value, Mapping):
+        return _REDACTED if secret else _safe(value)
+    kept: dict[str, Any] = {}
+    for name, item in value.items():
+        name = str(name)
+        if name in _SCHEMA_MAPS and isinstance(item, Mapping):
+            kept[name] = {
+                str(prop): _safe_schema(sub, secret=_secret_key(str(prop)))
+                for prop, sub in item.items()
+            }
+        elif name in _SCHEMA_SAMPLES:
+            kept[name] = _REDACTED if secret else _safe(item)
+        elif _secret_key(name):
+            kept[name] = _REDACTED
+        else:
+            kept[name] = _safe_schema(item)
+    return kept
 
 
 def _get(url: str, api_key: str) -> dict[str, Any]:

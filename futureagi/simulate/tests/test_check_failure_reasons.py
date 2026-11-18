@@ -21,6 +21,7 @@ def test_missing_credentials_are_named():
         "code": "credentials_missing",
         "message": "Missing credentials: LIVEKIT_API_KEY, LIVEKIT_URL",
         "retryable": False,
+        "missing": ["LIVEKIT_API_KEY", "LIVEKIT_URL"],
     }
 
 

@@ -363,6 +363,22 @@ class TestConnectLock:
 
         assert len(names) == 4
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            {"kind": "github", "repository": "acme/agent"},
+            {"kind": "archive", "archive_artifact_id": "1"},
+        ],
+        ids=["github", "archive"],
+    )
+    def test_each_entry_in_one_source_has_its_own_lock(self, source):
+        names = {
+            connect_lock_name("org", "ws", {**source, "entry": entry})
+            for entry in ("support/agent.py", "billing/agent.py")
+        }
+
+        assert len(names) == 2
+
     def test_another_workspace_has_its_own_lock(self):
         source = {"kind": "github", "repository": "acme/agent"}
 

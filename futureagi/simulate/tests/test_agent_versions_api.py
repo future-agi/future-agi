@@ -15,7 +15,14 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
-from simulate.services.agent_versions import upload_version, version_at_head
+from simulate.models.agent_definition import ProviderCredentials
+from simulate.services.agent_versions import (
+    credentials_version,
+    manual_version,
+    set_production,
+    upload_version,
+    version_at_head,
+)
 from simulate.services.harness_agent_changes import HeadResult
 from simulate.services.harness_agent_versions import POLICY_KEY, create_agent_version
 from simulate.services.hosted_harness_gateway import _source_object_key
@@ -747,6 +754,18 @@ def _failed(version):
     ).update(preflight_status=Status.FAILED)
 
 
+def _side_row(version):
+    return HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version=version)
+
+
+def _in_production(version):
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=version
+    ).update(preflight_status=Status.PASSED)
+    with patch(NUDGE):
+        set_production(version)
+
+
 class TestVersionAtHead:
     def test_the_production_commit_is_production(self, agent, production):
         version, created = version_at_head(agent, "A" * 40, trigger=Trigger.PUSH)
@@ -823,23 +842,64 @@ class TestVersionAtHead:
         assert rows.get().check_started_at > timezone.now() - timedelta(minutes=1)
         assert _versions(agent) == 2
 
-    def test_a_failed_version_at_the_commit_does_not_stand_for_it(
+    def test_a_sync_after_a_failed_check_at_the_commit_makes_a_new_version(
         self, agent, production
     ):
-        synced = _connect(
-            agent,
-            parent=production,
-            commit="b",
-            trigger=Trigger.SYNC,
-            prompt="A prompt the head would not be made with.",
-        )
-        _failed(synced)
+        pushed, _ = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+        _failed(pushed)
+
+        version, created = version_at_head(agent, "b" * 40, trigger=Trigger.SYNC)
+
+        assert created is True
+        assert version.id != pushed.id
+        assert _versions(agent) == 3
+
+    def test_a_failed_check_at_the_commit_stands_for_the_next_poll_or_push(
+        self, agent, production
+    ):
+        pushed, _ = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+        _failed(pushed)
+
+        first, first_created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+        second, second_created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+
+        assert (first.id, first_created) == (pushed.id, False)
+        assert (second.id, second_created) == (pushed.id, False)
+        assert _versions(agent) == 2
+
+    def test_a_discarded_version_at_the_commit_does_not_stand_for_a_push(
+        self, agent, production
+    ):
+        pushed, _ = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=pushed
+        ).update(preflight_status=Status.DISCARDED)
 
         version, created = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
 
         assert created is True
-        assert version.id != synced.id
-        assert _versions(agent) == 3
+        assert version.id != pushed.id
+
+    def test_a_version_at_the_commit_with_the_old_credentials_does_not_stand_for_it(
+        self, agent, production
+    ):
+        pushed, _ = version_at_head(agent, "b" * 40, trigger=Trigger.PUSH)
+        rotated = credentials_version(agent, secret_values={"DB_URL": "pg://rotated"})
+        _in_production(rotated)
+
+        version, created = version_at_head(agent, "b" * 40, trigger=Trigger.SYNC)
+
+        assert created is True
+        assert version.id not in (pushed.id, rotated.id)
+        assert _side_row(version).source["commit_sha"] == "b" * 40
+        assert (
+            _side_row(version).credential_set_hash
+            == _side_row(rotated).credential_set_hash
+        )
+        assert (
+            _side_row(version).credential_set_hash
+            != _side_row(pushed).credential_set_hash
+        )
 
 
 def _packed(files):
@@ -940,6 +1000,29 @@ class TestUploadVersion:
         assert version.id == uploaded.id
         assert _versions(agent) == 2
 
+    def test_the_files_of_a_version_with_the_old_credentials_make_a_version(
+        self, agent, uploads, uploaded
+    ):
+        _in_production(uploaded)
+        other = upload_version(
+            agent,
+            archive_artifact_id=uuid.UUID(
+                _uploaded(uploads, agent.organization_id, _packed(OTHER_FILES))
+            ),
+        )
+        rotated = credentials_version(agent, secret_values={"DB_URL": "pg://rotated"})
+        _in_production(rotated)
+        artifact = _uploaded(uploads, agent.organization_id, _packed(OTHER_FILES))
+
+        version = upload_version(agent, archive_artifact_id=uuid.UUID(artifact))
+
+        assert version.id not in (uploaded.id, other.id, rotated.id)
+        assert _side_row(version).source["archive_artifact_id"] == artifact
+        assert (
+            _side_row(version).credential_set_hash
+            == _side_row(rotated).credential_set_hash
+        )
+
     def test_a_failed_upload_version_is_not_reused(self, agent, uploads, uploaded):
         _failed(uploaded)
         artifact = _uploaded(uploads, agent.organization_id, _packed(AGENT_FILES))
@@ -968,3 +1051,63 @@ class TestUploadVersion:
 
         assert version.id != uploaded.id
         assert _versions(agent) == 2
+
+
+@pytest.fixture
+def livekit_agent(organization, workspace):
+    definition = AgentDefinition.objects.create(
+        agent_name="front desk",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        provider="livekit",
+        inbound=True,
+        organization=organization,
+        workspace=workspace,
+    )
+    version = definition.create_version(
+        description="Greet callers.", commit_message="v1", status="active"
+    )
+    ProviderCredentials.objects.create(
+        agent_version=version,
+        provider_type="livekit",
+        api_key="lk-key-123456",
+        api_secret="lk-secret-123456",
+        server_url="wss://lk.example.com",
+        agent_name="old",
+    )
+    return definition
+
+
+class TestConfiguredAgentWithoutSideRow:
+    def test_a_settings_edit_makes_a_livekit_version(self, livekit_agent):
+        version = manual_version(livekit_agent, settings={"agent_name": "new"})
+
+        runtime = _side_row(version)
+        assert version.version_number == 2
+        assert runtime.source_kind == HarnessAgentVersionRuntime.SourceKind.LIVEKIT
+        assert runtime.source["agent_name"] == "new"
+        assert runtime.agent_payload["connector"] == "livekit"
+        assert runtime.agent_payload["config"]["agent_name"] == "new"
+        assert {"LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"} <= set(
+            runtime.credential_fingerprints
+        )
+
+    def test_a_prompt_edit_makes_a_livekit_version(self, livekit_agent):
+        version = manual_version(livekit_agent, prompt="Greet callers by name.")
+
+        runtime = _side_row(version)
+        assert version.description == "Greet callers by name."
+        assert runtime.source_kind == HarnessAgentVersionRuntime.SourceKind.LIVEKIT
+        assert runtime.agent_payload["connector"] == "livekit"
+        assert runtime.agent_payload["config"]["agent_name"] == "old"
+        assert (
+            runtime.agent_payload["config"]["target_system_prompt"]
+            == "Greet callers by name."
+        )
+
+    def test_the_same_settings_make_no_version(self, livekit_agent):
+        parent = livekit_agent.active_version
+
+        version = manual_version(livekit_agent, settings={"agent_name": "old"})
+
+        assert version.id == parent.id
+        assert _versions(livekit_agent) == 1

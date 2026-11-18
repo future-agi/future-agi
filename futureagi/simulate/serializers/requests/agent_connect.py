@@ -3,6 +3,14 @@ from rest_framework import serializers
 from simulate.serializers.harness_job import SUBFOLDER_PATTERN, check_credential_values
 from tfc.utils.api_serializers import StrictInputSerializer
 
+GITHUB_ONLY_FIELDS = (
+    "repository",
+    "ref",
+    "visibility",
+    "installation_id",
+    "repository_id",
+)
+
 
 class AgentSourceRequestSerializer(StrictInputSerializer):
     """A source to find agents in: a GitHub repository at a branch, or an upload."""
@@ -35,10 +43,17 @@ class AgentSourceRequestSerializer(StrictInputSerializer):
                 raise serializers.ValidationError(
                     {"archive_artifact_id": "not part of a github source"}
                 )
-        elif not attrs.get("archive_artifact_id"):
-            raise serializers.ValidationError(
-                {"archive_artifact_id": "required for an upload"}
-            )
+        else:
+            if not attrs.get("archive_artifact_id"):
+                raise serializers.ValidationError(
+                    {"archive_artifact_id": "required for an upload"}
+                )
+            sent = getattr(self, "initial_data", None) or {}
+            github_only = [name for name in GITHUB_ONLY_FIELDS if name in sent]
+            if github_only:
+                raise serializers.ValidationError(
+                    dict.fromkeys(github_only, "not part of an upload")
+                )
         if attrs.get("archive_artifact_id"):
             attrs["archive_artifact_id"] = str(attrs["archive_artifact_id"])
         return attrs
@@ -51,6 +66,9 @@ class AgentConnectRequestSerializer(AgentSourceRequestSerializer):
     name = serializers.CharField(max_length=255)
     commit_sha = serializers.RegexField(r"^[0-9a-fA-F]{40}$", required=False)
     subfolder = serializers.RegexField(
+        SUBFOLDER_PATTERN, max_length=512, required=False, allow_blank=True
+    )
+    entry = serializers.RegexField(
         SUBFOLDER_PATTERN, max_length=512, required=False, allow_blank=True
     )
     env_values = serializers.DictField(

@@ -50,7 +50,7 @@ class StoredTelephonySerializer(serializers.Serializer):
 class StoredFrameworkSerializer(serializers.Serializer):
     name = serializers.CharField()
     version = serializers.CharField(allow_null=True)
-    label = serializers.CharField(required=False)
+    label = serializers.CharField(required=False, allow_null=True)
 
 
 class StoredSourceEchoSerializer(serializers.Serializer):
