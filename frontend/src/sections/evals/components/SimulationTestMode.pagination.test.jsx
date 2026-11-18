@@ -388,6 +388,7 @@ describe("SimulationTestMode exact snapshot pagination", () => {
 
       await goToSecondCall();
       const nestedName = await screen.findByText('"Nested name"');
+      expect(ready).toHaveBeenLastCalledWith(true, { first: selectedId });
       if (control === "row action") {
         const row = nestedName.parentElement.parentElement;
         fireEvent.click(
