@@ -151857,6 +151857,7 @@
             "required": [
                 "name",
                 "why",
+                "ran",
                 "failed",
                 "assumed"
             ],
@@ -151873,9 +151874,14 @@
                     "type": "string",
                     "x-nullable": true
                 },
+                "ran": {
+                    "title": "Ran",
+                    "description": "The control ran; false when a step of it could not run here.",
+                    "type": "boolean"
+                },
                 "failed": {
                     "title": "Failed",
-                    "description": "The checks failed the wrong behaviour, as they should.",
+                    "description": "The checks failed the wrong behaviour, as they should; null when the control never ran.",
                     "type": "boolean",
                     "x-nullable": true
                 },

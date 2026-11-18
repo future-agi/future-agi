@@ -144715,7 +144715,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessProofControl: {
-      required: ["name", "why", "failed", "assumed"],
+      required: ["name", "why", "ran", "failed", "assumed"],
       type: "object",
       properties: {
         name: {
@@ -144729,9 +144729,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        ran: {
+          title: "Ran",
+          description:
+            "The control ran; false when a step of it could not run here.",
+          type: "boolean",
+        },
         failed: {
           title: "Failed",
-          description: "The checks failed the wrong behaviour, as they should.",
+          description:
+            "The checks failed the wrong behaviour, as they should; null when the control never ran.",
           type: "boolean",
           "x-nullable": true,
         },

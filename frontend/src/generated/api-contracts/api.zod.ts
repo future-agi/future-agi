@@ -51073,10 +51073,15 @@ export const SimulateApiHarnessEnvironmentsArchiveScenarioResponse = zod.object(
           zod.object({
             name: zod.string().min(1),
             why: zod.string(),
+            ran: zod
+              .boolean()
+              .describe(
+                "The control ran; false when a step of it could not run here.",
+              ),
             failed: zod
               .boolean()
               .describe(
-                "The checks failed the wrong behaviour, as they should.",
+                "The checks failed the wrong behaviour, as they should; null when the control never ran.",
               ),
             assumed: zod.array(zod.string().min(1)),
           }),
@@ -51222,10 +51227,15 @@ export const SimulateApiHarnessEnvironmentsRestoreScenarioResponse = zod.object(
           zod.object({
             name: zod.string().min(1),
             why: zod.string(),
+            ran: zod
+              .boolean()
+              .describe(
+                "The control ran; false when a step of it could not run here.",
+              ),
             failed: zod
               .boolean()
               .describe(
-                "The checks failed the wrong behaviour, as they should.",
+                "The checks failed the wrong behaviour, as they should; null when the control never ran.",
               ),
             assumed: zod.array(zod.string().min(1)),
           }),
@@ -51352,10 +51362,15 @@ export const SimulateApiHarnessEnvironmentsScenarioRevisionsResponse =
               zod.object({
                 name: zod.string().min(1),
                 why: zod.string(),
+                ran: zod
+                  .boolean()
+                  .describe(
+                    "The control ran; false when a step of it could not run here.",
+                  ),
                 failed: zod
                   .boolean()
                   .describe(
-                    "The checks failed the wrong behaviour, as they should.",
+                    "The checks failed the wrong behaviour, as they should; null when the control never ran.",
                   ),
                 assumed: zod.array(zod.string().min(1)),
               }),
@@ -54874,10 +54889,15 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
               zod.object({
                 name: zod.string().min(1),
                 why: zod.string(),
+                ran: zod
+                  .boolean()
+                  .describe(
+                    "The control ran; false when a step of it could not run here.",
+                  ),
                 failed: zod
                   .boolean()
                   .describe(
-                    "The checks failed the wrong behaviour, as they should.",
+                    "The checks failed the wrong behaviour, as they should; null when the control never ran.",
                   ),
                 assumed: zod.array(zod.string().min(1)),
               }),

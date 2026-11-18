@@ -23374,7 +23374,9 @@ export interface HarnessProofControlApi {
   /** @minLength 1 */
   name: string;
   why: string;
-  /** The checks failed the wrong behaviour, as they should. */
+  /** The control ran; false when a step of it could not run here. */
+  ran: boolean;
+  /** The checks failed the wrong behaviour, as they should; null when the control never ran. */
   failed: boolean;
   assumed: string[];
 }
