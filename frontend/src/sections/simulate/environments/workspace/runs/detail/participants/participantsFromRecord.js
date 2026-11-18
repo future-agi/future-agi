@@ -56,8 +56,9 @@ export function participantsFromRecord(record) {
 
   const toCall = (step) => {
     const call = step.call || {};
-    const start = seconds(step.started_at ?? call.at);
-    const end = seconds(step.ended_at);
+    // The API times a tool call on the call itself.
+    const start = seconds(call.at);
+    const end = seconds(call.ended_at);
     const by = step.worker_id ? workerOf[step.worker_id] : null;
     return {
       id: step.key,

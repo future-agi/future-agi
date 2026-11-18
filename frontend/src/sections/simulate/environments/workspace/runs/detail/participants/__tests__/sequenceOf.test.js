@@ -169,7 +169,7 @@ describe("sequenceOf over the worker record", () => {
     expect(tool.dur).toBeNull();
   });
 
-  it("a tool step the record ends takes its duration from the step's times", () => {
+  it("a tool call the record ends takes its duration from the call's own times", () => {
     const record = timeline({
       steps: [
         handOffStep(1, {
@@ -178,10 +178,10 @@ describe("sequenceOf over the worker record", () => {
           end: "no_return",
           children: [LOOKUP.seq],
         }),
-        {
-          ...callStep(LOOKUP, { parent: 1, depth: 1 }),
-          ended_at: "2026-10-31T11:59:58.500000+00:00",
-        },
+        callStep(
+          { ...LOOKUP, ended_at: "2026-10-31T11:59:58.500000+00:00" },
+          { parent: 1, depth: 1 },
+        ),
       ],
       turns: oneTurn(undefined, undefined, [1]),
     });
