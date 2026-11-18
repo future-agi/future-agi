@@ -301,28 +301,48 @@ func TestCachedPriceFollowsTheInstanceThatServed(t *testing.T) {
 	if own == nil {
 		t.Fatal("org-2's own openai not created")
 	}
+	// The mirror: org-3's own "proxy" counts cached tokens inside the prompt
+	// (Azure's format does, whatever its host), while the operator's "proxy"
+	// (an OpenAI-format proxy, not the official API) does not.
+	operatorProxy, ok := srv.registry.GetProvider("proxy")
+	if !ok {
+		t.Fatal("operator proxy not registered")
+	}
+	ownProxy, err := srv.OrgProviderCache.GetOrCreateWithTenantConfig("org-3", "proxy", "org-key",
+		&tenant.ProviderConfig{APIKey: "org-key", Enabled: true, BaseURL: "https://8.8.8.8", APIFormat: "azure"})
+	if err != nil {
+		t.Fatalf("creating org-3's own proxy: %v", err)
+	}
+	if !providers.CachedTokensInPrompt(ownProxy) || providers.CachedTokensInPrompt(operatorProxy) {
+		t.Fatal("setup: org-3's own proxy must count cached tokens in the prompt, the operator's must not")
+	}
 
 	for _, tc := range []struct {
-		name   string
-		org    string
-		served providers.Provider
-		orgRan bool
-		want   string
+		name     string
+		org      string
+		provider string
+		served   providers.Provider
+		orgRan   bool
+		want     string
 	}{
 		// No org instance: the operator's official API, cached share discounted.
-		{"operator, no org instance", "", operator, false, "3.000000"},
+		{"operator, no org instance", "", "openai", operator, false, "3.000000"},
 		// The org's own instance served: its usage is not trusted, full price.
-		{"org's own instance served", "org-2", own, true, "3.500000"},
+		{"org's own instance served", "org-2", "openai", own, true, "3.500000"},
 		// The operator's instance served an org that has its own (an internal
 		// key, or a fallback): the cached share is discounted.
-		{"operator served an org with its own", "org-2", operator, false, "3.000000"},
+		{"operator served an org with its own", "org-2", "openai", operator, false, "3.000000"},
+		// The mirror: the operator's untrusted instance served an org whose own
+		// instance would have been trusted. Full price: the instance that served
+		// decides.
+		{"mirror: operator's untrusted instance served", "org-3", "proxy", operatorProxy, false, "3.500000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			details := json.RawMessage(`{"cached_tokens":400000}`)
 			rc := &models.RequestContext{
 				EndpointType: "chat",
 				Model:        "gpt-4o",
-				Provider:     "openai",
+				Provider:     tc.provider,
 				ServedBy:     tc.served,
 				Response: &models.ChatCompletionResponse{Usage: &models.Usage{
 					PromptTokens:        1_000_000,
