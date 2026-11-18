@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { addSampleEdits } from "./draftReview";
+import { addSampleEdits, draftReviewKey, sampleFileEdits } from "./draftReview";
+import { ALL_SCENARIOS } from "./_fixtures/draftReview";
 import {
   KNOWLEDGE_BASES,
   draftOfSources,
@@ -231,8 +232,26 @@ const CHANGE_KINDS = {
 // Scenarios name these, so they touch a list of scenarios, not all.
 const NAMED = ["tool", "actor", "scenario"];
 
-// Added from Review proposed changes, so it arrives accepted.
-const fileChange = ({ kind, key, summary, from }) => ({
+// The sample scenarios a change makes graded runs check again: rules and
+// records touch every one, an actor or a tool a few. Background is ungraded.
+const RECHECKED = {
+  rule: ALL_SCENARIOS,
+  world_state: ALL_SCENARIOS,
+  actor: ALL_SCENARIOS.slice(0, 3),
+  tool: ALL_SCENARIOS.slice(-6),
+  source: [],
+};
+
+// Added from Review proposed changes, so it arrives accepted. `patch` is
+// what changes, read as the diff.
+const fileChange = ({
+  kind,
+  key,
+  summary,
+  patch,
+  from,
+  revalidate = RECHECKED[kind],
+}) => ({
   id: `${kind}:${key}`,
   piece: kind === "scenario" ? "suite" : "environment",
   kind,
@@ -240,18 +259,20 @@ const fileChange = ({ kind, key, summary, from }) => ({
   document: "sources.json",
   action: "added",
   fields: [],
-  patch: [{ op: "add", path: "", value: summary }],
+  patch,
   base_digest: null,
   draft_digest: null,
   summary,
   decision: "accepted",
-  affects: NAMED.includes(kind) ? [] : "all",
+  affects: NAMED.includes(kind) ? revalidate : "all",
   ...(kind === "world_state" && { rows: [] }),
   sources: [from],
   depends_on: [],
-  graded: false,
-  revalidate: [],
+  graded: revalidate.length > 0,
+  revalidate,
 });
+
+const added = (value, path = "") => ({ op: "add", path, value });
 
 /**
  * Accepted proposals become accepted changes in Review changes, one per item;
@@ -263,30 +284,96 @@ export const appendAcceptedEdits = (
   envId,
   { accepted = [], failed = [] },
 ) => {
-  const names = new Map(
+  const sources = new Map(
     summaryOf(queryClient, envId).sources.map((source) => [
       source.source_id,
-      source.name,
+      source,
     ]),
   );
-  const nameOf = (id) => names.get(id) || id;
-  addSampleEdits(queryClient, envId, {
-    changes: accepted.map((item) => {
-      const sourceId = item.cite?.sourceId || item.pick?.sourceId;
-      const rule = ["rule", "conflict"].includes(item.kind)
-        ? item.edited || item.pick?.rule || item.rule
-        : null;
+  const nameOf = (id) => sources.get(id)?.name || id;
+  const fromItem = (item) => {
+    const sourceId = item.cite?.sourceId || item.pick?.sourceId;
+    return readFrom(sourceId, nameOf(sourceId), item.cite);
+  };
+  // Rules are numbered in the order they're added; one added again keeps its number.
+  const ruleIds = sampleFileEdits(
+    queryClient.getQueryData(draftReviewKey(envId)),
+  )
+    .changes.filter((change) => change.kind === "rule")
+    .map((change) => change.id);
+  const numberOf = (id) => {
+    if (!ruleIds.includes(id)) ruleIds.push(id);
+    return ruleIds.indexOf(id) + 1;
+  };
+  let tables = 0;
+  const changeOf = (item) => {
+    const kind = CHANGE_KINDS[item.kind] || "source";
+    const base = { kind, key: item.id, from: fromItem(item) };
+    if (kind === "rule") {
+      const text = item.edited || item.pick?.rule || item.rule;
+      const n = numberOf(`rule:${item.id}`);
       return fileChange({
-        kind: CHANGE_KINDS[item.kind] || "source",
-        key: item.id,
-        summary: rule
-          ? `Rule: ${rule}`
-          : item.kind === "actor" && item.edited
-            ? `${item.title} · approval scope: ${item.edited}`
-            : item.title,
-        from: readFrom(sourceId, nameOf(sourceId), item.cite),
+        ...base,
+        summary: `Rule R${n} added: ${text}`,
+        patch: [added(`R${n}: ${text}`)],
       });
-    }),
+    }
+    if (item.kind === "table") {
+      const source = sources.get(item.cite?.sourceId);
+      const parsed = source?.ui?.parsed || {};
+      tables += 1;
+      return fileChange({
+        ...base,
+        summary: `New table ${parsed.table} · ${(parsed.accepted ?? 0).toLocaleString()} rows from ${source?.name}`,
+        patch: [
+          added(parsed.table, "/tables"),
+          // The first table moves the world off generated data.
+          ...(tables === 1
+            ? [
+                { op: "test", path: "/world_data", value: "generated" },
+                {
+                  op: "replace",
+                  path: "/world_data",
+                  value: "your records (a private sample)",
+                },
+              ]
+            : []),
+        ],
+      });
+    }
+    let value = item.title;
+    if (item.kind === "actor") value = item.actor || item.title;
+    if (item.kind === "state")
+      value = item.title.replace(/^Starting state: /, "");
+    if (kind === "source") value = nameOf(item.cite?.sourceId);
+    return fileChange({
+      ...base,
+      summary:
+        item.kind === "actor" && item.edited
+          ? `${item.title} · approval scope: ${item.edited}`
+          : item.title,
+      patch: [added(value)],
+    });
+  };
+  // Every proposed scenario from one add is one change, as the design has it.
+  const scenarios = accepted.filter((item) => item.kind === "scenario");
+  const proposed = scenarios.flatMap((item) => item.scenario || []);
+  addSampleEdits(queryClient, envId, {
+    changes: [
+      ...accepted.filter((item) => item.kind !== "scenario").map(changeOf),
+      ...(scenarios.length
+        ? [
+            fileChange({
+              kind: "scenario",
+              key: scenarios.map((item) => item.id).join("+"),
+              summary: `${proposed.length} proposed scenario${proposed.length === 1 ? "" : "s"} added`,
+              patch: proposed.map((one) => added(one.t)),
+              from: fromItem(scenarios[0]),
+              revalidate: proposed.map((one) => one.t),
+            }),
+          ]
+        : []),
+    ],
     failed: failed.map((item) => {
       const sourceId =
         item.sourceId ||
@@ -316,12 +403,14 @@ export const appendAcceptedEdits = (
 export const upsertPersonalDataEdit = (queryClient, envId, source) => {
   const choice = source?.ui?.personal_choice;
   if (!choice || ["reading", "not_saved"].includes(source.status)) return;
+  const words = PERSONAL_CHOICES[choice] || choice;
   addSampleEdits(queryClient, envId, {
     changes: [
       fileChange({
         kind: "world_state",
         key: `personal-${source.source_id}`,
-        summary: `${source.name}: personal data, ${PERSONAL_CHOICES[choice] || choice}`,
+        summary: `${source.name}: personal data, ${words}`,
+        patch: [added(`${source.name}: ${words}`, "/personal_data")],
         from: readFrom(source.source_id, source.name),
       }),
     ],

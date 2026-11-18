@@ -11,15 +11,19 @@ vi.mock("notistack", async (importOriginal) => ({
 const state = { review: null, query: {} };
 const decide = vi.fn();
 const dismiss = vi.fn();
-vi.mock("src/api/simulate-environments/draftReview", () => ({
-  useDraftReview: vi.fn(() => ({
-    data: state.review,
-    isLoading: false,
-    ...state.query,
-  })),
-  useDecideChanges: vi.fn(() => ({ mutate: decide, isPending: false })),
-  useDismissFailedChange: vi.fn(() => dismiss),
-}));
+vi.mock(
+  "src/api/simulate-environments/draftReview",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useDraftReview: vi.fn(() => ({
+      data: state.review,
+      isLoading: false,
+      ...state.query,
+    })),
+    useDecideChanges: vi.fn(() => ({ mutate: decide, isPending: false })),
+    useDismissFailedChange: vi.fn(() => dismiss),
+  }),
+);
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentVersions: vi.fn(() => ({
@@ -149,6 +153,26 @@ describe("ReviewChangesDrawer", () => {
     rerenderDrawer();
     expect(save()).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Discard all" })).toBeEnabled();
+  });
+
+  it("holds Save for a file's changes until their scenarios are checked", async () => {
+    const user = userEvent.setup();
+    const save = () => screen.getByRole("button", { name: /^Save/ });
+    state.review = review([
+      change({
+        decision: "accepted",
+        sources: [
+          { used: [{ kind: "source", source_id: "src_1", name: "a.pdf" }] },
+        ],
+      }),
+    ]);
+    renderDrawer();
+    expect(save()).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("button", { name: "Run checks" }));
+    await vi.waitFor(
+      () => expect(save()).not.toHaveAttribute("aria-disabled"),
+      { timeout: 3000 },
+    );
   });
 
   it("holds Reject while a kept change needs this one", () => {

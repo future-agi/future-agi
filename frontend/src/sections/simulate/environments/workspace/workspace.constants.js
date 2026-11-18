@@ -488,6 +488,7 @@ const SAVE_KIND = {
 };
 const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
 const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
+const affectedWord = (n) => `${n} affected scenario${n === 1 ? "" : "s"}`;
 export const REVIEW_COPY = {
   title: "Review changes",
   subtitle: (n, rejected, piece, label) =>
@@ -531,7 +532,7 @@ export const REVIEW_COPY = {
   byHand: "By hand",
   fromUpdate: "From an agent update",
   openInChat: "Open in chat",
-  openFile: (name) => `Open ${name}`,
+  viewIn: (name) => `View in ${name}`,
   open: "Open",
   accept: "Accept",
   reject: "Reject",
@@ -567,6 +568,11 @@ export const REVIEW_COPY = {
   andMore: (n) => `and ${n} more`,
   rechecked: (n) =>
     `These change what's graded, so ${scenarioWord(n)} get${n === 1 ? "s" : ""} rechecked when you save`,
+  checkFirst: (n) => `Check the ${affectedWord(n)} before you save`,
+  checking: (n) => `Checking ${affectedWord(n)}…`,
+  checked: (n) => `${affectedWord(n)} checked, all pass`,
+  runChecks: "Run checks",
+  runChecksFirst: "Run the affected scenario checks first.",
   showWhich: "Show which",
   hide: "Hide",
   comparability: ({ rechecked, exact }) =>

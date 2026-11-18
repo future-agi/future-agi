@@ -6,8 +6,15 @@ import { REVIEW_COPY as COPY } from "../workspace.constants";
 
 const NAMES_SHOWN = 20;
 
-/** The scenarios a save rechecks, because the changes alter what's graded. */
-export default function RecheckCard({ names }) {
+/**
+ * The scenarios a save rechecks, because the changes alter what's graded.
+ * With `check`, they're checked here first and the save waits for it.
+ */
+export default function RecheckCard({ names, check = null }) {
+  let line = COPY.rechecked(names.length);
+  if (check?.state === "passed") line = COPY.checked(names.length);
+  else if (check?.state === "running") line = COPY.checking(names.length);
+  else if (check) line = COPY.checkFirst(names.length);
   const [showNames, setShowNames] = useState(false);
   return (
     <Box
@@ -25,9 +32,19 @@ export default function RecheckCard({ names }) {
           width={16}
           sx={{ color: "text.secondary", flexShrink: 0 }}
         />
-        <Typography sx={{ typography: "s1", flex: 1 }}>
-          {COPY.rechecked(names.length)}
-        </Typography>
+        <Typography sx={{ typography: "s1", flex: 1 }}>{line}</Typography>
+        {check && check.state !== "passed" && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled={check.state === "running"}
+            onClick={check.onRun}
+            sx={{ flexShrink: 0 }}
+          >
+            {COPY.runChecks}
+          </Button>
+        )}
         <Button
           size="small"
           color="inherit"
@@ -65,4 +82,9 @@ export default function RecheckCard({ names }) {
 
 RecheckCard.propTypes = {
   names: PropTypes.arrayOf(PropTypes.string).isRequired,
+  // { state: "idle" | "running" | "passed", onRun }: checked before the save.
+  check: PropTypes.shape({
+    state: PropTypes.oneOf(["idle", "running", "passed"]).isRequired,
+    onRun: PropTypes.func.isRequired,
+  }),
 };
