@@ -8,17 +8,13 @@ from typing import Any
 
 from simulate.models import CallExecution, HostedHarnessJob
 from simulate.services.harness_readiness.catalogue import EvidenceCheck, Reading
+from simulate.services.harness_worker_states import CUT_SHORT_STATES
+from simulate.services.harness_workers import WORKERS_KEY
 from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
 _CALLS_READ = 20
-# The key the call's worker record is kept under.
-WORKERS_KEY = "harness_workers"
 # A transfer passes control and never returns; a delegation is whole once it returns.
 _HAND_OFFS = frozenset({"delegated", "transferred"})
-# A worker's stored end `state` when the trial stopped it before it returned: past its deadline, cancelled, or cut off.
-_CUT_SHORT = frozenset(
-    {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
-)
 # Each checklist item as the reason names it when it was not seen.
 CHECK_LABELS = {
     "stable_ids": "the same worker ids in two runs",
@@ -144,7 +140,7 @@ def children(declared: Any, runs: list[Any]) -> Reading:
             "check": "timeout_or_cancel",
             "result": result(
                 any(
-                    isinstance(one, Mapping) and one.get("state") in _CUT_SHORT
+                    isinstance(one, Mapping) and one.get("state") in CUT_SHORT_STATES
                     for record in records
                     for one in record.get("workers") or []
                 )
