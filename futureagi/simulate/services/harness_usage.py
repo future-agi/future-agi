@@ -7,6 +7,7 @@ import logging
 from decimal import Decimal
 from uuid import UUID, uuid5
 
+from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
 from django.utils import timezone
@@ -492,15 +493,10 @@ def _emit_authoring_records(
         )
 
 
-def record_agent_reading_usage(
-    *, organization_id, workspace_id, subject_id, run_id, spend: dict
-) -> dict | None:
-    """Price the model stages of one reading of an agent (or one scan for agents)
-    and bill them like a build's authoring. Returns the priced report, or None
-    when nothing was billed. One event per stage of each reading run, so a repeated
-    call for the same run bills nothing twice and a retried reading bills again."""
-    if is_oss() or not isinstance(spend, dict):
-        return None
+_READING_PURPOSES = frozenset({"agent", "scan"})
+
+
+def _reading_records(spend: dict) -> list[dict]:
     records = [
         record
         for item in spend.get("stages") or []
@@ -511,6 +507,59 @@ def record_agent_reading_usage(
         raise HostedHarnessError(
             "reading_usage_invalid", "Each reading stage must be reported once."
         )
+    return records
+
+
+def _log_uncharged_reading(*, subject_id, run_id, purpose, spend: dict) -> None:
+    """One line per reading while charging is off: what it would have been charged."""
+    try:
+        stages = [
+            {
+                "stage": record["stage"],
+                "model": record["model"],
+                "tokens_in": record["tokens_in"],
+                "tokens_cached": record["tokens_cached"],
+                "tokens_out": record["tokens_out"],
+                "cost_usd": record["cost_usd"],
+                "credits": record["credits"],
+            }
+            for record in _reading_records(spend)
+        ]
+        unpriced = ""
+    except HostedHarnessError as exc:
+        stages, unpriced = [], exc.code
+    logger.info(
+        "agent_reading_not_charged subject_id=%s purpose=%s run_id=%s unpriced=%s stages=%s",
+        subject_id,
+        purpose,
+        run_id,
+        unpriced,
+        json.dumps(stages, cls=DjangoJSONEncoder),
+    )
+
+
+def record_agent_reading_usage(
+    *, organization_id, workspace_id, subject_id, run_id, purpose: str, spend: dict
+) -> dict | None:
+    """Price the model stages of one reading of an agent (``purpose`` "agent", the
+    subject its agent version) or one scan for agents ("scan", the subject its scan),
+    and bill them like a build's authoring. Returns the priced report, or None when
+    nothing was billed.
+
+    Nothing is billed while HARNESS_AGENT_READING_CHARGE_ENABLED is off; one log
+    line says what would have been. Each stage's charge is keyed by the subject, the
+    purpose and the stage, never the run: every attempt at the same reading is one
+    charge, and a retried step, which reads again under a new run id, adds none."""
+    if purpose not in _READING_PURPOSES:
+        raise ValueError(f"unknown reading purpose {purpose!r}")
+    if is_oss() or not isinstance(spend, dict):
+        return None
+    if not settings.HARNESS_AGENT_READING_CHARGE_ENABLED:
+        _log_uncharged_reading(
+            subject_id=subject_id, run_id=run_id, purpose=purpose, spend=spend
+        )
+        return None
+    records = _reading_records(spend)
     if not records:
         return None
     report = {
@@ -526,7 +575,9 @@ def record_agent_reading_usage(
             continue
         emit(
             UsageEvent(
-                event_id=str(uuid5(UUID(str(run_id)), f"reading:{item['stage']}")),
+                event_id=str(
+                    uuid5(UUID(str(subject_id)), f"reading:{purpose}:{item['stage']}")
+                ),
                 org_id=str(organization_id),
                 event_type=BillingEventType.HARNESS_AUTHORING,
                 amount=item["credits"],
@@ -535,6 +586,7 @@ def record_agent_reading_usage(
                     "source": "agent_reading",
                     "source_id": str(subject_id),
                     "reading_run_id": str(run_id),
+                    "reading_purpose": purpose,
                     "workspace_id": str(workspace_id or ""),
                     "phase": "reading",
                     "authoring_stage": item["stage"],

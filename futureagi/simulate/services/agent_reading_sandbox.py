@@ -509,6 +509,7 @@ def _bill(
             workspace_id=runtime.workspace_id,
             subject_id=runtime.agent_version_id,
             run_id=run_id,
+            purpose="agent",
             spend=spend,
         )
     except Exception:  # noqa: BLE001 - a pricing gap never loses the reading
@@ -695,6 +696,7 @@ def scan_source(scan_id: UUID | str) -> None:
                 workspace_id=scan.workspace_id,
                 subject_id=scan.id,
                 run_id=job_document["run_id"],
+                purpose="scan",
                 spend=spend,
             )
         except Exception:  # noqa: BLE001 - a pricing gap never loses the scan

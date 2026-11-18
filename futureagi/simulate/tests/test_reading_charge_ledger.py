@@ -2,9 +2,10 @@
 
 The tests in test_harness_usage.py stop at ``emit``. These go through the real
 usage stream and the billing consumer into ``UsageEventLog``, with charging
-forced on, and check what a customer is charged for one reading: the amount,
-the organization, one row per stage, and no second row when the same reading
-run is recorded again.
+switched on (HARNESS_AGENT_READING_CHARGE_ENABLED), and check what a customer is
+charged for one reading: the amount, the organization, one row per stage, and
+one charge for every attempt at the same reading, a retried step included.
+With the setting off, its default, nothing is charged and one line is logged.
 
 The token counts are one real reading's: the OpenAI Agents SDK reference, read
 on 18 Nov 2026 (readings/2026-11-18/out/openai_agents/cost.json). That reading
@@ -16,7 +17,9 @@ priced tests name that model and keep every count as the reading wrote it.
 from __future__ import annotations
 
 import copy
+import logging
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import uuid4, uuid5
 
 import pytest
@@ -60,11 +63,17 @@ READING_COST_FILE = {
 
 PRODUCTION_READING_MODEL = "vertex_ai/gemini-3.7-flash"
 
-# The platform catalog's price for that name (ee/prompts/additional_models.py):
-# 0.75 USD per million input tokens and 3.75 per million output. It declares no
-# cache-read rate, so cached input is charged at the full input rate.
-INPUT_USD_PER_TOKEN = Decimal("0.75") / 1_000_000
-OUTPUT_USD_PER_TOKEN = Decimal("3.75") / 1_000_000
+
+# Read from the platform catalog (ee/prompts/additional_models.py), so the expected
+# amount holds whether or not the entry carries a cache-read rate yet:
+# without one, cached input is charged at the full input rate.
+def _rate(key, default=None):
+    from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
+
+    value = get_model_pricing(PRODUCTION_READING_MODEL).get(key, default)
+    return None if value is None else Decimal(str(value)) / 1_000_000
+
+
 # billing.yaml: credits = cost * ai_cost_markup (1.2) / 0.01 USD per credit.
 CREDITS_PER_USD = Decimal("1.2") / Decimal("0.01")
 
@@ -80,9 +89,12 @@ def _cost_file(model=PRODUCTION_READING_MODEL, extra_stage=None):
 
 
 def _expected_usd(stage) -> Decimal:
+    input_rate = _rate("input_per_1M_tokens")
+    cached_rate = _rate("cached_input_per_1M_tokens") or input_rate
     return (
-        stage["tokens_in"] * INPUT_USD_PER_TOKEN
-        + stage["tokens_out"] * OUTPUT_USD_PER_TOKEN
+        (stage["tokens_in"] - stage["tokens_cached"]) * input_rate
+        + stage["tokens_cached"] * cached_rate
+        + stage["tokens_out"] * _rate("output_per_1M_tokens")
     )
 
 
@@ -125,6 +137,7 @@ def ledger(monkeypatch, settings, subscription):
     from ee.usage.services.emitter import get_redis
 
     settings.USAGE_EVENTS_ENABLED = True
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
     redis = get_redis()
 
@@ -139,12 +152,13 @@ def ledger(monkeypatch, settings, subscription):
     purge()
 
 
-def _record(organization, run_id, spend, subject_id=None):
+def _record(organization, run_id, spend, subject_id=None, purpose="agent"):
     return harness_usage.record_agent_reading_usage(
         organization_id=organization.id,
         workspace_id=None,
         subject_id=subject_id or uuid4(),
         run_id=str(run_id),
+        purpose=purpose,
         spend=spend,
     )
 
@@ -175,7 +189,7 @@ def test_a_reading_is_charged_its_cost_file_once_to_its_organization(
     expected_credits = expected_usd * CREDITS_PER_USD
     row = UsageEventLog.objects.get()
     assert row.organization_id == organization.id
-    assert row.event_id == uuid5(run_id, "reading:understand-agent")
+    assert row.event_id == uuid5(subject_id, "reading:agent:understand-agent")
     assert row.event_type == "harness_authoring"
     assert row.dimension == "ai_credits"
     assert row.amount_raw == pytest.approx(expected_credits, abs=Decimal("0.001"))
@@ -191,7 +205,9 @@ def test_a_reading_is_charged_its_cost_file_once_to_its_organization(
     # A cost file the kit marked incomplete is charged all the same.
     assert row.properties["complete"] is False
     assert not UsageEventLog.objects.filter(organization=other_organization).exists()
-    summary = UsageSummary.objects.get(organization=organization, dimension="ai_credits")
+    summary = UsageSummary.objects.get(
+        organization=organization, dimension="ai_credits"
+    )
     charged = summary.total_usage
 
     # The same reading run recorded again (a replayed activity) adds nothing.
@@ -218,11 +234,11 @@ def test_each_stage_of_a_reading_is_one_row(ledger, organization):
         models=[PRODUCTION_READING_MODEL],
     )
     spend = _cost_file(extra_stage=check)
-    run_id = uuid4()
+    run_id, subject_id = uuid4(), uuid4()
 
-    _record(organization, run_id, spend)
+    _record(organization, run_id, spend, subject_id)
     _drain()
-    _record(organization, run_id, spend)
+    _record(organization, run_id, spend, subject_id)
     _drain()
 
     rows = {
@@ -233,7 +249,7 @@ def test_each_stage_of_a_reading_is_one_row(ledger, organization):
     assert UsageEventLog.objects.filter(organization=organization).count() == 2
     for stage in spend["stages"]:
         row = rows[stage["stage"]]
-        assert row.event_id == uuid5(run_id, f"reading:{stage['stage']}")
+        assert row.event_id == uuid5(subject_id, f"reading:agent:{stage['stage']}")
         assert row.amount_raw == pytest.approx(
             _expected_usd(stage) * CREDITS_PER_USD, abs=Decimal("0.001")
         )
@@ -242,16 +258,110 @@ def test_each_stage_of_a_reading_is_one_row(ledger, organization):
 @pytest.mark.django_db
 @pytest.mark.requires_ee
 @requires_cloud_billing
-def test_a_retried_reading_is_a_new_run_and_charged_again(ledger, organization):
-    from ee.usage.models.usage import UsageEventLog
+def test_three_attempts_at_one_reading_are_charged_once(ledger, organization):
+    """Each attempt reads again under a new run id; the charge is the same."""
+    from ee.usage.models.usage import UsageEventLog, UsageSummary
 
     spend, subject_id = _cost_file(), uuid4()
 
     _record(organization, uuid4(), spend, subject_id)
+    _drain()
+    charged = UsageSummary.objects.get(
+        organization=organization, dimension="ai_credits"
+    ).total_usage
+    _record(organization, uuid4(), spend, subject_id)
     _record(organization, uuid4(), spend, subject_id)
     _drain()
 
+    assert UsageEventLog.objects.filter(organization=organization).count() == 1
+    assert (
+        UsageSummary.objects.get(
+            organization=organization, dimension="ai_credits"
+        ).total_usage
+        == charged
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_retried_reading_step_is_charged_once(ledger, organization):
+    """The workflow's step retry runs read_version again, which bills under a new
+    run id each time (agent_reading_sandbox._bill). One charge, not three."""
+    from ee.usage.models.usage import UsageEventLog
+    from simulate.services import agent_reading_sandbox
+
+    runtime = SimpleNamespace(
+        organization_id=organization.id, workspace_id=None, agent_version_id=uuid4()
+    )
+    spend = _cost_file()
+
+    for _attempt in range(3):
+        agent_reading_sandbox._bill(runtime, str(uuid4()), spend)
+    _drain()
+
+    row = UsageEventLog.objects.get(organization=organization)
+    assert row.event_id == uuid5(
+        runtime.agent_version_id, "reading:agent:understand-agent"
+    )
+    assert row.amount_raw == pytest.approx(
+        _expected_usd(spend["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_two_versions_are_two_charges(ledger, organization):
+    from ee.usage.models.usage import UsageEventLog
+
+    spend = _cost_file()
+
+    _record(organization, uuid4(), spend, uuid4())
+    _record(organization, uuid4(), spend, uuid4())
+    _drain()
+
     assert UsageEventLog.objects.filter(organization=organization).count() == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize("purpose", ["agent", "scan"])
+def test_with_charging_off_a_reading_records_nothing_and_logs_once(
+    ledger, settings, organization, caplog, purpose
+):
+    from ee.usage.models.usage import UsageEventLog
+
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = False
+    spend, subject_id, run_id = _cost_file(), uuid4(), uuid4()
+    caplog.set_level(logging.INFO, logger=harness_usage.__name__)
+
+    assert _record(organization, run_id, spend, subject_id, purpose) is None
+    _drain()
+
+    assert not UsageEventLog.objects.filter(organization=organization).exists()
+    lines = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("agent_reading_not_charged")
+    ]
+    assert len(lines) == 1
+    stage = spend["stages"][0]
+    assert f"subject_id={subject_id}" in lines[0]
+    assert f"purpose={purpose}" in lines[0]
+    assert f"run_id={run_id}" in lines[0]
+    assert PRODUCTION_READING_MODEL in lines[0]
+    for count in ("tokens_in", "tokens_cached", "tokens_out"):
+        assert f'"{count}": {stage[count]}' in lines[0]
+    assert '"credits"' in lines[0]
+
+
+def test_charging_for_readings_is_off_by_default():
+    """Unset, the setting is off: production needs no new value for it."""
+    from django.conf import settings
+
+    assert settings.HARNESS_AGENT_READING_CHARGE_ENABLED is False
 
 
 @pytest.mark.django_db

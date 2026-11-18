@@ -493,6 +493,7 @@ class TestReadingBill:
                 "workspace_id": agent.workspace_id,
                 "subject_id": version.id,
                 "run_id": sent["run_id"],
+                "purpose": "agent",
                 "spend": spend,
             }
         ]
@@ -516,9 +517,9 @@ class TestReadingBill:
 
         scan_source(scan.id)
 
-        assert [(one["subject_id"], one["run_id"]) for one in billed] == [
-            (scan.id, sent["run_id"])
-        ]
+        assert [
+            (one["subject_id"], one["run_id"], one["purpose"]) for one in billed
+        ] == [(scan.id, sent["run_id"], "scan")]
 
 
 class TestReadingFolder:
