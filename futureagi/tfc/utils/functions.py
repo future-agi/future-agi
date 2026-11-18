@@ -647,7 +647,7 @@ def calculate_eval_average(eval_template, api_logs):
     """
     try:
         output_type = eval_template.config.get("output")
-        success_count = 0
+        success_count = 0.0
         valid_logs = 0
 
         choices_map = eval_template.config.get("choices_map")
@@ -684,19 +684,33 @@ def calculate_eval_average(eval_template, api_logs):
                                 valid_logs += 1
                             case _:
                                 valid_logs += 1
-                    elif choices_map:
-                        selected_choices = output.get("output")
-                        if (
-                            not isinstance(selected_choices, list)
-                            or not selected_choices
-                        ):
+                    elif eval_template.multi_choice:
+                        result = output.get("output")
+                        if isinstance(result, dict):
+                            # The formatter has already averaged the scored picks.
+                            score = result.get("score")
+                            picks = result.get("choices")
+                            if not (
+                                isinstance(picks, list)
+                                and picks
+                                and isinstance(score, (int, float))
+                                and not isinstance(score, bool)
+                                and 0 <= score <= 1
+                            ):
+                                continue
+                        elif isinstance(result, list) and result:
+                            if choices_map:
+                                weights = {"pass": 1, "neutral": 0.5}
+                                score = sum(
+                                    weights.get(choices_map.get(pick), 0)
+                                    for pick in result
+                                ) / len(result)
+                            else:
+                                # Preserve the fallback for unmapped legacy selections.
+                                score = 1
+                        else:
                             continue
-                        choice_weights = {"pass": 1, "neutral": 0.5}
-                        # Average within each log so every log has equal weight.
-                        success_count += sum(
-                            choice_weights.get(choices_map.get(choice), 0)
-                            for choice in selected_choices
-                        ) / len(selected_choices)
+                        success_count += score
                         valid_logs += 1
                     else:
                         success_count += 1

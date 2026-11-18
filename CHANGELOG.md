@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+* **evals:** Multi-choice template usage averages count each scored run once, using its stored score or, for older mapped selections, the mean of its choice weights. A run scored zero counts; empty or malformed results do not.
+
 ## [1.56.1](https://github.com/future-agi/future-agi/compare/v1.56.0...v1.56.1) (2026-10-28)
 
 

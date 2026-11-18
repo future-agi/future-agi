@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-
 CHOICES_MAP = {"Excellent": "pass", "Average": "neutral", "Poor": "fail"}
 
 
@@ -135,7 +134,9 @@ class TestCalculateEvalAverage(unittest.TestCase):
                     config={"output": output_type}, multi_choice=False
                 )
                 self.assertEqual(
-                    self.calculate_average(template, [_log(value) for value in outputs]),
+                    self.calculate_average(
+                        template, [_log(value) for value in outputs]
+                    ),
                     50,
                 )
 
