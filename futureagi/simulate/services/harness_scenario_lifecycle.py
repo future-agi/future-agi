@@ -664,12 +664,12 @@ def scenario_lifecycle(
                     _demote(
                         view, "tools_unread", reason_text("tools_unread", agent=label)
                     )
-            elif missing := sorted(needed.get(key, frozenset()) - names):
+            elif lacking := sorted(needed.get(key, frozenset()) - names):
                 _demote(
                     view,
                     "tool_not_on_agent",
                     reason_text(
-                        "tool_not_on_agent", tool=", ".join(missing), agent=label
+                        "tool_not_on_agent", tool=", ".join(lacking), agent=label
                     ),
                 )
         if default and key in failed and view["state"] != "archived":
