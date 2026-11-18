@@ -585,6 +585,23 @@ def test_numeric_similarity_distinct_large_integers_never_match(first, second):
     }
 
 
+def test_numeric_similarity_plain_integers_above_2_53_compare_exactly():
+    # Plain digit strings above 2**53 must not read as equal when they differ.
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, "9007199254740993", "9007199254740992", None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+    assert evaluate(None, "9007199254740992", "9007199254740993", None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in expected",
+    }
+    assert evaluate(None, "9007199254740992", "9007199254740992", None) == {
+        "score": 1.0,
+        "reason": "Numeric Similarity: 1.000",
+    }
+
+
 @pytest.mark.parametrize(
     "other",
     ["Order number: 9,007,199,254,740,993", "Order number: 9007199254740993e0"],
