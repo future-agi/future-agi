@@ -12,6 +12,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
 }));
 
 const { default: TrialRoutes } = await import("../TrialRoutes");
+const { resetTrialRoutesView } = await import("../store");
 
 const column = (to) => ({
   key: `handoff:coordinator:>worker:${to}`,
@@ -76,6 +77,33 @@ describe("TrialRoutes", () => {
   beforeEach(() => {
     asked.length = 0;
     routes = SPLIT;
+    resetTrialRoutesView();
+  });
+
+  it("stays open, with its tool-call columns, when the next trial's panel opens", () => {
+    const { unmount } = render(
+      <TrialRoutes
+        testExecutionId="ex1"
+        scenarioKey="refund"
+        currentId="c1"
+        onOpen={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show trials" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show tool calls" }));
+    unmount();
+    render(
+      <TrialRoutes
+        testExecutionId="ex1"
+        scenarioKey="refund"
+        currentId="c2"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Hide trials" }),
+    ).toBeInTheDocument();
+    expect(asked.at(-1)).toEqual(["ex1", "refund", true]);
   });
 
   it("says where the trials first went differently and how each went", () => {

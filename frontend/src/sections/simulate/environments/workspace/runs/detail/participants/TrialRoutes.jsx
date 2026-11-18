@@ -1,4 +1,3 @@
-import { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Collapse, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -6,6 +5,7 @@ import { useTrialRoutes } from "src/api/simulate-environments/runDetail";
 import { TRIAL_ROUTES_COPY as C } from "../callTraces.constants";
 import { runOutcome } from "../trace/traceTable.constants";
 import { Toggle } from "./SequenceParts";
+import { useShallowTrialRoutesView } from "./store";
 
 const linkSx = {
   typography: "s3",
@@ -81,8 +81,9 @@ export default function TrialRoutes({
   currentId,
   onOpen,
 }) {
-  const [open, setOpen] = useState(false);
-  const [showTools, setShowTools] = useState(false);
+  const { open, setOpen, showTools, setShowTools } = useShallowTrialRoutesView(
+    (view) => view,
+  );
   const { data, isPlaceholderData } = useTrialRoutes(
     testExecutionId,
     scenarioKey,
@@ -142,7 +143,7 @@ export default function TrialRoutes({
         <Typography
           component="button"
           type="button"
-          onClick={() => setOpen((was) => !was)}
+          onClick={() => setOpen(!open)}
           sx={linkSx}
         >
           {open ? C.hide : C.show}
@@ -151,7 +152,7 @@ export default function TrialRoutes({
       {/* Slides open, so the diagram below is seen moving down. */}
       <Collapse in={open} unmountOnExit>
         <Stack direction="row" justifyContent="flex-end" sx={{ py: 0.5 }}>
-          <Toggle on={showTools} onClick={() => setShowTools((was) => !was)}>
+          <Toggle on={showTools} onClick={() => setShowTools(!showTools)}>
             {C.showTools}
           </Toggle>
         </Stack>

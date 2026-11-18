@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Drawer } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { useHasWorkers } from "src/api/simulate-environments/runDetail";
@@ -8,6 +8,7 @@ import ChatCallDrawer from "./ChatCallDrawer";
 import VoiceCallDrawer from "./VoiceCallDrawer";
 import { isVoiceCall } from "./callRouting";
 import useCallTraceOpen from "./useCallTraceOpen";
+import { resetTrialRoutesView } from "./participants/store";
 
 /**
  * The per-call drawer. Opens on a trace row-click and routes to the matching
@@ -38,6 +39,10 @@ export default function CallDrawer({
   if (hasWorkers !== undefined && hasWorkers !== wide) setWide(hasWorkers);
   const { traceOpen, onTracePanelMountedChange } = useCallTraceOpen();
   const covered = useDrawerCovered(open);
+  // The trials table's open/tool-call view lasts while moving between trials, not past closing the drawer.
+  useEffect(() => {
+    if (!open) resetTrialRoutesView();
+  }, [open]);
 
   return (
     <Drawer
