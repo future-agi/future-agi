@@ -240,7 +240,7 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         },
     )
     @action(detail=True, methods=["get"], url_path="download-file")
-    def download_file(self, request: Request, pk: str = None):
+    def download_file(self, request: Request, pk: str | None = None):
         from model_hub.utils.kb_download import download_knowledge_base_file
 
         return download_knowledge_base_file(

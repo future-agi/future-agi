@@ -1921,16 +1921,60 @@ class ClickHouseFilterBuilder:
     def _enduser_dimension_id_subquery(self, inner: str) -> str:
         """Return physical end-user IDs matching one dimension predicate.
 
-        The legacy dimension has no ID-remap bridge.  CH25 overrides this hook
-        so a curated survivor expands to every physical ID that spans may carry
-        during the dual-ID cutover.
+        The dimension stays keyed by the old ID while spans can straddle the
+        old-ID/new-ID cutover, so the matched IDs are expanded through
+        ``end_user_id_remap`` to every ID their group's spans may carry, the
+        same way the list and analytics readers resolve a user. CH25
+        overrides this hook to read its own ``end_users`` dimension.
         """
 
-        return (
-            f"SELECT {self._ENDUSER_DIM_ID_COL} "
+        return self._expand_end_user_ids_through_remap(
+            f"SELECT DISTINCT {self._ENDUSER_DIM_ID_COL} AS end_user_id "
             f"FROM {self._ENDUSER_DIM_TABLE} FINAL "
             f"WHERE {inner} AND {self._ENDUSER_DIM_NOT_DELETED}"
         )
+
+    @staticmethod
+    def _expand_end_user_ids_through_remap(matching_ids: str) -> str:
+        """Expand matched end-user IDs to every old/new ID of their remap group.
+
+        ``matching_ids`` selects one ``end_user_id`` column. Only the remap
+        groups touched by those IDs are read, never a tenant-global window over
+        the remap table. The direct arm keeps users that have no remap row.
+        """
+
+        return f"""
+            WITH
+            matching_end_user_ids AS (
+                {matching_ids}
+            ),
+            matching_end_user_group_ids AS (
+                SELECT DISTINCT remap_match.new_id
+                FROM end_user_id_remap AS remap_match FINAL
+                WHERE remap_match.old_id IN (
+                    SELECT end_user_id FROM matching_end_user_ids
+                )
+                   OR remap_match.new_id IN (
+                    SELECT end_user_id FROM matching_end_user_ids
+                )
+            ),
+            expanded_matching_end_user_ids AS (
+                SELECT arrayJoin(arrayDistinct(arrayConcat(
+                    groupArray(remap.old_id),
+                    [remap.new_id]
+                ))) AS expanded_end_user_id
+                FROM end_user_id_remap AS remap FINAL
+                WHERE remap.new_id IN (
+                    SELECT new_id FROM matching_end_user_group_ids
+                )
+                GROUP BY remap.new_id
+            )
+            SELECT end_user_id AS expanded_end_user_id
+            FROM matching_end_user_ids
+            UNION DISTINCT
+            SELECT expanded_end_user_id
+            FROM expanded_matching_end_user_ids
+        """
 
     def _build_enduser_string_subquery(
         self,

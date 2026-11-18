@@ -399,7 +399,10 @@ describe("RunTraceTable", () => {
     expect(onQueryChange).toHaveBeenLastCalledWith(base);
     // What it reports is what it asked the list for — the drawer reads the
     // same cache entry.
-    expect(useRunCalls).toHaveBeenLastCalledWith("ex1", base);
+    expect(useRunCalls).toHaveBeenLastCalledWith("ex1", {
+      ...base,
+      keepPrevious: true,
+    });
 
     await user.click(screen.getByRole("button", { name: /Group by/ }));
     await user.click(screen.getByRole("menuitem", { name: "Status" }));
@@ -425,6 +428,86 @@ describe("RunTraceTable", () => {
       "ex1",
       expect.objectContaining({ filters: { goal_outcome: ["escalated"] } }),
     );
+  });
+
+  it("forwards actor filters to the server", () => {
+    renderTable({
+      initialFilters: { callActor: ["friend"], callActor_not: ["none"] },
+    });
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { actor: ["friend"], actor_not: ["none"] },
+      }),
+    );
+  });
+
+  it("says how many calls each actor was planned for and how many it never reached", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [
+          { value: "none", count: 3, label: "Simulated user only" },
+          {
+            value: "friend",
+            count: 4,
+            label: "Rowan",
+            delivered: 2,
+            dropped: 1,
+            not_triggered: 1,
+          },
+          {
+            value: "kid",
+            count: 2,
+            label: "Sam",
+            delivered: 2,
+            dropped: 0,
+            not_triggered: 0,
+          },
+        ],
+      },
+    }));
+    renderTable();
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await user.click(await screen.findByRole("option", { name: "Actor" }));
+    await user.click(screen.getByText(/Select values/));
+    expect(
+      await screen.findByText("Rowan (4; 1 dropped, 1 not triggered)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sam (2)")).toBeInTheDocument();
+    expect(screen.getByText("Simulated user only (3)")).toBeInTheDocument();
+  });
+
+  it("keeps the Actor filter on offer while the next results load", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [{ value: "friend", count: 2, label: "Rowan" }],
+      },
+    }));
+    const { rerender } = renderTable();
+    // `keepPrevious` keeps the last facets while the next page loads.
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        actor: [{ value: "friend", count: 2, label: "Rowan" }],
+      },
+      isLoading: true,
+    }));
+    rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    expect(
+      await screen.findByRole("option", { name: "Actor" }),
+    ).toBeInTheDocument();
   });
 
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {

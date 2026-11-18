@@ -2082,6 +2082,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "trace_count_rollup for the projects the list view passes in"
             ),
         ),
+        "_project_trace_counts": filed(
+            PROJECT_SET,
+            why=(
+                "ProjectView.list's 30-day trace_count, read from "
+                "trace_count_rollup for the page of projects that view took from "
+                "Project.no_workspace_objects"
+            ),
+        ),
     },
     "tracer.views.trace": {
         "_has_voice_conversation_roots": filed(

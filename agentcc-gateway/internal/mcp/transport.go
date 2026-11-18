@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -157,23 +158,38 @@ type StdioTransport struct {
 	pendMu  sync.Mutex
 
 	stderrDone chan struct{}
+	writeGate  chan struct{} // one complete JSON line at a time
+	done       chan struct{} // closed by Close to wake senders
+	untrack    func()        // ends live collection of the command's workers
 }
 
 // NewStdioTransport creates a transport that launches a subprocess.
 func NewStdioTransport(command string, args []string) *StdioTransport {
 	return &StdioTransport{
-		command: command,
-		args:    args,
-		pending: make(map[string]chan *Message),
+		command:   command,
+		args:      args,
+		pending:   make(map[string]chan *Message),
+		writeGate: make(chan struct{}, 1),
+		done:      make(chan struct{}),
 	}
 }
 
-// Start launches the subprocess and begins reading stdout.
+// Start launches the subprocess and begins reading stdout. ctx only gates the
+// launch; the subprocess runs until Close. Callers start it under a handshake
+// timeout and cancel that once connected, which CommandContext would take as
+// the signal to kill the process.
 func (t *StdioTransport) Start(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	cmd := exec.CommandContext(ctx, t.command, t.args...)
+	if t.closed.Load() || t.cmd != nil {
+		return fmt.Errorf("stdio transport already started or closed")
+	}
+	cmd := stdioCommand(t.command, t.args...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -196,6 +212,7 @@ func (t *StdioTransport) Start(ctx context.Context) error {
 	}
 
 	t.cmd = cmd
+	t.untrack = trackStdioGroup(cmd.Process.Pid)
 	t.stdin = stdin
 	t.scanner = bufio.NewScanner(stdout)
 	t.scanner.Buffer(make([]byte, 0, 64*1024), maxStdioMessageSize)
@@ -250,7 +267,11 @@ func (t *StdioTransport) readLoop() {
 	if err := t.scanner.Err(); err != nil && !t.closed.Load() {
 		slog.Error("mcp stdio read error", "error", err)
 	}
-	t.healthy.Store(false)
+	// No more responses are possible, even if the command itself is still
+	// running. Wake requests and reconnect exactly as for a local close.
+	if err := t.Close(); err != nil {
+		slog.Warn("closing ended stdio session", "error", err)
+	}
 }
 
 func (t *StdioTransport) Send(ctx context.Context, msg *Message) (*Message, error) {
@@ -263,12 +284,9 @@ func (t *StdioTransport) Send(ctx context.Context, msg *Message) (*Message, erro
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
 
-	// For notifications, just write and return.
+	data = append(data, '\n')
 	if msg.IsNotification() {
-		t.mu.Lock()
-		_, err = t.stdin.Write(append(data, '\n'))
-		t.mu.Unlock()
-		return nil, err
+		return nil, t.write(ctx, data)
 	}
 
 	// Register a response channel.
@@ -278,61 +296,91 @@ func (t *StdioTransport) Send(ctx context.Context, msg *Message) (*Message, erro
 	t.pending[idStr] = ch
 	t.pendMu.Unlock()
 
-	// Write the request.
-	t.mu.Lock()
-	_, err = t.stdin.Write(append(data, '\n'))
-	t.mu.Unlock()
-	if err != nil {
+	defer func() {
 		t.pendMu.Lock()
-		delete(t.pending, idStr)
+		if t.pending[idStr] == ch {
+			delete(t.pending, idStr)
+		}
 		t.pendMu.Unlock()
+	}()
+	if err := t.write(ctx, data); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
 
-	// Wait for response or context cancellation.
 	select {
 	case resp := <-ch:
 		return resp, nil
 	case <-ctx.Done():
-		t.pendMu.Lock()
-		delete(t.pending, idStr)
-		t.pendMu.Unlock()
 		return nil, ctx.Err()
+	case <-t.done:
+		// A command may write its last complete response just before EOF.
+		select {
+		case resp := <-ch:
+			return resp, nil
+		default:
+			return nil, fmt.Errorf("transport closed")
+		}
 	}
 }
 
+func (t *StdioTransport) write(ctx context.Context, data []byte) error {
+	select {
+	case t.writeGate <- struct{}{}:
+		defer func() { <-t.writeGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.done:
+		return fmt.Errorf("transport closed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if t.closed.Load() {
+		return fmt.Errorf("transport closed")
+	}
+	// Unlike waiting for a response, interrupting a write may leave half a
+	// JSON line on the pipe. Close the session rather than reusing that line.
+	stop := context.AfterFunc(ctx, func() { t.Close() })
+	_, err := t.stdin.Write(data)
+	if !stop() {
+		return ctx.Err()
+	}
+	if err != nil {
+		// The stdin reader can disappear while a worker still holds stdout.
+		// Don't wait for EOF on a session that can no longer send requests.
+		_ = t.Close()
+	}
+	return err
+}
+
 func (t *StdioTransport) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.closed.Swap(true) {
 		return nil // already closed
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.healthy.Store(false)
+	close(t.done)
 
 	if t.stdin != nil {
 		t.stdin.Close()
 	}
-	if t.cmd != nil && t.cmd.Process != nil {
-		// Send SIGTERM, wait up to 5s, then SIGKILL.
-		t.cmd.Process.Kill()
-		done := make(chan error, 1)
-		go func() { done <- t.cmd.Wait() }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
+	if t.cmd == nil || t.cmd.Process == nil {
+		return nil
 	}
-
-	// Clean up pending requests.
-	t.pendMu.Lock()
-	for id, ch := range t.pending {
-		close(ch)
-		delete(t.pending, id)
+	t.untrack()
+	err := stopStdioCommand(t.cmd)
+	done := make(chan error, 1)
+	go func() {
+		_ = t.cmd.Wait() // a command stopped by signal has a nonzero status
+		done <- reapStdioGroup(t.cmd.Process.Pid)
+	}()
+	select {
+	case reapErr := <-done:
+		return errors.Join(err, reapErr)
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timed out waiting for stdio command to exit")
 	}
-	t.pendMu.Unlock()
-
-	t.healthy.Store(false)
-	return nil
 }
 
 func (t *StdioTransport) Healthy() bool {

@@ -9,12 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-try:
-    from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
-except ImportError:
-    # Older installs do not yet expose the evaluator's typed config error.
-    class EvalConfigError(ValueError):
-        """An evaluation configuration error whose message is safe to display."""
+from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
 
 
 class MissingEvalInputError(EvalConfigError):
@@ -34,7 +29,8 @@ def validate_eval_configuration(eval_id: str, evaluator) -> None:
     from evaluations.engine.registry import get_eval_class
 
     # Model binding can replace a deterministic template's engine (e.g. Jev).
-    if not isinstance(evaluator, get_eval_class(eval_id)):
+    eval_class: type[Any] = get_eval_class(eval_id)
+    if not isinstance(evaluator, eval_class):
         return
     if evaluator.provider in {
         ModelConfigs.PROTECT.provider,
