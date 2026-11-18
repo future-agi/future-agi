@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { screen, within } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 
 const getHarnessSourceChanges = vi.fn(async () => ({
   from_version: 1,

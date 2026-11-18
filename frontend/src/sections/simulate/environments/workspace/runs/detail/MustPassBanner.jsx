@@ -1,8 +1,7 @@
 import PropTypes from "prop-types";
 import { Alert } from "@mui/material";
 
-const mustPassFailedText = (names) =>
-  `A must-pass case failed: ${names.join(", ")}`;
+const mustPassFailedText = (names) => `A must-pass case failed: ${names.join(", ")}`;
 
 // A must-pass case that failed blocks the release, so the run says so above its results.
 export default function MustPassBanner({ names }) {

@@ -17,18 +17,11 @@ export const CHECK_KINDS = {
 };
 
 export const checkKind = (goal, call) => {
-  const result =
-    goal?.result ??
-    (goal?.passed === false ? "fail" : goal?.passed === true ? "pass" : null);
+  const result = goal?.result ?? (goal?.passed === false ? "fail" : goal?.passed === true ? "pass" : null);
   if (result === "fail") return "task";
   if (result === "unmeasured") return "evidence";
-  if (
-    result === "inconclusive" ||
-    (result == null && call?.failureCode === "check_broken")
-  )
-    return "grader";
-  if (result == null && INFRASTRUCTURE_DOMAINS.includes(call?.failureDomain))
-    return "infrastructure";
+  if (result === "inconclusive" || (result == null && call?.failureCode === "check_broken")) return "grader";
+  if (result == null && INFRASTRUCTURE_DOMAINS.includes(call?.failureDomain)) return "infrastructure";
   return null;
 };
 

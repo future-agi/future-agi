@@ -11,9 +11,7 @@ import { missingCasesGuidance } from "../addScenarios.constants";
 vi.mock("src/api/simulate-environments/scenariosHooks", () => ({
   useScenarioCoverage: vi.fn(),
 }));
-const { useScenarioCoverage } = await import(
-  "src/api/simulate-environments/scenariosHooks"
-);
+const { useScenarioCoverage } = await import("src/api/simulate-environments/scenariosHooks");
 
 beforeEach(() => {
   useScenarioCoverage.mockReset();
@@ -24,9 +22,7 @@ describe("CoverageMatrix", () => {
   it("sits as one toolbar button that names the summary, with the breakdown closed", () => {
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
     expect(
-      screen.getByRole("button", {
-        name: /^Coverage: Axes 8\/8, Pairs \d+%, Forced 5\/5$/,
-      }),
+      screen.getByRole("button", { name: /^Coverage: Axes 8\/8, Pairs \d+%, Forced 5\/5$/ }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Destructive / irreversible")).toBeNull();
   });
@@ -55,13 +51,7 @@ describe("CoverageMatrix", () => {
   });
 
   it("passes the search + filters through to the coverage hook", () => {
-    render(
-      <CoverageMatrix
-        jobId="job-1"
-        search="ride"
-        filters={{ "persona.accent": ["Canadian"] }}
-      />,
-    );
+    render(<CoverageMatrix jobId="job-1" search="ride" filters={{ "persona.accent": ["Canadian"] }} />);
     expect(useScenarioCoverage).toHaveBeenCalledWith(
       "job-1",
       expect.objectContaining({
@@ -84,15 +74,9 @@ describe("CoverageMatrix", () => {
     // Without this, a failed request renders 0/8 axes and 0% pairs — falsely
     // telling the user their suite covers nothing.
     const refetch = vi.fn();
-    useScenarioCoverage.mockReturnValue({
-      data: undefined,
-      isError: true,
-      refetch,
-    });
+    useScenarioCoverage.mockReturnValue({ data: undefined, isError: true, refetch });
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Coverage couldn't load" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Coverage couldn't load" }));
     expect(screen.getByText(/Couldn't load coverage/i)).toBeInTheDocument();
     expect(screen.queryByText("8/8")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -108,24 +92,19 @@ describe("CoverageMatrix", () => {
   });
 });
 
+
 describe("CoverageMatrix uncovered levels", () => {
   it("offers Add missing cases only when a planned level is uncovered", async () => {
     const onAddMissing = vi.fn();
     const uncovered = [{ axis: "task", level: "cancel" }];
-    const { rerender } = render(
-      <UncoveredLevels uncovered={uncovered} onAddMissing={onAddMissing} />,
-    );
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "Add missing cases" }));
+    const { rerender } = render(<UncoveredLevels uncovered={uncovered} onAddMissing={onAddMissing} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add missing cases" }));
     expect(onAddMissing).toHaveBeenCalledWith(uncovered);
     expect(missingCasesGuidance(uncovered)).toBe(
       "Write scenarios for these planned levels that no scenario covers yet: task: cancel",
     );
     rerender(<UncoveredLevels uncovered={[]} onAddMissing={onAddMissing} />);
-    expect(
-      screen.queryByRole("button", { name: "Add missing cases" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add missing cases" })).toBeNull();
   });
 });
 
@@ -135,25 +114,13 @@ describe("WorkflowChecks", () => {
     const onAddMissing = vi.fn();
     render(
       <WorkflowChecks
-        workflows={[
-          {
-            workflow: "refunds",
-            success: 2,
-            refusal: 0,
-            wrong_result: 1,
-            missing: ["refusal"],
-          },
-        ]}
+        workflows={[{ workflow: "refunds", success: 2, refusal: 0, wrong_result: 1, missing: ["refusal"] }]}
         onAddMissing={onAddMissing}
       />,
     );
-    expect(screen.getByTestId("coverage-workflows")).toHaveTextContent(
-      "Missing",
-    );
+    expect(screen.getByTestId("coverage-workflows")).toHaveTextContent("Missing");
     fireEvent.click(screen.getByRole("button", { name: "Add missing cases" }));
-    expect(onAddMissing).toHaveBeenCalledWith(
-      'Write the missing refusal case for the workflow "refunds".',
-    );
+    expect(onAddMissing).toHaveBeenCalledWith('Write the missing refusal case for the workflow "refunds".');
   });
 
   it("shows nothing without workflows", async () => {
@@ -167,18 +134,9 @@ describe("RequestedUncovered", () => {
   it("lists what was asked for and not written, and asks for it", async () => {
     const { RequestedUncovered } = await import("../CoverageMatrix");
     const onAddMissing = vi.fn();
-    render(
-      <RequestedUncovered
-        lines={["a refund after 30 days"]}
-        onAddMissing={onAddMissing}
-      />,
-    );
-    expect(screen.getByTestId("coverage-requested")).toHaveTextContent(
-      "Asked for, not written yet",
-    );
-    expect(screen.getByTestId("coverage-requested")).toHaveTextContent(
-      "a refund after 30 days",
-    );
+    render(<RequestedUncovered lines={["a refund after 30 days"]} onAddMissing={onAddMissing} />);
+    expect(screen.getByTestId("coverage-requested")).toHaveTextContent("Asked for, not written yet");
+    expect(screen.getByTestId("coverage-requested")).toHaveTextContent("a refund after 30 days");
     fireEvent.click(screen.getByRole("button", { name: "Add missing cases" }));
     expect(onAddMissing).toHaveBeenCalledWith(["a refund after 30 days"]);
   });

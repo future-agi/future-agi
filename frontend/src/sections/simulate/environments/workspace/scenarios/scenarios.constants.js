@@ -89,7 +89,7 @@ export const SCENARIOS_COPY = {
     { value: "archived", label: "Archived" },
     { value: "source_changed", label: "Source changed" },
   ],
-  validate: "Validate scenarios against the environment",
+  validate: "Validate all against the environment",
   validateOne: "Validate scenario against the environment",
   validateDrafts: "Validate with the unsaved changes",
   validating: "Validating… (up to 45 min)",

@@ -106,20 +106,12 @@ function Verdict({ pair }) {
       )}
       {pair.changed_test && (
         <Tooltip title={COPY.changedTestHint}>
-          <Chip
-            size="small"
-            color="warning"
-            label={COPY.changedTest}
-            data-testid="changed-test"
-          />
+          <Chip size="small" color="warning" label={COPY.changedTest} data-testid="changed-test" />
         </Tooltip>
       )}
       {verdict}
       {[interval, hint].filter(Boolean).map((text) => (
-        <Typography
-          key={text}
-          sx={{ typography: "s3", color: "text.secondary" }}
-        >
+        <Typography key={text} sx={{ typography: "s3", color: "text.secondary" }}>
           {text}
         </Typography>
       ))}
@@ -164,9 +156,7 @@ export default function RunCompare({ open, onClose, env, current, against }) {
   } else {
     body = (
       <>
-        <Typography
-          sx={{ mt: 0.75, typography: "s3", color: "text.secondary" }}
-        >
+        <Typography sx={{ mt: 0.75, typography: "s3", color: "text.secondary" }}>
           {COPY.versions(current?.label, versionLine(data.versions?.current))}
           {" · "}
           {COPY.versions(against?.label, versionLine(data.versions?.against))}

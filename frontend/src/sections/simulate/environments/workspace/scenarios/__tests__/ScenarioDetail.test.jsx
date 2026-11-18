@@ -9,27 +9,18 @@ vi.mock("src/api/harness/harness", async () => ({
   sendHarnessConversationMessage: (...args) => sendMessage(...args),
   harnessIdempotencyKey: () => "req-1",
 }));
-vi.mock("src/auth/hooks", () => ({
-  useAuthContext: () => ({ user: { name: "Reviewer One" } }),
-}));
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => ({ user: { name: "Reviewer One" } }) }));
 vi.mock("src/api/harness/scenarios", () => ({
   useAmendScenarios: () => ({ mutate: amendMutate, isPending: false }),
   useScenarioRecords: (jobId, key, table) => ({
-    data: table
-      ? { table, rows: [{ id: "RX-1001" }, { id: "RX-1002" }], available: true }
-      : undefined,
+    data: table ? { table, rows: [{ id: "RX-1001" }, { id: "RX-1002" }], available: true } : undefined,
   }),
   useValidateScenarios: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScenarioValidation: () => ({ data: undefined }),
   useScenarioRevisions: () => ({
     data: {
       revisions: [
-        {
-          revision: 2,
-          digest: "d2",
-          suite_versions: [3, 4],
-          changed_fields: ["tests"],
-        },
+        { revision: 2, digest: "d2", suite_versions: [3, 4], changed_fields: ["tests"] },
         { revision: 1, digest: "d1", suite_versions: [1], changed_fields: [] },
       ],
     },
@@ -43,71 +34,37 @@ const saveCandidates = vi.hoisted(() => vi.fn());
 const draftsData = vi.hoisted(() => ({ validation: null, candidates: null }));
 vi.mock("src/api/simulate-environments/versions", () => ({
   useDrafts: () => ({
-    data: {
-      any: true,
-      pieces: ["suite"],
-      suite: { parentId: "s1", revision: 3 },
-      ...draftsData,
-    },
+    data: { any: true, pieces: ["suite"], suite: { parentId: "s1", revision: 3 }, ...draftsData },
   }),
   useDraftReview: () => ({ data: { review_digest: "digest-1" } }),
-  useValidateDrafts: () => ({
-    mutate: validateDrafts,
-    isPending: false,
-    error: null,
-  }),
+  useValidateDrafts: () => ({ mutate: validateDrafts, isPending: false, error: null }),
   useSaveCandidates: () => ({ mutate: saveCandidates, isPending: false }),
   useSaveDrafts: () => ({ mutate: saveDrafts, isPending: false }),
   useDiscardDraft: () => ({ mutate: discardDraft, isPending: false }),
-  useActors: () => ({
-    data: {
-      knowledge_sources: { records: [{ store: "db", collection: "refills" }] },
-    },
-  }),
+  useActors: () => ({ data: { knowledge_sources: { records: [{ store: "db", collection: "refills" }] } } }),
 }));
 
 import ScenarioDetail, { ScenarioDetailBody } from "../ScenarioDetail";
 
-const row = (subTasks) => ({
-  id: "sc-1",
-  name: "Refund request",
-  task: "Ask for a refund.",
-  subTasks,
-});
+const row = (subTasks) => ({ id: "sc-1", name: "Refund request", task: "Ask for a refund.", subTasks });
 
 describe("ScenarioDetail sub-goals", () => {
   // The scenarios list endpoint sends sub_goals as plain name strings.
   it("shows each sub-goal's text when the list sends plain strings", () => {
-    render(
-      <ScenarioDetail
-        row={row(["identity_verified", "refund_created"])}
-        defaultOpen
-      />,
-    );
-    expect(
-      screen.getByText("Sub-goals: the moves that settle it (2)"),
-    ).toBeInTheDocument();
+    render(<ScenarioDetail row={row(["identity_verified", "refund_created"])} defaultOpen />);
+    expect(screen.getByText("Sub-goals: the moves that settle it (2)")).toBeInTheDocument();
     expect(screen.getByText("identity_verified")).toBeInTheDocument();
     expect(screen.getByText("refund_created")).toBeInTheDocument();
   });
 
   it("shows each sub-goal's label when they arrive as objects", () => {
-    render(
-      <ScenarioDetail
-        row={row([{ id: "a", label: "Verify identity" }])}
-        defaultOpen
-      />,
-    );
+    render(<ScenarioDetail row={row([{ id: "a", label: "Verify identity" }])} defaultOpen />);
     expect(screen.getByText("Verify identity")).toBeInTheDocument();
   });
 
   it("skips empty sub-goals rather than numbering a blank line", () => {
-    render(
-      <ScenarioDetail row={row(["identity_verified", "", null])} defaultOpen />,
-    );
-    expect(
-      screen.getByText("Sub-goals: the moves that settle it (1)"),
-    ).toBeInTheDocument();
+    render(<ScenarioDetail row={row(["identity_verified", "", null])} defaultOpen />);
+    expect(screen.getByText("Sub-goals: the moves that settle it (1)")).toBeInTheDocument();
   });
 });
 
@@ -143,15 +100,7 @@ describe("ScenarioDetail persona", () => {
 
 describe("ScenarioDetailBody", () => {
   it("shows the branch once when the category says the same", () => {
-    render(
-      <ScenarioDetailBody
-        row={{
-          ...row([]),
-          branchCategory: "Price objection",
-          conversationBranch: "Price objection",
-        }}
-      />,
-    );
+    render(<ScenarioDetailBody row={{ ...row([]), branchCategory: "Price objection", conversationBranch: "Price objection" }} />);
     expect(screen.queryByText("Category")).toBeNull();
     expect(screen.getByText("Branch")).toBeInTheDocument();
   });
@@ -159,9 +108,7 @@ describe("ScenarioDetailBody", () => {
 
 describe("ScenarioDetailBody — empty scenario", () => {
   it("leaves out sections with nothing in them", () => {
-    render(
-      <ScenarioDetailBody row={{ id: "x", name: "orphan", subTasks: [] }} />,
-    );
+    render(<ScenarioDetailBody row={{ id: "x", name: "orphan", subTasks: [] }} />);
     expect(screen.queryByText("What this tests")).toBeNull();
     expect(screen.queryByText("The person is told")).toBeNull();
   });
@@ -171,34 +118,12 @@ describe("ScenarioDetail lifecycle", () => {
   const lifecycle = {
     state: "draft",
     reason: "negative_control_passed",
-    reason_text:
-      "The checks pass a wrong behaviour: two_refunds (refunds twice). Tighten refund_once.",
+    reason_text: "The checks pass a wrong behaviour: two_refunds (refunds twice). Tighten refund_once.",
     sources: [
-      {
-        kind: "rule",
-        ref: "rule:3",
-        quote: "Refund at most once.",
-        label: "Refund at most once.",
-        resolved: true,
-      },
-      {
-        kind: "assumption",
-        ref: "",
-        quote: "",
-        label: "Assumption",
-        resolved: true,
-      },
+      { kind: "rule", ref: "rule:3", quote: "Refund at most once.", label: "Refund at most once.", resolved: true },
+      { kind: "assumption", ref: "", quote: "", label: "Assumption", resolved: true },
     ],
-    proof: {
-      controls: [
-        {
-          name: "two_refunds",
-          why: "refunds twice",
-          failed: false,
-          assumed: [],
-        },
-      ],
-    },
+    proof: { controls: [{ name: "two_refunds", why: "refunds twice", failed: false, assumed: [] }] },
   };
 
   it("shows the status, sources, controls and revisions", () => {
@@ -208,36 +133,16 @@ describe("ScenarioDetail lifecycle", () => {
         row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }}
       />,
     );
-    expect(screen.getByTestId("lifecycle-status")).toHaveTextContent(
-      lifecycle.reason_text,
-    );
-    expect(screen.getByTestId("lifecycle-sources")).toHaveTextContent(
-      "Refund at most once.",
-    );
+    expect(screen.getByTestId("lifecycle-status")).toHaveTextContent(lifecycle.reason_text);
+    expect(screen.getByTestId("lifecycle-sources")).toHaveTextContent("Refund at most once.");
     expect(screen.getByText("Assumption")).toBeInTheDocument();
-    expect(screen.getByTestId("lifecycle-controls")).toHaveTextContent(
-      "Passed",
-    );
-    expect(screen.getByTestId("lifecycle-revisions")).toHaveTextContent(
-      "Revision 2",
-    );
+    expect(screen.getByTestId("lifecycle-controls")).toHaveTextContent("Passed");
+    expect(screen.getByTestId("lifecycle-revisions")).toHaveTextContent("Revision 2");
   });
 
   it("says a case with no sources was assumed by the builder", () => {
-    render(
-      <ScenarioDetailBody
-        row={{
-          id: "r1",
-          name: "Refund",
-          lifecycle: { ...lifecycle, sources: [] },
-        }}
-      />,
-    );
-    expect(
-      screen.getByText(
-        "No source recorded (written before sources were required).",
-      ),
-    ).toBeInTheDocument();
+    render(<ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle: { ...lifecycle, sources: [] } }} />);
+    expect(screen.getByText("No source recorded (written before sources were required).")).toBeInTheDocument();
   });
 });
 
@@ -251,12 +156,8 @@ describe("ScenarioDetail source changes", () => {
       source_changed: ["rule:1"],
       source_changed_version: 4,
     };
-    render(
-      <ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle }} />,
-    );
-    expect(screen.getByTestId("lifecycle-source-changed")).toHaveTextContent(
-      "Source changed in environment v4: rule:1",
-    );
+    render(<ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle }} />);
+    expect(screen.getByTestId("lifecycle-source-changed")).toHaveTextContent("Source changed in environment v4: rule:1");
   });
 });
 
@@ -266,30 +167,16 @@ describe("ScenarioDetail Activate", () => {
   it("shows Activate only for a Validated case and saves the versions it was proved on", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <ScenarioDetailBody
-        jobId="env-1"
-        row={{
-          id: "r1",
-          name: "Refund",
-          lifecycle: { ...base, state: "validated" },
-        }}
-      />,
+      <ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", lifecycle: { ...base, state: "validated" } }} />,
     );
     expect(screen.getByTestId("lifecycle-activate")).toHaveTextContent(
       "Activating saves these versions. It does not start a run.",
     );
     await user.click(screen.getByRole("button", { name: "Activate" }));
-    expect(saveDrafts).toHaveBeenCalledWith([
-      { piece: "suite", parentId: "s1", revision: 3 },
-    ]);
+    expect(saveDrafts).toHaveBeenCalledWith([{ piece: "suite", parentId: "s1", revision: 3 }]);
 
     for (const state of ["active", "draft", "kept_as_written", "archived"]) {
-      rerender(
-        <ScenarioDetailBody
-          jobId="env-1"
-          row={{ id: "r1", name: "Refund", lifecycle: { ...base, state } }}
-        />,
-      );
+      rerender(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", lifecycle: { ...base, state } }} />);
       expect(screen.queryByTestId("lifecycle-activate")).toBeNull();
     }
   });
@@ -306,21 +193,10 @@ describe("ScenarioDetail unsaved case", () => {
 
   it("validates an unsaved case with the unsaved changes, never the saved versions", async () => {
     const user = userEvent.setup();
-    render(
-      <ScenarioDetailBody
-        jobId="env-1"
-        row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }}
-      />,
-    );
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }} />);
 
-    expect(
-      screen.queryByRole("button", {
-        name: "Validate scenario against the environment",
-      }),
-    ).toBeNull();
-    await user.click(
-      screen.getByRole("button", { name: "Validate with the unsaved changes" }),
-    );
+    expect(screen.queryByRole("button", { name: "Validate scenario against the environment" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Validate with the unsaved changes" }));
     expect(validateDrafts).toHaveBeenCalledWith({
       expectedRevisions: { suite: 3 },
       expectedReviewDigest: "digest-1",
@@ -329,15 +205,8 @@ describe("ScenarioDetail unsaved case", () => {
 
   it("says where the validation of the unsaved changes stands", () => {
     draftsData.validation = { state: "failed", affectedScenarios: ["refund"] };
-    render(
-      <ScenarioDetailBody
-        jobId="env-1"
-        row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }}
-      />,
-    );
-    expect(screen.getByTestId("lifecycle-validate-drafts")).toHaveTextContent(
-      "Validation failed. 1 scenario needs a change",
-    );
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }} />);
+    expect(screen.getByTestId("lifecycle-validate-drafts")).toHaveTextContent("Validation failed. 1 scenario needs a change");
     draftsData.validation = null;
   });
 });
@@ -348,28 +217,12 @@ describe("ScenarioDetail Activate after validating an unsaved case", () => {
     saveDrafts.mockClear();
     saveCandidates.mockClear();
     draftsData.validation = { state: "ready", affectedScenarios: [] };
-    draftsData.candidates = {
-      environmentVersionId: "e2",
-      suiteVersionId: "s2",
-    };
-    const lifecycle = {
-      state: "draft",
-      reason: "in_draft",
-      sources: [],
-      proof: null,
-    };
-    render(
-      <ScenarioDetailBody
-        jobId="env-1"
-        row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }}
-      />,
-    );
+    draftsData.candidates = { environmentVersionId: "e2", suiteVersionId: "s2" };
+    const lifecycle = { state: "draft", reason: "in_draft", sources: [], proof: null };
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "Refund", scenarioKey: "refund", lifecycle }} />);
 
     const drawer = within(screen.getByTestId("lifecycle-validate-drafts"));
-    await user.type(
-      drawer.getByRole("textbox", { name: "Name this version" }),
-      "with refunds",
-    );
+    await user.type(drawer.getByRole("textbox", { name: "Name this version" }), "with refunds");
     await user.click(drawer.getByRole("button", { name: "Activate" }));
 
     expect(saveCandidates).toHaveBeenCalledWith({
@@ -388,31 +241,16 @@ describe("ScenarioDetail Activate of validated changes", () => {
     const user = userEvent.setup();
     saveDrafts.mockClear();
     draftsData.validation = { state: "ready", affectedScenarios: [] };
-    draftsData.candidates = {
-      environmentVersionId: "e2",
-      suiteVersionId: "s2",
-    };
+    draftsData.candidates = { environmentVersionId: "e2", suiteVersionId: "s2" };
     render(
       <ScenarioDetailBody
         jobId="env-1"
-        row={{
-          id: "r1",
-          name: "Refund",
-          lifecycle: {
-            state: "validated",
-            reason: null,
-            sources: [],
-            proof: null,
-          },
-        }}
+        row={{ id: "r1", name: "Refund", lifecycle: { state: "validated", reason: null, sources: [], proof: null } }}
       />,
     );
 
     expect(screen.getByRole("button", { name: "Activate" })).toBeDisabled();
-    await user.type(
-      screen.getByRole("textbox", { name: "Name this version" }),
-      "with refunds",
-    );
+    await user.type(screen.getByRole("textbox", { name: "Name this version" }), "with refunds");
     await user.click(screen.getByRole("button", { name: "Activate" }));
 
     expect(saveCandidates).toHaveBeenCalledWith({
@@ -427,27 +265,14 @@ describe("ScenarioDetail Activate of validated changes", () => {
 });
 
 describe("ScenarioDetail missing record", () => {
-  const lifecycle = {
-    state: "draft",
-    reason: "not_ready",
-    reason_text: "RX-99999 is not in the world",
-    sources: [],
-    proof: null,
-  };
+  const lifecycle = { state: "draft", reason: "not_ready", reason_text: "RX-99999 is not in the world", sources: [], proof: null };
   const open = () =>
-    render(
-      <ScenarioDetailBody
-        jobId="env-1"
-        row={{ id: "r1", name: "refill", scenarioKey: "refill", lifecycle }}
-      />,
-    );
+    render(<ScenarioDetailBody jobId="env-1" row={{ id: "r1", name: "refill", scenarioKey: "refill", lifecycle }} />);
 
   it("uses a real record through the builder chat", async () => {
     const user = userEvent.setup();
     open();
-    expect(screen.getByTestId("record-choice")).toHaveTextContent(
-      "This case presumes a record the world does not hold.",
-    );
+    expect(screen.getByTestId("record-choice")).toHaveTextContent("This case presumes a record the world does not hold.");
     await user.click(screen.getByLabelText("Table"));
     await user.click(await screen.findByRole("option", { name: "refills" }));
     await user.click(screen.getByLabelText("Record"));
@@ -468,9 +293,7 @@ describe("ScenarioDetail missing record", () => {
     await user.click(screen.getByLabelText("Table"));
     await user.click(await screen.findByRole("option", { name: "refills" }));
     await user.type(screen.getByLabelText("Synthetic record id"), "RX-99999");
-    await user.click(
-      screen.getByRole("button", { name: "Approve as a synthetic record" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Approve as a synthetic record" }));
     expect(amendMutate).toHaveBeenCalledWith({
       rework: false,
       changes: [
@@ -501,13 +324,7 @@ describe("ScenarioDetail failed change", () => {
         row={{
           id: "r1",
           name: "refund",
-          lifecycle: {
-            state: "draft",
-            reason: "apply_failed",
-            reason_text: "This change could not be applied: bad check.",
-            sources: [],
-            proof: null,
-          },
+          lifecycle: { state: "draft", reason: "apply_failed", reason_text: "This change could not be applied: bad check.", sources: [], proof: null },
         }}
       />,
     );

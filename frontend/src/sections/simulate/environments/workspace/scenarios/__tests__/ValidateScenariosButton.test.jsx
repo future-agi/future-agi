@@ -36,17 +36,13 @@ describe("Validate scenarios", () => {
     );
 
     await user.click(
-      screen.getByRole("button", {
-        name: "Validate scenarios against the environment",
-      }),
+      screen.getByRole("button", { name: "Validate all against the environment" }),
     );
     await waitFor(() =>
       expect(getHarnessScenarioValidation).toHaveBeenCalledTimes(1),
     );
     expect(
-      await screen.findByRole("button", {
-        name: "Validate scenarios against the environment",
-      }),
+      await screen.findByRole("button", { name: "Validate all against the environment" }),
     ).toBeEnabled();
 
     // Its end refreshes the list. Under the list's key, the status was read again, which refreshed
@@ -61,9 +57,7 @@ describe("Validate one scenario", () => {
   it("sends only that case's key", async () => {
     const user = userEvent.setup();
     validateHarnessScenarios.mockClear();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
         <ValidateScenariosButton
@@ -74,16 +68,10 @@ describe("Validate one scenario", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(
-      screen.getByRole("button", {
-        name: "Validate scenario against the environment",
-      }),
-    );
+    await user.click(screen.getByRole("button", { name: "Validate scenario against the environment" }));
 
     await waitFor(() =>
-      expect(validateHarnessScenarios).toHaveBeenCalledWith("env-1", {
-        keys: ["refund-o10"],
-      }),
+      expect(validateHarnessScenarios).toHaveBeenCalledWith("env-1", { keys: ["refund-o10"] }),
     );
   });
 });

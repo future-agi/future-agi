@@ -68,12 +68,7 @@ describe("ScenarioToolbar — versions in view", () => {
       ],
       defaults: {
         suite: { id: "s1", label: "v1", status: "active", isDefault: true },
-        environment: {
-          id: "e1",
-          label: "v1",
-          status: "active",
-          isDefault: true,
-        },
+        environment: { id: "e1", label: "v1", status: "active", isDefault: true },
       },
     });
     expect(pairs[0]).toMatchObject({
@@ -85,30 +80,15 @@ describe("ScenarioToolbar — versions in view", () => {
     const onVersionPairChange = vi.fn();
     const user = userEvent.setup();
     render(
-      <ScenarioToolbar
-        {...props}
-        versionPairs={pairs}
-        versionPair=""
-        onVersionPairChange={onVersionPairChange}
-      />,
+      <ScenarioToolbar {...props} versionPairs={pairs} versionPair="" onVersionPairChange={onVersionPairChange} />,
     );
     await user.click(screen.getByRole("combobox", { name: "Versions" }));
-    await user.click(
-      screen.getByRole("option", {
-        name: "Suite v2 on environment v2 (candidate)",
-      }),
-    );
+    await user.click(screen.getByRole("option", { name: "Suite v2 on environment v2 (candidate)" }));
     expect(onVersionPairChange).toHaveBeenCalledWith("s2:e2");
   });
 
   it("shows no versions select when the environment has only its saved pair", () => {
-    render(
-      <ScenarioToolbar
-        {...props}
-        versionPairs={[]}
-        onVersionPairChange={vi.fn()}
-      />,
-    );
+    render(<ScenarioToolbar {...props} versionPairs={[]} onVersionPairChange={vi.fn()} />);
     expect(screen.queryByTestId("versions-select")).toBeNull();
   });
 });

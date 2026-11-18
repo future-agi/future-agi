@@ -31,14 +31,7 @@ export const harnessScenariosListKey = (jobId) => ["harness-scenarios", jobId];
 
 export const harnessScenariosKey = (
   jobId,
-  {
-    page = 0,
-    pageSize = 25,
-    search = "",
-    groupBy,
-    ordering,
-    filters = {},
-  } = {},
+  { page = 0, pageSize = 25, search = "", groupBy, ordering, filters = {} } = {},
 ) => [
   ...harnessScenariosListKey(jobId),
   { page, pageSize, search, groupBy, ordering, filters },
@@ -71,14 +64,7 @@ export function useHarnessScenarios({
   filters = {},
 } = {}) {
   return useQuery({
-    queryKey: harnessScenariosKey(jobId, {
-      page,
-      pageSize,
-      search,
-      groupBy,
-      ordering,
-      filters,
-    }),
+    queryKey: harnessScenariosKey(jobId, { page, pageSize, search, groupBy, ordering, filters }),
     queryFn: () =>
       listScenarios(jobId, {
         page: page + 1,
@@ -102,23 +88,14 @@ export function useHarnessScenarios({
 export const harnessScenarioCoverageKey = (
   jobId,
   { search = "", filters = {}, rowAxis, colAxis } = {},
-) => [
-  ...harnessScenariosListKey(jobId),
-  "coverage",
-  { search, filters, rowAxis, colAxis },
-];
+) => [...harnessScenariosListKey(jobId), "coverage", { search, filters, rowAxis, colAxis }];
 
 export function useScenarioCoverage(
   jobId,
   { search = "", filters = {}, rowAxis, colAxis } = {},
 ) {
   return useQuery({
-    queryKey: harnessScenarioCoverageKey(jobId, {
-      search,
-      filters,
-      rowAxis,
-      colAxis,
-    }),
+    queryKey: harnessScenarioCoverageKey(jobId, { search, filters, rowAxis, colAxis }),
     queryFn: () =>
       scenarioCoverage(jobId, {
         search,
@@ -145,9 +122,7 @@ export function useAmendScenarios(jobId) {
     meta: { errorHandled: true },
     mutationFn: (body) => amendScenarios(jobId, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: harnessScenariosListKey(jobId),
-      });
+      queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
       // The header and tab badge read the scenario count from the detail.
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(jobId) });
       // Only the list: a saved version's own diff and scenarios never change.
