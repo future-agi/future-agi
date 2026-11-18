@@ -14,7 +14,7 @@ from simulate.services.harness_tool_reach import (
 # The first sealing release's rules: routes named with `/` read as `.`, POST routes only.
 RULES = actor_rules({})
 
-# A tools service serves refund (behind the world's door); lookup runs inside the agent as a closure; notify reaches
+# A tools service serves refund (behind the test's tool gateway); lookup runs inside the agent as a closure; notify reaches
 # someone else's API; audit has no entrypoint the build could read.
 CONTRACT = {
     "runtime": {"language": "python"},

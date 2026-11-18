@@ -425,4 +425,6 @@ class TestRunHoldBackApi:
         assert response.status_code == 409, response.content
         body = response.json()
         assert body["error"] == "all_cases_blocked"
-        assert "Certification: dropped when the pair was certified" in body["message"]
+        assert (
+            "Certification: dropped when these versions were checked" in body["message"]
+        )

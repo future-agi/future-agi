@@ -514,9 +514,9 @@ def _tool_routing(evidence: Evidence, in_run: RoutedInRun | None = None) -> Read
             "failed",
             "action_failed",
             (
-                "Failed its probe: " + ", ".join(failed)
+                "Failed its check: " + ", ".join(failed)
                 if failed or ratio is None
-                else f"{ratio[0]} of {ratio[1]} tool probes passed"
+                else f"{ratio[0]} of {ratio[1]} tool checks passed"
             ),
             targets("action", failed, "failed"),
             seen,
@@ -582,7 +582,7 @@ def _tool_routing(evidence: Evidence, in_run: RoutedInRun | None = None) -> Read
         return Reading(
             "limited",
             "probe_not_run",
-            "Its tools work when the harness calls them; no call of the agent's was"
+            "Its tools work when the test calls them; no call of the agent's was"
             " recorded reaching the test world",
             evidence=seen,
         )
@@ -633,7 +633,7 @@ def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Re
         return Reading(
             "failed",
             "reset_failed",
-            "The world did not return to its seeded state",
+            "The world did not return to its starting records",
             evidence=seen,
         )
     if reset == "not_applicable" and isolation in (None, "not_applicable"):
@@ -919,7 +919,7 @@ def _streaming(pairing: Pairing) -> Reading:
         return Reading(
             "not_applicable",
             "transport_not_qualified",
-            f"A {kind} connection is not supported until it passes qualification",
+            f"A {kind} connection is not supported until it is approved for runs",
             evidence=[{"check": "interface", "result": kind}],
         )
     return Reading(
@@ -1011,7 +1011,7 @@ def hidden_material(certificate: Mapping[str, Any]) -> Reading:
         return Reading(
             "not_run",
             "isolation_not_recorded",
-            "This pairing's check did not record whether the agent could read the grading material. Treat its "
+            "The check of these versions did not record whether the agent could read the grading material. Treat its "
             "runs as not blind",
         )
     if isolation != "per_user":
@@ -1025,7 +1025,7 @@ def hidden_material(certificate: Mapping[str, Any]) -> Reading:
         return Reading(
             "limited",
             "door_not_isolated",
-            "The agent's processes are kept apart, but the world's door shares the agent's tools' access, so the "
+            "The agent's processes are kept apart, but the test's tool gateway shares the agent's tools' access, so the "
             "graded call log could be read or changed. Treat its runs as not blind",
         )
     return Reading("passed")

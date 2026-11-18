@@ -74,7 +74,7 @@ def preflight_findings(
     status = runtime.preflight_status
     if status == HarnessAgentVersionRuntime.PreflightStatus.PENDING:
         return Reading(
-            "failed", "preflight_pending", "The agent's preflight has not finished"
+            "failed", "preflight_pending", "The agent's start-up check has not finished"
         )
     if status != HarnessAgentVersionRuntime.PreflightStatus.FAILED:
         return None
@@ -91,7 +91,7 @@ def preflight_findings(
     return Reading(
         "failed",
         "preflight_failed",
-        f"Agent preflight failed: {names or 'agent preflight'}"
+        f"Agent start-up check failed: {names or 'agent start-up'}"
         + (f" (missing {', '.join(missing)})" if missing else ""),
         targets("check", [str(check.get("id")) for check in failed], "failed"),
     )

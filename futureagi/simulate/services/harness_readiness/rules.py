@@ -48,7 +48,7 @@ def _status(reading: Reading) -> tuple[Status, str | None, str | None]:
         return (
             "unavailable",
             reading.reason_code or "not_applicable",
-            reading.reason or "This agent's lane cannot have this check",
+            reading.reason or "This agent's connection cannot have this check",
         )
     if reading.finding == "limited":
         return "partial", reading.reason_code, reading.reason
@@ -188,7 +188,7 @@ def rows(
                 found = Reading(
                     found.finding,
                     found.reason_code,
-                    f"{found.reason}; failed its probe: " + ", ".join(names),
+                    f"{found.reason}; failed its check: " + ", ".join(names),
                     found.targets + targets("action", names, "failed"),
                 )
             status, _, _ = _status(found)
@@ -211,7 +211,7 @@ def rows(
             failed = Reading(
                 "failed",
                 "action_failed",
-                "Failed its probe: " + ", ".join(names),
+                "Failed its check: " + ", ".join(names),
                 targets("action", names, "failed"),
                 reading.evidence,
             )
@@ -445,7 +445,10 @@ def _stale_reason(stale: str, pairing: Pairing, evidence: Evidence) -> tuple[str
             evidence.certificate, pairing.environment.organization_id
         )
         was, now = moved if moved is not None else ("an earlier version", "another")
-        return ("harness_changed", f"Checked with harness {was}; runs now use {now}")
+        return (
+            "harness_changed",
+            f"Checked with test release {was}; runs now use {now}",
+        )
     if stale == "agent_version":
         changed = release.framework_change(
             release.frameworks(evidence.certificate), _picked_agent_frameworks(pairing)
@@ -465,12 +468,12 @@ def _stale_reason(stale: str, pairing: Pairing, evidence: Evidence) -> tuple[str
         was = _label(evidence.made_for.version_number)
         return (
             "environment_changed",
-            f"Checked with environment version {was}; this pairing uses {now}",
+            f"Checked with environment version {was}; these versions use {now}",
         )
     return (
         "suite_changed",
-        f"Checked with the scenarios environment version {now} was built with; this"
-        f" pairing uses suite version {_label(pairing.suite_version.version_number)}",
+        f"Checked with the scenarios environment version {now} was built with; these"
+        f" versions use suite version {_label(pairing.suite_version.version_number)}",
     )
 
 
@@ -490,19 +493,19 @@ _FIXES: dict[str, tuple[str, str]] = {
         "A test message reaches the agent and it answers",
     ),
     "tool_discovery": (
-        "Expose {target} so the harness can find and call it",
+        "Expose {target} so the test can find and call it",
         "{target} is discovered before calls",
     ),
     "tool_routing": (
         "Point {target} at the test world",
-        "{target} lands in the test world and its probe passes",
+        "{target} lands in the test world and its check passes",
     ),
     "state": (
         "Give the environment a copy of the data the agent reads",
-        "The world is seeded and its state check passes",
+        "The world has its starting records and their check passes",
     ),
     "reset": (
-        "Make the world return to its seeded state between cases",
+        "Make the world return to its starting records between cases",
         "The world resets and its reset check passes",
     ),
 }
@@ -512,7 +515,7 @@ _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
     "tool_not_in_world": (
         "Add {target} to this environment in the builder, or test this agent version"
         " in an environment that has it",
-        "{target} is simulated in the test world and its probe passes",
+        "{target} is simulated in the test world and its check passes",
     ),
     "tool_not_in_agent": (
         "Give this agent version {target}, or pick an agent version that has it",
@@ -521,7 +524,7 @@ _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
     "tool_signature_changed": (
         "Rebuild this environment from this agent version so {target} takes the"
         " arguments the agent sends, or test it in an environment built for them",
-        "{target} takes the agent's arguments in the test world and its probe passes",
+        "{target} takes the agent's arguments in the test world and its check passes",
     ),
 }
 
@@ -574,23 +577,22 @@ _CONSEQUENCES: dict[str, dict[str, str]] = {
         " world",
     },
     "state": {
-        "supported": "Every case starts from the seeded test data",
-        "blocked": "Cases that read the world's data cannot run until it is seeded",
-        "unavailable": "This connection keeps its own data; there is no seeded world of"
-        " ours",
+        "supported": "Every case starts from the same starting records",
+        "blocked": "Cases that read the world's data cannot run until it has its starting records",
+        "unavailable": "This connection keeps its own data; there are no starting records of ours",
     },
     "reset": {
-        "supported": "Every trial starts from the same seed, agent included",
+        "supported": "Every trial starts from the same starting point, agent included",
         "partial": "The world resets between trials; the agent may carry its own memory",
         "partial:isolation_not_run": "The world resets between trials, but cases run at"
         " the same time were not shown to stay apart",
         "blocked": "Trials can see each other's changes, so repeated results are not"
         " independent",
-        "unavailable": "No seeded world of ours to reset for this connection",
+        "unavailable": "No starting records of ours to reset for this connection",
     },
 }
 _SHARED_CONSEQUENCES: dict[Status, str] = {
-    "supported": "Shown to work for this pairing",
+    "supported": "Shown to work with these versions",
     "partial": "Works within the limits the reason names",
     "blocked": "Cases that need this cannot run until it is fixed",
     "unavailable": "This connection does not offer this",
@@ -628,7 +630,7 @@ _OBSERVED: dict[str, dict[str, str]] = {
         "unavailable:voice_call": "Voice cases are heard over the call; no chat stream"
         " applies",
         "unavailable:transport_not_qualified": "This transport is not supported for"
-        " runs until it passes qualification",
+        " runs until it is approved for runs",
         "untested": "How this connection replies is not recorded, so where a case ends"
         " is not verified",
     },
@@ -724,7 +726,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
             "category": "startup",
             "target": None,
             "action": _preflight_action(pairing.runtime),
-            "would": "The agent passes its preflight and can start",
+            "would": "The agent passes its start-up check and can start",
             "recheck": {
                 "scope": "agent",
                 "method": "POST",
@@ -808,7 +810,7 @@ def _preflight_action(runtime: HarnessAgentVersionRuntime | None) -> str:
         if isinstance(check, Mapping) and check.get("status") == "failed"
     ]
     if not failed:
-        return "Wait for the agent's preflight, or check the agent again"
+        return "Wait for the agent's start-up check, or check the agent again"
     parts = []
     for check in failed:
         missing = [str(name) for name in check.get("missing") or []]
@@ -817,7 +819,7 @@ def _preflight_action(runtime: HarnessAgentVersionRuntime | None) -> str:
             if missing
             else f"{check.get('id')}: fix it in the agent's connection"
         )
-    return "Fix the agent's preflight checks (" + "; ".join(parts) + ")"
+    return "Fix the agent's start-up checks (" + "; ".join(parts) + ")"
 
 
 def worst(statuses: Iterable[Status]) -> Status:
