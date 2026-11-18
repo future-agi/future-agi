@@ -17,6 +17,7 @@ Usage:
     init_sentry(component="temporal", tags={"queue": "tasks_l"})
 """
 
+import bisect
 import json
 import os
 import re
@@ -369,8 +370,21 @@ def _param_spans(
     return spans
 
 
-def _overlaps(span: tuple[int, int], spans: list[tuple[int, int]]) -> bool:
-    return any(span[0] < end and start < span[1] for start, end in spans)
+def _overlaps(span: tuple[int, int], ends: list[int], starts: list[int]) -> bool:
+    """Whether ``span`` overlaps one of the redacted spans, given their
+    ``ends`` and ``starts``. The spans come from ``finditer``, so they are
+    disjoint and in order and both lists are sorted: only the first span that
+    ends after ``span`` starts can overlap it."""
+    first = bisect.bisect_right(ends, span[0])
+    return first < len(starts) and starts[first] < span[1]
+
+
+# Without a template to replay, each argument is looked for at every redacted
+# value (and in the tail of the text). Past this many steps for all the
+# distinct arguments together, every argument is redacted instead, so an event
+# with thousands of arguments and values stays fast; over-redacting is better
+# than leaking.
+_SEARCH_BUDGET = 1_000_000
 
 
 def _scrub_log_params(
@@ -397,6 +411,34 @@ def _scrub_log_params(
         else None
     )
     redacted = False
+    searchable = bool(spans) and isinstance(formatted, str)
+    starts = [start for start, _ in spans] if searchable else []
+    ends = [end for _, end in spans] if searchable else []
+    to_end = (
+        [start for start, end in spans if end == len(formatted)] if searchable else []
+    )
+    found: dict[str, bool] = {}
+    over_budget = False
+    if searchable and located is None and isinstance(params, (list, tuple, dict)):
+        values = params.values() if isinstance(params, dict) else params
+        distinct = {str(param) for param in values}
+        over_budget = (
+            len(distinct) * (len(spans) + len(formatted) // 256) > _SEARCH_BUDGET
+        )
+
+    def occurs(rendered: str) -> bool:
+        """Whether some occurrence of ``rendered`` starts where a redacted
+        value starts or overlaps one that runs to the end of the text. Checked
+        per value rather than by listing every occurrence, which is quadratic
+        for a long, repetitive argument; each distinct rendering once."""
+        if rendered not in found:
+            found[rendered] = any(
+                formatted.startswith(rendered, start) for start in starts
+            ) or any(
+                formatted.find(rendered, max(0, start - len(rendered) + 1)) != -1
+                for start in to_end
+            )
+        return found[rendered]
 
     def credential(param: Any, key: Any) -> bool:
         rendered = str(param)
@@ -404,21 +446,11 @@ def _scrub_log_params(
             return False
         if spans is None:
             return isinstance(param, str)
-        if not spans or not isinstance(formatted, str):
+        if not searchable:
             return False
         if located is not None:
-            return any(_overlaps(span, spans) for span in located.get(key, ()))
-        # Whether some occurrence of ``rendered`` starts where a redacted
-        # value starts or overlaps one that runs to the end of the text.
-        # Checked per span rather than by listing every occurrence, which is
-        # quadratic for a long, repetitive argument.
-        if any(formatted.startswith(rendered, start) for start, _ in spans):
-            return True
-        return any(
-            formatted.find(rendered, max(0, start - len(rendered) + 1)) != -1
-            for start, end in spans
-            if end == len(formatted)
-        )
+            return any(_overlaps(span, ends, starts) for span in located.get(key, ()))
+        return over_budget or occurs(rendered)
 
     def one(param: Any, key: Any) -> Any:
         nonlocal redacted

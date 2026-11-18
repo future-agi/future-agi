@@ -15,7 +15,12 @@ import pytest
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-from tfc.logging.sentry import _before_breadcrumb, _scrub_text
+from tfc.logging.sentry import (
+    _before_breadcrumb,
+    _scrub_log_params,
+    _scrub_message_fields,
+    _scrub_text,
+)
 from tfc.tests.sentry_capture import sentry_capture
 
 LOGGER = "tfc.tests.synthetic_scrubbing"
@@ -489,3 +494,38 @@ def test_scrubbing_an_event_is_linear(transport, text):
         _BOUND_SECONDS
     )
     assert len(transport.events) == 3
+
+
+_MANY = 10_000
+
+
+def test_scrubbing_many_log_arguments_is_linear(transport):
+    # Each argument's rendering is checked against the redacted values by
+    # bisection, not against every one of them.
+    for template, arg in (("password=%s ", "x"), ("password=x %s ", "y")):
+        assert _timed(_log_probe, template * _MANY, (arg,) * _MANY) < _BOUND_SECONDS
+    assert len(transport.events) == 2
+    assert transport.events[0]["logentry"]["params"] == ["[Filtered]"] * _MANY
+    assert transport.events[1]["logentry"]["params"] == ["y"] * _MANY
+
+
+def test_many_log_arguments_without_a_replayable_template_are_redacted_fast():
+    # The template does not render ``formatted`` (the SDK or a handler changed
+    # it), so arguments are looked for in the text, each distinct rendering
+    # once; past the search budget every one is redacted.
+    message = "password=x%s " * _MANY
+    params = [f"y{i}" for i in range(_MANY)]
+    event = {
+        "logentry": {
+            "message": message,
+            "params": params,
+            "formatted": message % tuple(params) + "...",
+        }
+    }
+    assert _timed(_scrub_message_fields, event, []) < _BOUND_SECONDS
+    assert event["logentry"]["params"] == ["[Filtered]"] * _MANY
+
+    start = time.perf_counter()
+    scrubbed, redacted = _scrub_log_params(["y"] * _MANY, "password=x " * _MANY)
+    assert time.perf_counter() - start < _BOUND_SECONDS
+    assert not redacted and scrubbed == ["y"] * _MANY
