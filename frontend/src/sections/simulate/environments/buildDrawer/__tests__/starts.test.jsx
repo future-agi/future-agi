@@ -14,9 +14,10 @@ import {
   shows its whole design and its last step only says it's UI only.
 */
 
+const navigate = vi.hoisted(() => vi.fn());
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
-  return { ...actual, useNavigate: () => vi.fn() };
+  return { ...actual, useNavigate: () => navigate };
 });
 
 const agent = (id, name, modality, extra = {}) => ({
@@ -82,6 +83,14 @@ const click = (name) => fireEvent.click(button(name));
 const header = () =>
   screen.getByRole("button", { name: /^Back to / }).parentElement;
 
+// Building opens the proposed design, and nothing reaches the build API.
+const expectDesignPage = () => {
+  expect(navigate).toHaveBeenCalledWith(
+    expect.stringMatching(/\/simulate\/environments\/design\/design-/),
+  );
+  expect(createHarnessJob).not.toHaveBeenCalled();
+};
+
 // The last step says it's UI only, and nothing reaches the build API.
 const expectUiOnlyToast = () => {
   expect(enqueueSnackbar).toHaveBeenCalledWith(
@@ -95,6 +104,7 @@ const expectUiOnlyToast = () => {
 beforeEach(() => {
   agentItems = TWO_AGENTS;
   enqueueSnackbar.mockClear();
+  navigate.mockClear();
   createHarnessJob.mockReset();
   preflightHarnessJob.mockReset();
 });
@@ -128,7 +138,7 @@ describe("Build from scratch", () => {
     expect(screen.getByText("4 words")).toBeInTheDocument();
     expect(build).toBeEnabled();
     fireEvent.click(build);
-    expectUiOnlyToast();
+    expectDesignPage();
   });
 
   it("builds from an attached file alone, listed and removable", () => {
@@ -409,7 +419,7 @@ describe("Your agents", () => {
     expect(within(dialog).getByText("Sandbox")).toBeInTheDocument();
     expect(build).toBeEnabled();
     fireEvent.click(build);
-    expectUiOnlyToast();
+    expectDesignPage();
   });
 
   it("shows six, then all of them", () => {

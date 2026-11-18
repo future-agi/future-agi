@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
@@ -12,10 +13,12 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import { MONO, PreflightRow, useUiOnlyBuild } from "../forms/formBits";
 import BuildFilesField from "../forms/shared/BuildFilesField";
 import BuildTestField from "../forms/shared/BuildTestField";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
+import { useDesignDraftStore } from "../../design/useDesignDraftStore";
 import { BTN_SX, INPUT_SX, T12, T13, T14, focusRing } from "../drawerStyles";
 import { envNameFor } from "./startUtils";
 
@@ -83,6 +86,8 @@ Pick.propTypes = {
 
 function DialogBody({ agent, onClose, subtitle }) {
   const build = useUiOnlyBuild(SAMPLE_CHECKS);
+  const navigate = useNavigate();
+  const createDesignDraft = useDesignDraftStore((s) => s.createDesignDraft);
   const [name, setName] = useState(() => envNameFor(agent));
   const [testRequest, setTestRequest] = useState("");
   const [files, setFiles] = useState([]);
@@ -285,7 +290,19 @@ function DialogBody({ agent, onClose, subtitle }) {
           variant="contained"
           color="primary"
           disabled={!!blocked}
-          onClick={build.commitBuild}
+          onClick={() =>
+            navigate(
+              paths.dashboard.simulate.environments.design(
+                createDesignDraft({
+                  name,
+                  description: testRequest,
+                  files,
+                  agent: { id: agent.id, name: agent.name, version },
+                  scenarioCount: count,
+                }),
+              ),
+            )
+          }
           sx={BTN_SX}
         >
           Build environment
@@ -303,7 +320,7 @@ DialogBody.propTypes = {
 /**
  * "Build environment" for one connected agent: its name, the version it's
  * built from and how many scenarios to start with, then preflight. UI only:
- * preflight shows sample checks and building only says it isn't wired.
+ * preflight shows sample checks and building opens the proposed design.
  */
 export default function BuildForAgentDialog({ agent, onClose, subtitle }) {
   return (
