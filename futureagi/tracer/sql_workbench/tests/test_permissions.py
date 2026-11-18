@@ -966,6 +966,83 @@ def test_worker_releases_a_cancelled_slot_only_after_the_scan_returns(tenants):
     ).exists()
 
 
+def test_driver_text_with_compiled_sql_and_tenant_literals_never_leaks(
+    tenants, monkeypatch
+):
+    """A ClickHouse error echoes the compiled query: physical database and
+    table names, the scope filter and the org/project UUIDs. Neither the stored
+    error nor the log record may carry any of it; the code alone is logged."""
+    import logging
+    import re
+
+    from clickhouse_driver.errors import ServerException
+
+    from tracer.sql_workbench import errors, tasks
+
+    (actor, project, _), _ = tenants
+    job = create_job(actor, project, sql="SELECT * FROM spans")
+    seen = {}
+
+    def scan(sql, query_id, cancelled, *, table_filters):
+        seen["sql"], seen["filters"] = sql, table_filters
+        database = re.match(r"\{'([^.']+)\.", table_filters).group(1)
+        seen["database"] = database
+        # First quoted name is internal: in the compiled query, not job.sql.
+        raise ServerException(
+            f"Unknown expression identifier `project_id` in scope {sql}. "
+            f"Table {database}.spans filters {table_filters} for organization "
+            f"'{actor.organization_id}' project '{project.id}'",
+            code=47,
+        )
+
+    records = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    quiet = logging.getLogger(f"test.sql_workbench.leak.{uuid4().hex}")
+    quiet.propagate = False
+    quiet.setLevel(logging.DEBUG)
+    quiet.addHandler(Capture())
+    monkeypatch.setattr(tasks, "logger", quiet)
+    with patch.object(tasks, "run", scan):
+        tasks.execute_sql._original_func(str(job.id))
+
+    job.refresh_from_db()
+    assert job.state == "failed"
+    assert job.error == errors.UNKNOWN_IDENTIFIER[1]
+    assert "project_id" not in job.error
+    secrets = [
+        seen["sql"],
+        seen["filters"],
+        seen["database"],
+        f"{seen['database']}.spans",
+        str(actor.organization_id),
+        str(actor.workspace_id),
+        str(project.id),
+        "Unknown expression identifier",
+        "toUUID",
+    ]
+    [record] = records
+    assert record.exc_info is None and record.exc_text is None
+    assert record.clickhouse_code == 47 and type(record.clickhouse_code) is int
+    assert record.error_type == "ServerException"
+    standard = set(vars(logging.LogRecord("x", 0, "", 0, "", (), None)))
+    extras = {k: v for k, v in vars(record).items() if k not in standard}
+    assert set(extras) >= {"query_id", "error_type", "clickhouse_code"}
+    logged = " ".join(
+        [
+            record.getMessage(),
+            repr(record.args),
+            *(f"{k}={v!r}" for k, v in extras.items()),
+        ]
+    )
+    for secret in secrets:
+        assert secret not in job.error
+        assert secret not in logged
+
+
 def test_execution_deadline_is_anchored_to_the_actual_start(tenants, monkeypatch):
     from types import SimpleNamespace
 
