@@ -5,30 +5,12 @@ import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import { OUTLINED_BTN_SX, ROW_BOX_SX, T12, T13 } from "../../drawerStyles";
-import { BUILD_FILES_ACCEPT, extOf, mergeBuildFiles } from "./buildFiles";
-
-const kb = (n) =>
-  n >= 1024 * 1024
-    ? `${(n / (1024 * 1024)).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(n / 1024))} KB`;
-
-// How the builder will likely read a file, from its name alone. Drag and drop
-// skips `accept`, so a type outside it says it can't be read.
-function readAs(name, accept) {
-  const ext = extOf(name);
-  const lower = name.toLowerCase();
-  if (!accept.split(",").includes(`.${ext}`)) return null;
-  if (/expected|outcome|answer|golden/.test(lower)) return "Grader answers";
-  if (["csv", "tsv", "json", "jsonl", "xlsx"].includes(ext)) return "Records";
-  const policyish =
-    /polic|terms|rule|sop|procedure|guideline|sla|returns?|refund/.test(lower);
-  const reference =
-    /chat|conversation|transcript|guide|faq|handbook|reference|catalog|macro|manual|readme|notes?\b|changelog/.test(
-      lower,
-    ) ||
-    (["md", "txt"].includes(ext) && !policyish);
-  return reference ? "Background" : "Rules";
-}
+import {
+  BUILD_FILES_ACCEPT,
+  extOf,
+  mergeBuildFiles,
+  readAsOf,
+} from "./buildFiles";
 
 /**
  * Files for the environment a form builds: a policy becomes rules, a CSV the
@@ -140,7 +122,7 @@ export default function BuildFilesField({
           }}
         >
           {files.map((f) => {
-            const role = readAs(f.name, accept);
+            const role = readAsOf(f.name, accept);
             return (
               <Stack
                 component="li"

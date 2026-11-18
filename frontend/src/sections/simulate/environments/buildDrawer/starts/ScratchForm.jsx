@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   FormControlLabel,
   Radio,
@@ -12,8 +13,9 @@ import {
   mergeBuildFiles,
 } from "../forms/shared/buildFiles";
 import { T12 } from "../drawerStyles";
+import { paths } from "src/routes/paths";
+import { useDesignDraftStore } from "../../design/useDesignDraftStore";
 import DescribeFlowCard from "./DescribeFlowCard";
-import { uiOnlyToast } from "./startUtils";
 
 const CHIPS = [
   "The agent gets triggered when…",
@@ -30,9 +32,12 @@ const PERSONAL_DATA = [
 
 /**
  * Build from scratch: name it (or not) and describe the flow, or drop files
- * to learn from. UI only: building from a description isn't wired yet.
+ * to learn from. Build environment opens the proposed design to approve;
+ * nothing is built yet.
  */
 export default function ScratchForm() {
+  const navigate = useNavigate();
+  const createDesignDraft = useDesignDraftStore((s) => s.createDesignDraft);
   const [name, setName] = useState("");
   const [flowText, setFlowText] = useState("");
   const [attachments, setAttachments] = useState([]);
@@ -76,7 +81,18 @@ export default function ScratchForm() {
         onRemove={(id) =>
           setAttachments((prev) => prev.filter((a) => a.id !== id))
         }
-        onNext={() => uiOnlyToast("building from a description")}
+        onNext={() =>
+          navigate(
+            paths.dashboard.simulate.environments.design(
+              createDesignDraft({
+                name,
+                description: flowText,
+                files: attachments,
+                personalChoice: personalData,
+              }),
+            ),
+          )
+        }
         canSubmit={canGo}
         submitLabel="Build environment"
         filesFooter={

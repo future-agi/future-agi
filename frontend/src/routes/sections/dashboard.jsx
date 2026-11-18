@@ -334,6 +334,9 @@ const SimulatePrebuiltEnvironments = lazyWithRetry(
 const SimulateUseTemplate = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
 );
+const SimulateEnvironmentDesign = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/design"),
+);
 const SimulateEnvironmentWorkspace = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
@@ -1492,6 +1495,10 @@ export const dashboardRoutes = (
               replace
             />
           ),
+        },
+        {
+          path: "environments/design/:draftId",
+          element: <SimulateEnvironmentDesign />,
         },
         {
           path: "environments/:envId",
