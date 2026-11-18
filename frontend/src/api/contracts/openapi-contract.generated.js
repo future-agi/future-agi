@@ -71108,6 +71108,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        private_fields: {
+          description:
+            "Scenario fields only the grader reads: never shown to the agent or to a simulated person.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
         dropped: {
           description:
             "Cases a rebuild dropped from this suite version for a capability the agent lost, with why.",

@@ -24757,6 +24757,8 @@ export interface HarnessScenarioListResponseApi {
   groupings: HarnessScenarioGroupingApi[];
   /** The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it. */
   level_labels: HarnessScenarioListResponseApiLevelLabels;
+  /** Scenario fields only the grader reads: never shown to the agent or to a simulated person. */
+  private_fields?: string[];
   /** Cases a rebuild dropped from this suite version for a capability the agent lost, with why. */
   dropped?: HarnessDroppedCaseApi[];
   /** Cases the parent suite version had dropped that are back under their keys. */

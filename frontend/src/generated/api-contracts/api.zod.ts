@@ -54561,6 +54561,12 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
     .describe(
       "The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it.",
     ),
+  private_fields: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "Scenario fields only the grader reads: never shown to the agent or to a simulated person.",
+    ),
   dropped: zod
     .array(
       zod
