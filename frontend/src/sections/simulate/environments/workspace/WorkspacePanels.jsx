@@ -7,6 +7,7 @@ import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
+import WorldToolsPanel from "./world/WorldToolsPanel";
 import ActorsTab from "./actors/ActorsTab";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
@@ -77,8 +78,11 @@ export default function WorkspacePanels({
   // the Overview and back.
   const showRuns = runsTotal > 0 || (runsLoading && tab === "runs");
   // Improvements appears once the environment has a fix, the same way Runs does.
-  const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(env?.id);
-  const showImprovements = fixCount > 0 || (fixesLoading && tab === "improvements");
+  const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(
+    env?.id,
+  );
+  const showImprovements =
+    fixCount > 0 || (fixesLoading && tab === "improvements");
   // Versions appears only while versioning is switched on for this environment.
   const showVersions = Boolean(env?.versioning?.enabled);
   const tabs = WORKSPACE_TABS.filter(
@@ -91,8 +95,7 @@ export default function WorkspacePanels({
 
   // Default landing is the Overview, which is also the first tab in the rail.
   const current =
-    tabs.find((t) => t.id === tab) ||
-    tabs.find((t) => t.id === "overview");
+    tabs.find((t) => t.id === tab) || tabs.find((t) => t.id === "overview");
 
   const go = (tabId) => {
     if (!tabs.some((t) => t.id === tabId)) return;
@@ -102,7 +105,13 @@ export default function WorkspacePanels({
   const openRun = (run) => {
     const runTestId = env?.platform?.runTestId;
     if (!runTestId || !run?.executionId) return;
-    navigate(paths.dashboard.simulate.environments.execution(env.id, runTestId, run.executionId));
+    navigate(
+      paths.dashboard.simulate.environments.execution(
+        env.id,
+        runTestId,
+        run.executionId,
+      ),
+    );
   };
 
   // The rest come from the injected client-state counts. A null `counts`
@@ -116,12 +125,33 @@ export default function WorkspacePanels({
 
   const renderBody = () => {
     switch (current.id) {
+      case "world":
+        return (
+          <WorldToolsPanel
+            env={env}
+            envState={envState}
+            patch={patch}
+            locked={locked}
+            graphData={graphData}
+          />
+        );
       case "contract":
-        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} backed={backed} />;
+        return <RlContractPanel env={env} backed={backed} />;
       case "actors":
         return <ActorsTab env={env} locked={locked} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} />;
+        return (
+          <ScenariosStep
+            env={env}
+            envState={envState}
+            patch={patch}
+            locked={locked}
+            onFork={onFork}
+            onStartRun={onStartRun}
+            canRun={canRun}
+            runBlockedReason={runBlockedReason}
+          />
+        );
       case "evals":
         return (
           <EvalsStep
@@ -139,7 +169,16 @@ export default function WorkspacePanels({
       case "runs":
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
-        return <RunsSummary key={env.id} env={env} envState={envState} scenarioCount={counts?.scenarios} onOpenRun={openRun} onGo={go} />;
+        return (
+          <RunsSummary
+            key={env.id}
+            env={env}
+            envState={envState}
+            scenarioCount={counts?.scenarios}
+            onOpenRun={openRun}
+            onGo={go}
+          />
+        );
       case "improvements":
         return <ImprovementsPanel env={env} />;
       case "versions":
@@ -171,8 +210,15 @@ export default function WorkspacePanels({
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
-      <Box sx={{ flexShrink: 0, borderBottom: "1px solid", borderColor: "divider" }}>
-        <CustomTabs sx={{ boxShadow: "none" }}
+      <Box
+        sx={{
+          flexShrink: 0,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <CustomTabs
+          sx={{ boxShadow: "none" }}
           value={current.id}
           onChange={(_, v) => onTabChange(v)}
           variant="scrollable"
@@ -194,7 +240,9 @@ export default function WorkspacePanels({
         </CustomTabs>
       </Box>
 
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>{renderBody()}</Box>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
+        {renderBody()}
+      </Box>
     </Stack>
   );
 }
@@ -219,7 +267,10 @@ WorkspacePanels.propTypes = {
     agent: PropTypes.shape({ name: PropTypes.string }),
     scenarios: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
     evals: PropTypes.arrayOf(
-      PropTypes.oneOfType([PropTypes.string, PropTypes.shape({ id: PropTypes.string })]),
+      PropTypes.oneOfType([
+        PropTypes.string,
+        PropTypes.shape({ id: PropTypes.string }),
+      ]),
     ),
     runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
   }).isRequired,
@@ -243,7 +294,7 @@ WorkspacePanels.propTypes = {
   overviewCounts: PropTypes.object,
   // Its real world content (stores/amendments/dependencies) for the Overview.
   overviewWorld: PropTypes.object,
-  // Its real capability-graph data (tools/flows/personas/guardrails) for Contract.
+  // Its real capability-graph data (tools/flows/personas/guardrails) for World & tools.
   graphData: PropTypes.object,
   // Starts a run scoped to the scenario selection × trials — (ids, trials).
   onStartRun: PropTypes.func,

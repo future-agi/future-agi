@@ -247,11 +247,17 @@ describe("EnvironmentWorkspace route shell", () => {
       await screen.findByText("Refund Copilot", { selector: "p" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach(
-      (label) =>
-        expect(
-          screen.getByRole("tab", { name: new RegExp(label) }),
-        ).toBeInTheDocument(),
+    [
+      "Overview",
+      "World & tools",
+      "Contract",
+      "Scenarios",
+      "Evaluations",
+      "Settings",
+    ].forEach((label) =>
+      expect(
+        screen.getByRole("tab", { name: new RegExp(label) }),
+      ).toBeInTheDocument(),
     );
     expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });

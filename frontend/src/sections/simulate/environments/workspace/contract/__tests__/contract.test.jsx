@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
+import WorldToolsPanel from "../../world/WorldToolsPanel";
+
+vi.mock("../../sources/SourcesSection", () => ({ default: () => null }));
 
 const tool = (name, description, writes) => ({
   tool: name,
@@ -18,9 +21,9 @@ const tool = (name, description, writes) => ({
   tables: { recorded: false, read: [], changed: [], label: "Not recorded" },
 });
 
-// A voice environment with two tools, two hard rules and a seeded table —
+// A voice environment with two tools, two hard rules and a seeded table:
 // enough to exercise the world (capability graph), the internals (tables +
-// tools) and the run-end card.
+// tools) on World & tools and the run-end card on Contract.
 const voiceEnv = {
   name: "Refund Copilot",
   surface: "voice",
@@ -42,9 +45,9 @@ const voiceEnv = {
   ],
 };
 
-const renderPanel = (props = {}) =>
+const renderPanel = (props = {}, Panel = RlContractPanel) =>
   render(
-    <RlContractPanel
+    <Panel
       env={voiceEnv}
       envState={{
         evals: [{ id: "task_success" }],
@@ -55,6 +58,7 @@ const renderPanel = (props = {}) =>
       {...props}
     />,
   );
+const renderWorld = (props) => renderPanel(props, WorldToolsPanel);
 
 describe("RlContractPanel", () => {
   it("opens on its content, with no heading repeating the tab", () => {
@@ -63,8 +67,13 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText(/What this environment is made of/)).toBeNull();
   });
 
-  it("renders the world-internals cards over real data only: tables and tools", () => {
+  it("leaves the world to World & tools", () => {
     renderPanel();
+    expect(screen.queryByText("World state · database")).toBeNull();
+  });
+
+  it("renders the world-internals cards over real data only: tables and tools", () => {
+    renderWorld();
     expect(screen.getByText("World state · database")).toBeInTheDocument();
     expect(screen.getAllByText("Tools").length).toBeGreaterThan(0);
     // The synthesised handler/check source cards are gone: their bodies were
@@ -124,7 +133,7 @@ describe("RlContractPanel", () => {
   });
 
   it("lists each declared tool with its description and no inferred effect chip", () => {
-    renderPanel();
+    renderWorld();
     expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
     expect(screen.getAllByText("issue_refund").length).toBeGreaterThan(0);
     expect(screen.getByText("Reads the caller's account.")).toBeInTheDocument();
@@ -136,7 +145,7 @@ describe("RlContractPanel", () => {
   });
 
   it("shows where a tool runs only when the contract says, in its words", () => {
-    renderPanel({
+    renderWorld({
       env: {
         ...voiceEnv,
         toolStatus: [
@@ -168,7 +177,7 @@ describe("RlContractPanel", () => {
 
     it("renders the tool list as a static read-out — no override menu, no patch", () => {
       const patch = vi.fn();
-      renderPanel({ patch, locked: true });
+      renderWorld({ patch, locked: true });
 
       // With the effect override gone there is nothing on this card to lock,
       // and nothing that can reach patch.
