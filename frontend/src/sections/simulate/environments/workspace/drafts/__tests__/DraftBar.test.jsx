@@ -11,6 +11,10 @@ const state = {
 };
 const saveMutate = vi.fn();
 const saveReset = vi.fn();
+vi.mock("notistack", async () => ({
+  ...(await vi.importActual("notistack")),
+  enqueueSnackbar: vi.fn(),
+}));
 vi.mock("src/api/simulate-environments/draftReview", () => ({
   useDraftReview: vi.fn(() => ({
     data: state.review,
