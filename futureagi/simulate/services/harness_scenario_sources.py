@@ -91,7 +91,9 @@ def source_problems(value: object, *, require_one: bool = False) -> list[str]:
         if kind == "assumption" and not (
             str(quote or "").strip() or str(one.get("supports") or "").strip()
         ):
-            problems.append(f"sources[{at}]: an assumption source says what was assumed")
+            problems.append(
+                f"sources[{at}]: an assumption source says what was assumed"
+            )
     return problems
 
 
@@ -379,7 +381,8 @@ def _label(
             else "Builder chat"
         )
     if kind == "evidence_case":
-        return f"evidence case {ref.removeprefix('evidence:')}"
+        # Built from a real conversation or record, never a replay of it.
+        return f"Based on evidence case {ref.removeprefix('evidence:')}, not an exact replay"
     if kind == "requirement":
         return "Stated by you"
     return "Assumption"

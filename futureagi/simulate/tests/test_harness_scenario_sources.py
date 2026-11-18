@@ -204,3 +204,12 @@ def test_records_endpoint_reads_seed_rows_only(user, workspace, storage, auth_cl
             "rows": [],
             "available": False,
         }
+
+
+def test_a_case_from_real_evidence_says_it_is_not_an_exact_replay():
+    """A case cites a transcript or a record it was built from; its source never claims to replay it."""
+    from simulate.services.harness_scenario_sources import _label
+
+    label = _label("evidence_case", "evidence:42", "", [], None)
+
+    assert label == "Based on evidence case 42, not an exact replay"
