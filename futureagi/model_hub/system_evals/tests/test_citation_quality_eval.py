@@ -11,6 +11,8 @@ Verifies:
 
 from __future__ import annotations
 
+import os
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -141,7 +143,7 @@ def test_existing_catalog_adds_citation_judge_without_replacing_advice(monkeypat
             previous_install.setattr(
                 seeder, "load_yaml_evals", lambda: previous_catalog
             )
-            previous_install.setattr(seeder, "SYSTEM_EVALS_VERSION", 32)
+            previous_install.setattr(seeder, "SYSTEM_EVALS_VERSION", 33)
             seeder.seed_evals(force=True)
         advice_before = templates.values().get(eval_id=203)
         assert advice_before["name"] == "advice_authority_boundary"
@@ -199,3 +201,46 @@ def test_criteria_covers_fabricated_citations(eval_def):
 def test_criteria_covers_completeness(eval_def):
     criteria = eval_def["criteria"].lower()
     assert "complet" in criteria
+
+
+@pytest.mark.live_llm
+def test_uncited_answers_score_by_need_for_a_source(eval_def, monkeypatch):
+    """Opt-in with CITATION_JUDGE_MODEL served on a local OpenAI-compatible port."""
+    from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import (
+        CustomPromptEvaluator,
+    )
+
+    model = os.environ.get("CITATION_JUDGE_MODEL")
+    if not model:
+        pytest.skip("Set CITATION_JUDGE_MODEL to a locally served judge")
+    port = int(os.environ.get("CITATION_JUDGE_PORT", "8080"))
+    monkeypatch.setenv("OPENAI_API_BASE", f"http://127.0.0.1:{port}/v1")
+    config = seeder._yaml_to_template_fields(deepcopy(eval_def))["config"]
+    judge = CustomPromptEvaluator(
+        rule_prompt=config["rule_prompt"],
+        output_type=config["output"],
+        model=f"openai/{model}",
+        provider="openai",
+        api_key="local-test-only",
+    )
+    judge.temperature = 0
+    context = (
+        "[1] Alder Observatory maintenance log: the lens was replaced on May 7.\n"
+        "[2] Larch Observatory maintenance log: the lens was replaced on July 9."
+    )
+    scores = [
+        judge._evaluate(
+            context=context,
+            input=question,
+            output=answer,
+            required_keys=config["required_keys"],
+        )["data"]["result"]
+        for question, answer in [
+            (
+                "When was the Alder lens replaced? Cite the log.",
+                "The Alder Observatory lens was replaced on May 7.",
+            ),
+            ("Say hello.", "Hello!"),
+        ]
+    ]
+    assert scores == [0.0, 1.0], "Distinguish a missing citation from one not needed"
