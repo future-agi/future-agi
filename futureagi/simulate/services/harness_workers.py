@@ -131,19 +131,7 @@ def _call_turns(call: CallExecution, sealed: list[SealedToolCall]) -> list[CallT
     start = _clock_start(call, sealed)
     if start is None:
         return []
-    said = []
-    for message in ChatMessageModel.objects.filter(call_execution=call).order_by(
-        "created_at"
-    ):
-        for item in message.content if isinstance(message.content, list) else []:
-            if (
-                isinstance(item, dict)
-                and isinstance(item.get("start_time_ms"), (int, float))
-                and message.role in _ROLES
-            ):
-                said.append(
-                    (item["start_time_ms"], _ROLES[message.role], item.get("content"))
-                )
+    said = _transcript_said(timed_messages(call))
     if not said:
         said = _transcript_said(
             CallTranscript.objects.filter(
@@ -151,6 +139,25 @@ def _call_turns(call: CallExecution, sealed: list[SealedToolCall]) -> list[CallT
             ).values("speaker_role", "content", "start_time_ms")
         )
     return _timed(start, said)
+
+
+def timed_messages(call: CallExecution) -> list[dict[str, Any]]:
+    """A chat call's caller and agent messages that say when each was said, as transcript rows: what its turns are read
+    from, and what a rerun snapshot keeps, since a later attempt's messages replace these."""
+    return [
+        {
+            "speaker_role": message.role,
+            "content": item.get("content"),
+            "start_time_ms": item["start_time_ms"],
+        }
+        for message in ChatMessageModel.objects.filter(call_execution=call).order_by(
+            "created_at"
+        )
+        if message.role in _ROLES
+        for item in (message.content if isinstance(message.content, list) else [])
+        if isinstance(item, dict)
+        and isinstance(item.get("start_time_ms"), (int, float))
+    ]
 
 
 def _transcript_said(
@@ -179,7 +186,7 @@ def _timed(
 def _attempt_turns(
     attempt: CallExecutionSnapshot, sealed: list[SealedToolCall]
 ) -> list[CallTurn]:
-    """An earlier attempt's messages with when each was said, from the transcript its rerun snapshot kept."""
+    """An earlier attempt's messages with when each was said, from the transcript or chat its rerun snapshot kept."""
     start = _clock_start(attempt, sealed)
     if start is None:
         return []
@@ -568,7 +575,8 @@ def record_call_workers(
     since = reset.timestamp() if reset is not None else None
     if traces.project_id is not None:
         with application_read_context(execution_cap_ms=SPAN_READ_CAP_MS):
-            # Making the client, reading and closing it are one read: any of them failing reads as spans unavailable.
+            # Making the client or reading through it failing reads as spans unavailable; closing it failing keeps the
+            # spans already read.
             reader = None
             try:
                 reader = get_reader()

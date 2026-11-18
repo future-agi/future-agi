@@ -5213,15 +5213,17 @@ def test_a_failed_dispatch_during_a_rerun_never_marks_the_new_attempt_unreadable
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["voice", "text"])
 def test_an_attempt_rerun_before_its_first_read_keeps_its_turns_from_the_snapshot(
-    user, workspace, storage, settings, auth_client
+    user, workspace, storage, settings, auth_client, modality
 ):
     """A two-turn attempt rerun before its read ran: its hand-off was made after the caller's second message, so the
-    record built from its snapshot puts it in turn 2 with that turn's request and reply, read from the transcript the
-    snapshot kept (the call's own rows now belong to the new attempt)."""
+    record built from its snapshot puts it in turn 2 with that turn's request and reply, read from the transcript or
+    chat the snapshot kept (the call's own rows now belong to the new attempt, and a text call's are replaced)."""
     from datetime import UTC, datetime
 
     from simulate.models import CallExecution, CallTranscript
+    from simulate.models.chat_message import ChatMessageModel
     from simulate.models.test_execution import CallExecutionSnapshot
     from simulate.services.call_rerun import clear_call_for_rerun
     from simulate.tests.test_harness_versioning_picks import _create, _environment
@@ -5265,12 +5267,29 @@ def test_an_attempt_rerun_before_its_first_read_keeps_its_turns_from_the_snapsho
         ("user", "Refund order 1042 please", 20_000),
         ("assistant", "Your refund is issued", 40_000),
     ):
-        CallTranscript.objects.create(
-            call_execution=call, speaker_role=role, content=text, start_time_ms=offset
-        )
+        if modality == "voice":
+            CallTranscript.objects.create(
+                call_execution=call,
+                speaker_role=role,
+                content=text,
+                start_time_ms=offset,
+            )
+        else:
+            ChatMessageModel.objects.create(
+                call_execution=call,
+                role=role,
+                messages=[text],
+                content=[{"role": role, "content": text, "start_time_ms": offset}],
+                session_id=f"alk-chat-{call.id}",
+                tool_calls=[],
+                organization=call.test_execution.run_test.organization,
+                workspace=call.test_execution.run_test.workspace,
+            )
     call.refresh_from_db()
 
     clear_call_for_rerun(call, clear_metadata=False)
+    # The new attempt's ingestion replaces a text call's messages.
+    ChatMessageModel.objects.filter(call_execution=call).delete()
     snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
     body = auth_client.get(
         f"/simulate/v3/call-executions/{call.id}/workers/",
