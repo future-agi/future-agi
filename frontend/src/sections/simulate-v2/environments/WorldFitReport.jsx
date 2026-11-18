@@ -68,6 +68,7 @@ export default function WorldFitReport({
   const agentTools = agentToolNamesOf(agent);
   /* Plain name matches need no look — folded unless opened. */
   const [showMatched, setShowMatched] = useState(false);
+  const [showUnmeasured, setShowUnmeasured] = useState(false);
   const isPlainMatch = (r) => r.kind === "matched" && !r.needsInput;
   const matched = fit.rows.filter(isPlainMatch);
   const shown = showMatched
@@ -85,13 +86,20 @@ export default function WorldFitReport({
         />
         <Typography sx={{ typography: "s1" }}>
           <Box component="span" sx={{ fontWeight: 600 }}>
-            {VERDICT[fit.verdict].label}
+            {/* Nothing measurable isn't partial: say so plainly. */}
+            {fit.verdict === "partial" &&
+            fit.total > 0 &&
+            fit.unmeasured.length === fit.total
+              ? "Can't be measured"
+              : VERDICT[fit.verdict].label}
           </Box>
           {fit.verdict === "ready"
             ? ` — all ${total} cases run on ${agent.name}, unchanged.`
             : fit.verdict === "needs_input"
               ? ` — ${fit.needsInput.length} mapping${fit.needsInput.length === 1 ? "" : "s"} to review: the names line up, but ${fit.needsInput.length === 1 ? "something differs" : "things differ"} underneath. Review ${fit.needsInput.length === 1 ? "it" : "them"} below before the run.`
-              : ` — ${fit.unmeasured.length} of ${total} cases can't be measured${fit.channel.ok ? "" : `, and ${agent.name} is a ${fit.channel.agent} agent in a ${fit.channel.world} world`}. They stay listed, never dropped.`}
+              : fit.total > 0 && fit.unmeasured.length === fit.total
+                ? ` — ${agent.name} has none of this world's tools. Pair one below, or choose another world.`
+                : ` — ${fit.unmeasured.length} of ${total} cases can't be measured${fit.channel.ok ? "" : `, and ${agent.name} is a ${fit.channel.agent} agent in a ${fit.channel.world} world`}. They stay listed, never dropped.`}
         </Typography>
       </Stack>
       {/* Why this table exists, in one line. */}
@@ -308,33 +316,28 @@ export default function WorldFitReport({
             py: 1,
           }}
         >
-          <Stack
-            direction="row"
-            alignItems="baseline"
-            spacing={1}
-            sx={{ mb: 0.5 }}
-          >
+          <Stack direction="row" alignItems="baseline" spacing={1.5}>
             <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
               {`${fit.unmeasured.length} ${fit.unmeasured.length === 1 ? "case" : "cases"} can't be measured with ${agent.name}`}
             </Typography>
+            {/* Which cases: on request, not a list by default. */}
+            <TextLink onClick={() => setShowUnmeasured((v) => !v)}>
+              {showUnmeasured ? "Hide" : "Show which"}
+            </TextLink>
             {onOtherWorld && (
               <TextLink onClick={onOtherWorld}>Choose another world</TextLink>
             )}
           </Stack>
-          {fit.unmeasured.slice(0, 5).map((s) => (
-            <Typography
-              key={s.id}
-              noWrap
-              sx={{ typography: "s3", color: "text.secondary" }}
-            >
-              {s.title}
-            </Typography>
-          ))}
-          {fit.unmeasured.length > 5 && (
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {`+${fit.unmeasured.length - 5} more`}
-            </Typography>
-          )}
+          {showUnmeasured &&
+            fit.unmeasured.map((s) => (
+              <Typography
+                key={s.id}
+                noWrap
+                sx={{ typography: "s3", color: "text.secondary" }}
+              >
+                {s.title}
+              </Typography>
+            ))}
         </Box>
       )}
     </Stack>

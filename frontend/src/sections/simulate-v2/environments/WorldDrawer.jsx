@@ -98,7 +98,7 @@ export default function WorldDrawer({
                   : entry?.host
                     ? `${entry.host.name} · ${entry.task} · release ${entry.release.version}`
                     : entry
-                      ? `${entry.id} · ${entry.task} · release ${entry.release.version}`
+                      ? `${entry.task} · release ${entry.release.version}`
                       : "Use it with one of your agents."}
               </Typography>
             </Box>

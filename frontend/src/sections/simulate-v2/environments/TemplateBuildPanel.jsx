@@ -316,7 +316,11 @@ export default function TemplateBuildPanel({
                 title={
                   fit?.verdict === "needs_input"
                     ? "Review the mappings that need input first"
-                    : ""
+                    : fit &&
+                        fit.total > 0 &&
+                        fit.unmeasured.length === fit.total
+                      ? "Nothing can be measured yet — pair a world tool, or choose another world"
+                      : ""
                 }
               >
                 <span>
@@ -324,13 +328,21 @@ export default function TemplateBuildPanel({
                     variant="contained"
                     color="primary"
                     disabled={
-                      !agent || !!blocked || fit?.verdict === "needs_input"
+                      !agent ||
+                      !!blocked ||
+                      fit?.verdict === "needs_input" ||
+                      /* Nothing to run until one world tool is paired. */
+                      (fit &&
+                        fit.total > 0 &&
+                        fit.unmeasured.length === fit.total)
                     }
                     onClick={() => startBuild(false)}
                     startIcon={<Iconify icon="solar:play-bold" width={16} />}
                     sx={{ whiteSpace: "nowrap" }}
                   >
-                    {fit?.verdict === "partial" && fit.unmeasured.length
+                    {fit?.verdict === "partial" &&
+                    fit.unmeasured.length &&
+                    fit.unmeasured.length < fit.total
                       ? `Run the ${fit.total - fit.unmeasured.length} measurable cases`
                       : "Run the same cases"}
                   </Button>

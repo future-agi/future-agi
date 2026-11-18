@@ -140,7 +140,10 @@ export default function DesignReview({
           ? "None readable yet"
           : scratch
             ? "Your description"
-            : "The agent alone"}
+            : env?.builtFrom?.worldSource?.kind === "template" &&
+                !env?.builtFrom?.connectedAgent
+              ? `The ready world${env.builtFrom.request ? " and your change" : ""}`
+              : "The agent alone"}
       {canAdd && (
         <Button
           size="small"
@@ -494,7 +497,11 @@ export default function DesignReview({
                 ) : (
                   <PlanLine
                     key={`${i}-${r}`}
-                    src={ruleSrc}
+                    src={
+                      (env?.requestRules || []).includes(r)
+                        ? "From your change"
+                        : ruleSrc
+                    }
                     onEdit={
                       onChange &&
                       (() => {

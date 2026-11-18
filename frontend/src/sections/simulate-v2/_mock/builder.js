@@ -347,6 +347,9 @@ const toolsOfSource = (source) =>
 */
 const readKindOf = (source) => {
   const k = source?.kind;
+  /* A customized copy of a ready world has no agent: it reads the world. */
+  if (!k && source?.worldSource?.kind === "template" && !source?.connectedAgent)
+    return "world";
   if (k === "repo" || k === "upload") return "code";
   if (k === "template" || k === "twin") return "world";
   if (
@@ -424,7 +427,7 @@ const STAGES = {
       ],
       world: [
         think(
-          `Reading ${source.value || "the world"} — its tools, tables and rules.`,
+          `Reading ${source.value || ws?.label || "the world"} — its tools, tables and rules.`,
         ),
       ],
       endpoint: [
@@ -883,6 +886,8 @@ export const derivedEnvironment = (source, { id } = {}) => {
             : t,
         ),
         rules: asked.envPatch.rules,
+        /* The limits the change added, so the design can say where they came from. */
+        requestRules: asked.added.rules,
         ...(asked.envPatch.starterScenarios && {
           starterScenarios: asked.envPatch.starterScenarios,
         }),
