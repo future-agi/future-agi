@@ -462,16 +462,19 @@ export default function ScenariosStep({
   // Edits route through the amend route as set_field / set_persona ops (the
   // editor emits only the changed writable fields). A refused receipt surfaces
   // its `why`; a success invalidates the list + coverage so the row updates.
-  const saveScenario = ({ changes, rework }) => {
-    if (!changes?.length) return;
-    amend.mutate(
-      { rework, changes },
-      {
-        onSuccess: (data) => surfaceReceipts(data, "Saved"),
-        onError: () =>
-          enqueueSnackbar("Couldn't save. Try again", { variant: "error" }),
-      },
-    );
+  // Resolves to { refused, failed } so the editor can stay open on a refusal.
+  const saveScenario = async ({ changes, rework }) => {
+    try {
+      const data = await amend.mutateAsync({ rework, changes });
+      surfaceReceipts(data, "Saved");
+      const refused = (data?.receipts || []).filter(
+        (one) => one.outcome === "refused",
+      );
+      return { refused, failed: false };
+    } catch {
+      enqueueSnackbar("Couldn't save. Try again", { variant: "error" });
+      return { refused: [], failed: true };
+    }
   };
 
   return (
@@ -684,6 +687,7 @@ export default function ScenariosStep({
         scenarioEditing={pageData.scenarioEditing}
         noiseOptions={noiseOptions}
         levelLabels={pageData.levelLabels}
+        env={env}
       />
       <ConfirmDialog
         open={!!pendingDelete}

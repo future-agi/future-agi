@@ -32,7 +32,8 @@ from django.db import close_old_connections, transaction
 from django.utils import timezone
 from temporalio import activity
 
-from simulate.models.test_execution import CallExecution
+from simulate.models.test_execution import CallExecution, CallTranscript
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.services.harness_evals import effective_simulation_mapping
@@ -44,6 +45,7 @@ from simulate.temporal.types.activities import (
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.stored_transcript_roles import call_actor_label
 from simulate.utils.test_execution_utils import (
     accrue_check_run_eval_cost,
     eval_source,
@@ -242,7 +244,9 @@ def _build_transcript_data(call_execution):
         if is_text:
             transcripts = call_execution.chat_messages.all().order_by("created_at")
         else:
-            transcripts = call_execution.transcripts.all().order_by("start_time_ms")
+            transcripts = with_speakers(call_execution.transcripts.all()).order_by(
+                "start_time_ms"
+            )
 
         if transcripts.exists():
             transcript_text = []
@@ -306,6 +310,10 @@ def _build_transcript_data(call_execution):
                 conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
                     if not transcript.content.strip():
+                        continue
+                    if transcript.speaker_role == CallTranscript.SpeakerRole.ACTOR:
+                        speaker = call_actor_label(transcript.speaker_name)
+                        transcript_text.append(f"{speaker}: {transcript.content}")
                         continue
                     if transcript.speaker_role not in conversational_roles:
                         continue
