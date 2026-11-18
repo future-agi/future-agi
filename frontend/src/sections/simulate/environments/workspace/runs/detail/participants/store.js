@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from "src/utils/zustand";
 import { useShallow } from "zustand/react/shallow";
 
 // The trials table's view, kept while the drawer moves between trials (each trial remounts the Participants panel).
