@@ -164,7 +164,8 @@ def worker_enforcement(
         return "bypassed"
     if binding != "separate" or unheld:
         return "not_enforced"
-    if trial is None:
+    if trial is None or trial.get("stopped_workers_unreadable") is True:
+        # With no trial, or whether the harness stopped its workers could not be read: not known, never held.
         return "unknown"
     if trial.get("door") is True and trial.get("worker_channels") is True:
         return "held_at_world" if at_door else "unknown"
