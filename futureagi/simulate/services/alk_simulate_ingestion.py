@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from io import BytesIO
+from itertools import pairwise
 from typing import Any
 
 import structlog
@@ -1562,9 +1563,13 @@ def _store_alk_chat_messages(
     ``tool_calls``, ``tool_call_result``) folds into that exchange's single
     ASSISTANT row. Folding keeps the agent's real tool activity visible while
     ``turn_count`` (COUNT of ASSISTANT rows) still equals the exchange count, the
-    native chat semantic. The USER and ASSISTANT rows of one exchange **share a
-    created_at**: that is what the chat UI groups a turn by — staggering per row
-    made every message render as interrupted.
+    native chat semantic.
+
+    Each row gets its own ``created_at``, in conversation order, anchored at the
+    call's ``started_at`` (the receipt's start time): the row's first segment's
+    ``start_time_ms`` offset when the transcript's offsets rise row by row, else
+    one second per row. Readers order a chat by ``created_at`` alone, so rows
+    must not share one.
 
     Mirrors ``simulate/tasks/chat_sim.py`` store_chat_messages (agent → ASSISTANT,
     simulator → USER). ``latency_ms`` is carried from the last agent segment that
@@ -1639,10 +1644,11 @@ def _store_alk_chat_messages(
         )
 
     rows: list[ChatMessageModel] = []
-    for index, exchange in enumerate(exchanges):
-        created_at = base + timedelta(seconds=index)
+    row_offsets_ms: list[int | None] = []
+    for exchange in exchanges:
         if exchange["user"] is not None:
-            rows.append(_row(ChatRole.USER, "user", [exchange["user"]], created_at))
+            rows.append(_row(ChatRole.USER, "user", [exchange["user"]], base))
+            row_offsets_ms.append(exchange["user"].get("start_time_ms"))
         agent_segs = exchange["agent"]
         if agent_segs:
             latency = next(
@@ -1654,14 +1660,22 @@ def _store_alk_chat_messages(
                 None,
             )
             rows.append(
-                _row(ChatRole.ASSISTANT, "assistant", agent_segs, created_at, latency)
+                _row(ChatRole.ASSISTANT, "assistant", agent_segs, base, latency)
             )
+            row_offsets_ms.append(agent_segs[0].get("start_time_ms"))
+
+    timed = all(isinstance(ms, int) for ms in row_offsets_ms) and all(
+        later > earlier for earlier, later in pairwise(row_offsets_ms)
+    )
+    transcript_times = [
+        base + (timedelta(milliseconds=ms) if timed else timedelta(seconds=index))
+        for index, ms in enumerate(row_offsets_ms)
+    ]
 
     if rows:
         # ``created_at`` is ``auto_now_add``, so bulk_create stamps every row
         # with the import time. Write the transcript's own times back after the
         # insert so the conversation keeps the date it actually happened.
-        transcript_times = [row.created_at for row in rows]
         ChatMessageModel.objects.bulk_create(rows)
         for row, created_at in zip(rows, transcript_times, strict=True):
             row.created_at = created_at
