@@ -785,6 +785,26 @@ export default function EnvironmentWorkspace() {
       env.buildStatus === "awaiting_approval"
         ? (latestEnvState.current.designQuestions || []).find((q) => !q.answer)
         : null;
+    /* Files still being read: the builder says so, then what it found once
+       the reading is done — never a finding before the page shows it. */
+    const readLeft = (env.designReadUntil || 0) - Date.now();
+    const readingNote =
+      env.buildStatus === "awaiting_approval" && readLeft > 0
+        ? `Reading ${designSourcesSummary(env, latestEnvState.current)
+            .sources.map((x) => x.name)
+            .join(", ")} — I'll say what I found in a moment.`
+        : null;
+    const greetText = openQ
+      ? `I drafted ${env.name} from your description — the design is on the right. One question first: ${openQ.why}`
+      : env.buildStatus === "awaiting_approval" &&
+          env.builtFrom?.kind === "scratch" &&
+          designIsEmpty(env, latestEnvState.current)
+        ? emptyDesignGreeting(env, latestEnvState.current)
+        : env.buildStatus === "awaiting_approval"
+          ? `${env.name}'s design is waiting for your approval — it's on the right. Nothing is built until you approve.`
+          : env.buildStatus === "building"
+            ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
+            : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`;
     setTurns((prev) =>
       prev.length && !switched
         ? prev
@@ -795,17 +815,7 @@ export default function EnvironmentWorkspace() {
               steps: [
                 {
                   kind: "note",
-                  text: openQ
-                    ? `I drafted ${env.name} from your description — the design is on the right. One question first: ${openQ.why}`
-                    : env.buildStatus === "awaiting_approval" &&
-                        env.builtFrom?.kind === "scratch" &&
-                        designIsEmpty(env, latestEnvState.current)
-                      ? emptyDesignGreeting(env, latestEnvState.current)
-                      : env.buildStatus === "awaiting_approval"
-                        ? `${env.name}'s design is waiting for your approval — it's on the right. Nothing is built until you approve.`
-                        : env.buildStatus === "building"
-                          ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
-                          : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
+                  text: readingNote || greetText,
                 },
                 ...(openQ
                   ? [
@@ -828,6 +838,23 @@ export default function EnvironmentWorkspace() {
             ...(latestEnvState.current.chatHistory || []).map(restoredTurn),
           ],
     );
+    if (readingNote)
+      setTimeout(
+        () =>
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === "ws-greet"
+                ? {
+                    ...t,
+                    steps: t.steps.map((st, i) =>
+                      i === 0 ? { ...st, text: greetText } : st,
+                    ),
+                  }
+                : t,
+            ),
+          ),
+        readLeft + 150,
+      );
   }, [env?.id, state.hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
   /* Approving finishes the build here, so the greeting that said the design
      was waiting moves on with it instead of going stale. */
@@ -2069,6 +2096,13 @@ export default function EnvironmentWorkspace() {
     const latest = latestEnvState.current;
     const merged = mergeDesignFiles(latest, read);
     patch({ sources: merged.sources });
+    /* New files are read before the design shows them (builder.md §1). */
+    if (merged.fresh.length)
+      dispatch({
+        type: "patchEnvironment",
+        envId: env.id,
+        patch: { designReadUntil: Date.now() + 3600 },
+      });
     const res = designFromSourcesPatch(env, merged.fresh, merged.sources);
     if (res)
       dispatch({

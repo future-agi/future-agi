@@ -82,10 +82,9 @@ export const designSourcesSummary = (env, envState) => {
  * Nothing to build: no records and no actions, from the description or its
  * files. Rules alone aren't a world — the agent needs something to act on.
  */
-export const designIsEmpty = (env, envState) =>
-  !(env?.seed?.tables || []).length &&
-  !(env?.tools || []).length &&
-  !designSourcesSummary(env, envState).tableItems.length;
+/* Nothing to build until it knows what the agent does: no tools, no
+   actions to test — whatever records or rules the files hold. */
+export const designIsEmpty = (env) => !(env?.tools || []).length;
 
 /** The envState patch approving the design applies, or null with no files. */
 export const designSourcesPatch = (env, envState) => {

@@ -1,9 +1,10 @@
 import PropTypes from "prop-types";
-import { Children, isValidElement, useState } from "react";
+import { Children, isValidElement, useEffect, useState } from "react";
 import {
   Box,
   Button,
   ButtonBase,
+  CircularProgress,
   IconButton,
   Stack,
   TextField,
@@ -61,6 +62,33 @@ export default function DesignReview({
      they shape this design and join the first version. */
   const canAdd = !!(onAddFiles && onAddOrg);
   const files = sources?.sources || [];
+  /* Reading the files: the parts fill in as they're found, in order, so the
+     wait is visible (builder.md §1–3). The proposal is the quick step; the
+     build after approval is the slow one. */
+  const readUntil = waiting ? env?.designReadUntil || 0 : 0;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!readUntil || Date.now() >= readUntil) return undefined;
+    const t = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(t);
+  }, [readUntil]);
+  const READ_MS = 3600;
+  const readLeft = Math.max(0, readUntil - now);
+  const reading = readLeft > 0;
+  const READ_AT = {
+    Records: 0.2,
+    Tools: 0.45,
+    Rules: 0.7,
+    People: 0.82,
+    Scenarios: 0.97,
+  };
+  const shown = (part) =>
+    !reading || READ_MS - readLeft >= READ_AT[part] * READ_MS;
+  const readingNames =
+    files
+      .map((f) => f.name)
+      .slice(0, 2)
+      .join(", ") + (files.length > 2 ? ` and ${files.length - 2} more` : "");
   const sourcesValue = (
     <>
       {files.length
@@ -135,11 +163,10 @@ export default function DesignReview({
   const fileTables = sources?.tableItems || [];
   const fileRules = sources?.ruleItems || [];
   const unusable = sources?.unusable || [];
-  const emptyWorld =
-    scratch &&
-    !(env?.seed?.tables || []).length &&
-    !(env?.tools || []).length &&
-    !fileTables.length;
+  /* Nothing to build until it knows what the agent does: no tools means no
+     actions to test, whatever records or rules the files hold. The builder
+     asks instead of inventing a world (builder.md §2). */
+  const emptyWorld = scratch && !(env?.tools || []).length;
   const status = parked
     ? "Parked"
     : waiting && emptyWorld
@@ -213,7 +240,7 @@ export default function DesignReview({
                 size="small"
                 variant="contained"
                 color="primary"
-                disabled={!!question || emptyWorld}
+                disabled={!!question || emptyWorld || reading}
                 onClick={onApprove}
                 startIcon={
                   <Iconify icon="solar:check-circle-linear" width={14} />
@@ -229,29 +256,30 @@ export default function DesignReview({
   );
   /* What blocks Approve, said once, with the action that clears it
      (design system: a disabled main button gets a banner that says why). */
-  const blocker = !waiting
-    ? null
-    : parked
-      ? {
-          text: `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Continue picks up the same design.`,
-          cta: "Continue",
-          onClick: onContinue,
-        }
-      : question
+  const blocker =
+    !waiting || reading
+      ? null
+      : parked
         ? {
-            text: `Answer the builder's question first: ${question}`,
-            cta: "Answer in builder",
-            onClick: onOpenChat,
+            text: `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Continue picks up the same design.`,
+            cta: "Continue",
+            onClick: onContinue,
           }
-        : emptyWorld
+        : question
           ? {
-              text: fileRules.length
-                ? `Your ${files.length === 1 ? "file adds" : "files add"} ${fileRules.length} rule${fileRules.length === 1 ? "" : "s"}, but nothing the agent works with yet. Name the records and actions, for example “customers and their orders; it can look up an order and refund up to $200”, or add a CSV of records.`
-                : "There's nothing to build yet. Name the records and actions the agent works with, for example “customers and their orders; it can look up an order and refund up to $200”.",
-              cta: "Describe in builder",
+              text: `Answer the builder's question first: ${question}`,
+              cta: "Answer in builder",
               onClick: onOpenChat,
             }
-          : null;
+          : emptyWorld
+            ? {
+                text: files.length
+                  ? `${readingNames} ${files.length === 1 ? "doesn't" : "don't"} say what the agent does. Describe it — for example “it triages new issues: labels, assigns and closes duplicates” — or add a file that does.`
+                  : "There's nothing to build yet. Say what the agent does and works with — for example “customers and their orders; it can look up an order and refund up to $200”.",
+                cta: "Describe in builder",
+                onClick: onOpenChat,
+              }
+            : null;
 
   if (framed)
     return (
@@ -291,7 +319,11 @@ export default function DesignReview({
     <>
       <Stack spacing={page ? 3 : 2.5}>
         <>
-          <PlanRow label="Records">
+          <PlanRow
+            label="Records"
+            pending={!shown("Records")}
+            reading={readingNames}
+          >
             {tables.length || fileTables.length ? (
               [
                 ...tables.map((t) => (
@@ -329,7 +361,11 @@ export default function DesignReview({
               </PlanLine>
             )}
           </PlanRow>
-          <PlanRow label="Tools">
+          <PlanRow
+            label="Tools"
+            pending={!shown("Tools")}
+            reading={readingNames}
+          >
             {tools.length ? (
               tools.map((t) => (
                 <PlanLine
@@ -363,7 +399,11 @@ export default function DesignReview({
                 </PlanLine>
               ))}
           </PlanRow>
-          <PlanRow label="Rules">
+          <PlanRow
+            label="Rules"
+            pending={!shown("Rules")}
+            reading={readingNames}
+          >
             {rules.length ? (
               rules.map((r, i) =>
                 editing === i ? (
@@ -442,7 +482,11 @@ export default function DesignReview({
               </PlanLine>
             ))}
           </PlanRow>
-          <PlanRow label="People">
+          <PlanRow
+            label="People"
+            pending={!shown("People")}
+            reading={readingNames}
+          >
             <PlanLine>
               Caller
               <Box component="span" sx={{ color: "text.secondary", ml: 0.75 }}>
@@ -467,9 +511,17 @@ export default function DesignReview({
           </PlanRow>
           <PlanRow
             label="Scenarios"
-            count={groups.reduce((n, g) => n + g.n, 0) || draftCount}
+            pending={!shown("Scenarios")}
+            reading={readingNames}
+            count={
+              emptyWorld ? 0 : groups.reduce((n, g) => n + g.n, 0) || draftCount
+            }
           >
-            {page && cases.length ? (
+            {emptyWorld ? (
+              <PlanLine empty>
+                Written once it knows what the agent does
+              </PlanLine>
+            ) : page && cases.length ? (
               [
                 ...cases.slice(0, allCases ? cases.length : 6).map((r) => (
                   <PlanLine key={r.id || r.key} src={r.useCase || r.branch}>
@@ -588,7 +640,9 @@ export default function DesignReview({
             <Typography
               sx={{ typography: "s1", color: "text.tertiary", mt: 0.25 }}
             >
-              Nothing is built until you approve — a clean build saves as v1.
+              {reading
+                ? `Reading ${readingNames} — the design fills in as it's read.`
+                : "Nothing is built until you approve — a clean build saves as v1."}
             </Typography>
           </Box>
           {canAdd && (
@@ -1000,12 +1054,13 @@ const linkSx = {
 
 /* One section of the plan: a heading with its count, then its lines in a
    bordered list — the spec-sheet look the rest of the environment uses. */
-function PlanRow({ label, count, children }) {
-  const n =
-    count ??
-    Children.toArray(children).filter(
-      (c) => isValidElement(c) && !c.props.empty,
-    ).length;
+function PlanRow({ label, count, children, pending = false, reading = "" }) {
+  const n = pending
+    ? ""
+    : count ??
+      Children.toArray(children).filter(
+        (c) => isValidElement(c) && !c.props.empty,
+      ).length;
   /* Design system list rows: the heading carries the count; rows sit on the
      page with a hairline under each one and no box around them. */
   return (
@@ -1031,7 +1086,21 @@ function PlanRow({ label, count, children }) {
           "& > *": { borderBottom: "1px solid", borderColor: "divider" },
         }}
       >
-        {children}
+        {pending ? (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ px: 1.5, py: 1.25 }}
+          >
+            <CircularProgress size={12} thickness={5} />
+            <Typography sx={{ typography: "s1", color: "text.tertiary" }}>
+              {reading ? `Reading ${reading}…` : "Reading…"}
+            </Typography>
+          </Stack>
+        ) : (
+          children
+        )}
       </Box>
     </Box>
   );
@@ -1040,6 +1109,9 @@ PlanRow.propTypes = {
   label: PropTypes.string,
   count: PropTypes.number,
   children: PropTypes.node,
+  /* Still being read from the files. */
+  pending: PropTypes.bool,
+  reading: PropTypes.string,
 };
 
 /* A quiet icon action at the end of a line; the word is on hover. */

@@ -171,6 +171,10 @@ const isTable = (ext) => ["csv", "tsv", "json", "jsonl", "xlsx"].includes(ext);
    notes ("if you use npm…") don't become rules. */
 const RULE_SENTENCE =
   /\b(must|never|always|may only|can only|only (?:if|when|after|before|one)|requires? (?:a |an )?(?:approval|sign-?off)|not allowed|cannot|can't|up to \$\d|over \$\d|within \d+ (?:days?|hours?))\b/i;
+/* Rules for people changing the code (a CONTRIBUTING guide) aren't rules
+   the agent is graded on. */
+const DEV_PROCESS =
+  /\b(pull requests?|PRs?|commits?|mypy|lint(ing|er)?|ruff|black|pre-commit|type hints?|docstrings?|unit tests?|test suite|code review|branch(es)?|merge|CI|baseline|changelog|semver|maintainers?|contributors?)\b/i;
 /* A rule is a sentence: words, not markup, a table cell or a label. */
 const isSentence = (x) =>
   x.split(/\s+/).length >= 5 && !/[<>{}|]/.test(x) && /[a-z]/.test(x);
@@ -208,6 +212,7 @@ const passagesOfText = (raw) => {
           page: section,
           text: sentence,
           ...(RULE_SENTENCE.test(sentence) &&
+            !DEV_PROCESS.test(sentence) &&
             isSentence(sentence) &&
             sentence.length <= 200 && { rule: sentence.replace(/\s+/g, " ") }),
         }),

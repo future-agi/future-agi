@@ -3010,16 +3010,19 @@ function PanelScratch() {
     const proposed = scratchDesignOf(readText);
     const design = {
       ...proposed,
-      /* A table a file seeds isn't proposed a second time, empty. */
-      tables: proposed.tables.filter((t) => !fileTables.has(t.name)),
+      /* A table a file seeds isn't proposed a second time, empty. With no
+         action found, nothing is invented: records come with what the agent
+         does (a stray word like "service" isn't a world). */
+      tables: proposed.tools.length
+        ? proposed.tables.filter((t) => !fileTables.has(t.name))
+        : [],
     };
     /* Rules come from the description; a file's rules arrive cited. */
     const derivedRules = deriveScratchRules(flowText);
-    const derivedScenarios = deriveScratchScenarios(
-      readText,
-      finalName,
-      design.tools,
-    );
+    /* No actions known yet: no filler cases — they're written once it is. */
+    const derivedScenarios = design.tools.length
+      ? deriveScratchScenarios(readText, finalName, design.tools)
+      : [];
     const derivedEvals = deriveScratchEvals(flowText);
     const env = {
       id: envId,
@@ -3061,6 +3064,8 @@ function PanelScratch() {
       evalPreset: derivedEvals,
       buildStatus: "awaiting_approval",
       designPendingAt: Date.now(),
+      /* Files are read before the design shows in full. */
+      ...(attachments.length && { designReadUntil: Date.now() + 3600 }),
       /* Written by the build once the design is approved. */
       starterScenarios: derivedScenarios,
     };
