@@ -4026,3 +4026,25 @@ class TestCheckRunReceipts:
             call.call_metadata.get("eval_started"),
             call.call_metadata.get("eval_completed"),
         ) == (True, True)
+
+
+def test_a_suite_private_to_a_fix_is_never_reused_as_a_saved_twin(source_run):
+    """Save and Validate reuse an active version with the same content; never one only a fix's check runs see."""
+    from simulate.models import HarnessSuiteVersion
+    from simulate.services.harness_versioning.draft_pieces import active_twin
+
+    environment = source_run.environment
+    suite = environment.suite_version
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(
+        fix_run=_fix_run(source_run)
+    )
+
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind)
+        is None
+    )
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(fix_run=None)
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind).id
+        == suite.id
+    )

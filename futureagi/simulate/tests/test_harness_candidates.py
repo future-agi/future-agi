@@ -428,7 +428,12 @@ def test_candidates_are_not_pickable_movable_or_twins(
     ) == ("candidate", "ready", None, False)
     # A later draft with the same content is not saved onto the candidate.
     draft = drafts.open_draft(environment, "environment")
-    assert drafts.active_twin(HarnessEnvironmentVersion, environment, draft) is None
+    assert (
+        drafts.active_twin(
+            HarnessEnvironmentVersion, environment, draft.hash, draft.hash_kind
+        )
+        is None
+    )
 
 
 def test_twin_skips_the_candidate(user, workspace, storage, auth_client):

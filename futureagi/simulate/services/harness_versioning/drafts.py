@@ -1288,7 +1288,7 @@ def activate_drafts(
             drafts[piece] = draft
     current = {piece: getattr(locked, f"{piece}_version") for piece in DRAFT_PIECES}
     twins = {
-        piece: active_twin(piece_model(piece), locked, draft)
+        piece: active_twin(piece_model(piece), locked, draft.hash, draft.hash_kind)
         for piece, draft in drafts.items()
     }
     targets = {

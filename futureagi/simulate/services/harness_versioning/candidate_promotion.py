@@ -95,7 +95,7 @@ def _promote(
     if version.status != VersionStatus.CANDIDATE:
         raise _not_validated()
     model = piece_model(piece)
-    twin = active_twin(model, locked, version)
+    twin = active_twin(model, locked, version.hash, version.hash_kind)
     if twin is not None:
         discard_version(version, reason=DiscardReason.SUPERSEDED)
         return twin, False
