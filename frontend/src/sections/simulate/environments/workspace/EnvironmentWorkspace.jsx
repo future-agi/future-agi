@@ -671,6 +671,7 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               onStartRun={startRun}
+              runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}
               runBlockedReason={blockedReason(
                 envState,
