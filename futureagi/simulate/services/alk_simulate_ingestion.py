@@ -1658,7 +1658,14 @@ def _store_alk_chat_messages(
             )
 
     if rows:
+        # ``created_at`` is ``auto_now_add``, so bulk_create stamps every row
+        # with the import time. Write the transcript's own times back after the
+        # insert so the conversation keeps the date it actually happened.
+        transcript_times = [row.created_at for row in rows]
         ChatMessageModel.objects.bulk_create(rows)
+        for row, created_at in zip(rows, transcript_times, strict=True):
+            row.created_at = created_at
+        ChatMessageModel.all_objects.bulk_update(rows, ["created_at"])
     return len(rows)
 
 

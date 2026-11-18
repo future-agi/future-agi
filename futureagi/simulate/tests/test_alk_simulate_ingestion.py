@@ -2010,6 +2010,56 @@ class TestTextModeIngestion:
         cmd = call.conversation_metrics_data or {}
         assert cmd.get("turn_count") == 1
 
+    def test_text_result_ingest_keeps_the_receipt_times_on_chat_messages(
+        self, auth_client, text_run_test
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from simulate.models.chat_message import ChatMessageModel
+
+        started = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        _, call_ids = _start_and_batch(auth_client, text_run_test)
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "started_at": started.isoformat(),
+                "ended_at": (started + timedelta(seconds=10)).isoformat(),
+                "duration_seconds": 10,
+                "transcript": [
+                    {"speaker_role": "user", "content": "Where is my order?"},
+                    {"speaker_role": "assistant", "content": "It ships today."},
+                    {"speaker_role": "user", "content": "Can I change the address?"},
+                    {"speaker_role": "assistant", "content": "Yes, done."},
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.started_at == started
+        assert call.duration_seconds == 10
+        rows = list(
+            ChatMessageModel.objects.filter(call_execution=call).order_by(
+                "created_at", "role"
+            )
+        )
+        assert [(r.role, r.created_at) for r in rows] == [
+            ("assistant", started),
+            ("user", started),
+            ("assistant", started + timedelta(seconds=1)),
+            ("user", started + timedelta(seconds=1)),
+        ]
+
+        detail = auth_client.get(f"/simulate/call-executions/{call.id}/")
+        assert detail.status_code == 200, detail.content
+        body = detail.json()
+        body = body.get("result", body)
+        assert body["start_time"].startswith("2026-01-02T03:04:05")
+        assert body["duration_seconds"] == 10
+        assert body["duration"] == 1.0
+
     def test_text_result_ingest_folds_tool_calls_into_agent_turn(
         self, auth_client, text_run_test
     ):
