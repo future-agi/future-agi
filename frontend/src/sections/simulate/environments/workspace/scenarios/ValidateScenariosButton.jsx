@@ -9,7 +9,7 @@ import {
 } from "src/api/harness/scenarios";
 import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 
-// "Validate all against the environment": proves every case of the default pair again; with
+// "Validate scenarios against the environment": proves every case of the default pair again; with
 // `keys`, only those cases, and the others keep their proofs. The button stays disabled while the
 // validation runs and the list refreshes when it ends, so each case shows its new state.
 export default function ValidateScenariosButton({
