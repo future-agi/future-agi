@@ -93,18 +93,22 @@ export default function ChatTranscriptPane({
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
   const rowRefs = useRef({});
-  // Turn n starts at the caller's nth message.
-  const focusIndex = focusTurn
-    ? turns.reduce(
-        (found, s, i) =>
-          found.index >= 0 || s.role !== "customer"
-            ? found
-            : found.seen + 1 === focusTurn.turn
-              ? { seen: found.seen + 1, index: i }
-              : { seen: found.seen + 1, index: -1 },
-        { seen: 0, index: -1 },
-      ).index
-    : -1;
+  // Turn n starts at the caller's nth message; turn 0, before the caller spoke, is the top.
+  const focusIndex = !focusTurn
+    ? -1
+    : focusTurn.turn < 1
+      ? turns.length
+        ? 0
+        : -1
+      : turns.reduce(
+          (found, s, i) =>
+            found.index >= 0 || s.role !== "customer"
+              ? found
+              : found.seen + 1 === focusTurn.turn
+                ? { seen: found.seen + 1, index: i }
+                : { seen: found.seen + 1, index: -1 },
+          { seen: 0, index: -1 },
+        ).index;
   useEffect(() => {
     if (focusIndex < 0) return;
     setRoleFilter("all");

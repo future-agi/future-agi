@@ -38,6 +38,22 @@ describe("ChatTranscriptPane", () => {
     expect(scrolled).toHaveBeenCalled();
   });
 
+  it("takes a step from before the caller spoke to the top of the transcript", () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    render(
+      <Pane
+        turns={[
+          { role: "agent", text: "Hello, how can I help?" },
+          { role: "customer", text: "One ride please" },
+        ]}
+        focusTurn={{ turn: 0 }}
+      />,
+    );
+    expect(
+      screen.getByText("Hello, how can I help?").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "true");
+  });
+
   it("names an actor with their role and how they were heard, and filters to them", async () => {
     render(
       <Pane
