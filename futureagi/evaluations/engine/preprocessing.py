@@ -438,14 +438,12 @@ def _preprocess_dead_air_detection(inputs):
     try:
         y, sr = librosa.load(io.BytesIO(audio_bytes), sr=None)
     except Exception as e:
-        # libsndfile can't read MP4/AAC (m4a). The loader already transcodes
-        # external URLs to MP3, but uploads, base64 and own-bucket audio
-        # arrive as-is, so transcode those the same way and retry.
+        # Raw uploads and own-bucket recordings aren't always readable by
+        # libsndfile. A PCM retry avoids adding an MP3 encoder delay.
         try:
-            from tfc.utils.storage import convert_to_mp3
+            from evaluations.engine.dead_air_audio import aac_to_wav
 
-            mp3_bytes, _ = convert_to_mp3(audio_bytes)
-            y, sr = librosa.load(io.BytesIO(mp3_bytes), sr=None)
+            y, sr = librosa.load(io.BytesIO(aac_to_wav(audio_bytes)), sr=None)
         except Exception:
             logger.warning("dead_air_preprocess_decode_failed", error=str(e))
             inputs["_dead_air_error"] = f"Could not decode audio: {e}"

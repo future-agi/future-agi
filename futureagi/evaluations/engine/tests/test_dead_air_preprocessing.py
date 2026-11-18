@@ -10,6 +10,7 @@ inspection.
 
 from __future__ import annotations
 
+import base64
 import io
 import math
 import shutil
@@ -125,6 +126,55 @@ def test_m4a_audio_is_decoded(tmp_path):
     assert "_dead_air_error" not in out
     assert out["_dead_air_percentage"] > 50.0
     assert out["_dead_air_max_gap_ms"] > 1000.0
+
+
+@pytest.mark.parametrize("as_base64", [False, True], ids=["uploaded-bytes", "base64"])
+def test_short_m4a_matches_original_waveform(tmp_path, as_base64):
+    # 1600 samples do not end on an AAC frame boundary (1024 samples).
+    duration = 0.2
+    wav = _synth_wav_bytes(duration_sec=duration)
+    m4a = _synth_m4a_bytes(tmp_path, duration_sec=duration)
+    value = base64.b64encode(m4a).decode("ascii") if as_base64 else {"bytes": m4a}
+    reference = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": wav}})
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": value})
+    assert "_dead_air_error" not in actual
+    assert actual["_dead_air_duration_sec"] == pytest.approx(
+        reference["_dead_air_duration_sec"], abs=1 / 8000
+    )
+    assert actual["_dead_air_percentage"] == reference["_dead_air_percentage"]
+    assert actual["_dead_air_max_gap_ms"] == reference["_dead_air_max_gap_ms"]
+
+
+def test_decodable_wav_does_not_require_ffmpeg():
+    wav = _synth_wav_bytes(duration_sec=0.2)
+    with patch("tfc.utils.media_tools.shutil.which", return_value=None) as which:
+        actual = preprocess_inputs(
+            "dead_air_detection", {"input_audio": {"bytes": wav}}
+        )
+    assert "_dead_air_error" not in actual
+    which.assert_not_called()
+
+
+def test_missing_ffmpeg_keeps_original_decode_error(monkeypatch):
+    librosa = pytest.importorskip("librosa")
+    monkeypatch.setenv("PATH", "")
+    with patch.object(
+        librosa, "load", side_effect=RuntimeError("unsupported recording")
+    ):
+        actual = preprocess_inputs(
+            "dead_air_detection", {"input_audio": {"bytes": b"recording"}}
+        )
+    assert actual["_dead_air_error"] == "Could not decode audio: unsupported recording"
+    assert "_dead_air_percentage" not in actual
+
+
+def test_oversize_pcm_is_not_scored(tmp_path, monkeypatch):
+    audio = _synth_m4a_bytes(tmp_path, duration_sec=2.0)
+    # The compressed recording fits, but the 32 kB PCM recording does not.
+    monkeypatch.setattr("tfc.utils.storage.MAX_AUDIO_FILE_SIZE", len(audio) + 1024)
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    assert actual["_dead_air_error"].startswith("Could not decode audio:")
+    assert "_dead_air_percentage" not in actual
 
 
 def test_undecodable_bytes_return_error():
