@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-func TestSimulationRoutedObserveSpanUsesPerMillionRate(t *testing.T) {
+func TestPostgresSimulationRoutedObserveSpanUsesPerMillionRate(t *testing.T) {
 	pool, key, secret := auth.NewSimulationCostFixture(t)
 	ctx := context.Background()
 	log := slog.Default()
