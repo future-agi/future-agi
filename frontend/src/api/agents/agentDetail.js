@@ -111,6 +111,9 @@ export function useProviderConfigurationHealth(providerId) {
       ),
     select: (d) => d?.configuration_health ?? null,
     enabled: !!providerId,
+    // A link to a deleted provider answers 400; the warning is optional, so
+    // that is not worth an error toast on the agent page.
+    meta: { errorHandled: true },
   });
 }
 
