@@ -72,6 +72,12 @@ class NormalisedLevenshteinSimilarity(Comparator):
 
 
 class JaroWincklerSimilarity(Comparator):
+    """Score plain Jaro under the historical grounded comparator name.
+
+    Unlike the seeded Answer Similarity evaluator, this comparator gives no
+    bonus for a shared prefix.
+    """
+
     def compare(self, string1, string2):
         return self._jaro_winckler_similarity(string1, string2)
 
