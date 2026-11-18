@@ -186,6 +186,8 @@ export const STATUS_CHIPS = [
   { id: "in_progress", label: "In progress", role: "info" },
   { id: "failed", label: "Failed", role: "danger" },
   { id: "error", label: "Error", role: "warning" },
+  // Stopped by the user: neither an error nor a failure.
+  { id: "cancelled", label: STATUS_META.cancelled.label, role: null },
   { id: "inconclusive", label: "Inconclusive", role: null },
   { id: "no_score", label: STATUS_META.no_score.label, role: null },
   { id: "passed", label: "Passed", role: "success" },
@@ -293,3 +295,6 @@ export function runOutcome(status) {
     color: `status.${role}.fg`,
   };
 }
+
+/** A sub-goal as the server names it, with its worker's name when it is one worker's own check. */
+export const subGoalLabel = (goal) => goal.display_name;

@@ -36,6 +36,7 @@ const rawExecutions = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 100,
+      outcome_status: "passed",
     },
     {
       id: "ex-mid",
@@ -44,6 +45,7 @@ const rawExecutions = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 50,
+      outcome_status: "running",
     },
     {
       id: "ex-old",
@@ -52,6 +54,7 @@ const rawExecutions = () => ({
       agent_version: "v1",
       total_chats: 10,
       success_rate: 70,
+      outcome_status: "failed",
     },
   ],
   count: 3,
@@ -76,46 +79,37 @@ beforeEach(() => {
 });
 
 describe("executionToRun", () => {
-  it("bases the pass rate on passed plus failed only, like the call summary", () => {
-    const base = {
+  it("reads the run's verdict, pass rate and rate base from the server, the rate null when nothing was scored", () => {
+    const run = executionToRun({
       id: "ex-rate",
       status: "Completed",
       outcome_passed: 6,
       outcome_failed: 2,
       outcome_errored: 2,
       outcome_skipped: 2,
-    };
-    const run = executionToRun({
-      ...base,
-      total_chats: 12,
-      outcome_no_score: 0,
+      outcome_status: "failed",
+      pass_rate: 75,
+      trial_pass_rate: 75,
+      scored: 8,
     });
-    expect([run.scored, run.failed, run.errored, run.skipped]).toEqual([
-      8, 2, 2, 2,
-    ]);
-    expect(
-      executionToRun({ ...base, total_chats: 14, outcome_no_score: 2 }).scored,
-    ).toBe(8);
-    // Errored and skipped calls keep a run from reading passed, but stay out of its rate.
-    const unrated = { ...base, outcome_failed: 0, total_chats: 10 };
-    expect(executionToRun(unrated).scored).toBe(6);
-    expect(executionToRun(unrated).status).toBe("failed");
-    // A run stopped before its calls finished has nothing to rate them on yet.
-    const stopped = { id: "ex-stopped", status: "Cancelled", total_chats: 4, outcome_passed: 0 };
-    expect(executionToRun({ ...stopped, outcome_failed: 0, outcome_no_score: 0 }).scored).toBe(0);
-  });
-
-  it("reads No score for a finished run whose graded calls all had no pass or fail", () => {
-    const run = executionToRun({
+    expect([
+      run.passRate,
+      run.scored,
+      run.failed,
+      run.errored,
+      run.skipped,
+    ]).toEqual([75, 8, 2, 2, 2]);
+    const unscored = executionToRun({
       id: "ex-unscored",
       status: "Completed",
-      total_chats: 3,
-      outcome_passed: 0,
-      outcome_failed: 0,
-      outcome_skipped: 0,
-      outcome_no_score: 3,
+      outcome_status: "no_score",
+      pass_rate: null,
+      trial_pass_rate: null,
+      scored: 0,
     });
-    expect(run.status).toBe("no_score");
+    expect(run.status).toBe("failed");
+    expect(unscored.status).toBe("no_score");
+    expect(unscored.passRate).toBeNull();
   });
 
   it("maps a completed, fully-passing execution to `passed`", () => {
@@ -129,7 +123,6 @@ describe("executionToRun", () => {
     });
     expect(run.id).toBe("ex-1");
     expect(run.executionId).toBe("ex-1");
-    expect(run.status).toBe("passed");
     expect(run.total).toBe(12);
     expect(run.passed).toBe(12);
     expect(run.failed).toBe(0);
@@ -137,30 +130,24 @@ describe("executionToRun", () => {
     expect(run.startedAt).toBe("2026-01-14T09:12:00.000Z");
   });
 
-  it("maps a completed execution with failures to `failed`", () => {
+  it("reads the counts of a run without per-outcome counts from its success rate", () => {
     const run = executionToRun({
       id: "ex-2",
       status: "Completed",
       total_chats: 10,
       success_rate: 70,
     });
-    expect(run.status).toBe("failed");
     expect(run.passed).toBe(7);
     expect(run.failed).toBe(3);
   });
 
-  it("maps a non-terminal execution to `running`", () => {
-    const run = executionToRun({ id: "ex-3", status: "Running", total_chats: 12, success_rate: 50 });
-    expect(run.status).toBe("running");
-  });
-
-  it("maps an explicitly failed execution to `failed`", () => {
-    const run = executionToRun({ id: "ex-4", status: "Failed", total_chats: 5, success_rate: 100 });
-    expect(run.status).toBe("failed");
-  });
-
   it("falls back to `calls_attempted` for voice executions", () => {
-    const run = executionToRun({ id: "ex-5", status: "Completed", calls_attempted: 8, success_rate: 100 });
+    const run = executionToRun({
+      id: "ex-5",
+      status: "Completed",
+      calls_attempted: 8,
+      success_rate: 100,
+    });
     expect(run.total).toBe(8);
   });
 
@@ -184,12 +171,19 @@ describe("executionToRun", () => {
   });
 
   it("carries the run-level duration (seconds) the summary table shows", () => {
-    const run = executionToRun({ id: "ex-6", status: "Completed", total_chats: 4, success_rate: 100, duration: 11.9 });
+    const run = executionToRun({
+      id: "ex-6",
+      status: "Completed",
+      total_chats: 4,
+      success_rate: 100,
+      duration: 11.9,
+    });
     expect(run.durationS).toBe(11.9);
   });
 
   it("maps the raw lifecycle to the Status column's runState", () => {
-    const state = (status) => executionToRun({ id: "x", status, total_chats: 1 }).runState;
+    const state = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).runState;
     expect(state("Pending")).toBe("queued");
     expect(state("Running")).toBe("running");
     expect(state("Evaluating")).toBe("grading");
@@ -203,7 +197,8 @@ describe("executionToRun", () => {
   });
 
   it("marks only a pending or running run as stoppable", () => {
-    const stoppable = (status) => executionToRun({ id: "x", status, total_chats: 1 }).stoppable;
+    const stoppable = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).stoppable;
     expect(stoppable("Pending")).toBe(true);
     expect(stoppable("Running")).toBe(true);
     // Grading finishes on its own; the server refuses to stop it.
@@ -230,13 +225,13 @@ describe("executionToRun", () => {
     }
   });
 
-  it("reads a stopped run as cancelled, not failed", () => {
-    const run = executionToRun({ id: "ex-c", status: "Cancelled", total_chats: 5, success_rate: 40 });
-    expect(run.status).toBe("cancelled");
-  });
-
   it("leaves durationS null when the execution row has no duration", () => {
-    const run = executionToRun({ id: "ex-7", status: "Completed", total_chats: 4, success_rate: 100 });
+    const run = executionToRun({
+      id: "ex-7",
+      status: "Completed",
+      total_chats: 4,
+      success_rate: 100,
+    });
     expect(run.durationS).toBeNull();
   });
 
@@ -260,7 +255,6 @@ describe("executionToRun", () => {
       scenarioCount: 2,
       trials: 3,
       scenarioIds: ["scenario-a", "scenario-b"],
-      status: "running",
     });
   });
 
@@ -281,15 +275,16 @@ describe("executionToRun", () => {
       passed: 3,
       failed: 2,
       skipped: 1,
-      scored: 5,
-      status: "failed",
     });
   });
 });
 
 describe("useEnvironmentRuns", () => {
   it("fetches executions when the env carries platform.runTestId and maps them in the server's newest-first order", async () => {
-    const env = { id: "env-1", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-1",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -320,12 +315,27 @@ describe("useEnvironmentRuns", () => {
         count: 12,
         covered_scenario_count: 7,
         results: [
-          { id: "ex-12", status: "Completed", start_time: "2026-02-03T10:00:00.000Z", total_chats: 5, success_rate: 100 },
-          { id: "ex-11", status: "Failed", start_time: "2026-02-02T10:00:00.000Z", total_chats: 5, success_rate: 40 },
+          {
+            id: "ex-12",
+            status: "Completed",
+            start_time: "2026-02-03T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
+          {
+            id: "ex-11",
+            status: "Failed",
+            start_time: "2026-02-02T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 40,
+          },
         ],
       },
     });
-    const env = { id: "env-c", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-c",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -336,9 +346,12 @@ describe("useEnvironmentRuns", () => {
   });
 
   it("counts the local runs and leaves covered scenarios to the client without a run-test", () => {
-    const { result } = renderHook(() => useEnvironmentRuns({ id: "env-x" }, { runs: [] }), {
-      wrapper: makeWrapper(),
-    });
+    const { result } = renderHook(
+      () => useEnvironmentRuns({ id: "env-x" }, { runs: [] }),
+      {
+        wrapper: makeWrapper(),
+      },
+    );
     expect(result.current.count).toBe(0);
     expect(result.current.coveredScenarioCount).toBeNull();
   });
@@ -353,13 +366,34 @@ describe("useEnvironmentRuns", () => {
       data: {
         count: 12,
         results: [
-          { id: "ex-12", status: "Completed", start_time: "2026-02-03T10:00:00.000Z", total_chats: 5, success_rate: 100 },
-          { id: "ex-11", status: "Failed", start_time: "2026-02-02T10:00:00.000Z", total_chats: 5, success_rate: 40 },
-          { id: "ex-10", status: "Completed", start_time: "2026-02-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          {
+            id: "ex-12",
+            status: "Completed",
+            start_time: "2026-02-03T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
+          {
+            id: "ex-11",
+            status: "Failed",
+            start_time: "2026-02-02T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 40,
+          },
+          {
+            id: "ex-10",
+            status: "Completed",
+            start_time: "2026-02-01T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
         ],
       },
     });
-    const env = { id: "env-g", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-g",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -378,12 +412,27 @@ describe("useEnvironmentRuns", () => {
       data: {
         count: 12,
         results: [
-          { id: "ex-2", status: "Completed", start_time: "2026-01-02T10:00:00.000Z", total_chats: 5, success_rate: 100 },
-          { id: "ex-1", status: "Completed", start_time: "2026-01-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          {
+            id: "ex-2",
+            status: "Completed",
+            start_time: "2026-01-02T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
+          {
+            id: "ex-1",
+            status: "Completed",
+            start_time: "2026-01-01T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
         ],
       },
     });
-    const env = { id: "env-p", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-p",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(
       () => useEnvironmentRuns(env, { runs: [] }, { page: 1, pageSize: 10 }),
       { wrapper: makeWrapper() },
@@ -393,13 +442,20 @@ describe("useEnvironmentRuns", () => {
     expect(axios.get).toHaveBeenCalledWith(expect.any(String), {
       params: { page: 2, limit: 10 },
     });
-    expect(result.current.runs.map((run) => run.label)).toEqual(["Run 2", "Run 1"]);
+    expect(result.current.runs.map((run) => run.label)).toEqual([
+      "Run 2",
+      "Run 1",
+    ]);
   });
 
   it("keeps the current page on screen while the next one loads", async () => {
-    const env = { id: "env-k", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-k",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result, rerender } = renderHook(
-      ({ page }) => useEnvironmentRuns(env, { runs: [] }, { page, pageSize: 10 }),
+      ({ page }) =>
+        useEnvironmentRuns(env, { runs: [] }, { page, pageSize: 10 }),
       { wrapper: makeWrapper(), initialProps: { page: 0 } },
     );
     await waitFor(() => expect(result.current.runs.length).toBeGreaterThan(0));
@@ -420,12 +476,27 @@ describe("useEnvironmentRuns", () => {
       data: {
         count: 2,
         results: [
-          { id: "ex-pending", status: "Pending", start_time: null, total_chats: 0, success_rate: 0 },
-          { id: "ex-done", status: "Completed", start_time: "2026-02-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          {
+            id: "ex-pending",
+            status: "Pending",
+            start_time: null,
+            total_chats: 0,
+            success_rate: 0,
+          },
+          {
+            id: "ex-done",
+            status: "Completed",
+            start_time: "2026-02-01T10:00:00.000Z",
+            total_chats: 5,
+            success_rate: 100,
+          },
         ],
       },
     });
-    const env = { id: "env-p", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-p",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
     });
@@ -449,7 +520,10 @@ describe("useEnvironmentRuns", () => {
   });
 
   it("renders MOCK_RUNS behind ?mockRuns=1 without fetching", () => {
-    const env = { id: "env-3", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const env = {
+      id: "env-3",
+      platform: { runTestId: "rt1", testExecutionId: "ex1" },
+    };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(["/?mockRuns=1"]),
     });
@@ -486,4 +560,3 @@ describe("runSimulationTarget", () => {
     expect(runSimulationTarget(null)).toBe(paths.dashboard.simulate.test);
   });
 });
-

@@ -23,6 +23,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from simulate.models import (
     HarnessEnvironmentVersion,
@@ -201,10 +202,11 @@ def rebuild_running(piece: str | None) -> HostedHarnessError:
 
 
 def _conversations(environment: HostedHarnessJob):
-    """The environment's chat and its runs' chats, which publish into it."""
+    """The environment's chat and its runs' chats, which publish into it. An
+    evidence import's drafting chat never publishes, so it holds up no Save."""
     return HostedHarnessConversation.no_workspace_objects.filter(
         Q(job_id=environment.id) | Q(job__environment_id=environment.id)
-    )
+    ).exclude(job__evidence_drafting__isnull=False)
 
 
 def _awaiting_answer(conversation: HostedHarnessConversation) -> bool:
@@ -489,6 +491,32 @@ def _pairs(
     return pairs
 
 
+def prepare_sealed_tree(environment: HostedHarnessJob, files: Mapping[str, bytes]):
+    """An edited tree prepared as a draft stores it; a bundle the chat sealed from this very tree runs the contract
+    it sealed."""
+    split = archives.split_authoring(files)
+    return prepare_tree(
+        environment, files, built=SEALED_MANIFEST in split.sealed and _stamped(split)
+    )
+
+
+def _targets_before(environment: HostedHarnessJob) -> list[Any] | None:
+    """The fault targets of the environment's files before this write; None when they cannot be read or the contract
+    says nothing about the door, so every scenario's faults are checked."""
+    from simulate.selectors.environment_documents import version_contract
+    from simulate.services.harness_actor_rules import actor_rules, cast_records
+    from simulate.services.harness_tool_reach import door_targets
+
+    try:
+        files = edit_sides(environment)["environment"]
+    except (S3Error, HTTPError, HostedHarnessError, ValueError):
+        # Unreadable earlier files: every fault is checked, never one waved through.
+        return None
+    # The contract those files run with, as a build sealed it.
+    contract = version_contract(environment, fresh_draft(environment, "environment"))
+    return door_targets(contract, actor_rules(files), cast_records(files))
+
+
 def record_draft(
     environment: HostedHarnessJob,
     body: bytes,
@@ -519,11 +547,34 @@ def record_draft(
     wanted = set(DRAFT_PIECES if pieces is None else pieces)
     checked = wanted | set(checked or ())
     published = index_in_step(archives.read_archive(body))
-    split, prepared = prepare_tree(environment, published)
+    split, prepared = prepare_sealed_tree(environment, published)
     require_checkpoint_scenarios(prepared.scenarios)
-    from simulate.services.harness_actors import require_valid_faults
+    from simulate.selectors.environment_documents import recorded_contract
+    from simulate.selectors.stage_outputs import stage_output
+    from simulate.services.harness_actor_rules import actor_rules, cast_records
+    from simulate.services.harness_tool_reach import door_targets
+    from simulate.services.scenario_faults import require_valid_faults
 
-    require_valid_faults(prepared.scenarios)
+    # Only the scenarios whose faults this write changes, judged against the contract they will run on.
+    base = fresh_draft(environment, "suite") or getattr(
+        environment, "suite_version", None
+    )
+    before = (base.documents or {}).get("scenarios") if base is not None else None
+    cast = cast_records(split.environment)
+    require_valid_faults(
+        prepared.scenarios,
+        # Judged on the contract the draft runs with, as its build reaches each tool, not the authored one.
+        targets=door_targets(
+            recorded_contract(prepared.environment_documents),
+            actor_rules(split.environment),
+            cast,
+        ),
+        cast=cast,
+        before=before
+        if isinstance(before, list)
+        else stage_output(environment, "scenarios"),
+        before_targets=_targets_before(environment),
+    )
     hashes = {
         "environment": prepared.environment_hash,
         "suite": prepared.suite_hash,
@@ -709,23 +760,22 @@ def edit_side(
     environment: HostedHarnessJob, piece: str
 ) -> tuple[dict[str, bytes], str]:
     """One piece's files the next edit builds on (its open draft, else its saved default), with the archive key they
-    were read from ("" when there is none)."""
-    head = HostedHarnessJob.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
-    version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+    were read from ("" when there is none). ``environment`` is the caller's scoped job."""
+    version = fresh_draft(environment, piece) or getattr(
+        environment, f"{piece}_version"
+    )
     key = str(getattr(version, "archive_object_key", "") or "")
-    return piece_files(head, piece, version), key
+    return piece_files(environment, piece, version), key
 
 
 def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
-    """The files the next edit builds on, per piece: its open draft, else its saved default."""
-    head = HostedHarnessJob.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
+    """The files the next edit builds on, per piece: its open draft, else its saved default. ``environment`` is the
+    caller's scoped job."""
     return {
         piece: piece_files(
-            head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+            environment,
+            piece,
+            fresh_draft(environment, piece) or getattr(environment, f"{piece}_version"),
         )
         for piece in DRAFT_PIECES
     }
@@ -1348,14 +1398,10 @@ def save_drafts(
             ),
             None,
         )
-        if validation_available(locked) and (
-            expected_review_digest
-            or any_decision(locked)
-            or settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE
-        ):
+        if must_validate(locked, expected_review_digest):
             raise version_error(
                 "validation_required",
-                "Validate the reviewed changes first, then save the validated versions",
+                "Validate these changes first, then save the validated versions",
                 409,
             )
         for piece in DRAFT_PIECES:
@@ -1544,6 +1590,7 @@ def _changes(draft: Any, piece: str) -> dict[str, int]:
         ),
         "tools": size(tools.get("added"), tools.get("removed"), tools.get("changed")),
         "rules": size(rules.get("added"), rules.get("removed")),
+        "contract_fields": size(contract.get("fields")),
         "sub_goals": size(
             sub_goals.get("added"), sub_goals.get("removed"), sub_goals.get("changed")
         ),
@@ -1572,6 +1619,18 @@ def _draft_item(draft: Any, environment: HostedHarnessJob) -> dict[str, Any]:
         "default_label": read._label(getattr(default, "version_number", None)),
         "changes": _changes(draft, piece),
     }
+
+
+def must_validate(
+    environment: HostedHarnessJob, expected_review_digest: str | None = None
+) -> bool:
+    """Whether a Save of the open drafts must go through Validate first: where the environment's pairings can be
+    validated, once a change was reviewed, or always while Validate before Save is required."""
+    return validation_available(environment) and bool(
+        expected_review_digest
+        or any_decision(environment)
+        or settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE
+    )
 
 
 def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
@@ -1605,6 +1664,7 @@ def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
         if entry is not None
         else None
     )
+    body["validation_required"] = must_validate(environment)
     return body
 
 

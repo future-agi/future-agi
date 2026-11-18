@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // CreateResponse handles POST /v1/responses.
@@ -55,6 +57,10 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 	rc.GuardrailRequest = responsesGuardrailRequest(&req)
+	rc.SelectedGuardrailRequest = selectedResponsesGuardrailRequest(&req)
+	if !completeResponsesInput(&req) {
+		rc.GuardrailInputUnsupported = "Responses input contains content without a complete text projection"
+	}
 
 	// Extract client IP.
 	rc.Metadata["client_ip"] = h.clientIP(r)
@@ -170,12 +176,14 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 			return err
 		}
 		respBody = body
+		recordServedBy(callRC, rp)
 		applyResponsesUsage(callRC, body)
 		callRC.GuardrailResponse = assistantText(responsesOutputText(body))
+		setNativeOutputProjection(callRC, "responses", body)
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "responses.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -227,11 +235,12 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 			return err
 		}
 		stream = s
+		recordServedBy(callRC, rp)
 		callRC.IsStream = true
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "responses.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -375,31 +384,32 @@ func responsesEventType(ev streaming.Event) string {
 	return payload.Type
 }
 
-// applyResponsesUsage moves a Responses API response's model and token counts
-// onto rc, which is what the cost plugin prices from. A response without usage
-// leaves rc.Response without it, so the request goes unpriced rather than
-// priced at zero.
+// applyResponsesUsage moves a Responses API response's model and usage onto
+// rc, which is what the cost plugin prices from. The usage is read the way a
+// chat response's is, so keys the gateway does not name (a vendor's own
+// statement of the cost, such as Perplexity's usage.cost) reach the plugin
+// in Usage.Extra on this route too, streamed or not. A response without
+// usage leaves rc.Response without it, so the request goes unpriced rather
+// than priced at zero.
 func applyResponsesUsage(rc *models.RequestContext, body []byte) {
 	var parsed struct {
-		Model string `json:"model"`
-		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-			TotalTokens  int `json:"total_tokens"`
-		} `json:"usage"`
+		Model string          `json:"model"`
+		Usage json.RawMessage `json:"usage"`
 	}
 	_ = json.Unmarshal(body, &parsed)
 	if parsed.Model != "" {
 		rc.ResolvedModel = parsed.Model
 	}
 	rc.Response = &models.ChatCompletionResponse{Model: rc.ResolvedModel}
-	if parsed.Usage != nil {
-		rc.Response.Usage = &models.Usage{
-			PromptTokens:     parsed.Usage.InputTokens,
-			CompletionTokens: parsed.Usage.OutputTokens,
-			TotalTokens:      parsed.Usage.TotalTokens,
-		}
+	raw := bytes.TrimSpace(parsed.Usage)
+	if len(raw) == 0 || raw[0] != '{' {
+		return
 	}
+	var usage models.Usage
+	if err := json.Unmarshal(raw, &usage); err != nil {
+		return
+	}
+	rc.Response.Usage = &usage
 }
 
 // responsesStreamErrorEvent is an error as a Responses stream event: the
@@ -494,19 +504,16 @@ func (h *Handlers) DeleteResponse(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractOrgID extracts the org ID from auth metadata.
+// extractOrgID binds storage ownership to the current credential, independently
+// of provider routing. Internal keys can intentionally bypass org providers, but
+// that must not turn a known storage owner into the store's empty-scope wildcard.
 func extractOrgID(r *http.Request, h *Handlers) string {
+	if orgID, _ := models.InspectionFromContext(r.Context()).Principal(); orgID != "" {
+		return orgID
+	}
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
-
 	setAuthMetadataFromRequest(rc, r)
-
 	h.peekKeyOrgID(rc)
-	_, orgCfg := h.resolveOrgConfig(rc)
-	if orgCfg != nil {
-		if v, ok := rc.Metadata["org_id"]; ok {
-			return v
-		}
-	}
-	return ""
+	return rc.Metadata[tenant.MetadataKeyOrgID]
 }

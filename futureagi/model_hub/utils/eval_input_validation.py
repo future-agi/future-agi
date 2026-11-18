@@ -9,6 +9,40 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
+
+
+class MissingEvalInputError(EvalConfigError):
+    """A declared evaluation input was explicitly supplied empty."""
+
+
+def validate_eval_configuration(eval_id: str, evaluator) -> None:
+    """Check the resolved deterministic rubric, not an unversioned template.
+
+    Protect intentionally has no rubric. Other evaluators own their own
+    validation; in particular, do not classify arbitrary ValueErrors as config.
+    """
+    if eval_id != "DeterministicEvaluator":
+        return
+
+    from agentic_eval.core.utils.model_config import ModelConfigs
+    from evaluations.engine.registry import get_eval_class
+
+    # Model binding can replace a deterministic template's engine (e.g. Jev).
+    eval_class: type[Any] = get_eval_class(eval_id)
+    if not isinstance(evaluator, eval_class):
+        return
+    if evaluator.provider in {
+        ModelConfigs.PROTECT.provider,
+        ModelConfigs.PROTECT_FLASH.provider,
+    }:
+        return
+    if not evaluator.rule_prompt or not evaluator.rule_prompt.strip():
+        raise EvalConfigError(
+            "Evaluation criteria (rule_prompt) are required. Add grading instructions."
+        )
+
+
 PARTIAL_INPUT_WARNING_TYPE = "partial_input"
 
 PARTIAL_INPUT_MESSAGE = (
@@ -88,7 +122,7 @@ def validate_eval_inputs(
         # matches "every mapped input empty".
         if is_custom_eval and mapped_keys is not None:
             keys_label = ", ".join(f"'{k}'" for k in sorted(declared_keys))
-            raise ValueError(
+            raise MissingEvalInputError(
                 f"No input received for any of {keys_label}. Please check your inputs."
             )
         return None, values
@@ -105,7 +139,7 @@ def validate_eval_inputs(
 
         if not nonempty:
             keys_label = ", ".join(f"'{k}'" for k in sorted(keys_to_check))
-            raise ValueError(
+            raise MissingEvalInputError(
                 f"No input received for any of {keys_label}. Please check your inputs."
             )
 
@@ -126,5 +160,7 @@ def validate_eval_inputs(
 
     for key in sorted(k for k in keys_to_check if k in values):
         if is_empty_value(values[key]):
-            raise ValueError(f"No input received for '{key}'. Please check your input.")
+            raise MissingEvalInputError(
+                f"No input received for '{key}'. Please check your input."
+            )
     return None, values

@@ -1578,6 +1578,7 @@ class TestApi:
             "set_aside",
             "validation",
             "candidates",
+            "validation_required",
         }
         assert body["environment"] is None and body["set_aside"] == []
         # Nothing validated yet.
@@ -2612,3 +2613,13 @@ def test_discard_with_no_suite_draft_clears_a_failed_change(user, workspace, sto
 
     environment.refresh_from_db()
     assert failed_changes(environment) == {}
+
+
+def test_a_changed_contract_field_counts_as_an_unsaved_change():
+    """A builder change to a contract field such as the participants counts, so the bar never reads 0 changes."""
+    draft = type("Draft", (), {"diff": {"contract": {"fields": ["workers"]}}})()
+
+    changes = drafts._changes(draft, "environment")
+
+    assert changes["contract_fields"] == 1
+    assert sum(changes.values()) == 1

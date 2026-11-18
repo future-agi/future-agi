@@ -40,6 +40,8 @@ SUITE_FILES = frozenset(
 )
 
 SEALED_ROOTS = ("environment-bundle/", "generic-harness/certified-bundle/")
+# The contract a bundle was sealed and certified with: a build can amend the authored one while it builds.
+SEALED_CONTRACT = "environment-bundle/contract.json"
 SEALED_FILES = frozenset(
     {
         "runtime-validation.json",
@@ -243,9 +245,13 @@ def suite_key(organization_id: object, job_id: object, body: bytes) -> str:
     return f"harness-suites/{organization_id}/{job_id}/{sha256_hex(body)}.tar.gz"
 
 
+# Where a build's sealed bundle is kept; a READY cache row a run filled points elsewhere.
+SEALED_PREFIX = "harness-sealed/"
+
+
 def sealed_key(organization_id: object, job_id: object, body: bytes) -> str:
     # Content-addressed copy of a build's sealed bundle; READY cache rows point at it.
-    return f"harness-sealed/{organization_id}/{job_id}/{sha256_hex(body)}.tar.gz"
+    return f"{SEALED_PREFIX}{organization_id}/{job_id}/{sha256_hex(body)}.tar.gz"
 
 
 def pair_key(organization_id: object, job_id: object, body: bytes) -> str:

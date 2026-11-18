@@ -38,7 +38,6 @@ from simulate.models import (
     CallExecution,
     CallLogEntry,
     ChatMessageModel,
-    HostedHarnessJob,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -137,12 +136,11 @@ from simulate.serializers.test_execution import (
     TestExecutionSerializer,
     TestExecutionStatusSerializer,
 )
-
-# Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.call_rerun import (
     call_snapshot,
     clear_call_for_rerun,
+    closed_attempt_metadata,
     eval_snapshot,
 )
 from simulate.services.eval_config_edit import (
@@ -150,7 +148,6 @@ from simulate.services.eval_config_edit import (
     update_eval_config,
     visible_eval_template_query,
 )
-from simulate.services.harness_environment import receipt_outcome_counts
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
     is_harness_run_test,
@@ -159,6 +156,8 @@ from simulate.services.harness_evals import (
 )
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_workers import attempt_end
+from simulate.services.run_outcome import hosted_receipt_outcomes, outcome_fields
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
     RegradeDispatchFailed,
@@ -170,6 +169,9 @@ from simulate.services.run_regrade import (
     regrade_run_evals,
     regrade_still_finishing,
 )
+
+# Import Temporal activities (using @temporal_activity drop-in decorator)
+from simulate.services.run_reliability_v3 import trial_passes
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -1484,7 +1486,9 @@ class TestExecutionCancelView(APIView):
                     HostedHarnessGateway,
                 )
 
-                HostedHarnessGateway().cancel(hosted_job, reason=reason)
+                HostedHarnessGateway(require_provider=False).cancel(
+                    hosted_job, reason=reason
+                )
             return {
                 "success": True,
                 "message": "Cancellation signal sent to hosted simulation",
@@ -5733,13 +5737,10 @@ class RunTestExecutionsView(APIView):
 
             # Batch fetch agent turn counts for all executions in one query
             execution_ids = [te.id for te in result_page]
-            hosted_jobs = {
-                job.test_execution_id: job.id
-                for job in HostedHarnessJob.no_workspace_objects.filter(
-                    test_execution_id__in=execution_ids
-                ).only("id", "test_execution_id")
-            }
-            outcome_counts = receipt_outcome_counts(hosted_jobs.values())
+            receipt_outcomes = hosted_receipt_outcomes(
+                execution_ids, organization_id=user_organization.id
+            )
+            trials = trial_passes(result_page or [])
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -5956,41 +5957,15 @@ class RunTestExecutionsView(APIView):
                             if test_execution.completed_at
                             else None
                         ),
-                        "outcome_passed": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "passed", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
+                        **outcome_fields(
+                            status=test_execution.status,
+                            receipts=receipt_outcomes.get(test_execution.id),
+                            calls={
+                                "completed": completed_calls,
+                                "failed": failed_calls,
+                            },
                         ),
-                        "outcome_failed": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "failed", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_errored": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "errored", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_skipped": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "skipped", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
-                        "outcome_no_score": (
-                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
-                                "no_score", 0
-                            )
-                            if test_execution.id in hosted_jobs
-                            else None
-                        ),
+                        **trials[test_execution.id],
                         **_version_labels(version_labels, test_execution.id),
                     }
                 )
@@ -7510,6 +7485,8 @@ class TestExecutionRerunView(APIView):
         snapshots_to_create = []
         call_executions_to_update = []
         call_ids_to_delete_transcripts = []
+        # Each call_and_eval call's closing attempt: its snapshot's id and how it ended, read before the reset.
+        closing: dict[Any, tuple[Any, Any]] = {}
 
         # First pass: prepare all objects in memory
         rerun_eval_ids = {}
@@ -7540,7 +7517,12 @@ class TestExecutionRerunView(APIView):
                     call_executions_to_update.append(call_execution)
                 else:
                     # call_and_eval: the same snapshot every rerun keeps, before the transcripts go
-                    snapshots_to_create.append(call_snapshot(call_execution))
+                    snapshot = call_snapshot(call_execution)
+                    snapshots_to_create.append(snapshot)
+                    closing[call_execution.id] = (
+                        snapshot.id,
+                        attempt_end(call_execution),
+                    )
 
                     # Mark for transcript deletion
                     call_ids_to_delete_transcripts.append(call_execution.id)
@@ -7579,6 +7561,25 @@ class TestExecutionRerunView(APIView):
 
                 # Bulk update all call executions
                 if call_executions_to_update:
+                    if rerun_type != "eval_only":
+                        # A worker read or a receipt may have written a call's metadata since it was loaded: lock the
+                        # rows and close each attempt from what they hold now, as a single rerun does.
+                        current = dict(
+                            CallExecution.objects.select_for_update()
+                            .filter(
+                                id__in=[one.id for one in call_executions_to_update]
+                            )
+                            .order_by("id")
+                            .values_list("id", "call_metadata")
+                        )
+                        for one in call_executions_to_update:
+                            snapshot_id, ending = closing[one.id]
+                            one.call_metadata = closed_attempt_metadata(
+                                current.get(one.id),
+                                call_id=one.id,
+                                snapshot_id=snapshot_id,
+                                ending=ending,
+                            )
                     if rerun_type == "eval_only":
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,
@@ -7588,7 +7589,8 @@ class TestExecutionRerunView(APIView):
                     else:
                         CallExecution.objects.bulk_update(
                             call_executions_to_update,
-                            CallExecution.RESET_FIELDS,
+                            # With each closed attempt kept and its record gone (`closed_attempt_metadata`).
+                            [*CallExecution.RESET_FIELDS, "call_metadata"],
                             batch_size=BATCH_SIZE,
                         )
 

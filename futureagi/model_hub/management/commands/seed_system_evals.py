@@ -35,7 +35,10 @@ logger = structlog.get_logger(__name__)
 # 30: spearman_correlation uses Pearson over midranks and scores constant input as undefined.
 # After 30: link checks ignore prose and require operator-approved public
 # destinations. They need any version above 30; the number is set only here.
-SYSTEM_EVALS_VERSION = 31
+# 32: refresh stored answer_similarity and jaro_winkler_similarity transposition math.
+# 33: mean_average_precision credits each relevant document once, so duplicate
+# retrievals no longer push AP past 1.0.
+SYSTEM_EVALS_VERSION = 33
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any

@@ -38,6 +38,7 @@ export const BUILDING_TABS = WORKSPACE_TABS.filter(
 );
 
 export const CONSOLE_COPY = {
+  answerWithOptions: "Answer with the options above",
   working: "Working on your last message…",
   idle: "Ask, correct, or steer what it builds",
   empty:

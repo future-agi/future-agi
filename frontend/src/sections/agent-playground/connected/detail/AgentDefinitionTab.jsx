@@ -8,6 +8,7 @@ import { Card, LineSkeleton } from "./bits";
 import { MONO } from "./format";
 import { hostedRows, storedAgentRows } from "./definitionRows";
 import ComingSoonCard from "./ComingSoonCard";
+import ParticipantsCard from "./ParticipantsCard";
 import ObservabilityToggle, {
   ObservabilityToggleSkeleton,
 } from "./ObservabilityToggle";
@@ -244,6 +245,9 @@ export default function AgentDefinitionTab() {
       >
         {body}
       </Card>
+      {version?.participants ? (
+        <ParticipantsCard participants={version.participants} />
+      ) : null}
       {agent ? (
         <ObservabilityToggle agent={agent} />
       ) : (

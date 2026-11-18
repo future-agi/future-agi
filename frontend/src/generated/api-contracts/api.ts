@@ -121,8 +121,8 @@ import type {
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
   AgentVersionDeleteResponseApi,
+  AgentVersionDetailResponseApi,
   AgentVersionListResponseApi,
-  AgentVersionResponseApi,
   AgentVersionRestoreResponseApi,
   AgentccAPIKeyApi,
   AgentccAnalyticsCostBreakdown200,
@@ -269,6 +269,8 @@ import type {
   CallWebsocketErrorResponseApi,
   CallWebsocketRequestApi,
   CallWebsocketResponseApi,
+  CallWorkersPendingApi,
+  CallWorkersResponseApi,
   CancelTestExecutionResponseApi,
   CapabilitiesResponseApi,
   CellErrorLocalizerResponseApi,
@@ -488,6 +490,12 @@ import type {
   EvalTemplateVersionRestoreResponseApi,
   EvalUsageStatsResponseApi,
   EvalUserTemplateApi,
+  EvidenceImportAddApi,
+  EvidenceImportAddResponseApi,
+  EvidenceImportApi,
+  EvidenceImportCreateApi,
+  EvidenceImportDraftApi,
+  EvidenceImportListItemApi,
   ExecutePromptSimulationRequestApi,
   ExecutePromptSimulationResponseApi,
   ExecuteRequestApi,
@@ -601,6 +609,9 @@ import type {
   HarnessAcceptedResponseApi,
   HarnessActorLimitsWriteApi,
   HarnessActorListApi,
+  HarnessActorUnresolvedAcceptApi,
+  HarnessActorValidateApi,
+  HarnessActorValidationApi,
   HarnessActorViewApi,
   HarnessActorWriteApi,
   HarnessAgentCredentialsResponseApi,
@@ -642,6 +653,7 @@ import type {
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentEvalEditApi,
+  HarnessEnvironmentFileUploadedApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
   HarnessEnvironmentRunEvaluationQueuedApi,
@@ -669,20 +681,16 @@ import type {
   HarnessRunCreateResponseApi,
   HarnessRunPlanApi,
   HarnessScenarioAmendApi,
-  HarnessScenarioArchiveApi,
-  HarnessScenarioLifecycleResponseApi,
+  HarnessScenarioAmendResponseApi,
+  HarnessScenarioListResponseApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
-  HarnessScenarioRecordsResponseApi,
-  HarnessScenarioRestoreApi,
-  HarnessScenarioRevisionsApi,
-  HarnessScenarioValidateApi,
-  HarnessScenarioValidateResponseApi,
-  HarnessScenarioValidationStatusApi,
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
-  HarnessSourceChangesApi,
   HarnessSourceUploadResponseApi,
+  HarnessStartingRecordReworkApi,
+  HarnessStartingRecordReworkWriteApi,
+  HarnessStartingRecordsApi,
   HarnessSuiteMemberApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
@@ -1163,6 +1171,7 @@ import type {
   SDKConfigureEvaluationsResponseApi,
   SDKErrorResponseApi,
   SDKEvalTemplateResponseApi,
+  SDKEvaluationDenialResponseApi,
   SDKGetEvalsResponseApi,
   SDKSimulationAnalyticsResponseApi,
   SDKSimulationMetricsResponseApi,
@@ -1273,9 +1282,7 @@ import type {
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
-  SimulateApiHarnessEnvironmentsScenarioRecordsParams,
   SimulateApiHarnessEnvironmentsUploadFileBody,
-  SimulateApiHarnessEnvironmentsValidationStatusParams,
   SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
@@ -1301,8 +1308,10 @@ import type {
   SimulateScenariosListParams,
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
+  SimulateV3CallExecutionWorkersParams,
   SimulateV3TestExecutionCallsParams,
   SimulateV3TestExecutionTracesParams,
+  SimulateV3TestExecutionTrialRoutesParams,
   SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
@@ -1540,6 +1549,7 @@ import type {
   TracerUsersListParams,
   TracesTabApiResponseApi,
   TrendsTabApiResponseApi,
+  TrialRoutesResponseApi,
   TriggerAnalysisApi,
   TwoFactorChallengeTokenApi,
   TwoFactorPasskeyVerifyRequestApi,
@@ -15687,7 +15697,7 @@ export const getAgentccGuardrailPoliciesApplyUrl = (id: string) => {
 };
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const agentccGuardrailPoliciesApply = async (
   id: string,
@@ -19089,7 +19099,10 @@ export const getApiHealthClickhouseListUrl = () => {
  * Returns JSON with:
 - status: healthy | degraded | unhealthy | disabled
 - clickhouse_connected: bool
-- cdc_lag: per-table replication lag in seconds
+- cdc_lag: per-table replication lag in seconds; -1 is unverified, even if empty
+- cdc_lag_verified: optional per-table boolean; true only for complete coverage
+  with an observed sync timestamp on every relevant destination. Incomplete
+  coverage alone does not degrade health; metadata-denial failures still do.
 - routing: per-query-type routing configuration
 
 No authentication required (intended for infrastructure monitoring).
@@ -20089,9 +20102,14 @@ export type falconAiFilesUploadCreateResponse403 = {
   status: 403;
 };
 
+export type falconAiFilesUploadCreateResponse503 = {
+  data: FalconErrorResponseApi;
+  status: 503;
+};
+
 export type falconAiFilesUploadCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 403>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 503>;
 };
 
 export type falconAiFilesUploadCreateResponseSuccess =
@@ -20101,6 +20119,7 @@ export type falconAiFilesUploadCreateResponseSuccess =
 export type falconAiFilesUploadCreateResponseError = (
   | falconAiFilesUploadCreateResponse400
   | falconAiFilesUploadCreateResponse403
+  | falconAiFilesUploadCreateResponse503
   | falconAiFilesUploadCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -38286,6 +38305,11 @@ export type modelHubEvalPlaygroundCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubEvalPlaygroundCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubEvalPlaygroundCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -38301,6 +38325,11 @@ export type modelHubEvalPlaygroundCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubEvalPlaygroundCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubEvalPlaygroundCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -38308,7 +38337,10 @@ export type modelHubEvalPlaygroundCreateResponse500 = {
 
 export type modelHubEvalPlaygroundCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubEvalPlaygroundCreateResponseSuccess =
@@ -38317,9 +38349,11 @@ export type modelHubEvalPlaygroundCreateResponseSuccess =
   };
 export type modelHubEvalPlaygroundCreateResponseError = (
   | modelHubEvalPlaygroundCreateResponse400
+  | modelHubEvalPlaygroundCreateResponse402
   | modelHubEvalPlaygroundCreateResponse403
   | modelHubEvalPlaygroundCreateResponse404
   | modelHubEvalPlaygroundCreateResponse409
+  | modelHubEvalPlaygroundCreateResponse429
   | modelHubEvalPlaygroundCreateResponse500
   | modelHubEvalPlaygroundCreateResponseDefault
 ) & {
@@ -54057,6 +54091,11 @@ export type modelHubTestEvaluationCreateResponse400 = {
   status: 400;
 };
 
+export type modelHubTestEvaluationCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
 export type modelHubTestEvaluationCreateResponse403 = {
   data: ModelHubErrorResponseApi;
   status: 403;
@@ -54072,6 +54111,11 @@ export type modelHubTestEvaluationCreateResponse409 = {
   status: 409;
 };
 
+export type modelHubTestEvaluationCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type modelHubTestEvaluationCreateResponse500 = {
   data: ModelHubErrorResponseApi;
   status: 500;
@@ -54079,7 +54123,10 @@ export type modelHubTestEvaluationCreateResponse500 = {
 
 export type modelHubTestEvaluationCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 409 | 429 | 500
+  >;
 };
 
 export type modelHubTestEvaluationCreateResponseSuccess =
@@ -54088,9 +54135,11 @@ export type modelHubTestEvaluationCreateResponseSuccess =
   };
 export type modelHubTestEvaluationCreateResponseError = (
   | modelHubTestEvaluationCreateResponse400
+  | modelHubTestEvaluationCreateResponse402
   | modelHubTestEvaluationCreateResponse403
   | modelHubTestEvaluationCreateResponse404
   | modelHubTestEvaluationCreateResponse409
+  | modelHubTestEvaluationCreateResponse429
   | modelHubTestEvaluationCreateResponse500
   | modelHubTestEvaluationCreateResponseDefault
 ) & {
@@ -55801,6 +55850,16 @@ export type sdkApiV1EvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1EvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1EvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1EvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -55808,7 +55867,7 @@ export type sdkApiV1EvalCreateResponse500 = {
 
 export type sdkApiV1EvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1EvalCreateResponseSuccess =
@@ -55817,6 +55876,8 @@ export type sdkApiV1EvalCreateResponseSuccess =
   };
 export type sdkApiV1EvalCreateResponseError = (
   | sdkApiV1EvalCreateResponse400
+  | sdkApiV1EvalCreateResponse402
+  | sdkApiV1EvalCreateResponse429
   | sdkApiV1EvalCreateResponse500
   | sdkApiV1EvalCreateResponseDefault
 ) & {
@@ -56145,6 +56206,16 @@ export type sdkApiV1NewEvalCreateResponse400 = {
   status: 400;
 };
 
+export type sdkApiV1NewEvalCreateResponse402 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 402;
+};
+
+export type sdkApiV1NewEvalCreateResponse429 = {
+  data: SDKEvaluationDenialResponseApi;
+  status: 429;
+};
+
 export type sdkApiV1NewEvalCreateResponse500 = {
   data: SDKErrorResponseApi;
   status: 500;
@@ -56152,7 +56223,7 @@ export type sdkApiV1NewEvalCreateResponse500 = {
 
 export type sdkApiV1NewEvalCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 402 | 429 | 500>;
 };
 
 export type sdkApiV1NewEvalCreateResponseSuccess =
@@ -56161,6 +56232,8 @@ export type sdkApiV1NewEvalCreateResponseSuccess =
   };
 export type sdkApiV1NewEvalCreateResponseError = (
   | sdkApiV1NewEvalCreateResponse400
+  | sdkApiV1NewEvalCreateResponse402
+  | sdkApiV1NewEvalCreateResponse429
   | sdkApiV1NewEvalCreateResponse500
   | sdkApiV1NewEvalCreateResponseDefault
 ) & {
@@ -57004,7 +57077,7 @@ export const simulateAgentDefinitionsVersionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsVersionsReadResponse200 = {
-  data: AgentVersionResponseApi;
+  data: AgentVersionDetailResponseApi;
   status: 200;
 };
 
@@ -60169,6 +60242,103 @@ export const simulateApiHarnessEnvironmentsActorLimits = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponseSuccess =
+  simulateApiHarnessEnvironmentsAcceptUnresolvedResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponseError =
+  simulateApiHarnessEnvironmentsAcceptUnresolvedResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
+  | simulateApiHarnessEnvironmentsAcceptUnresolvedResponseSuccess
+  | simulateApiHarnessEnvironmentsAcceptUnresolvedResponseError;
+
+export const getSimulateApiHarnessEnvironmentsAcceptUnresolvedUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/actor-unresolved/accept/`;
+};
+
+/**
+ * Accept the cast as written for one policy point the builder could not model.
+ */
+export const simulateApiHarnessEnvironmentsAcceptUnresolved = async (
+  id: string,
+  harnessActorUnresolvedAcceptApi: HarnessActorUnresolvedAcceptApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsAcceptUnresolvedResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsAcceptUnresolvedResponse>(
+    getSimulateApiHarnessEnvironmentsAcceptUnresolvedUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorUnresolvedAcceptApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsValidateActorResponse200 = {
+  data: HarnessActorValidationApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsValidateActorResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsValidateActorResponseSuccess =
+  simulateApiHarnessEnvironmentsValidateActorResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsValidateActorResponseError =
+  simulateApiHarnessEnvironmentsValidateActorResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsValidateActorResponse =
+  | simulateApiHarnessEnvironmentsValidateActorResponseSuccess
+  | simulateApiHarnessEnvironmentsValidateActorResponseError;
+
+export const getSimulateApiHarnessEnvironmentsValidateActorUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/actor-validation/`;
+};
+
+/**
+ * What a create, replace or removal of one actor would say, writing nothing: its problems, the actions it
+would share that `share_actions` does not confirm, the id a create gets, and how far it is over the bound.
+ */
+export const simulateApiHarnessEnvironmentsValidateActor = async (
+  id: string,
+  harnessActorValidateApi: HarnessActorValidateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsValidateActorResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsValidateActorResponse>(
+    getSimulateApiHarnessEnvironmentsValidateActorUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessActorValidateApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsActorsResponse200 = {
   data: HarnessActorListApi;
   status: 200;
@@ -60354,7 +60524,7 @@ export const getSimulateApiHarnessEnvironmentsReplaceActorUrl = (
 };
 
 /**
- * Replace one actor in the draft; its id never changes.
+ * Replace one actor in the draft, as a whole record or as changes to it; its id never changes.
  */
 export const simulateApiHarnessEnvironmentsReplaceActor = async (
   id: string,
@@ -61346,8 +61516,315 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponse200 = {
+  data: EvidenceImportListItemApi[];
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponseSuccess =
+  simulateApiHarnessEnvironmentsListEvidenceImportsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponseError =
+  simulateApiHarnessEnvironmentsListEvidenceImportsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsListEvidenceImportsResponse =
+  | simulateApiHarnessEnvironmentsListEvidenceImportsResponseSuccess
+  | simulateApiHarnessEnvironmentsListEvidenceImportsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsListEvidenceImportsUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/`;
+};
+
+/**
+ * This environment's imports a person can still finish, newest first.
+Read from what each import stores: no source is read again.
+ */
+export const simulateApiHarnessEnvironmentsListEvidenceImports = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsListEvidenceImportsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsListEvidenceImportsResponse>(
+    getSimulateApiHarnessEnvironmentsListEvidenceImportsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponse201 = {
+  data: EvidenceImportApi;
+  status: 201;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportsResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsResponse =
+  | simulateApiHarnessEnvironmentsEvidenceImportsResponseSuccess
+  | simulateApiHarnessEnvironmentsEvidenceImportsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportsUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/`;
+};
+
+/**
+ * Freeze Observe sessions or calls or dataset rows, or store transcripts
+a person added, as evidence for this environment's tests; returns what
+each holds and lacks, and what redaction replaces. Nothing is drafted or
+run.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImports = async (
+  id: string,
+  evidenceImportCreateApi: EvidenceImportCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEvidenceImportsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportsResponse>(
+    getSimulateApiHarnessEnvironmentsEvidenceImportsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(evidenceImportCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponse200 = {
+  data: EvidenceImportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportResponse =
+  | simulateApiHarnessEnvironmentsEvidenceImportResponseSuccess
+  | simulateApiHarnessEnvironmentsEvidenceImportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportUrl = (
+  id: string,
+  importId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/`;
+};
+
+/**
+ * One evidence import, read from Observe again: a source deleted since
+reads as unavailable, and a changed one says so.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImport = async (
+  id: string,
+  importId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEvidenceImportResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportResponse>(
+    getSimulateApiHarnessEnvironmentsEvidenceImportUrl(id, importId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 204>;
+  };
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseSuccess =
+  simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseError =
+  simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse =
+  | simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseSuccess
+  | simulateApiHarnessEnvironmentsDiscardEvidenceImportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDiscardEvidenceImportUrl = (
+  id: string,
+  importId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/`;
+};
+
+/**
+ * Discard an import never added, and a transcript's stored text with it.
+Of an import with added cases, only the cases not added are discarded.
+ */
+export const simulateApiHarnessEnvironmentsDiscardEvidenceImport = async (
+  id: string,
+  importId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDiscardEvidenceImportResponse>(
+    getSimulateApiHarnessEnvironmentsDiscardEvidenceImportUrl(id, importId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse200 =
+  {
+    data: EvidenceImportAddResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse =
+
+    | simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseSuccess
+    | simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesUrl =
+  (id: string, importId: string) => {
+    return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/add/`;
+  };
+
+/**
+ * Add an import's drafted cases to the suite: saved with them when the
+review saw no unsaved changes, else beside those changes in the draft.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCases =
+  async (
+    id: string,
+    importId: string,
+    evidenceImportAddApi: EvidenceImportAddApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse>(
+      getSimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesUrl(
+        id,
+        importId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(evidenceImportAddApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse202 =
+  {
+    data: EvidenceImportApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseSuccess =
+  simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseError =
+  simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse =
+
+    | simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseSuccess
+    | simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesUrl =
+  (id: string, importId: string) => {
+    return `/simulate/api/harness-environments/${id}/evidence-imports/${importId}/draft/`;
+  };
+
+/**
+ * Ask the environment's builder to draft a scenario for each of an import's
+waiting cases. The turn runs in a chat of the import's own; nothing it does
+reaches the environment until a person adds the drafted cases.
+ */
+export const simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCases =
+  async (
+    id: string,
+    importId: string,
+    evidenceImportDraftApi: EvidenceImportDraftApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesResponse>(
+      getSimulateApiHarnessEnvironmentsEvidenceImportsDraftEvidenceCasesUrl(
+        id,
+        importId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(evidenceImportDraftApi),
+      },
+    );
+  };
+
 export type simulateApiHarnessEnvironmentsUploadFileResponse200 = {
-  data: HarnessActorListApi;
+  data: HarnessEnvironmentFileUploadedApi;
   status: 200;
 };
 
@@ -61619,8 +62096,8 @@ export const getSimulateApiHarnessEnvironmentsRunPlanUrl = (
 };
 
 /**
- * The versions a run of these picks would use and what to warn about; no
-writes. An absent pick is the environment's default.
+ * The versions a run of these picks would use, what to warn about and whether
+it would start; no writes. An absent pick is the environment's default.
  */
 export const simulateApiHarnessEnvironmentsRunPlan = async (
   id: string,
@@ -61788,62 +62265,46 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
     );
   };
 
-export type simulateApiHarnessEnvironmentsValidationStatusResponse200 = {
-  data: HarnessScenarioValidationStatusApi;
+export type simulateApiHarnessEnvironmentsStartingRecordsResponse200 = {
+  data: HarnessStartingRecordsApi;
   status: 200;
 };
 
-export type simulateApiHarnessEnvironmentsValidationStatusResponseDefault = {
+export type simulateApiHarnessEnvironmentsStartingRecordsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
   status: Exclude<HTTPStatusCodes, 200>;
 };
 
-export type simulateApiHarnessEnvironmentsValidationStatusResponseSuccess =
-  simulateApiHarnessEnvironmentsValidationStatusResponse200 & {
+export type simulateApiHarnessEnvironmentsStartingRecordsResponseSuccess =
+  simulateApiHarnessEnvironmentsStartingRecordsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsValidationStatusResponseError =
-  simulateApiHarnessEnvironmentsValidationStatusResponseDefault & {
+export type simulateApiHarnessEnvironmentsStartingRecordsResponseError =
+  simulateApiHarnessEnvironmentsStartingRecordsResponseDefault & {
     headers: ApiResponseHeaders;
   };
 
-export type simulateApiHarnessEnvironmentsValidationStatusResponse =
-  | simulateApiHarnessEnvironmentsValidationStatusResponseSuccess
-  | simulateApiHarnessEnvironmentsValidationStatusResponseError;
+export type simulateApiHarnessEnvironmentsStartingRecordsResponse =
+  | simulateApiHarnessEnvironmentsStartingRecordsResponseSuccess
+  | simulateApiHarnessEnvironmentsStartingRecordsResponseError;
 
-export const getSimulateApiHarnessEnvironmentsValidationStatusUrl = (
+export const getSimulateApiHarnessEnvironmentsStartingRecordsUrl = (
   id: string,
-  params: SimulateApiHarnessEnvironmentsValidationStatusParams,
+  scenarioKey: string,
 ) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()));
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/simulate/api/harness-environments/${id}/scenarios/validate/?${stringifiedParams}`
-    : `/simulate/api/harness-environments/${id}/scenarios/validate/`;
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioKey}/starting-records/`;
 };
 
 /**
- * Where one scenario validation got to, and whether it recorded its proofs.
+ * The seeded rows this scenario's facts name, each looked up by its key: held, or missing from the seed.
  */
-export const simulateApiHarnessEnvironmentsValidationStatus = async (
+export const simulateApiHarnessEnvironmentsStartingRecords = async (
   id: string,
-  params: SimulateApiHarnessEnvironmentsValidationStatusParams,
+  scenarioKey: string,
   options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsValidationStatusResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsValidationStatusResponse>(
-    getSimulateApiHarnessEnvironmentsValidationStatusUrl(id, params),
+): Promise<simulateApiHarnessEnvironmentsStartingRecordsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsStartingRecordsResponse>(
+    getSimulateApiHarnessEnvironmentsStartingRecordsUrl(id, scenarioKey),
     {
       ...options,
       method: "GET",
@@ -61851,269 +62312,53 @@ export const simulateApiHarnessEnvironmentsValidationStatus = async (
   );
 };
 
-export type simulateApiHarnessEnvironmentsValidateScenariosResponse200 = {
-  data: HarnessScenarioValidateResponseApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsValidateScenariosResponse202 = {
-  data: HarnessScenarioValidateResponseApi;
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponse202 = {
+  data: HarnessStartingRecordReworkApi;
   status: 202;
 };
 
-export type simulateApiHarnessEnvironmentsValidateScenariosResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 202>;
-};
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
 
-export type simulateApiHarnessEnvironmentsValidateScenariosResponseSuccess = (
-  | simulateApiHarnessEnvironmentsValidateScenariosResponse200
-  | simulateApiHarnessEnvironmentsValidateScenariosResponse202
-) & {
-  headers: ApiResponseHeaders;
-};
-export type simulateApiHarnessEnvironmentsValidateScenariosResponseError =
-  simulateApiHarnessEnvironmentsValidateScenariosResponseDefault & {
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponseSuccess =
+  simulateApiHarnessEnvironmentsReworkStartingRecordResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponseError =
+  simulateApiHarnessEnvironmentsReworkStartingRecordResponseDefault & {
     headers: ApiResponseHeaders;
   };
 
-export type simulateApiHarnessEnvironmentsValidateScenariosResponse =
-  | simulateApiHarnessEnvironmentsValidateScenariosResponseSuccess
-  | simulateApiHarnessEnvironmentsValidateScenariosResponseError;
+export type simulateApiHarnessEnvironmentsReworkStartingRecordResponse =
+  | simulateApiHarnessEnvironmentsReworkStartingRecordResponseSuccess
+  | simulateApiHarnessEnvironmentsReworkStartingRecordResponseError;
 
-export const getSimulateApiHarnessEnvironmentsValidateScenariosUrl = (
+export const getSimulateApiHarnessEnvironmentsReworkStartingRecordUrl = (
   id: string,
+  scenarioKey: string,
 ) => {
-  return `/simulate/api/harness-environments/${id}/scenarios/validate/`;
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioKey}/starting-records/rework/`;
 };
 
 /**
- * Prove every scenario of the pair again; 202 while it runs, never refused while one is live.
+ * Ask the environment's builder to rework this scenario so it starts from another seeded row.
  */
-export const simulateApiHarnessEnvironmentsValidateScenarios = async (
+export const simulateApiHarnessEnvironmentsReworkStartingRecord = async (
   id: string,
-  harnessScenarioValidateApi: HarnessScenarioValidateApi,
+  scenarioKey: string,
+  harnessStartingRecordReworkWriteApi: HarnessStartingRecordReworkWriteApi,
   options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsValidateScenariosResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsValidateScenariosResponse>(
-    getSimulateApiHarnessEnvironmentsValidateScenariosUrl(id),
+): Promise<simulateApiHarnessEnvironmentsReworkStartingRecordResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsReworkStartingRecordResponse>(
+    getSimulateApiHarnessEnvironmentsReworkStartingRecordUrl(id, scenarioKey),
     {
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessScenarioValidateApi),
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsArchiveScenarioResponse200 = {
-  data: HarnessScenarioLifecycleResponseApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsArchiveScenarioResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsArchiveScenarioResponseSuccess =
-  simulateApiHarnessEnvironmentsArchiveScenarioResponse200 & {
-    headers: ApiResponseHeaders;
-  };
-export type simulateApiHarnessEnvironmentsArchiveScenarioResponseError =
-  simulateApiHarnessEnvironmentsArchiveScenarioResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
-
-export type simulateApiHarnessEnvironmentsArchiveScenarioResponse =
-  | simulateApiHarnessEnvironmentsArchiveScenarioResponseSuccess
-  | simulateApiHarnessEnvironmentsArchiveScenarioResponseError;
-
-export const getSimulateApiHarnessEnvironmentsArchiveScenarioUrl = (
-  id: string,
-  key: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/scenarios/${key}/archive/`;
-};
-
-/**
- * Take a scenario out of future runs, keeping its identity, runs and evidence.
- */
-export const simulateApiHarnessEnvironmentsArchiveScenario = async (
-  id: string,
-  key: string,
-  harnessScenarioArchiveApi: HarnessScenarioArchiveApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsArchiveScenarioResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsArchiveScenarioResponse>(
-    getSimulateApiHarnessEnvironmentsArchiveScenarioUrl(id, key),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessScenarioArchiveApi),
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsScenarioRecordsResponse200 = {
-  data: HarnessScenarioRecordsResponseApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsScenarioRecordsResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsScenarioRecordsResponseSuccess =
-  simulateApiHarnessEnvironmentsScenarioRecordsResponse200 & {
-    headers: ApiResponseHeaders;
-  };
-export type simulateApiHarnessEnvironmentsScenarioRecordsResponseError =
-  simulateApiHarnessEnvironmentsScenarioRecordsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
-
-export type simulateApiHarnessEnvironmentsScenarioRecordsResponse =
-  | simulateApiHarnessEnvironmentsScenarioRecordsResponseSuccess
-  | simulateApiHarnessEnvironmentsScenarioRecordsResponseError;
-
-export const getSimulateApiHarnessEnvironmentsScenarioRecordsUrl = (
-  id: string,
-  key: string,
-  params: SimulateApiHarnessEnvironmentsScenarioRecordsParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()));
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/simulate/api/harness-environments/${id}/scenarios/${key}/records/?${stringifiedParams}`
-    : `/simulate/api/harness-environments/${id}/scenarios/${key}/records/`;
-};
-
-/**
- * Seeded rows of one table, to pick a real record for a case whose record is missing. No writes.
- */
-export const simulateApiHarnessEnvironmentsScenarioRecords = async (
-  id: string,
-  key: string,
-  params: SimulateApiHarnessEnvironmentsScenarioRecordsParams,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsScenarioRecordsResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsScenarioRecordsResponse>(
-    getSimulateApiHarnessEnvironmentsScenarioRecordsUrl(id, key, params),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsRestoreScenarioResponse200 = {
-  data: HarnessScenarioLifecycleResponseApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsRestoreScenarioResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsRestoreScenarioResponseSuccess =
-  simulateApiHarnessEnvironmentsRestoreScenarioResponse200 & {
-    headers: ApiResponseHeaders;
-  };
-export type simulateApiHarnessEnvironmentsRestoreScenarioResponseError =
-  simulateApiHarnessEnvironmentsRestoreScenarioResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
-
-export type simulateApiHarnessEnvironmentsRestoreScenarioResponse =
-  | simulateApiHarnessEnvironmentsRestoreScenarioResponseSuccess
-  | simulateApiHarnessEnvironmentsRestoreScenarioResponseError;
-
-export const getSimulateApiHarnessEnvironmentsRestoreScenarioUrl = (
-  id: string,
-  key: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/scenarios/${key}/restore/`;
-};
-
-/**
- * Bring an archived scenario back: at once when the saved suite still holds it, else as a draft.
- */
-export const simulateApiHarnessEnvironmentsRestoreScenario = async (
-  id: string,
-  key: string,
-  harnessScenarioRestoreApi: HarnessScenarioRestoreApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsRestoreScenarioResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsRestoreScenarioResponse>(
-    getSimulateApiHarnessEnvironmentsRestoreScenarioUrl(id, key),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessScenarioRestoreApi),
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsScenarioRevisionsResponse200 = {
-  data: HarnessScenarioRevisionsApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsScenarioRevisionsResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsScenarioRevisionsResponseSuccess =
-  simulateApiHarnessEnvironmentsScenarioRevisionsResponse200 & {
-    headers: ApiResponseHeaders;
-  };
-export type simulateApiHarnessEnvironmentsScenarioRevisionsResponseError =
-  simulateApiHarnessEnvironmentsScenarioRevisionsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
-
-export type simulateApiHarnessEnvironmentsScenarioRevisionsResponse =
-  | simulateApiHarnessEnvironmentsScenarioRevisionsResponseSuccess
-  | simulateApiHarnessEnvironmentsScenarioRevisionsResponseError;
-
-export const getSimulateApiHarnessEnvironmentsScenarioRevisionsUrl = (
-  id: string,
-  key: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/scenarios/${key}/revisions/`;
-};
-
-/**
- * Each distinct content of a scenario across saved suite versions, newest first.
- */
-export const simulateApiHarnessEnvironmentsScenarioRevisions = async (
-  id: string,
-  key: string,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsScenarioRevisionsResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsScenarioRevisionsResponse>(
-    getSimulateApiHarnessEnvironmentsScenarioRevisionsUrl(id, key),
-    {
-      ...options,
-      method: "GET",
+      body: JSON.stringify(harnessStartingRecordReworkWriteApi),
     },
   );
 };
@@ -62417,53 +62662,6 @@ export const simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersion =
       },
     );
   };
-
-export type simulateApiHarnessEnvironmentsSourceChangesResponse200 = {
-  data: HarnessSourceChangesApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsSourceChangesResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsSourceChangesResponseSuccess =
-  simulateApiHarnessEnvironmentsSourceChangesResponse200 & {
-    headers: ApiResponseHeaders;
-  };
-export type simulateApiHarnessEnvironmentsSourceChangesResponseError =
-  simulateApiHarnessEnvironmentsSourceChangesResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
-
-export type simulateApiHarnessEnvironmentsSourceChangesResponse =
-  | simulateApiHarnessEnvironmentsSourceChangesResponseSuccess
-  | simulateApiHarnessEnvironmentsSourceChangesResponseError;
-
-export const getSimulateApiHarnessEnvironmentsSourceChangesUrl = (
-  id: string,
-  versionId: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/versions/environment/${versionId}/source-changes/`;
-};
-
-/**
- * The rules and files this environment version changed that cases cite, with the cases citing each.
- */
-export const simulateApiHarnessEnvironmentsSourceChanges = async (
-  id: string,
-  versionId: string,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsSourceChangesResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsSourceChangesResponse>(
-    getSimulateApiHarnessEnvironmentsSourceChangesUrl(id, versionId),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
-};
 
 export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse200 =
   {
@@ -63309,7 +63507,7 @@ export const simulateApiHarnessJobsRuns = async (
 };
 
 export type simulateApiHarnessJobsScenariosResponse200 = {
-  data: void;
+  data: HarnessScenarioListResponseApi;
   status: 200;
 };
 
@@ -63354,18 +63552,18 @@ export const simulateApiHarnessJobsScenarios = async (
   );
 };
 
-export type simulateApiHarnessJobsScenariosAmendScenariosResponse201 = {
-  data: HarnessScenarioAmendApi;
-  status: 201;
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse200 = {
+  data: HarnessScenarioAmendResponseApi;
+  status: 200;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200>;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
-  simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
+  simulateApiHarnessJobsScenariosAmendScenariosResponse200 & {
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
@@ -71043,6 +71241,82 @@ export const simulateV3CallExecutionDetail = async (
   );
 };
 
+export type simulateV3CallExecutionWorkersResponse200 = {
+  data: CallWorkersResponseApi;
+  status: 200;
+};
+
+export type simulateV3CallExecutionWorkersResponse202 = {
+  data: CallWorkersPendingApi;
+  status: 202;
+};
+
+export type simulateV3CallExecutionWorkersResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateV3CallExecutionWorkersResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 204>;
+};
+
+export type simulateV3CallExecutionWorkersResponseSuccess = (
+  | simulateV3CallExecutionWorkersResponse200
+  | simulateV3CallExecutionWorkersResponse202
+  | simulateV3CallExecutionWorkersResponse204
+) & {
+  headers: ApiResponseHeaders;
+};
+export type simulateV3CallExecutionWorkersResponseError =
+  simulateV3CallExecutionWorkersResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3CallExecutionWorkersResponse =
+  | simulateV3CallExecutionWorkersResponseSuccess
+  | simulateV3CallExecutionWorkersResponseError;
+
+export const getSimulateV3CallExecutionWorkersUrl = (
+  callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/call-executions/${callExecutionId}/workers/?${stringifiedParams}`
+    : `/simulate/v3/call-executions/${callExecutionId}/workers/`;
+};
+
+/**
+ * Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.
+ */
+export const simulateV3CallExecutionWorkers = async (
+  callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
+  options?: RequestInit,
+): Promise<simulateV3CallExecutionWorkersResponse> => {
+  return apiMutator<simulateV3CallExecutionWorkersResponse>(
+    getSimulateV3CallExecutionWorkersUrl(callExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateV3TestExecutionAnalyticsResponse200 = {
   data: RunAnalyticsV3ResponseApi;
   status: 200;
@@ -71295,6 +71569,69 @@ export const simulateV3TestExecutionTraces = async (
 ): Promise<simulateV3TestExecutionTracesResponse> => {
   return apiMutator<simulateV3TestExecutionTracesResponse>(
     getSimulateV3TestExecutionTracesUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionTrialRoutesResponse200 = {
+  data: TrialRoutesResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionTrialRoutesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionTrialRoutesResponseSuccess =
+  simulateV3TestExecutionTrialRoutesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateV3TestExecutionTrialRoutesResponseError =
+  simulateV3TestExecutionTrialRoutesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3TestExecutionTrialRoutesResponse =
+  | simulateV3TestExecutionTrialRoutesResponseSuccess
+  | simulateV3TestExecutionTrialRoutesResponseError;
+
+export const getSimulateV3TestExecutionTrialRoutesUrl = (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTrialRoutesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/trial-routes/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/trial-routes/`;
+};
+
+/**
+ * One scenario's trials in the run lined up by who asked whom, and the first step where they went different ways.
+ */
+export const simulateV3TestExecutionTrialRoutes = async (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTrialRoutesParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionTrialRoutesResponse> => {
+  return apiMutator<simulateV3TestExecutionTrialRoutesResponse>(
+    getSimulateV3TestExecutionTrialRoutesUrl(testExecutionId, params),
     {
       ...options,
       method: "GET",

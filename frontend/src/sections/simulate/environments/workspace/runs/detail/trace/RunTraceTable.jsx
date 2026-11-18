@@ -60,8 +60,7 @@ const tickableIds = (rows) =>
 
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
-// "Rowan (5; 1 dropped, 1 not triggered)": the calls an actor was planned for, then
-// any where none of its lines reached the agent.
+// "Rowan (5; 1 dropped, 1 not triggered)"
 const callActorChoiceLabel = (item) => {
   if (item.count == null) return item.label;
   const missed = [
@@ -213,7 +212,7 @@ export default function RunTraceTable({
     runActive = false,
     isLoading,
     error,
-  } = useRunCalls(executionId, listQuery);
+  } = useRunCalls(executionId, { ...listQuery, keepPrevious: true });
 
   // Calls ticked for a re-run. The selection survives paging: "all matching"
   // is a mode with the unticked calls as exceptions, never a list of ids.
@@ -396,16 +395,7 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
-  // Only a run where some call had an actor planned offers this filter. Facets
-  // are empty while loading or failed, so the row keeps the last ones it had.
-  const lastCallActorFacetRef = useRef(facets.actor);
-  useEffect(() => {
-    if (facets.actor?.length) lastCallActorFacetRef.current = facets.actor;
-  }, [facets.actor]);
-  const callActorFacet =
-    (isLoading || error) && !facets.actor?.length
-      ? lastCallActorFacetRef.current
-      : facets.actor;
+  const callActorFacet = facets.actor;
   const callActorField = useMemo(
     () =>
       callActorFacet?.length
@@ -415,8 +405,6 @@ export default function RunTraceTable({
               label: "Actor",
               type: "enum",
               choices: callActorFacet.map((item) => item.value),
-              // Each choice says how many of the run's calls it was planned for,
-              // and how many of those it never reached the agent in.
               choiceLabels: Object.fromEntries(
                 callActorFacet.map((item) => [
                   item.value,

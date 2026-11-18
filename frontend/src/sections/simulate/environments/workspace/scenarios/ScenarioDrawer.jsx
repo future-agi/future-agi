@@ -9,13 +9,13 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
-import {
-  callActorTimeout,
-  callActorWhen,
-  effectiveTrigger,
-} from "./callActorLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import { ACTORS_COPY } from "../actors/actors.constants";
+import {
+  TEST_CONDITIONS_COPY,
+  testConditionRoute,
+} from "./testConditions.constants";
 
 // One scenario, opened from its table row, laid out as the designer's
 // ScenarioDrawer: the name (the table's Scenario column) and Edit in the
@@ -48,15 +48,25 @@ function ArchiveAction({ row, jobId, onDone }) {
 
   const run = async () => {
     try {
-      const done = await archive.mutateAsync({ key, reason, restore: archived });
-      const restoredCopy = done?.live ? SCENARIOS_COPY.restoredLive : SCENARIOS_COPY.restored;
-      enqueueSnackbar(archived ? restoredCopy : SCENARIOS_COPY.archived, { variant: "success" });
+      const done = await archive.mutateAsync({
+        key,
+        reason,
+        restore: archived,
+      });
+      const restoredCopy = done?.live
+        ? SCENARIOS_COPY.restoredLive
+        : SCENARIOS_COPY.restored;
+      enqueueSnackbar(archived ? restoredCopy : SCENARIOS_COPY.archived, {
+        variant: "success",
+      });
       setConfirming(false);
       onDone?.();
     } catch (error) {
       const code = error?.response?.data?.error;
       enqueueSnackbar(
-        code === "draft_changed" ? SCENARIOS_COPY.draftChanged : error?.response?.data?.message || error?.message,
+        code === "draft_changed"
+          ? SCENARIOS_COPY.draftChanged
+          : error?.response?.data?.message || error?.message,
         { variant: "error" },
       );
     }
@@ -70,7 +80,12 @@ function ArchiveAction({ row, jobId, onDone }) {
         color="inherit"
         onClick={() => (archived ? run() : setConfirming(true))}
         disabled={archive.isPending}
-        startIcon={<Iconify icon={archived ? "solar:restart-linear" : "solar:archive-linear"} width={14} />}
+        startIcon={
+          <Iconify
+            icon={archived ? "solar:restart-linear" : "solar:archive-linear"}
+            width={14}
+          />
+        }
         sx={{ flexShrink: 0 }}
       >
         {archived ? SCENARIOS_COPY.restore : SCENARIOS_COPY.archive}
@@ -90,7 +105,12 @@ function ArchiveAction({ row, jobId, onDone }) {
           />
         }
         action={
-          <Button variant="contained" color="primary" onClick={run} disabled={archive.isPending}>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={run}
+            disabled={archive.isPending}
+          >
             {SCENARIOS_COPY.archive}
           </Button>
         }
@@ -151,10 +171,12 @@ export default function ScenarioDrawer({
                 Edit
               </Button>
             )}
-            {!locked && <ArchiveAction row={row} jobId={env?.id} onDone={onClose} />}
+            {!locked && (
+              <ArchiveAction row={row} jobId={env?.id} onDone={onClose} />
+            )}
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            <ScenarioSheet row={row} env={env} />
+            <ScenarioSheet row={row} />
             <Stack spacing={3} sx={{ px: 3, pb: 3 }}>
               <LifecycleSections row={row} jobId={env?.id} />
             </Stack>
@@ -167,21 +189,22 @@ export default function ScenarioDrawer({
 
 ScenarioDrawer.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({ id: PropTypes.string, callActors: PropTypes.array }),
+  env: PropTypes.shape({ id: PropTypes.string }),
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
 };
 
-function ScenarioSheet({ row, env }) {
+function ScenarioSheet({ row }) {
   const persona = row.persona?.name ? row.persona : null;
-  const listed = Object.fromEntries(
-    (env?.callActors || []).map((one) => [one.id, one]),
-  );
-  const names = Object.fromEntries(
-    Object.values(listed).map((one) => [one.id, one.name || one.id]),
-  );
   const goals = normaliseSubTasks(row.subTasks);
+  const problem = row.doorProblem;
+  const problemLine = (code) =>
+    problem?.code === code && (
+      <Typography className="sd-val" sx={{ color: "warning.main" }}>
+        {problem.message}
+      </Typography>
+    );
   // The same fields the table's Situation and Ideal outcome cells read.
   const situation = row.situation || row.task;
   const idealOutcome = row.outcome || row.expected;
@@ -255,29 +278,66 @@ function ScenarioSheet({ row, env }) {
                   component="span"
                   sx={{ color: "text.primary", fontWeight: 600 }}
                 >
-                  {listed[one.id]?.name || one.id}
+                  {one.name}
                 </Box>
-                {listed[one.id]?.role ? ` · ${listed[one.id].role}` : ""}
-                {` · ${callActorWhen(effectiveTrigger(one, listed[one.id]), listed[one.id]?.channel)}`}
+                {one.role ? ` · ${one.role}` : ""}
+                {` · ${one.when_label}`}
               </Typography>
-              {callActorTimeout(listed[one.id], names) && (
+              {one.timeout_label && (
                 <Typography className="sd-val" sx={{ color: "text.secondary" }}>
-                  {callActorTimeout(listed[one.id], names)}
+                  {one.timeout_label}
                 </Typography>
               )}
-              {(one.instruction || listed[one.id]?.goal) && (
+              {one.instruction && (
                 <Typography
                   className="sd-val"
                   sx={{ color: "text.secondary", whiteSpace: "pre-line" }}
                 >
-                  {one.instruction || listed[one.id]?.goal}
+                  {one.instruction}
                 </Typography>
               )}
+              {(one.actions || []).map((step, index) => (
+                <Typography
+                  key={`${step.action}-${index}`}
+                  className="sd-val"
+                  sx={{ color: "text.secondary" }}
+                >
+                  {ACTORS_COPY.scenarioActions.takes(
+                    step.action,
+                    step.when_label,
+                  )}
+                </Typography>
+              ))}
             </Box>
           ))}
+          {problemLine("actor_no_door")}
         </Stack>
       </Row>
     ),
+    <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
+      <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
+        {row.faults?.length > 0 ? (
+          row.faults.map((fault, index) => (
+            <Box key={`${fault.action}-${index}`}>
+              <Typography className="sd-val">{fault.line}</Typography>
+              {testConditionRoute(fault) && (
+                <Typography
+                  className="sd-val"
+                  sx={{ typography: "s2", color: "text.subtitle" }}
+                >
+                  {testConditionRoute(fault)}
+                </Typography>
+              )}
+            </Box>
+          ))
+        ) : (
+          <Typography className="sd-val">
+            {TEST_CONDITIONS_COPY.empty}
+          </Typography>
+        )}
+        {problemLine("fault_unreachable")}
+      </Stack>
+    </Row>,
     idealOutcome && (
       <Row key="outcome" label="Ideal outcome">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
@@ -309,7 +369,6 @@ function ScenarioSheet({ row, env }) {
 
 ScenarioSheet.propTypes = {
   row: SCENARIO_SHAPE,
-  env: PropTypes.shape({ callActors: PropTypes.array }),
 };
 
 function Row({ label, children }) {

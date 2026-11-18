@@ -29,9 +29,6 @@ from simulate.tests.test_harness_readiness import (
     _with_a2,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
@@ -40,7 +37,7 @@ from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
 from simulate.tests.test_harness_versioning_assembly import _row
 from simulate.tests.test_harness_versioning_runs import _run
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 LOOKUP = "lookup_order"
 REFUND = "issue_refund"
@@ -183,6 +180,8 @@ class TestBuckets:
         )
         assert chosen["lists"]["blocked"] == {"keys": REFUND_KEYS, "truncated": False}
         assert chosen["lists"]["eligible"]["keys"] == LOOKUP_KEYS
+        # The run dialog names the area holding them back as the server picks it.
+        assert chosen["blocking_area"] == "tool_binding"
         routing = _rows(report)["tool_routing"]
         assert routing["needed_by"] == 10
         assert routing["affected"] == {
@@ -191,6 +190,38 @@ class TestBuckets:
             "keys": REFUND_KEYS,
             "truncated": False,
         }
+
+    @pytest.mark.parametrize(
+        "read", ["selection_report", "case_page", "select_for_run"]
+    )
+    def test_each_report_reads_the_pairing_s_evidence_once(
+        self, user, workspace, storage, monkeypatch, read
+    ):
+        from simulate.services.harness_readiness import report as report_module
+
+        environment = _ten_certified(user, workspace, storage, f"once-{read}")
+        pairing = _pairing(environment)
+        reads = []
+        real = selection.read_evidence
+
+        def counted(*args, **kwargs):
+            reads.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(selection, "read_evidence", counted)
+        monkeypatch.setattr(report_module, "read_evidence", counted)
+        cache.clear()
+
+        if read == "selection_report":
+            harness_readiness.selection_report(pairing, keys=None, trials=1)
+        elif read == "case_page":
+            harness_readiness.case_page(
+                pairing, keys=None, trials=1, bucket=None, row=None, cursor=None
+            )
+        else:
+            harness_readiness.select_for_run(pairing, keys=LOOKUP_KEYS, trials=1)
+
+        assert len(reads) == 1
 
     def test_other_tool_failing_keeps_case_eligible(self, user, workspace, storage):
         environment = _ten_certified(
@@ -499,6 +530,56 @@ class TestBuckets:
         assert message["needed_by"] == 0
         assert message["affected"]["count"] == 0
         assert report["selection"]["eligible"] == 10
+
+
+class TestGrading:
+    """Whether the judge answered in the check decides if judged checks can be graded."""
+
+    def _judged(self, user, workspace, storage, key, checks):
+        environment = _environment(user, workspace, storage, key)
+        _suite(
+            environment,
+            [
+                _doc("polite-1", sub_goals=("polite",)),
+                _doc("polite-2", sub_goals=("looked_up", "polite")),
+                _doc("coded", solution=(LOOKUP,)),
+            ],
+        )
+        _certify(environment, storage, checks=checks)
+        return environment
+
+    def test_an_unreachable_judge_makes_judged_cases_not_gradable(
+        self, user, workspace, storage
+    ):
+        environment = self._judged(
+            user,
+            workspace,
+            storage,
+            "gr-judge-down",
+            {**PASSED, "judge_reachable": "failed"},
+        )
+
+        grading = _select(environment)["selection"]["grading"]
+
+        assert grading["not_gradable"] == [
+            {"key": "polite-1", "reason": "judge_unavailable"},
+            {"key": "polite-2", "reason": "judge_unavailable"},
+        ]
+        assert grading["gradable"] == 1
+
+    @pytest.mark.parametrize("judge", ["passed", "not_run", None])
+    def test_an_old_certificate_without_the_judge_check_reports_no_gap(
+        self, user, workspace, storage, judge
+    ):
+        checks = {**PASSED, **({"judge_reachable": judge} if judge else {})}
+        environment = self._judged(
+            user, workspace, storage, f"gr-judge-{judge}", checks
+        )
+
+        grading = _select(environment)["selection"]["grading"]
+
+        assert grading["not_gradable"] == []
+        assert grading["gradable"] == 3
 
 
 class TestRunRefusals:
@@ -858,6 +939,9 @@ class TestAgentGapCases:
         assert _rows(lookups)["tool_discovery"]["affected"]["count"] == 0
         assert lookups["selection"]["blocked"] == 0
         assert lookups["answer"]["kind"] != "blocked"
+        # The blocked tool-binding area holds none of the lookups, so it is not named as holding them.
+        assert whole["selection"]["blocking_area"] == "tool_binding"
+        assert lookups["selection"]["blocking_area"] is None
 
     def test_a_changed_signature_holds_back_only_the_cases_using_it(
         self, user, workspace, storage
@@ -1253,7 +1337,7 @@ def test_another_agent_s_tool_gap_keeps_the_production_only_tool_held(
                 {
                     "name": "orders-db",
                     "engine": "",
-                    "reached": {},
+                    "reached": {"host": "orders.example.com"},
                     "used_by": ["lookup_order"],
                 }
             ],

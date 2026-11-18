@@ -12,6 +12,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/scheduled"
 )
 
@@ -20,7 +21,8 @@ import (
 // route, so they carry gpt-5.6 tools too.
 
 func TestScheduledCompletionCarriesGPT56ToolsOverResponses(t *testing.T) {
-	srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{configure: func(cfg *config.Config) {
+	logs, wantLog := responseDropsLogger(t)
+	srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}, configure: func(cfg *config.Config) {
 		cfg.Routing.Scheduled.Enabled = true
 		cfg.Routing.Scheduled.RetryAttempts = 1
 	}})
@@ -53,7 +55,7 @@ func TestScheduledCompletionCarriesGPT56ToolsOverResponses(t *testing.T) {
 		ScheduledAt: time.Now(),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
-		Request:     json.RawMessage(chatToolBody("gpt-5.6-terra", false, "")),
+		Request:     json.RawMessage(chatToolBody("gpt-5.6-terra", false, allResponsesOnlySettings)),
 		Model:       "gpt-5.6-terra",
 		MaxAttempts: 1,
 		WebhookURL:  hook.URL,
@@ -73,13 +75,20 @@ func TestScheduledCompletionCarriesGPT56ToolsOverResponses(t *testing.T) {
 	}
 	checkToolCompletion(t, got.Result)
 	checkHits(t, upstream, 0, 1)
+	if _, leaked := sentToResponses(t, upstream); len(leaked) != 0 {
+		t.Errorf("scheduled call sent %v", leaked)
+	}
+	// Scheduled execution has no live HTTP response; its request log carries
+	// the warning without adding fields to the scheduled result schema.
+	wantLog(allResponsesDropNotes)
 }
 
 func TestBatchCarriesGPT56ToolsOverResponses(t *testing.T) {
-	srv, upstream := newResponsesBridgeServer(t)
+	logs, wantLog := responseDropsLogger(t)
+	srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}})
 
 	var req models.ChatCompletionRequest
-	if err := json.Unmarshal([]byte(chatToolBody("gpt-5.6-sol", false, "")), &req); err != nil {
+	if err := json.Unmarshal([]byte(chatToolBody("gpt-5.6-sol", false, allResponsesOnlySettings)), &req); err != nil {
 		t.Fatal(err)
 	}
 	b := srv.batchProcessor.Submit([]*models.ChatCompletionRequest{&req}, 1)
@@ -103,6 +112,10 @@ func TestBatchCarriesGPT56ToolsOverResponses(t *testing.T) {
 	}
 	checkToolCompletion(t, raw)
 	checkHits(t, upstream, 0, 1)
+	if _, leaked := sentToResponses(t, upstream); len(leaked) != 0 {
+		t.Errorf("batch call sent %v", leaked)
+	}
+	wantLog(allResponsesDropNotes)
 }
 
 // The GenAI translator builds a json_schema response format with no name. The
@@ -287,14 +300,31 @@ func TestGenAICandidateCountGetsOneCandidateOverResponses(t *testing.T) {
 	}
 }
 
-// A caller's own chat request asking for two choices is still refused, with
-// the remedy that route can take.
-func TestChatCompletionsNTwoIsRefusedOverResponses(t *testing.T) {
-	srv, upstream := newResponsesBridgeServer(t)
-	w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", false, `"n":2,`), nil)
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unsupported_over_responses") ||
-		!strings.Contains(w.Body.String(), `reasoning_effort to \"none\"`) {
-		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+// Decision B replaces the original n=2 refusal: one choice with a warning,
+// never a fake second choice or a change to the chat response shape.
+func TestChatCompletionsNTwoDropsAndWarnsOverResponses(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			srv, upstream := newResponsesBridgeServer(t)
+			w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", stream, `"n":2,`), nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			if got := w.Header().Get("x-agentcc-translation-drops"); got != "n_unsupported" {
+				t.Errorf("drops = %q", got)
+			}
+			if stream {
+				checkToolStream(t, w)
+			} else {
+				checkToolCompletion(t, w.Body.Bytes())
+			}
+			if strings.Contains(w.Body.String(), `"index":1`) {
+				t.Errorf("invented second choice: %s", w.Body.String())
+			}
+			checkHits(t, upstream, 0, 1)
+			if _, leaked := sentToResponses(t, upstream); len(leaked) > 0 {
+				t.Errorf("sent unsupported settings: %v", leaked)
+			}
+		})
 	}
-	checkHits(t, upstream, 0, 0)
 }

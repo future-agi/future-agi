@@ -1870,11 +1870,145 @@ class TestRunTestExecutionsView:
         )
         assert row["calls"] == 5
         assert row["total_calls"] == 5
-        assert row["outcome_passed"] == 1
-        assert row["outcome_failed"] == 1
+        # Receipts by status, as dev counted them: the no-score call's passed receipt is a pass, and
+        # outcome_failed is failed plus errored.
+        assert row["outcome_passed"] == 2
+        assert row["outcome_failed"] == 2
         assert row["outcome_errored"] == 1
         assert row["outcome_skipped"] == 1
         assert row["outcome_no_score"] == 1
+        # The rate scores the one real pass over the four calls that ran to a verdict.
+        assert (row["outcome_status"], row["pass_rate"], row["scored"]) == (
+            "failed",
+            25,
+            4,
+        )
+
+    def test_get_run_test_executions_judges_a_run_without_receipts_by_its_calls(
+        self, auth_client, run_test_with_v10_scenario, scenario_with_prompt_version
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=4,
+        )
+        for call_status in (
+            CallExecution.CallStatus.COMPLETED,
+            CallExecution.CallStatus.COMPLETED,
+            CallExecution.CallStatus.COMPLETED,
+            CallExecution.CallStatus.FAILED,
+        ):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario_with_prompt_version,
+                status=call_status,
+                simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        assert row["outcome_passed"] is None
+        assert (row["outcome_status"], row["pass_rate"], row["scored"]) == (
+            "failed",
+            75,
+            4,
+        )
+
+    def test_get_run_test_executions_never_counts_another_organisations_receipts(
+        self, auth_client, run_test_with_v10_scenario, scenario_with_prompt_version
+    ):
+        # A hosted job of another organisation that names this run must neither make it a hosted run nor count.
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+        from accounts.models import Organization
+
+        stranger = Organization.objects.create(name="Stranger receipts org")
+        job = HostedHarnessJob.no_workspace_objects.create(
+            organization=stranger,
+            test_execution=test_execution,
+            run_id=uuid4(),
+            idempotency_key=uuid4().hex,
+            request_digest=uuid4().hex,
+            schema_version="1.6",
+            seed=1,
+            artifact_level="standard",
+            max_artifact_bytes=1024,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            scenario_count=1,
+            payload={"metadata": {}, "runtime": {"max_duration_seconds": 600}},
+        )
+        attempt = HostedHarnessAttempt.objects.create(
+            job=job,
+            attempt_number=1,
+            token_hash="t" * 64,
+            fence_hash="f" * 64,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        HostedHarnessReceipt.objects.create(
+            job=job,
+            attempt=attempt,
+            scenario=HostedHarnessScenario.objects.create(job=job, scenario_key="x"),
+            attempt_number=1,
+            digest="sha256:" + "0" * 64,
+            status="failed",
+            body={},
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        assert (row["outcome_failed"], row["outcome_status"], row["pass_rate"]) == (
+            None,
+            "passed",
+            100,
+        )
+
+    def test_get_run_test_executions_a_running_run_is_running(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.RUNNING,
+            total_scenarios=1,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        assert (row["outcome_status"], row["pass_rate"], row["scored"]) == (
+            "running",
+            None,
+            0,
+        )
 
     def test_get_run_test_executions_times_a_prompt_run_without_deleted_calls(
         self, auth_client, organization, workspace, scenario_with_prompt_version

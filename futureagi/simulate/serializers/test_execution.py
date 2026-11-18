@@ -15,6 +15,7 @@ from simulate.models import (
     CallTranscript,
     TestExecution,
 )
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers.chat_message import ChatMessageSerializer
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
@@ -766,9 +767,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         # Filter out transcripts with 'unknown' speaker role
         if hasattr(obj, "transcripts"):
-            filtered_transcripts = obj.transcripts.exclude(
-                speaker_role=CallTranscript.SpeakerRole.UNKNOWN
-            ).select_related("actor_turn")
+            filtered_transcripts = with_speakers(
+                obj.transcripts.exclude(speaker_role=CallTranscript.SpeakerRole.UNKNOWN)
+            )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver
@@ -1580,9 +1581,9 @@ class CallExecutionSerializer(serializers.ModelSerializer):
         """Get transcripts excluding those with 'unknown' role"""
         # Filter out transcripts with 'unknown' speaker role
         if hasattr(obj, "transcripts"):
-            filtered_transcripts = obj.transcripts.exclude(
-                speaker_role=CallTranscript.SpeakerRole.UNKNOWN
-            ).select_related("actor_turn")
+            filtered_transcripts = with_speakers(
+                obj.transcripts.exclude(speaker_role=CallTranscript.SpeakerRole.UNKNOWN)
+            )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
             from simulate.utils.speaker_roles import SpeakerRoleResolver

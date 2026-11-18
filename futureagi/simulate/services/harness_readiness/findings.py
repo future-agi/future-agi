@@ -10,6 +10,11 @@ from typing import Any, Literal
 
 from simulate.models import HarnessAgentVersionRuntime
 from simulate.services.harness_readiness.catalogue import Reading, Target, targets
+from simulate.services.harness_tool_reach import (
+    PRODUCTION_ONLY_FIX,
+    production_only,
+    production_only_reason,
+)
 
 
 @dataclass(frozen=True)
@@ -19,40 +24,14 @@ class StructuralFinding:
     targets: list[Target]
 
 
-def _provisionable(dependency: Mapping[str, Any]) -> bool:
-    """The environment stands up its own copy of a dependency only when it knows the
-    engine and how the agent reaches it (the rule the build uses)."""
-    reached = dependency.get("reached") or {}
-    seam = any(
-        reached.get(name)
-        for name in (
-            "dsn_env",
-            "config_key",
-            "host",
-            "port",
-            "database",
-            "loader_module",
-        )
-    )
-    return bool(dependency.get("engine")) and seam
-
-
-def _compose_sibling(dependency: Mapping[str, Any]) -> bool:
-    """A service the agent reaches by a single-label host name: inside its own compose app that name can only be
-    another service of the same file, which the build runs with the agent."""
-    host = str((dependency.get("reached") or {}).get("host") or "").strip().lower()
-    return bool(host) and "." not in host and host != "localhost"
-
-
 def structural_findings(
     contract: Mapping[str, Any] | None,
 ) -> StructuralFinding | None:
     """What the environment version's contract alone shows tool routing cannot do.
 
     A tool the build recorded as unreachable, or a service-backed tool naming no
-    service, cannot be routed to the test world. A tool using a dependency the
-    environment cannot stand up reaches the real one: production-only. The agent's
-    own tools service, which a tool entrypoint names, is stood up with the agent.
+    service, cannot be routed to the test world. A tool calling an API someone else
+    runs is production-only, by the rule the Tools card reads.
     """
     contract = contract or {}
     unroutable = sorted(
@@ -70,32 +49,17 @@ def structural_findings(
             "No reachable implementation for: " + ", ".join(unroutable),
             targets("tool", unroutable, "failed"),
         )
-    # A service of the agent's own source that a tool calls, whether the harness calls it or the agent's code does:
-    # the build stands it up from that source, so it is never production.
-    served = {
-        str(entry.get("service"))
-        for entry in contract.get("tool_entrypoints") or []
-        if isinstance(entry, Mapping) and entry.get("service")
-    }
-    runtime = contract.get("runtime")
-    compose = isinstance(runtime, Mapping) and runtime.get("execution") == "compose"
-    live = sorted(
-        {
-            str(tool)
-            for dependency in contract.get("dependencies") or []
-            if isinstance(dependency, Mapping)
-            and not _provisionable(dependency)
-            and str(dependency.get("name") or "") not in served
-            and not (compose and _compose_sibling(dependency))
-            for tool in dependency.get("used_by") or []
-        }
-    )
+    # The Tools card's rule (``tool_status``), so a tool reads production-only in readiness exactly when it reads
+    # Unsupported there.
+    live = production_only(contract)
     if live:
-        verb = "reaches" if len(live) == 1 else "reach"
+        reason = (
+            production_only_reason(live[0])
+            if len(live) == 1
+            else f"{', '.join(live)} reach production and are blocked in this controlled test: {PRODUCTION_ONLY_FIX}."
+        )
         return StructuralFinding(
-            "production_only",
-            f"Unsupported for this controlled test: {', '.join(live)} {verb} production",
-            targets("tool", live, "failed"),
+            "production_only", reason, targets("tool", live, "failed")
         )
     return None
 

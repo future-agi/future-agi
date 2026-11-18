@@ -134,7 +134,6 @@ const stopRowClick = (e) => e.stopPropagation();
 export default function ScenarioTable({
   rows,
   groups,
-  env,
   onEdit,
   onRemove,
   onOpen,
@@ -148,9 +147,6 @@ export default function ScenarioTable({
   rowHeight = "Short",
 }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
-  const callActorNames = Object.fromEntries(
-    (env?.callActors || []).map((one) => [one.id, one.name]),
-  );
   const [widths, setWidths] = useState(readWidths);
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
@@ -449,7 +445,7 @@ export default function ScenarioTable({
               const p = row.persona;
               const subTasks = row.subTasks || [];
               const personaLine = personaSubline(p);
-              const callActorLine = `With ${(row.callActors || []).map((one) => callActorNames[one.id] || one.id).join(", ")}`;
+              const callActorLine = `With ${(row.callActors || []).map((one) => one.name).join(", ")}`;
               const situationText = row.situation || row.task || "";
               const idealOutcomeText = row.outcome || row.expected || "";
 
@@ -655,7 +651,6 @@ export default function ScenarioTable({
 ScenarioTable.propTypes = {
   rows: PropTypes.arrayOf(SCENARIO_SHAPE).isRequired,
   groups: PropTypes.arrayOf(GROUP_SHAPE),
-  env: PropTypes.shape({ callActors: PropTypes.array }),
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
   // Opens a row in full (the scenario drawer).

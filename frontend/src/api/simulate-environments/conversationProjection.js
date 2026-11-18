@@ -48,6 +48,8 @@ function normalizeQuestion(message, blocking) {
     prompt: source.prompt || message.content || "",
     options,
     multiSelect: Boolean(source.multiSelect ?? source.multi_select),
+    // Answered only with one of its options, as the server serves the question: no free-text answer.
+    optionsOnly: Boolean(source.options_only),
     step: source.step || 1,
     total: source.total || 1,
   };
@@ -77,7 +79,7 @@ export function projectConversation(conversation) {
   // text so a refreshed conversation renders the resolved summary.
   const answerFor = {};
   for (const m of messages) {
-    if (m.reply_to && m.role === "user") answerFor[m.reply_to] = m.content;
+    if (m.reply_to && m.role === "user") answerFor[m.reply_to] = m;
   }
 
   const timeline = [
@@ -214,7 +216,14 @@ export function projectConversation(conversation) {
           replyTo: m.message_id,
           confirmation: m.kind === "confirmation",
           resolved: answered,
-          answerText: answered ? answerFor[m.message_id] : undefined,
+          answerText: answered ? answerFor[m.message_id].content : undefined,
+          // An answer the server did not take: shown failed, with the reason it serves, never as accepted.
+          answerFailed:
+            answered && answerFor[m.message_id].state === "failed"
+              ? {
+                  reason: answerFor[m.message_id].payload?.failure_reason || "",
+                }
+              : undefined,
         });
         continue;
       }

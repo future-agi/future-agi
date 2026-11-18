@@ -1,6 +1,23 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
+import { WORKERS_COPY } from "../workers.constants";
+
+const tool = (name, description, writes) => ({
+  tool: name,
+  status: "simulated",
+  reset_between_trials: true,
+  runs_at: null,
+  writes,
+  description,
+  arguments: [],
+  returns: [],
+  requires: [],
+  refuses: "",
+  effect: writes ? "write" : "read",
+  effects: "",
+  tables: { recorded: false, read: [], changed: [], label: "Not recorded" },
+});
 
 // A voice environment with two tools, two hard rules and a seeded table —
 // enough to exercise the world (capability graph), the internals (tables +
@@ -16,9 +33,14 @@ const voiceEnv = {
     "Never disclose another caller's data.",
     "Only refund verified callers.",
   ],
-  seed: {
-    tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }],
-  },
+  worldTables: [
+    { name: "customers", rows: 240, note: "40 with saved cards", fields: [] },
+  ],
+  worldTotalRows: 240,
+  toolStatus: [
+    tool("lookup_account", "Reads the caller's account.", false),
+    tool("issue_refund", "Refunds a charge.", true),
+  ],
 };
 
 const renderPanel = (props = {}) =>
@@ -114,17 +136,18 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText("Writes data")).toBeNull();
   });
 
-  it("shows where a tool runs only when ALK reported an entrypoint for it", () => {
+  it("shows where a tool runs only when the contract says, in its words", () => {
     renderPanel({
       env: {
         ...voiceEnv,
-        toolEntrypoints: [
-          { tool: "issue_refund", module: "billing", callable: "refund" },
+        toolStatus: [
+          { ...voiceEnv.toolStatus[0] },
+          { ...voiceEnv.toolStatus[1], runs_at: "billing.refund" },
         ],
       },
     });
     expect(screen.getByText("billing.refund")).toBeInTheDocument();
-    // lookup_account has no entrypoint, so it carries no invented location.
+    // lookup_account has no location, so none is invented.
     expect(screen.queryByText(/lookup_account\./)).toBeNull();
   });
 
@@ -155,5 +178,61 @@ describe("RlContractPanel", () => {
       expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
       expect(patch).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("Participants card", () => {
+  // As the API serves them: a non-null channel and the tools each may use.
+  const workers = [
+    {
+      id: "order_lookup",
+      name: "Order-lookup worker",
+      display_name: "Order-lookup worker",
+      tools: ["get_order", "list_refunds", "update_order_status"],
+      allowed_tools: ["get_order", "list_refunds"],
+      tools_shown: ["get_order", "list_refunds"],
+      binding: "separate",
+      enforcement: "unknown",
+      enforcement_label:
+        "Not confirmed yet: no run has shown this participant's own calls",
+    },
+    {
+      id: "refund",
+      name: "Refund worker",
+      display_name: "Refund worker",
+      tools: ["list_refunds", "issue_refund"],
+      allowed_tools: [],
+      tools_shown: ["list_refunds", "issue_refund"],
+      binding: "not_declared",
+      enforcement: "not_enforced",
+      enforcement_label:
+        "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart",
+    },
+  ];
+
+  it("lists each declared worker with its served channel and only the tools it may use", () => {
+    renderPanel({ env: { ...voiceEnv, workers } });
+    const rows = screen.getAllByTestId("declared-worker");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText("get_order")).toBeTruthy();
+    expect(within(rows[0]).queryByText("update_order_status")).toBeNull();
+    // No channel is claimed for a worker whose contract entry does not say.
+    expect(rows[1]).not.toHaveTextContent(WORKERS_COPY.binding.shared);
+    expect(rows[1]).toHaveTextContent(WORKERS_COPY.binding.not_declared);
+  });
+
+  it("calls them Participants, as the agent and the call drawers do, in product words", () => {
+    renderPanel({ env: { ...voiceEnv, workers } });
+    expect(screen.getByText("Participants")).toBeInTheDocument();
+    expect(screen.getByText("2 participants")).toBeInTheDocument();
+    const rows = screen.getAllByTestId("declared-worker");
+    expect(rows[0]).toHaveTextContent("Own connection");
+    expect(rows[1]).toHaveTextContent("Connection not declared");
+    expect(screen.queryByText(/channel/i)).toBeNull();
+  });
+
+  it("hides the workers card when the contract declares none", () => {
+    renderPanel();
+    expect(screen.queryByTestId("declared-workers")).toBeNull();
   });
 });

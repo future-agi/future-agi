@@ -48,6 +48,10 @@ _LIST = {
 }
 
 
+# A row read with no contract and no cast: its actors read by their ids, and no door problem can be told.
+_NO_CAST = {"targets": None, "fault_targets": [], "actor_cast": []}
+
+
 def _docs():
     return [
         {"scenario_key": "alone", "name": "alone", "instruction": "Book it."},
@@ -77,9 +81,16 @@ def test_a_suite_indexes_each_scenarios_call_actors_and_filters_by_them(
     index_scenarios(job, _docs())
     rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
 
-    assert scenario_row(rows.get(scenario_key="with-friend"))["actors"] == [_FRIEND]
+    [friend] = scenario_row(rows.get(scenario_key="with-friend"), **_NO_CAST)["actors"]
+    # The entry as the scenario holds it, plus who the actor is, resolved against the cast (here none).
+    assert {key: friend[key] for key in _FRIEND} == _FRIEND
+    assert (friend["name"], friend["side"], friend["effective_trigger"]) == (
+        "friend",
+        "world",
+        _FRIEND["trigger"],
+    )
     assert rows.get(scenario_key="alone").actors is None
-    assert scenario_row(rows.get(scenario_key="alone"))["actors"] == []
+    assert scenario_row(rows.get(scenario_key="alone"), **_NO_CAST)["actors"] == []
 
     def filtered(query: str):
         return _keys(apply_filters(rows, QueryDict(query)))
@@ -216,7 +227,9 @@ def test_a_call_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_p
         metadata,
     )
 
-    rows = list(call.transcripts.order_by("start_time_ms"))
+    from simulate.selectors.call_transcripts import with_speakers
+
+    rows = list(with_speakers(call.transcripts.all()).order_by("start_time_ms"))
     assert [(row.speaker_role, row.speaker_name, row.actor_id) for row in rows] == [
         ("assistant", "", None),
         ("actor", "Rowan", "friend"),
@@ -356,7 +369,12 @@ def test_a_transcript_without_actors_stores_no_actor_turns(organization, workspa
     assert not CallTranscriptActor.objects.filter(
         transcript__call_execution=call
     ).exists()
-    assert [(row.speaker_name, row.actor_id) for row in call.transcripts.all()] == [
+    from simulate.selectors.call_transcripts import with_speakers
+
+    assert [
+        (row.speaker_name, row.actor_id)
+        for row in with_speakers(call.transcripts.all())
+    ] == [
         ("", None),
         ("", None),
     ]
@@ -498,6 +516,7 @@ def test_run_results_filter_and_count_calls_by_each_call_actor_planned_for_them(
             "count": 3,
             "label": "Rowan",
             "delivered": 1,
+            "acted": 0,
             "dropped": 1,
             "not_triggered": 1,
         },
@@ -506,6 +525,7 @@ def test_run_results_filter_and_count_calls_by_each_call_actor_planned_for_them(
             "count": 2,
             "label": "Simulated user only",
             "delivered": 0,
+            "acted": 0,
             "dropped": 0,
             "not_triggered": 0,
         },
@@ -519,6 +539,63 @@ def test_run_results_filter_and_count_calls_by_each_call_actor_planned_for_them(
         )
         == []
     )
+
+
+@pytest.mark.django_db
+def test_actor_facet_counts_match_the_python_reference(organization, workspace):
+    from simulate.services.run_results_v3_queries import (
+        _call_actor_facet,
+        _call_actor_facet_python,
+    )
+
+    summaries = [
+        [
+            {
+                "actor": "friend",
+                "name": "Rowan",
+                "triggered": True,
+                "delivered": 2,
+                "drawn": True,
+            }
+        ],
+        [{"actor": "friend", "name": "Rowan", "triggered": False, "delivered": 0}],
+        [
+            {"actor": "friend", "name": "Rowan", "triggered": True, "delivered": 0},
+            {"actor": "partner", "name": "Sam", "triggered": False, "drawn": False},
+        ],
+        [
+            {"actor": "partner", "name": "Sam", "triggered": True, "delivered": 1},
+            "not-an-entry",
+            {"name": "x"},
+        ],
+        [{"actor": "partner", "name": "Sam", "triggered": False, "drawn": False}],
+        "not-a-list",
+        None,
+    ]
+    ids = []
+    for index, summary in enumerate(summaries):
+        call = _ingest(
+            organization,
+            workspace,
+            f"facet-reference-{index}",
+            CallExecution.SimulationCallType.TEXT,
+            {"messages": []},
+            {},
+        )
+        if summary is not None:
+            call.call_metadata = {
+                **(call.call_metadata or {}),
+                "harness_call_actors": {"summary": summary},
+            }
+            call.save(update_fields=["call_metadata"])
+        ids.append(call.id)
+    calls = CallExecution.objects.filter(id__in=ids)
+
+    assert _call_actor_facet(calls) == _call_actor_facet_python(calls)
+    by_value = {one["value"]: one for one in _call_actor_facet(calls)}
+    # A call whose only planned actor was not drawn counts as simulated user only.
+    assert by_value["none"]["count"] == 3
+    assert (by_value["friend"]["count"], by_value["friend"]["dropped"]) == (3, 1)
 
 
 def test_a_pinned_suite_version_keeps_each_scenario_s_call_actors():
@@ -632,16 +709,19 @@ def test_a_built_bundle_s_call_actor_list_is_stored_once_and_an_empty_one_is_not
             ).values_list("title", "summary", "data")
         )
 
-    # The bundle has one actors.json; the stage output keeps the actors in it who speak in the conversation.
+    # The bundle has one actors.json; the stage output keeps every actor in it, one who only acts in the world too.
     world_only = {
         "id": "manager",
         "name": "Mia",
         "permitted_actions": ["deals.approve"],
     }
     assert persisted("bundle-one", {"actors": [*one["call_actors"], world_only]}) == [
-        ("Actors", "1 actor", one)
+        ("Actors", "2 actors", {"call_actors": [*one["call_actors"], world_only]})
     ]
-    assert persisted("bundle-empty", {"actors": [world_only]}) == []
+    assert persisted("bundle-world-only", {"actors": [world_only]}) == [
+        ("Actors", "1 actor", {"call_actors": [world_only]})
+    ]
+    assert persisted("bundle-empty", {"actors": []}) == []
     assert persisted("bundle-none", None) == []
 
 
@@ -692,7 +772,7 @@ def test_stored_call_actor_shapes_keep_only_well_formed_entries():
 
 
 def test_the_call_detail_serves_who_each_call_actor_is_and_an_older_call_what_it_kept():
-    from simulate.views.run_results_v3 import _call_call_actors
+    from simulate.selectors.call_detail import call_actors as _call_call_actors
 
     resolved = [
         {
@@ -722,8 +802,14 @@ def test_the_call_detail_serves_who_each_call_actor_is_and_an_older_call_what_it
             "role": "roommate",
             "channel": "audio_mix",
             "delivery": "dropped",
+            "delivery_label": "Due, but neither spoke nor acted",
         },
-        {"id": "kid", "name": "Sam", "delivery": "not_drawn"},
+        {
+            "id": "kid",
+            "name": "Sam",
+            "delivery": "not_drawn",
+            "delivery_label": "Not drawn for this call",
+        },
     ]
     assert _call_call_actors({"harness_call_actors": {"summary": []}}) == []
     assert _call_call_actors(None) == []
@@ -867,24 +953,31 @@ def test_a_sandbox_list_adds_at_most_the_cap_to_a_call():
 
 
 def test_a_pre_run_message_keeps_its_actor_s_name_in_the_served_trial_state():
+    from types import SimpleNamespace
+
+    from simulate.selectors.call_detail import trial_state
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
     from simulate.views.run_results_v3 import TrialStateSerializer
 
-    served = TrialStateSerializer(
-        {
-            "decisions": [
-                {
-                    "actor": "lead",
-                    "name": "Sam Lee",
-                    "play": "history",
-                    "action": "chat.post_message",
-                },
-                {"actor": "manager", "play": "history", "action": "chat.post_message"},
-            ]
-        }
-    ).data
-    assert [(one["actor"], one.get("name")) for one in served["decisions"]] == [
+    state = {
+        "decisions": [
+            {
+                "actor": "lead",
+                "name": "Sam Lee",
+                "play": "history",
+                "action": "chat.post_message",
+            },
+            {"actor": "manager", "play": "history", "action": "chat.post_message"},
+        ]
+    }
+    shown = trial_state(
+        SimpleNamespace(id="call", call_metadata={TRIAL_STATE_KEY: state})
+    )
+    served = TrialStateSerializer(shown).data
+    # A writer the trial did not name reads by its id.
+    assert [(one["actor"], one["name"]) for one in served["pre_run"]] == [
         ("lead", "Sam Lee"),
-        ("manager", None),
+        ("manager", "manager"),
     ]
 
 
@@ -922,3 +1015,57 @@ def test_a_trial_s_actor_limits_keep_only_the_known_limits_and_their_shapes():
             "anything": "x" * 10_000,
         }
     ) == {"max_messages": 4, "live_turns_per_trial": None}
+
+
+@pytest.mark.django_db
+def test_a_scenario_row_carries_its_test_conditions(organization, workspace):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(scenario_count=2),
+        idempotency_key="fault-index",
+        workspace=workspace,
+    )
+    fault = {"action": "orders.refund", "mode": "unavailable", "on_call": 1}
+    index_scenarios(job, [dict(_docs()[0], faults=[fault]), _docs()[1]])
+    rows = HostedHarnessScenario.no_workspace_objects.filter(job=job)
+
+    assert scenario_row(rows.get(scenario_key="alone"), **_NO_CAST)["faults"] == [
+        {
+            "action": "orders.refund",
+            "tool": None,
+            "mode": "unavailable",
+            "mode_label": "Unavailable",
+            "on_call": 1,
+            "delay_seconds": None,
+            "status": None,
+            "message": "",
+            "approval": None,
+            "approved_when": {},
+            "line": "orders.refund: Unavailable on call 1",
+        }
+    ]
+    assert (
+        scenario_row(rows.get(scenario_key="with-friend"), **_NO_CAST)["faults"] == []
+    )
+
+
+def test_an_amend_refuses_a_test_condition_the_world_cannot_apply_with_why():
+    from simulate.services.scenario_faults import faults_problems
+
+    assert faults_problems([{"action": "orders.refund", "mode": "explode"}], None) == [
+        {"index": 0, "field": "mode", "message": "choose what happens to the call"}
+    ]
+    assert (
+        faults_problems(
+            [{"action": "orders.refund", "mode": "timeout_after_commit", "on_call": 1}],
+            None,
+        )
+        == []
+    )
+    assert faults_problems("not a list", None) == [
+        {
+            "index": None,
+            "field": None,
+            "message": "a scenario's test conditions could not be read",
+        }
+    ]

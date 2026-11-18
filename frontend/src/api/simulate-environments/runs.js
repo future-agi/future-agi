@@ -2,10 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
-import {
-  STOPPABLE_STATUSES,
-  TERMINAL_STATUSES,
-} from "src/sections/common/simulation/constants/statusStyles";
+import { STOPPABLE_STATUSES } from "src/sections/common/simulation/constants/statusStyles";
 import { runStateFor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import { MOCK_RUNS } from "./_fixtures/runs";
 import { harnessEnvironmentKey } from "./environment";
@@ -50,7 +47,11 @@ export function listRunTestExecutions(
 // reused product execution detail.
 export function executionToRun(raw) {
   const total =
-    raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
+    raw?.total_calls ??
+    raw?.total_chats ??
+    raw?.calls_attempted ??
+    raw?.calls ??
+    0;
   const hasOutcomes = raw?.outcome_passed != null;
   const rate = raw?.success_rate ?? 0;
   const passed = hasOutcomes
@@ -61,36 +62,19 @@ export function executionToRun(raw) {
   const failed = hasOutcomes
     ? raw.outcome_failed ?? 0
     : raw?.failed_calls ?? Math.max(total - passed, 0);
-  const noScore = hasOutcomes ? raw.outcome_no_score ?? 0 : 0;
-  // A run passes only when no call failed, errored or was skipped.
-  const notPassed = failed + errored + skipped;
-
-  let status;
-  if (!TERMINAL_STATUSES.includes(raw?.status)) {
-    status = "running";
-  } else if (raw.status === "Cancelled") {
-    // A stopped run is terminal but not a failure.
-    status = "cancelled";
-  } else if (
-    raw.status === "Completed" &&
-    notPassed === 0 &&
-    !passed &&
-    noScore
-  ) {
-    status = "no_score";
-  } else if (raw.status === "Completed" && notPassed === 0) {
-    status = "passed";
-  } else {
-    status = "failed";
-  }
 
   return {
     id: raw?.id,
     executionId: raw?.id,
-    status,
+    status: raw.outcome_status,
+    // The run's trial pass, 0-100, as its own page reads it; null when no trial passed or failed.
+    passRate: raw.trial_pass_rate,
+    trialsPassed: raw.trials_passed,
+    trialsEvaluated: raw.trials_evaluated,
+    trialsInconclusive: raw.trials_inconclusive,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
-    runState: runStateFor(raw?.status) ?? status,
+    runState: runStateFor(raw.status),
     // Only a run that hasn't finished and isn't already stopping can be stopped.
     stoppable: STOPPABLE_RUN_STATUSES.includes(raw?.status),
     // Its evals are being graded. `runState` reads this as running, like a run
@@ -101,9 +85,7 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
-    // The pass rate base, as on the call summary: passed plus failed. Errored, skipped,
-    // no-score and unfinished calls are counted apart and never in it.
-    scored: hasOutcomes ? passed + failed : total,
+    scored: raw.scored,
     errored,
     skipped,
     hasOutcomes,
@@ -162,13 +144,14 @@ export function useEnvironmentRuns(
   const query = useQuery({
     queryKey: ["run-test-executions", runTestId, page, pageSize],
     queryFn: () =>
-      listRunTestExecutions(runTestId, { page: page + 1, limit: pageSize }).then(
-        (payload) => ({
-          runs: mapExecutions(payload, page * pageSize),
-          count: payload?.count ?? 0,
-          coveredScenarioCount: payload?.covered_scenario_count ?? null,
-        }),
-      ),
+      listRunTestExecutions(runTestId, {
+        page: page + 1,
+        limit: pageSize,
+      }).then((payload) => ({
+        runs: mapExecutions(payload, page * pageSize),
+        count: payload?.count ?? 0,
+        coveredScenarioCount: payload?.covered_scenario_count ?? null,
+      })),
     enabled: !!runTestId && !mockRuns,
     placeholderData: keepPreviousData,
     refetchInterval: (query) =>
@@ -214,4 +197,3 @@ export function runSimulationTarget(env) {
   }
   return paths.dashboard.simulate.test;
 }
-

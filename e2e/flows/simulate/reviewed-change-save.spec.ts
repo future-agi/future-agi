@@ -24,10 +24,10 @@ interface Drafts { environment: { revision: number; parent_id: string } | null; 
 interface Validated { validation: Validation; candidates: Candidates }
 interface Saved { saved: Record<string, { id: string }> }
 
-test('SIM-E2E-005: a reviewed draft saves only the accepted change, and only through Validate', {
+test('SIM-E2E-036: a reviewed draft saves only the accepted change, and only through Validate', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-005', area: 'simulate',
+    id: 'SIM-E2E-036', area: 'simulate',
     userGoal: 'A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule',
     steps: ['seed a built, versioned Environment and a draft rule the builder chat added in answer to a message (e2e/lib/simulate-seed.ts; no hosted build runs in this harness)',
             'add a Manager actor through the actors route',

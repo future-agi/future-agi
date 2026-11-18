@@ -2,31 +2,31 @@ import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
 import OtherPartyName from "./OtherPartyName";
 import { CALL_PARTICIPANTS_HEADING, DEFAULT_ROLE_LABELS } from "./constants";
-import { otherPartyKey } from "./transcriptUtils";
 
 const customerParty = (customerName) =>
   customerName
     ? { speakerName: customerName, actorRole: DEFAULT_ROLE_LABELS.user }
     : { speakerName: DEFAULT_ROLE_LABELS.user };
 
-// Who was on the call, shown only when someone besides the agent and the customer was. A world actor acts in the
-// world and never joins the call, so it is left out here; its actions are in the transcript.
-// Each person is one unit: they wrap whole, and a long role is cut rather than broken.
+// Who took part, as the server says; one who only acted in the world (no channel) was never on the call.
 export default function CallParticipants({
-  others,
+  participants,
   customerName,
   withCustomer = true,
 }) {
-  const speakers = others.filter((party) => party.role !== "world_actor");
+  const speakers = participants.filter((one) => one.channel);
   if (speakers.length === 0) return null;
   const line = [
-    // A run started by someone's message has no customer; they are listed only when one took part.
     ...(withCustomer
       ? [{ key: "customer", party: customerParty(customerName) }]
       : []),
-    ...speakers.map((party) => ({
-      key: otherPartyKey(party),
-      party,
+    ...speakers.map((one) => ({
+      key: one.id,
+      party: {
+        speakerName: one.name,
+        actorRole: one.role,
+        channel: one.channel,
+      },
     })),
     { key: "agent", party: { speakerName: DEFAULT_ROLE_LABELS.assistant } },
   ];
@@ -53,7 +53,8 @@ export default function CallParticipants({
 }
 
 CallParticipants.propTypes = {
-  others: PropTypes.arrayOf(PropTypes.object).isRequired,
+  // The call's `participants`: `{id, name, role, channel}` each.
+  participants: PropTypes.arrayOf(PropTypes.object).isRequired,
   customerName: PropTypes.string,
   withCustomer: PropTypes.bool,
 };

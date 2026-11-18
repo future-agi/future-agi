@@ -178,6 +178,33 @@ describe("projectConversation", () => {
     ]);
   });
 
+  it("carries a question's options-only rule from the server", () => {
+    const turns = projectConversation({
+      messages: [
+        msg({
+          message_id: "q1",
+          kind: "question",
+          content: "Confirm this change",
+          payload: { options: ["Yes", "No"], options_only: true },
+          created_at: "2026-09-22T10:00:00Z",
+        }),
+        msg({
+          message_id: "q2",
+          kind: "question",
+          content: "How strict?",
+          payload: { options: ["Strict"] },
+          created_at: "2026-09-22T10:00:05Z",
+        }),
+      ],
+      events: [],
+    });
+    const [confirm, open] = turns
+      .flatMap((t) => t.steps)
+      .filter((s) => s.kind === "ask");
+    expect(confirm.question.optionsOnly).toBe(true);
+    expect(open.question.optionsOnly).toBe(false);
+  });
+
   it("marks a question resolved once a user message replies to it", () => {
     const turns = projectConversation({
       messages: [
@@ -201,6 +228,51 @@ describe("projectConversation", () => {
     const ask = turns[0].steps.find((s) => s.kind === "ask");
     expect(ask.resolved).toBe(true);
     expect(ask.answerText).toBe("Strict");
+  });
+
+  it("never resolves a question as accepted by an answer the server failed: it carries the served reason", () => {
+    const reason =
+      "Not taken as the answer: the builder asked again. Answer with one of the options.";
+    const turns = projectConversation({
+      messages: [
+        msg({
+          message_id: "q1",
+          kind: "question",
+          content: "Confirm this change",
+          payload: { options: ["Yes, make this change", "No"] },
+          created_at: "2026-09-22T10:00:00Z",
+        }),
+        msg({
+          message_id: "u2",
+          role: "user",
+          state: "failed",
+          content: "Yes, go ahead and make this change.",
+          reply_to: "q1",
+          payload: { failure_reason: reason },
+          created_at: "2026-09-22T10:00:05Z",
+        }),
+        msg({
+          message_id: "q3",
+          kind: "question",
+          content: "Confirm this change",
+          payload: { options: ["Yes, make this change", "No"] },
+          created_at: "2026-09-22T10:00:09Z",
+        }),
+        msg({
+          message_id: "u4",
+          role: "user",
+          content: "Yes, make this change",
+          reply_to: "q3",
+          created_at: "2026-09-22T10:00:12Z",
+        }),
+      ],
+      events: [],
+    });
+    const [refused, taken] = turns
+      .flatMap((t) => t.steps)
+      .filter((s) => s.kind === "ask");
+    expect(refused.answerFailed).toEqual({ reason });
+    expect(taken.answerFailed).toBeUndefined();
   });
 
   it("finalizes a lingering running tool once the run is no longer active", () => {

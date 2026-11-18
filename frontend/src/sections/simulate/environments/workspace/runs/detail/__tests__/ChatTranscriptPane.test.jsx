@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
+import PropTypes from "prop-types";
 import ChatTranscriptPane from "../ChatTranscriptPane";
+
+function Pane(props) {
+  return <ChatTranscriptPane participants={[]} hasCustomer {...props} />;
+}
+Pane.propTypes = { participants: PropTypes.array, hasCustomer: PropTypes.bool };
 
 const plainChat = [
   { role: "customer", text: "One ride please" },
@@ -11,10 +17,55 @@ const tabLabels = () =>
   screen.getAllByRole("tab").map((tab) => tab.textContent);
 
 describe("ChatTranscriptPane", () => {
+  it("highlights and scrolls to the turn it is asked to show", () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    render(
+      <Pane
+        turns={[
+          ...plainChat,
+          { role: "customer", text: "Second ask" },
+          { role: "agent", text: "Done" },
+        ]}
+        focusTurn={{ turn: 2 }}
+      />,
+    );
+    const row = screen.getByText("Second ask").closest("[data-focused]");
+    expect(row).toHaveAttribute("data-focused", "true");
+    expect(
+      screen.getByText("One ride please").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "false");
+    expect(scrolled).toHaveBeenCalled();
+  });
+
+  it("takes a step from before the caller spoke to the top of the transcript", () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    render(
+      <Pane
+        turns={[
+          { role: "agent", text: "Hello, how can I help?" },
+          { role: "customer", text: "One ride please" },
+        ]}
+        focusTurn={{ turn: 0 }}
+      />,
+    );
+    expect(
+      screen.getByText("Hello, how can I help?").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "true");
+  });
+
   it("names an actor with their role and how they were heard, and filters to them", async () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         customerName="Maya"
+        participants={[
+          {
+            id: "roommate",
+            name: "Rowan",
+            role: "roommate",
+            channel: "audio_mix",
+          },
+        ]}
         turns={[
           ...plainChat,
           {
@@ -39,8 +90,17 @@ describe("ChatTranscriptPane", () => {
 
   it("lists no customer on a run started by an actor's message, where no customer spoke", () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         customerName="Oliver"
+        hasCustomer={false}
+        participants={[
+          {
+            id: "manager",
+            name: "Alex Vance",
+            role: "Sales Manager",
+            channel: "chat_message",
+          },
+        ]}
         turns={[
           {
             role: "actor",
@@ -61,12 +121,13 @@ describe("ChatTranscriptPane", () => {
 
   it("falls back to All when Others was picked and the next call has none", async () => {
     const { rerender } = render(
-      <ChatTranscriptPane
+      <Pane
+        participants={[{ id: "friend", channel: "chat_message" }]}
         turns={[...plainChat, { role: "actor", text: "Hello?" }]}
       />,
     );
     await userEvent.click(screen.getByRole("tab", { name: "Others" }));
-    rerender(<ChatTranscriptPane turns={plainChat} />);
+    rerender(<Pane turns={plainChat} />);
     expect(screen.getByRole("tab", { selected: true })).toHaveTextContent(
       "All",
     );
@@ -74,25 +135,22 @@ describe("ChatTranscriptPane", () => {
   });
 
   it("shows just Someone for an actor an older call kept no name for", () => {
-    render(
-      <ChatTranscriptPane
-        turns={[...plainChat, { role: "actor", text: "Hello?" }]}
-      />,
-    );
-    expect(screen.getAllByText("Someone")).toHaveLength(2);
+    render(<Pane turns={[...plainChat, { role: "actor", text: "Hello?" }]} />);
+    expect(screen.getAllByText("Someone")).toHaveLength(1);
     expect(screen.queryByText(/undefined/)).toBeNull();
   });
 
   it("renders a chat with only the customer and the agent as before", () => {
-    render(<ChatTranscriptPane customerName="Maya" turns={plainChat} />);
+    render(<Pane customerName="Maya" turns={plainChat} />);
     expect(tabLabels()).toEqual(["All", "Assistant", "Customer"]);
     expect(screen.queryByText("On the call:")).toBeNull();
   });
 
   it("labels a scenario's own task as the task, with no customer", () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         customerName={null}
+        hasCustomer={false}
         turns={[
           { role: "task", text: "Nightly reconciliation: post deal 9." },
           { role: "agent", text: "Posted." },
@@ -106,7 +164,7 @@ describe("ChatTranscriptPane", () => {
 
   it("names a world actor with their role and shows their action as an event", async () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         turns={[
           { role: "customer", text: "Can I get a discount?" },
           {
@@ -135,7 +193,7 @@ describe("ChatTranscriptPane", () => {
 
   it("opens a world action's fold when a search matched inside it", async () => {
     render(
-      <ChatTranscriptPane
+      <Pane
         turns={[
           {
             role: "world_actor",
@@ -150,5 +208,34 @@ describe("ChatTranscriptPane", () => {
       "percent",
     );
     expect(screen.getByText(/args:/)).toBeInTheDocument();
+  });
+
+  it("marks a tool row apart from the customer, under the label the server gives it", () => {
+    render(
+      <Pane
+        turns={[
+          { role: "customer", text: "Where is my order?" },
+          {
+            role: "tool",
+            text: "get_order",
+            toolCalls: [{ name: "get_order" }],
+          },
+          {
+            role: "tool",
+            text: "Billing",
+            toolCalls: [{ name: "Billing", delegated_to: "Billing" }],
+            toolLabel: "Served label",
+          },
+        ]}
+      />,
+    );
+
+    // The row's kind is the server's to say; the pane never reads it from the calls.
+    expect(screen.getByText(/· Served label$/)).toBeInTheDocument();
+    const tool = screen.getByText(/· Tool call$/).parentElement;
+    const customer = screen.getByText(/· Customer$/).parentElement;
+    expect(getComputedStyle(tool).borderLeftColor).not.toBe(
+      getComputedStyle(customer).borderLeftColor,
+    );
   });
 });

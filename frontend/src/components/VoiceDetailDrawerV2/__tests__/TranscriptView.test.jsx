@@ -111,6 +111,13 @@ const withCallActors = [
   },
 ];
 
+// Dana acts only in the world and never joins the call.
+const PARTICIPANTS = [
+  { id: "roommate", name: "Rowan", role: "roommate", channel: "audio_mix" },
+  { id: "son", name: "Sam", role: "son", channel: "audio_handoff" },
+  { id: "dana", name: "Dana", role: "approver", channel: null },
+];
+
 const chipLabels = () =>
   screen
     .getAllByRole("button")
@@ -119,7 +126,7 @@ const chipLabels = () =>
 
 describe("actors in voice transcripts", () => {
   it("names each actor with their role and how they were heard", () => {
-    render(<TranscriptView transcript={withCallActors} />);
+    render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     expect(screen.getAllByText("Rowan · roommate").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Sam · son").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Heard nearby").length).toBeGreaterThan(0);
@@ -128,7 +135,7 @@ describe("actors in voice transcripts", () => {
   });
 
   it("names an actor, not their raw role, on the speaker timeline", () => {
-    render(<TranscriptView transcript={withCallActors} />);
+    render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     expect(
       screen.getByLabelText(/^Rowan · roommate · \d+:\d{2}$/),
     ).toBeInTheDocument();
@@ -136,15 +143,36 @@ describe("actors in voice transcripts", () => {
   });
 
   it("lists who was on the call, customer first and the agent last", () => {
-    render(<TranscriptView transcript={withCallActors} customerName="Maya" />);
+    render(
+      <TranscriptView
+        transcript={withCallActors}
+        participants={PARTICIPANTS}
+        customerName="Maya"
+      />,
+    );
     expect(screen.getByText("On the call:")).toBeInTheDocument();
+    // Dana acts in the world, so she is not on the call.
+    expect(screen.queryByText(/Dana/)).toBeNull();
     expect(screen.getByText("Maya · Customer")).toBeInTheDocument();
     // Each actor shows once in the line and once on their turn.
     expect(screen.getAllByText("Rowan · roommate")).toHaveLength(2);
     expect(screen.getAllByText("Sam · son")).toHaveLength(2);
   });
 
-  it("shows just a name, or Someone, for a call stored before roles and channels were kept", () => {
+  it("lists no customer when the server says none took part", () => {
+    render(
+      <TranscriptView
+        transcript={withCallActors}
+        participants={PARTICIPANTS}
+        customerName="Maya"
+        hasCustomer={false}
+      />,
+    );
+    expect(screen.getByText("On the call:")).toBeInTheDocument();
+    expect(screen.queryByText("Maya · Customer")).toBeNull();
+  });
+
+  it("shows just a name, or Someone, on a turn stored before roles and channels were kept", () => {
     render(
       <TranscriptView
         transcript={[
@@ -165,16 +193,15 @@ describe("actors in voice transcripts", () => {
         ]}
       />,
     );
-    expect(screen.getAllByText("Rowan")).toHaveLength(2);
-    expect(screen.getAllByText("Someone")).toHaveLength(2);
-    // The chip and the line's customer, with no persona name to show.
-    expect(screen.getAllByText("Customer")).toHaveLength(2);
+    expect(screen.getAllByText("Rowan")).toHaveLength(1);
+    expect(screen.getAllByText("Someone")).toHaveLength(1);
+    expect(screen.queryByText("On the call:")).toBeNull();
     expect(screen.queryByText("Heard nearby")).toBeNull();
     expect(screen.queryByText(/undefined| ·$/)).toBeNull();
   });
 
   it("filters to the others on the call", async () => {
-    render(<TranscriptView transcript={withCallActors} />);
+    render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     expect(chipLabels()).toEqual(["All", "Assistant", "Customer", "Others"]);
     await userEvent.click(screen.getByRole("button", { name: "Others" }));
     expect(screen.getByText("Make it two")).toBeInTheDocument();
@@ -184,7 +211,7 @@ describe("actors in voice transcripts", () => {
   });
 
   it("shows every turn when Others was picked and the next call has none", async () => {
-    const { rerender } = render(<TranscriptView transcript={withCallActors} />);
+    const { rerender } = render(<TranscriptView transcript={withCallActors} participants={PARTICIPANTS} />);
     await userEvent.click(screen.getByRole("button", { name: "Others" }));
     rerender(<TranscriptView transcript={plainCall} />);
     expect(screen.queryByText("No matching turns")).toBeNull();
@@ -213,6 +240,9 @@ const showActions = (actions) =>
   render(
     <TranscriptView
       customerName="Maya"
+      participants={[
+        { id: "manager", name: "Arjun Mehta", role: "store manager", channel: null },
+      ]}
       transcript={[customer, ...functionCallTranscriptRows(actions)]}
     />,
   );
@@ -226,6 +256,7 @@ describe("world actors in voice transcripts", () => {
         arguments: { percent: 20 },
         result: { approved: false },
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         actor_role: "store manager",
         outcome: "refused",
@@ -261,6 +292,7 @@ describe("world actors in voice transcripts", () => {
         outcome,
         error: outcome === "faulted" ? "timeout" : undefined,
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         start_time_ms: 2000 + i,
       })),
@@ -270,26 +302,36 @@ describe("world actors in voice transcripts", () => {
     expect(screen.getByText("Failed · crm.cancel")).toBeInTheDocument();
   });
 
-  it("shows just the name and the action for a row stored without a role or an outcome", () => {
+  it("shows the name and the action, and says the outcome was not recorded, for a row stored without a role or an outcome", () => {
+    // A nameless actor reads by its id.
     showActions([
       {
         id: "a",
         name: "crm.lookup",
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
+        outcome: "not_recorded",
         start_time_ms: 2000,
       },
       {
         id: "b",
         name: "crm.hold",
         actor_id: "clerk",
-        actor_name: "",
+        kind: "world_actor_action",
+        actor_name: "clerk",
+        outcome: "a_code_this_page_has_no_word_for",
         start_time_ms: 3000,
       },
     ]);
     expect(screen.getByText("Arjun Mehta")).toBeInTheDocument();
     expect(screen.getByText("clerk")).toBeInTheDocument();
-    expect(screen.getByText("crm.lookup")).toBeInTheDocument();
+    expect(
+      screen.getByText("Outcome not recorded · crm.lookup"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Outcome not recorded · crm.hold"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/undefined|^Action| ·$/)).toBeNull();
     expect(screen.queryByRole("button", { name: /^Details/ })).toBeNull();
   });
@@ -300,6 +342,7 @@ describe("world actors in voice transcripts", () => {
         id: "a",
         name: "crm.lookup",
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         actor_role: "store manager",
         outcome: "committed",
@@ -320,6 +363,7 @@ describe("world actors in voice transcripts", () => {
         name: "crm.approve",
         arguments: { percent: 20 },
         actor_id: "manager",
+        kind: "world_actor_action",
         actor_name: "Arjun Mehta",
         start_time_ms: 2000,
       },

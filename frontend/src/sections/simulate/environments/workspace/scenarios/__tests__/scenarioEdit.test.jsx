@@ -134,7 +134,7 @@ describe("ScenariosStep — edit", () => {
 describe("ScenarioEditor persona choices", () => {
   it("offers the server's choices for a persona field and keeps the current value", async () => {
     const { default: ScenarioEditor } = await import("../ScenarioEditor");
-    const onSave = vi.fn();
+    const onSave = vi.fn().mockResolvedValue({ refused: [], failed: false });
     render(
       <ScenarioEditor
         open
@@ -186,16 +186,30 @@ describe("ScenarioEditor negative controls and must pass", () => {
         open
         onClose={() => {}}
         onSave={onSave}
-        row={{ id: "r1", name: "s1", subTasks: ["refund_once"], _raw: {}, lifecycle: { negative_controls: [] } }}
+        row={{
+          id: "r1",
+          name: "s1",
+          subTasks: ["refund_once"],
+          _raw: {},
+          lifecycle: { negative_controls: [] },
+        }}
         scenarioEditing={editing}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Add a negative control" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a negative control" }),
+    );
     const controls = within(screen.getByTestId("controls-editor"));
-    fireEvent.change(controls.getByLabelText("Name"), { target: { value: "refunds_twice" } });
-    fireEvent.change(controls.getByLabelText("Why it is wrong"), { target: { value: "refunds the order twice" } });
+    fireEvent.change(controls.getByLabelText("Name"), {
+      target: { value: "refunds_twice" },
+    });
+    fireEvent.change(controls.getByLabelText("Why it is wrong"), {
+      target: { value: "refunds the order twice" },
+    });
     fireEvent.change(controls.getByLabelText("Steps (JSON)"), {
-      target: { value: '[{"tool": "refund", "arguments": {"order_id": "O-10"}}]' },
+      target: {
+        value: '[{"tool": "refund", "arguments": {"order_id": "O-10"}}]',
+      },
     });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
 
@@ -226,14 +240,21 @@ describe("ScenarioEditor negative controls and must pass", () => {
         open
         onClose={() => {}}
         onSave={onSave}
-        row={{ id: "r1", name: "s1", _raw: {}, lifecycle: { must_pass: false } }}
+        row={{
+          id: "r1",
+          name: "s1",
+          _raw: {},
+          lifecycle: { must_pass: false },
+        }}
         scenarioEditing={editing}
       />,
     );
     fireEvent.click(screen.getByTestId("must-pass-toggle"));
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(onSave.mock.calls[0][0]).toEqual({
-      changes: [{ op: "set_field", scenario: "s1", field: "must_pass", value: true }],
+      changes: [
+        { op: "set_field", scenario: "s1", field: "must_pass", value: true },
+      ],
       rework: false,
     });
   });

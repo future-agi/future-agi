@@ -13,7 +13,8 @@ import FitDataTable from "./FitDataTable";
 import { LineSkeleton, QuietTag } from "./bits";
 import { agentDetailPath } from "./agentDetailTabs";
 import { MONO, ago } from "./format";
-import { PassRateCell, runPath } from "./runCells";
+import PassRateCell from "./PassRateCell";
+import { runPath } from "./runFacts";
 
 const RECENT_RUNS = 15;
 const SKELETON_ROWS = 8;
