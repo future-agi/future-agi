@@ -116,7 +116,7 @@ logger = structlog.get_logger(__name__)
 def sdk_key_snippets():
     """The keys block of the in-app SDK snippet, per language, with placeholder
     keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's API
-    (BASE_URL) and FI_TRACES_URL to its trace collector
+    (FI_API_PUBLIC_URL) and FI_TRACES_URL to its trace collector
     (FI_COLLECTOR_PUBLIC_URL): the SDKs default to Cloud, and without them the
     spans (prompts and completions included) would leave for
     api.futureagi.com."""
@@ -126,7 +126,7 @@ def sdk_key_snippets():
     }
     if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
         urls = {
-            "api_url": settings.BASE_URL.rstrip("/"),
+            "api_url": settings.FI_API_PUBLIC_URL.rstrip("/"),
             "traces_url": settings.FI_COLLECTOR_PUBLIC_URL.rstrip("/"),
         }
         for lang, lines in ORG_SELF_HOSTED_URLS.items():

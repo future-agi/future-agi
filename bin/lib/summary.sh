@@ -33,9 +33,12 @@ print_summary() { # frontend port, backend port
   collector_http_port=$(env_value FI_COLLECTOR_OTLP_HTTP_PORT 4318)
   # The URL SDKs send traces to, as the compose files give it to the app.
   collector_url=$(compose_env_value FI_COLLECTOR_PUBLIC_URL "http://localhost:${collector_http_port}")
-  # The API URL SDKs call (FI_BASE_URL): BASE_URL, which reaches the app from
-  # .env only (the compose files do not interpolate it), else the API port.
-  api_url=$(env_value BASE_URL "http://localhost:${backend_port}")
+  # The API URL SDKs call (FI_BASE_URL), in the app's order: BASE_URL, which
+  # reaches it from .env only (the compose files do not interpolate it), then
+  # the UI's VITE_HOST_API, then the published API port.
+  api_url=$(env_value BASE_URL "")
+  [[ -n "$api_url" ]] || api_url=$(compose_env_value VITE_HOST_API "")
+  [[ -n "$api_url" ]] || api_url="http://localhost:${backend_port}"
   api_url="${api_url%/}"
   gateway_port=$(env_value AGENTCC_GATEWAY_PORT 8090)
   ui_url="http://localhost:${frontend_port}"
@@ -96,7 +99,7 @@ print_summary() { # frontend port, backend port
   say "  ${BOLD}3. Send your first trace${RESET} ${DIM}(on this machine; paste with your keys from step 2)${RESET}"
   say ""
   # Flush left, so the heredoc and the Python indentation survive a copy-paste.
-  say "pip install -U fi-instrumentation-otel"
+  say "pip install -U \"fi-instrumentation-otel>=1.5.0\""
   say "export FI_API_KEY=\"<your API key>\" FI_SECRET_KEY=\"<your secret key>\" FI_BASE_URL=\"${api_url}\" FI_TRACES_URL=\"${collector_url}\""
   say "python3 - <<'PY'"
   say "from fi_instrumentation import register"

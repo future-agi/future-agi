@@ -105,8 +105,8 @@ WARNING  Bundled datastores run as single replicas with no backups, for evaluati
    Future AGI SDKs: FI_BASE_URL={{ $sdkApiUrl }} FI_TRACES_URL=http://localhost:4318
                     (the backend and fi-collector port-forwards above)
 {{- end }}
-   SDK versions:    FI_TRACES_URL needs fi-instrumentation-otel 1.5.0+ or @traceai/fi-core 1.4.0+;
-                    with an older SDK, set FI_BASE_URL to the collector URL instead.
+   SDK versions:    pip install -U "fi-instrumentation-otel>=1.5.0", or npm install "@traceai/fi-core@^1.4.0":
+                    older SDKs ignore FI_TRACES_URL; with one, set FI_BASE_URL to the collector URL instead.
    In the cluster:  OTLP/gRPC {{ $collector }}.{{ $ns }}.svc:{{ $v.fiCollector.service.grpcPort }}
                     OTLP/HTTP http://{{ $collector }}.{{ $ns }}.svc:{{ $v.fiCollector.service.httpPort }}/v1/traces
 {{- /* ---- Enterprise: edition, license and sign-in ---- */ -}}

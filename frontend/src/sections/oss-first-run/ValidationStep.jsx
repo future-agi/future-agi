@@ -148,6 +148,8 @@ export default function ValidationStep({
       nextSteps({
         authenticated,
         accountExists,
+        // VITE_HOST_API, else http://localhost:<BACKEND_PORT>: the order the
+        // server's SDK snippet (FI_API_PUBLIC_URL) follows after BASE_URL.
         apiUrl: HOST_API,
         collectorUrl,
       }),

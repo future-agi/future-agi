@@ -451,9 +451,10 @@ kubectl -n futureagi exec -it deploy/futureagi-backend -c backend -- python mana
 Then open <http://localhost:3000>. SDKs on this machine use
 `FI_BASE_URL=http://localhost:8000` (the API) and
 `FI_TRACES_URL=http://localhost:4318` (the trace collector), as in the README's
-Quickstart. `FI_TRACES_URL` needs fi-instrumentation-otel 1.5.0+ (Python) or
-@traceai/fi-core 1.4.0+ (TypeScript); with an older SDK, set `FI_BASE_URL` to
-the collector URL instead. On Docker Desktop, k3s or OrbStack,
+Quickstart. `FI_TRACES_URL` needs fi-instrumentation-otel 1.5.0+
+(`pip install -U "fi-instrumentation-otel>=1.5.0"`) or @traceai/fi-core 1.4.0+
+(`npm install "@traceai/fi-core@^1.4.0"`); with an older SDK, set
+`FI_BASE_URL` to the collector URL instead. On Docker Desktop, k3s or OrbStack,
 `examples/local.yaml` publishes the same ports on localhost without
 port-forwards.
 

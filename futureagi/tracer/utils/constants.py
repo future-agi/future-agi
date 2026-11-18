@@ -5,12 +5,14 @@ from tracer.utils.filter_operators import (
     SPAN_ATTR_ALLOWED_OPS as CONTRACT_SPAN_ATTR_ALLOWED_OPS,
 )
 
+# The minimums read FI_TRACES_URL, which a self-hosted snippet sets: older SDKs
+# send spans to FI_BASE_URL, the API, where they are dropped.
 INSTALLATION_GUIDE = {
     "Python": """
-pip install fi-instrumentation-otel
+pip install -U "fi-instrumentation-otel>=1.5.0"
 """,
     "TypeScript": """
-npm install @traceai/openai
+npm install "@traceai/fi-core@^1.4.0" @traceai/openai
 """,
 }
 

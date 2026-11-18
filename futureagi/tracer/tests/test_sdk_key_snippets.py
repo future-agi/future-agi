@@ -20,7 +20,8 @@ SDK_URL_VARIABLES = ("FI_BASE_URL", "FI_TRACES_URL")
 @pytest.fixture
 def self_hosted(settings):
     settings.CLOUD_DEPLOYMENT = ""
-    settings.BASE_URL = API
+    settings.BASE_URL = "http://localhost:8000"
+    settings.FI_API_PUBLIC_URL = API
     settings.FI_COLLECTOR_PUBLIC_URL = COLLECTOR
 
 
@@ -42,8 +43,15 @@ class TestSdkKeySnippets:
         for snippet in snippets.values():
             assert "set FI_BASE_URL to the collector URL instead" in snippet
 
+    def test_the_api_url_follows_a_moved_port_not_base_url(self, self_hosted):
+        """BASE_URL keeps its in-container default; the published port moved."""
+        snippets = sdk_key_snippets()
+
+        assert "localhost:8000" not in snippets["Python"]
+        assert f'os.environ["FI_BASE_URL"] = "{API}"' in snippets["Python"]
+
     def test_strips_trailing_slashes(self, self_hosted, settings):
-        settings.BASE_URL = f"{API}/"
+        settings.FI_API_PUBLIC_URL = f"{API}/"
         settings.FI_COLLECTOR_PUBLIC_URL = f"{COLLECTOR}/"
 
         snippets = sdk_key_snippets()

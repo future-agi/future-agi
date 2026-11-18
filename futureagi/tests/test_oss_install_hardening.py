@@ -2493,22 +2493,33 @@ def test_the_first_trace_goes_to_the_collector_url_the_app_shows(
     assert f"     Traces       {url}  (OTLP/HTTP" in stdout
 
 
-def test_the_first_trace_calls_the_api_url_the_app_shows(tmp_path: Path) -> None:
-    """BASE_URL in .env is the API URL the in-app SDK snippet shows as
-    FI_BASE_URL; the installer prints it without a trailing slash."""
+@pytest.mark.parametrize(
+    "setting, url",
+    [
+        ("BASE_URL=https://api.example.com/\n", "https://api.example.com"),
+        ("VITE_HOST_API=http://localhost:8100\n", "http://localhost:8100"),
+        (
+            "VITE_HOST_API=http://localhost:8100\nBASE_URL=https://api.example.com\n",
+            "https://api.example.com",
+        ),
+    ],
+)
+def test_the_first_trace_calls_the_api_url_the_app_shows(
+    tmp_path: Path, setting: str, url: str
+) -> None:
+    """The in-app SDK snippet's FI_BASE_URL (settings.FI_API_PUBLIC_URL):
+    BASE_URL, then VITE_HOST_API, then the published API port, without a
+    trailing slash."""
     script, environment, _ = _installer_sandbox(tmp_path, CI="1")
     (script.parents[1] / ".env").write_text(
-        SANDBOX_ENV_EXAMPLE + "BASE_URL=https://api.example.com/\n",
-        encoding="utf-8",
+        SANDBOX_ENV_EXAMPLE + setting, encoding="utf-8"
     )
 
     code, stdout, stderr = _run_installer(script, environment, "--skip-user-creation")
 
     assert code == 0, stderr
-    assert (
-        'FI_BASE_URL="https://api.example.com" FI_TRACES_URL="http://localhost:4318"'
-        in stdout
-    )
+    assert f'FI_BASE_URL="{url}" FI_TRACES_URL="http://localhost:4318"' in stdout
+    assert 'pip install -U "fi-instrumentation-otel>=1.5.0"' in stdout
 
 
 def _standalone_build(text: str) -> str:

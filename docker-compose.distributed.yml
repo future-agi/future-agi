@@ -156,6 +156,9 @@ x-backend-env: &backend-env
   # The OTLP/HTTP URL SDKs send traces to (their FI_TRACES_URL), as the UI
   # shows it.
   FI_COLLECTOR_PUBLIC_URL: ${FI_COLLECTOR_PUBLIC_URL:-http://localhost:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}}
+  # The API's published port: with BASE_URL and VITE_HOST_API unset, the UI's
+  # SDK snippet hands out http://localhost:<BACKEND_PORT> as FI_BASE_URL.
+  BACKEND_PORT: ${BACKEND_PORT:-8000}
   # The UI's host, without a scheme: invite and password-reset links.
   APP_URL: ${APP_URL:-localhost:${FRONTEND_PORT:-3000}}
 

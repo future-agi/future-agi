@@ -815,9 +815,9 @@ URL as `FI_BASE_URL`. The app shows both in its SDK snippet: `FI_BASE_URL` is
 also on the setup screen, is `FI_COLLECTOR_PUBLIC_URL`: `urls.otlp`, else the
 Gateway API or Ingress OTLP host, else `http://localhost:4318`. Set
 `urls.otlp` when you expose the collector another way. `FI_TRACES_URL` needs
-fi-instrumentation-otel 1.5.0+ (Python) or @traceai/fi-core 1.4.0+
-(TypeScript); with an older SDK, set `FI_BASE_URL` to the collector URL
-instead.
+fi-instrumentation-otel 1.5.0+ (`pip install -U "fi-instrumentation-otel>=1.5.0"`)
+or @traceai/fi-core 1.4.0+ (`npm install "@traceai/fi-core@^1.4.0"`); with an
+older SDK, set `FI_BASE_URL` to the collector URL instead.
 
 ### Timeouts and WebSockets
 

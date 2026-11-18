@@ -1102,7 +1102,7 @@ class TestProjectSDKCodeAPI:
         """The SDKs default to Future AGI Cloud: FI_BASE_URL names this
         install's API and FI_TRACES_URL its collector."""
         settings.CLOUD_DEPLOYMENT = ""
-        settings.BASE_URL = "http://localhost:8000"
+        settings.FI_API_PUBLIC_URL = "http://localhost:8000"
         settings.FI_COLLECTOR_PUBLIC_URL = "http://localhost:4318"
 
         response = auth_client.get(

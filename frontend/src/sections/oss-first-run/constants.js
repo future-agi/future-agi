@@ -126,7 +126,7 @@ export const nextSteps = ({
   {
     id: "trace",
     icon: "solar:code-square-linear",
-    text: `Send your first trace from this machine: \`pip install -U fi-instrumentation-otel\`, set \`FI_API_KEY\`, \`FI_SECRET_KEY\`, \`FI_BASE_URL=${withoutTrailingSlash(apiUrl || LOCAL_API_URL)}\` and \`FI_TRACES_URL=${withoutTrailingSlash(collectorUrl || LOCAL_COLLECTOR_URL)}\`, then call \`register()\`.`,
+    text: `Send your first trace from this machine: \`pip install -U "fi-instrumentation-otel>=1.5.0"\`, set \`FI_API_KEY\`, \`FI_SECRET_KEY\`, \`FI_BASE_URL=${withoutTrailingSlash(apiUrl || LOCAL_API_URL)}\` and \`FI_TRACES_URL=${withoutTrailingSlash(collectorUrl || LOCAL_COLLECTOR_URL)}\`, then call \`register()\`.`,
     link: { href: TRACING_DOCS_URL, label: "Tracing guide" },
   },
 ];

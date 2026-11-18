@@ -120,8 +120,9 @@ services:
       FI_COLLECTOR_PUBLIC_URL: ${FI_COLLECTOR_PUBLIC_URL:-http://localhost:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}}
       # The UI's host, without a scheme: invite and password-reset links.
       APP_URL: ${APP_URL:-localhost:${FRONTEND_PORT:-3000}}
-      # The host ports, for the boot summary's URLs and the SPA's API URL
-      # (bin/start), also when they are set in the shell rather than in .env.
+      # The host ports, for the boot summary's URLs, the SPA's API URL
+      # (bin/start) and the SDK snippet's FI_BASE_URL, also when they are set
+      # in the shell rather than in .env.
       FRONTEND_PORT: ${FRONTEND_PORT:-3000}
       BACKEND_PORT: ${BACKEND_PORT:-8000}
       # List pages publish the rows found within this wall plus a cursor
