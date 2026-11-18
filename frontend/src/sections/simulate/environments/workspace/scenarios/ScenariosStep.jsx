@@ -290,12 +290,8 @@ export default function ScenariosStep({
     }
   };
 
-  // Hiding groups is a page-local visual toggle.
-  const hiddenCount = pageData.pageGroups.filter((g) =>
-    hiddenGroupIds.includes(g.id),
-  ).length;
-
-  const filtered = query.length > 0 || filterCount > 0 || hiddenCount > 0;
+  const hiddenCount = hiddenGroupIds.length;
+  const hasSearchOrFilters = query.length > 0 || filterCount > 0;
   const clearFilters = () => {
     setQuery("");
     setFilters({});
@@ -636,16 +632,13 @@ export default function ScenariosStep({
                 locked={locked}
                 rowHeight={rowHeight}
                 readout={
-                  filtered
+                  hasSearchOrFilters || hiddenCount > 0
                     ? {
                         shown: pageData.total,
                         total: suiteTotal,
                         hiddenCount,
-                        onlyGroupsHidden:
-                          hiddenCount > 0 &&
-                          query.length === 0 &&
-                          filterCount === 0,
-                        onClear: clearFilters,
+                        onShowAll: () => setHiddenGroupIds([]),
+                        onClear: hasSearchOrFilters ? clearFilters : undefined,
                       }
                     : undefined
                 }

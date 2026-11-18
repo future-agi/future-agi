@@ -66,10 +66,10 @@
 
 # python:3.11-slim-bookworm (multi-arch index). Bump the digest to pick up
 # Debian security updates in the base layers.
-ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
-# Same uv as backend-ci.yml (astral-sh/setup-uv version "0.11.16") and
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+# Same uv as backend-ci.yml (astral-sh/setup-uv version "0.11.33") and
 # model_serving/Dockerfile.oss. Shipped only with WITH_UV=true.
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.33@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7
 # standard | slim; see the header and docker/image-variant.sh.
 ARG IMAGE_VARIANT=standard
 # Empty: the variant's flavor (the ffmpeg-standard/ffmpeg-slim stages below).
@@ -259,6 +259,12 @@ RUN set -eux; \
 COPY --from=ffmpeg /opt/ffmpeg/bin/ /usr/local/bin/
 COPY --from=ffmpeg /opt/ffmpeg/doc/ /usr/local/share/doc/ffmpeg/
 COPY --from=builder /usr/local/share/nltk_data /usr/local/share/nltk_data
+# The builder's site-packages replace the base image's. COPY merges into the
+# existing directory, so delete the base's setuptools first: otherwise its
+# older dist-info and vendored packages stay next to the builder's newer
+# setuptools (and importlib.metadata still reports the old version).
+RUN rm -rf /usr/local/lib/python3.11/site-packages/setuptools \
+        /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info
 # Copy installed Python packages from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages \
                     /usr/local/lib/python3.11/site-packages

@@ -20,7 +20,8 @@ type injectionDetector struct {
 // InjectionGuardrail detects prompt injection and jailbreak attempts.
 type InjectionGuardrail struct {
 	detectors []injectionDetector
-	threshold int // matches for score 1.0
+	threshold int   // matches for score 1.0
+	configErr error // original-input readiness, consumed only by selected policies
 }
 
 // New creates an InjectionGuardrail from rule config.
@@ -58,6 +59,7 @@ func New(cfg map[string]interface{}) *InjectionGuardrail {
 	}
 
 	allDetectors := defaultDetectors()
+	g.configErr = validateConfig(cfg, allDetectors)
 	for _, d := range allDetectors {
 		if enabledSet != nil && !enabledSet[d.category] {
 			continue
@@ -66,6 +68,42 @@ func New(cfg map[string]interface{}) *InjectionGuardrail {
 	}
 
 	return g
+}
+
+// ValidateConfig reports original-input errors without changing legacy Check
+// behavior or retaining caller-owned mutable configuration.
+func (g *InjectionGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}, catalog []injectionDetector) error {
+	if value, present := cfg["sensitivity"]; present {
+		sensitivity, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("prompt-injection sensitivity must be high, medium or low")
+		}
+		switch strings.ToLower(sensitivity) {
+		case "high", "medium", "low":
+		default:
+			return fmt.Errorf("prompt-injection sensitivity must be high, medium or low")
+		}
+	}
+	if value, present := cfg["categories"]; present {
+		list, ok := value.([]interface{})
+		if !ok {
+			return fmt.Errorf("prompt-injection categories must be an array of supported category names")
+		}
+		known := make(map[string]bool, len(catalog))
+		for _, detector := range catalog {
+			known[detector.category] = true
+		}
+		for _, item := range list {
+			name, ok := item.(string)
+			if !ok || !known[name] {
+				return fmt.Errorf("prompt-injection categories must contain only supported category names")
+			}
+		}
+	}
+	// Omitted/empty categories intentionally retain the constructor's defaults.
+	return nil
 }
 
 func (g *InjectionGuardrail) Name() string            { return "prompt-injection" }

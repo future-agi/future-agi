@@ -9,21 +9,27 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 RUN pip install --no-cache-dir \
     "daytona==0.207.0" \
     "httpx-ws==0.7.2" \
-    "urllib3>=2.1" \
+    "urllib3==2.8.0" \
     "e2b==2.37.1" \
     "claude-agent-sdk==0.2.139" \
-    "aiohttp>=3.13.3" \
+    "aiohttp==3.14.5" \
+    "yarl==1.25.1" \
     "granian[uvloop,reload]==2.8.3" \
     "channels-redis==4.3.0" \
     "asgiref==3.11.0" \
     "django==5.1.15" \
-    "litellm==1.84.10" \
+    "litellm==1.100.4" \
+    "boto3==1.44.3" \
+    "botocore==1.44.3" \
+    "s3transfer==0.19.3" \
+    "pydantic-settings==2.16.3" \
+    "python-dotenv==1.2.4" \
     "pyjwt==2.15.1" \
     "openai==2.54.0" \
     "mcp==1.30.0" \
-    "nltk==3.10.3" \
-    "pillow==12.3.0" \
-    "pypdf==6.19.0" \
+    "nltk==3.10.4" \
+    "pillow==13.0.0" \
+    "pypdf==6.21.4" \
     "pdfplumber==0.11.10" \
     "pdfminer.six==20260107" \
     "pypdfium2==5.14.0" \
@@ -31,12 +37,19 @@ RUN pip install --no-cache-dir \
 # daytona, httpx-ws and e2b mirror the `sandbox` extra of
 # futureagi/pyproject.toml and claude-agent-sdk its `localizer` extra;
 # aiohttp, granian, channels-redis and asgiref mirror futureagi/requirements.txt
-# until a future-agi-base rebuilt from it (v1.0.5) replaces v1.0.4.
+# until a future-agi-base rebuilt from it replaces v1.0.6.
 # django, litellm, pyjwt and openai are the critical-CVE upgrades of TH-8369
 # (CVE-2025-64459, CVE-2026-35030, CVE-2026-49468, CVE-2026-48526); v1.0.5 still
 # carries the vulnerable django 5.1.8 / litellm 1.81.11 / pyjwt 2.10.1, so they
 # are reinstalled here until the base is rebuilt. openai>=2.20.0 is required by
-# litellm 1.84.x, so the base's 2.15.0 has to move with it.
+# litellm 1.100.x, so the base's 2.15.0 has to move with it.
+# litellm 1.100.x also needs boto3>=1.43.1, pydantic-settings>=2.14.1 and
+# aiohttp>=3.14.2. The base's boto3 1.42.28 and pydantic-settings 2.12.0 are
+# older, so boto3, botocore, s3transfer, pydantic-settings and the
+# python-dotenv it needs are pinned at the futureagi/uv.lock versions rather
+# than whatever is newest at build time. aiohttp and urllib3 are pinned at the
+# lock versions too, which meet the futureagi/pyproject.toml floors, with the
+# yarl that aiohttp 3.14.5 needs.
 # mcp, nltk, pillow, pypdf, pdfminer.six and lxml are the high-CVE upgrades of
 # TH-8370 (MCP session authorization and origin/host validation
 # — CVE-2026-52869, CVE-2026-52870, CVE-2026-59950; NLTK remote code execution,
