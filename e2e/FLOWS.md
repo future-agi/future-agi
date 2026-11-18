@@ -3230,6 +3230,36 @@
 - the Participants card lists each declared participant with its connection and only the tools it may use
 - the stopped call says the refund worker was stopped when its deadline passed
 
+### SIM-E2E-012 — a case the builder adds is validated with the unsaved changes, saved Active, and runs
+
+**Goal:** A builder validates a case the chat just added from its own drawer and Activates the validated versions there under a name, and the case is Active and runs
+
+**Spec:** `flows/simulate/draft-case-validate.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment and a case the builder chat added to the suite draft in answer to a message (e2e/lib/simulate-seed.ts; no builder sandbox runs in this harness)
+2. open the Scenarios tab and the added case
+3. click Validate in the case drawer
+4. stand in for the validation sandbox: record every case proved on the candidate pairing as the gateway records a proofs file, and certify it (e2e/lib/harness_review_seed.py prove_candidates)
+5. name the version in the case drawer and click Activate
+6. read the Scenarios list and the run readiness for the added case
+
+**Backend state verified:**
+
+- the drawer Validate posts drafts/validate (202) and never scenarios/validate
+- the drafts read reports the candidate validation ready
+- the candidate pairing holds the added case proved
+- after Save the default suite is the candidate, its pairing holds the added case proved, the list reads it Active and a run of it holds nothing back
+
+**Browser observations:**
+
+- the added case reads as an unsaved change with a Validate that validates the unsaved changes
+- the drawer reads "Validated. Name this version to save it." once the validation is ready
+- the drawer names the version and Activates the validated versions
+
 ### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
 
 **Goal:** A developer inspects each tool of the test world: its inputs with units, the fields it returns, whether it changes records, whether it is reset between trials, and which tools only production answers
@@ -3535,3 +3565,31 @@
 - Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put
 - after Save the Environment default is the candidate version, active and named, holding the rule and its amendment line and not the actor
 - no draft is left open once saved
+
+### SIM-E2E-037 — each scenario shows its lifecycle and only validated cases run
+
+**Goal:** A developer sees which scenarios are proved, kept as written, not validated or archived, and knows which ones a run will hold back
+
+**Spec:** `flows/simulate/scenario-lifecycle.spec.ts:24`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an Environment of four cases: one proved, one kept as written, one with no proof, one archived (e2e/lib/harness_environment_seed.py proofs and archived options)
+2. read the Scenarios list with its lifecycle
+3. read the archived cases through the filter
+4. read the cases readiness holds back (GET capabilities/cases?bucket=blocked)
+5. open the Scenarios tab
+
+**Backend state verified:**
+
+- the list reads Active, Kept as written and Draft "Not validated on these versions yet."
+- the archived case appears only under lifecycle=archived
+- lifecycle_counts reads 1 proved, 1 kept as written, 1 not proved
+- readiness holds back the unproved case for not_validated and the archived one for scenario_archived
+
+**Browser observations:**
+
+- the counts line reads "1 proved · 1 kept as written · 1 not proved"
+- the rows carry Active, Kept as written and Draft badges

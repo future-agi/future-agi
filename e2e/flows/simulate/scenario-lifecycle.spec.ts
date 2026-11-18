@@ -21,10 +21,10 @@ interface ScenarioList {
 }
 interface CasePage { items: { key: string; by: string[] }[]; next: string | null }
 
-test('SIM-E2E-008: each scenario shows its lifecycle and only validated cases run', {
+test('SIM-E2E-037: each scenario shows its lifecycle and only validated cases run', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-008', area: 'simulate',
+    id: 'SIM-E2E-037', area: 'simulate',
     userGoal: 'A developer sees which scenarios are proved, kept as written, not validated or archived, '
       + 'and knows which ones a run will hold back',
     steps: ['seed an Environment of four cases: one proved, one kept as written, one with no proof, one archived '
