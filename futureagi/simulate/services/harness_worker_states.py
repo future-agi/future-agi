@@ -12,6 +12,7 @@ from simulate.constants.hosted_harness import (
     TRIAL_STATE_KEY,
     USER_CANCELED,
     WORKER_CHANNEL_BYPASSED,
+    WORKER_DEADLINE_NOT_ENFORCED,
     WORKER_ENFORCEMENT_LABELS,
     WORKER_LIMITS_NOT_ENFORCED,
 )
@@ -377,12 +378,23 @@ def _at_door(metadata: Mapping[str, Any] | None) -> set[str]:
 
 def _unheld(metadata: Mapping[str, Any] | None) -> set[str] | None:
     """The workers whose limits the trial says were not held, by its `worker_limits_not_enforced` notices; None when a
-    notice names no worker, so it falls on every one."""
+    notice names no worker, so it falls on every one. A worker whose deadline did not hold (its
+    `worker_deadline_not_enforced` notice, or the trial's `unenforced_deadlines`) is one of them."""
     trial = (metadata or {}).get(TRIAL_STATE_KEY)
     notices = trial.get("notices") if isinstance(trial, Mapping) else None
-    named: set[str] = set()
+    late = trial.get("unenforced_deadlines") if isinstance(trial, Mapping) else None
+    named: set[str] = {
+        str(one["worker"])
+        for one in (late if isinstance(late, list) else [])
+        if isinstance(one, Mapping) and one.get("worker")
+    }
     for one in notices if isinstance(notices, list) else []:
-        if isinstance(one, Mapping) and one.get("code") == WORKER_LIMITS_NOT_ENFORCED:
+        if isinstance(one, Mapping) and one.get("code") == WORKER_DEADLINE_NOT_ENFORCED:
+            workers = one.get("workers")
+            named.update(
+                str(worker) for worker in (workers if isinstance(workers, list) else [])
+            )
+        elif isinstance(one, Mapping) and one.get("code") == WORKER_LIMITS_NOT_ENFORCED:
             workers = one.get("workers")
             if not isinstance(workers, list) or not workers:
                 return None
