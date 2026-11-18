@@ -51,28 +51,25 @@ def _payload_provider(data: object) -> str | None:
         payload = data.get(provider)
         if isinstance(payload, dict) and payload:
             return provider
-    return next(
-        (key for key, value in data.items() if isinstance(value, dict) and value), None
+    return min(
+        (key for key, value in data.items() if isinstance(value, dict) and value),
+        default=None,
     )
 
 
 def execution_agent_provider(execution: TestExecution) -> str | None:
     # A partial rerun may have called a different target. Do not present a
     # single provider for the entire run if the recorded calls disagree.
-    calls = execution.calls.filter(deleted=False)
-    configured = _configured_provider(execution)
-    if (
-        not configured
-        or calls.filter(call_metadata__has_key=HOSTED_TARGET_PROVIDER).exists()
-    ):
-        providers = list(
-            calls.order_by()
-            .annotate(result_provider=call_agent_provider_expression())
-            .values_list("result_provider", flat=True)
-            .distinct()[:2]
-        )
-        return providers[0] if len(providers) == 1 else None
-    return configured
+    providers = list(
+        execution.calls.filter(deleted=False)
+        .order_by()
+        .annotate(result_provider=call_agent_provider_expression())
+        .values_list("result_provider", flat=True)
+        .distinct()[:2]
+    )
+    if not providers:
+        return _configured_provider(execution)
+    return providers[0] if len(providers) == 1 else None
 
 
 def call_agent_provider(call: CallExecution) -> str | None:
@@ -87,13 +84,16 @@ def call_agent_provider(call: CallExecution) -> str | None:
 
 
 class _FirstObjectPayloadKey(Func):
-    """First non-empty object in the stored JSONB object, including custom keys."""
+    """Lexically first custom key whose stored payload is a non-empty object."""
 
     output_field = TextField()
+    # JSONB's storage order and the database's default collation may differ
+    # from Python's lexical order. C collation compares the raw UTF-8 bytes.
     template = (
         "(CASE WHEN jsonb_typeof(%(expressions)s) = 'object' THEN "
         "(SELECT p.key FROM jsonb_each(%(expressions)s) AS p "
-        "WHERE jsonb_typeof(p.value) = 'object' AND p.value <> '{}'::jsonb LIMIT 1) END)"
+        "WHERE jsonb_typeof(p.value) = 'object' AND p.value <> '{}'::jsonb "
+        'ORDER BY p.key COLLATE "C" LIMIT 1) END)'
     )
 
 
