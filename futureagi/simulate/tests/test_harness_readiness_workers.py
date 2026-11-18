@@ -167,6 +167,28 @@ class TestWorkerRows:
             assert set(_boundaries(row).values()) == {"not_enforced"}
 
     @pytest.mark.parametrize(
+        "evidence",
+        [
+            {"door_outcome": {"present": False, "reason": "tool_service_not_fronted"}},
+            {"door_outcome": IN_PROCESS_DOOR, "worker_permissions": None},
+            {"worker_permissions": {}},
+            {"door_outcome": None, "worker_limits": None},
+        ],
+        ids=["no_door", "in_process", "no_sealed_allow_list", "sealed_before_limits"],
+    )
+    def test_limits_only_the_contract_declares_read_not_enforced_never_allowed(
+        self, evidence
+    ):
+        """A worker's `allowed_tools` in the contract is the customer's own restriction: unless the world's door
+        holds the worker to a sealed allow-list, each of its tools reads Not enforced and the worker never Supported."""
+        rows = _rows(evidence=_evidence(**evidence))
+
+        for worker in CONTRACT["workers"]:
+            row = rows[worker["id"]]
+            assert row["status"] != "supported"
+            assert set(_boundaries(row).values()) == {"not_enforced"}, row
+
+    @pytest.mark.parametrize(
         "reason", ["tool_service_not_fronted", "in_process_unbound", "no_tool_service"]
     )
     def test_a_build_sealed_without_a_door_reads_alk_s_reason_and_offers_no_rebuild(
