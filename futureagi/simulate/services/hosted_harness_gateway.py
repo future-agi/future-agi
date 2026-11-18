@@ -47,6 +47,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.harness_versioning.hashing import INDEX_ONLY_FIELDS
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
@@ -6578,10 +6579,6 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
                 document = documents.get(parts[1])
                 edit = _edit_for(parts[1], document, suite)
                 if isinstance(document, dict) and edit is not None:
-                    from simulate.services.harness_versioning.hashing import (
-                        INDEX_ONLY_FIELDS,
-                    )
-
                     # The case's own fields only: the edit is its suite index entry, whose bookkeeping stays there.
                     document = {
                         key: value
