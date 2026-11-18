@@ -688,29 +688,29 @@ def calculate_eval_average(eval_template, api_logs):
                         result = output.get("output")
                         if isinstance(result, dict):
                             # The formatter has already averaged the scored picks.
-                            score = result.get("score")
+                            run_score = result.get("score")
                             picks = result.get("choices")
                             if not (
                                 isinstance(picks, list)
                                 and picks
-                                and isinstance(score, (int, float))
-                                and not isinstance(score, bool)
-                                and 0 <= score <= 1
+                                and isinstance(run_score, (int, float))
+                                and not isinstance(run_score, bool)
+                                and 0 <= run_score <= 1
                             ):
                                 continue
                         elif isinstance(result, list) and result:
                             if choices_map:
                                 weights = {"pass": 1, "neutral": 0.5}
-                                score = sum(
+                                run_score = sum(
                                     weights.get(choices_map.get(pick), 0)
                                     for pick in result
                                 ) / len(result)
                             else:
                                 # Preserve the fallback for unmapped legacy selections.
-                                score = 1
+                                run_score = 1
                         else:
                             continue
-                        success_count += score
+                        success_count += run_score
                         valid_logs += 1
                     else:
                         success_count += 1
