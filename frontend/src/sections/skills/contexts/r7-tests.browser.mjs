@@ -102,7 +102,7 @@ try {
   await page.getByRole('button',{name:'Close',exact:true}).click();
   await page.getByText('Recorded reference v1 · also production').scrollIntoViewIfNeeded();
   await page.screenshot({path:path.join(output,'tests-repro-same-version.png')});
-  await page.goto(`${base}/__r7__/?state=inventory`); await page.getByRole('button',{name:'View all files sent to the model'}).click(); await page.getByRole('button',{name:'View AGENTS.md'}).click(); await page.getByText('hello',{exact:true}).waitFor();
+  await page.goto(`${base}/__r7__/?state=inventory`); await page.getByRole('button',{name:'View all files sent to the model'}).click(); await page.getByRole('row',{name:'View AGENTS.md'}).click(); await page.getByText('hello',{exact:true}).waitFor();
   await page.screenshot({path:path.join(output,'inventory-file-drawer.png')});
   await page.setViewportSize({width:390,height:900}); await page.goto(`${base}/__r7__/?state=current`); await page.getByRole('heading',{name:'Support context / Tests'}).waitFor();
   await page.screenshot({path:path.join(output,'tests-390.png')});

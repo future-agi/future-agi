@@ -41,8 +41,11 @@ vi.mock("src/api/skills/review-production", () => ({
 }));
 let closureData = { rows: [], changes: [] };
 let recovery = { candidates: [], cohort: [], releaseRevision: 1 };
+const openRefetch = vi.fn();
+let openRequests = { isLoading: false, data: [] };
 vi.mock("src/api/skills/j6-recovery", () => ({
   useContextRecovery: () => ({ isLoading: false, error: null, data: recovery }),
+  useOpenContextRequests: () => ({ refetch: openRefetch, ...openRequests }),
   useRefreshContextFacts: () => refresh,
   useRecoveryClosure: () => ({ data: closureData }),
   DESCRIPTOR_PATH: ".futureagi/context.json",
@@ -61,6 +64,8 @@ beforeEach(() => {
   executeMutate.mockClear();
   requestRead = {};
   executeState = {};
+  openRequests = { isLoading: false, data: [] };
+  openRefetch.mockClear();
   previewState = {};
   submitState = {};
   reviewers = [];
@@ -1043,4 +1048,61 @@ it('says the link could not be built when the binding has no valid context id, i
   fireEvent.click(screen.getByRole('button', { name: 'Actions for Support app' }));
   expect(screen.getByRole('menuitem', { name: /Runtime traces/ })).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByText("Couldn't build the link")).toBeVisible();
+});
+
+// UXF-08: after a reload the tracker comes from the server's open request, not page state.
+const openRollback = (patch = {}) => ({ requestId: 'req-1', requestRevision: 1, status: 'pending', candidateVersionId: 'v1-id', label: 'production', expectedReleaseRevision: 7, reviewer: 'Priya Shah', ...patch });
+const reloadedPage = () => {
+  recovery = { cohort: failedCohort, releaseRevision: 7, canPromote: true, candidates: suggestedCandidates };
+  reviewers = [{ id: 'u2', name: 'Priya Shah' }];
+};
+
+it('resumes the tracker after a reload while the rollback request is waiting, with no second form', () => {
+  reloadedPage();
+  openRequests = { isLoading: false, data: [openRollback()] };
+  requestRead = { data: { request: { id: 'req-1', status: 'pending', revision: 1 } } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  const steps = within(screen.getByRole('list', { name: 'Rollback progress' })).getAllByRole('listitem');
+  expect(steps.map((item) => item.getAttribute('aria-current'))).toEqual(['step', null, null]);
+  expect(screen.getByText('Rollback to v1 requested from Priya Shah. Production has not moved.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Request rollback to v1' })).toBeNull();
+  expect(screen.queryByRole('checkbox', { name: /I've checked/ })).toBeNull();
+  expect(screen.getByRole('link', { name: 'Open request' })).toHaveAttribute('href', expect.stringContaining('request=req-1'));
+});
+
+it('resumes an approved rollback at "Approved: move production" and sends the final move to the request page', () => {
+  reloadedPage();
+  openRequests = { isLoading: false, data: [openRollback({ status: 'approved' })] };
+  requestRead = { data: { request: { id: 'req-1', status: 'approved', revision: 1 }, preview: { current: true, fingerprint: 'fp' }, canExecute: true } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  const steps = within(screen.getByRole('list', { name: 'Rollback progress' })).getAllByRole('listitem');
+  expect(steps.map((item) => item.getAttribute('aria-current'))).toEqual([null, 'step', null]);
+  expect(screen.getByText('Priya Shah approved the rollback to v1. Production has not moved yet.')).toBeVisible();
+  // Not checked in this page session: no one-click move here; the request page confirms it.
+  expect(screen.queryByRole('button', { name: /Move production/ })).toBeNull();
+  expect(screen.getByText(/It shows the change for you to confirm before production moves/)).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Open request' })).toBeVisible();
+  expect(executeMutate).not.toHaveBeenCalled();
+});
+
+it('shows the form, not a tracker, for a forward release request or one made before production moved', () => {
+  reloadedPage();
+  openRequests = { isLoading: false, data: [openRollback({ expectedReleaseRevision: 6 }), openRollback({ requestId: 'req-2', candidateVersionId: 'v3-id' })] };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.queryByRole('list', { name: 'Rollback progress' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Request rollback to v1' })).toBeVisible();
+});
+
+it('offers no request form while the open-request check is loading or failed', () => {
+  reloadedPage();
+  openRequests = { isLoading: true };
+  const view = render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByLabelText('Checking for an open rollback request')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Request rollback to v1' })).toBeNull();
+  openRequests = { isLoading: false, isError: true };
+  view.rerender(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.getByText("Couldn't check for an open rollback request")).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Request rollback to v1' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(openRefetch).toHaveBeenCalled();
 });

@@ -98,15 +98,15 @@ describe("Usage tab", () => {
   );
   it("queries every supported time range", async () => {
     show();
-    expect(useSkillUsage).toHaveBeenLastCalledWith("skill-a", 30);
+    expect(useSkillUsage).toHaveBeenLastCalledWith("skill-a", 30, "skill");
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Time range" }));
     fireEvent.click(await screen.findByRole("option", { name: "Last 7 days" }));
-    expect(useSkillUsage).toHaveBeenLastCalledWith("skill-a", 7);
+    expect(useSkillUsage).toHaveBeenLastCalledWith("skill-a", 7, "skill");
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Time range" }));
     fireEvent.click(
       await screen.findByRole("option", { name: "Last 90 days" }),
     );
-    expect(useSkillUsage).toHaveBeenLastCalledWith("skill-a", 90);
+    expect(useSkillUsage).toHaveBeenLastCalledWith("skill-a", 90, "skill");
   });
   it("provides exact daily counts and a consumer table without relying on chart colors", () => {
     show();
@@ -249,7 +249,8 @@ describe("agent context Activity", () => {
   it("shows the context's fetches without the skill adoption panel", () => {
     useSkillUsage.mockReturnValue(success({ ...usage, consumers: [{ ...usage.consumers[0], channel: "sdk", sdkVersion: "1.4.0" }] }));
     showContext();
-    expect(useSkillUsage).toHaveBeenLastCalledWith("context-a", 30);
+    // The shared usage route, named with the context kind: never a skill read of a context id.
+    expect(useSkillUsage).toHaveBeenLastCalledWith("context-a", 30, "agent_context");
     expect(screen.getByText("Retrieval (fetches)")).toBeInTheDocument();
     expect(screen.queryByText("Adoption panel")).not.toBeInTheDocument();
     const consumers = within(screen.getByRole("table", { name: "Agent context consumers" }));
@@ -267,5 +268,53 @@ describe("agent context Activity", () => {
     useSkillUsage.mockReturnValue({ isError: true, refetch: vi.fn() });
     showContext();
     expect(screen.getByText("Your agent context and versions are unchanged.")).toBeInTheDocument();
+  });
+});
+
+// UXF-07: the context Activity tab's first-day, empty and error states.
+describe("agent context Activity states", () => {
+  const context = { id: "context-a", name: "support-agent", latestVersion: 3 };
+  const showContext = (props = {}) => render(
+    <ThemeProvider theme={createTheme({ palette: dsPalette("light"), typography: dsTypography })}>
+      <MemoryRouter initialEntries={["/"]}>
+        <UsageTab kind="agent_context" skill={context} {...props} />
+      </MemoryRouter>
+    </ThemeProvider>,
+  );
+  const none = { ...usage, total: 0, byDay: [], byVersion: [], consumers: [], lastFetchedAt: null };
+
+  it("says nobody has fetched it yet on the first day, with Install as the one action", () => {
+    const onInstall = vi.fn();
+    useSkillUsage.mockReturnValue(success({ ...none, firstFetchedOn: null }));
+    showContext({ onInstall });
+    expect(screen.getByText("Nobody has fetched this agent context yet")).toBeInTheDocument();
+    expect(screen.queryByText("No fetches in this period")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    expect(onInstall).toHaveBeenCalledTimes(1);
+    expect(ReactApexChart).not.toHaveBeenCalled();
+  });
+
+  it("says no fetches in this period when it was fetched before the window", () => {
+    useSkillUsage.mockReturnValue(success({ ...none, firstFetchedOn: "2026-09-01" }));
+    showContext({ onInstall: vi.fn() });
+    expect(screen.getByText("No fetches in this period")).toBeInTheDocument();
+    expect(screen.getByText("Fetches appear when someone resolves, downloads or reads this agent context through the API, the SDK or MCP.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the period wording when an older server doesn't report the first fetch", () => {
+    useSkillUsage.mockReturnValue(success(none));
+    showContext();
+    expect(screen.getByText("No fetches in this period")).toBeInTheDocument();
+  });
+
+  it("shows a retryable error that says the context is unchanged", () => {
+    const refetch = vi.fn();
+    useSkillUsage.mockReturnValue({ isError: true, refetch });
+    showContext();
+    expect(screen.getByText("Could not load usage")).toBeInTheDocument();
+    expect(screen.getByText("Your agent context and versions are unchanged.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

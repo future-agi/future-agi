@@ -111,3 +111,29 @@ export function canMoveFromTracker({ read, submitted } = {}) {
   if (Number.isInteger(submitted.requestRevision) && request.revision !== submitted.requestRevision) return false;
   return Number.isInteger(request.revision);
 }
+
+/**
+ * The rollback request to resume as a tracker after a reload (UXF-08), from the server's list of
+ * this person's open requests for the context. Only a production move to a release older than
+ * production, made against the release that is current now, counts: a forward "Request release for
+ * vN" never becomes a rollback tracker, and a request made before production moved is not resumed.
+ *
+ * The result has no packet fingerprint on purpose: the person did not acknowledge it in this page
+ * session, so `canMoveFromTracker` stays false and the final move happens on the request page,
+ * which asks for its own check.
+ */
+export function resumedRollback({ requests, candidates, releaseRevision }) {
+  const production = (candidates ?? []).find((candidate) => candidate.isProduction);
+  if (!production || !Number.isInteger(releaseRevision)) return null;
+  const match = (requests ?? []).find((request) => {
+    const candidate = candidates.find((row) => row.id === request.candidateVersionId);
+    return request.label === 'production' && candidate && !candidate.isProduction
+      && candidate.number < production.number && request.expectedReleaseRevision === releaseRevision;
+  });
+  if (!match) return null;
+  return {
+    candidateId: match.candidateVersionId, from: production.number, revision: releaseRevision,
+    reviewer: match.reviewer, requestId: match.requestId, requestRevision: match.requestRevision,
+    resumed: true,
+  };
+}

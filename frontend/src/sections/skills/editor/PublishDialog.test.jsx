@@ -422,3 +422,32 @@ describe('UXF-09: the label rule beside the label choice', () => {
     expect(screen.queryByText(RULE)).not.toBeInTheDocument();
   });
 });
+
+// UXF-09 / UXF-11: the rule note and what each label choice does are shown before any tick.
+describe('release label choices before ticking', () => {
+  const RULE = "Production is a protected label: only workspace admins can move it, and automation can't.";
+  it('shows the rule and each choice\'s effect with nothing ticked, and keeps the checkbox names', async () => {
+    const admin = { ...skill, latestVersion: 2, labels: [{ name: 'production', version: 2, canMove: true }], protectedLabelNames: ['production'], permissions: { canManageLabelProtection: true, canRunTests: true } };
+    api.currentSkill = admin;
+    renderDialog({ skill: admin });
+    const production = screen.getByRole('checkbox', { name: 'production', exact: true });
+    const staging = screen.getByRole('checkbox', { name: 'staging', exact: true });
+    expect(production).not.toBeChecked();
+    expect(staging).not.toBeChecked();
+    expect(screen.getByText(RULE)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Change rules' })).toBeInTheDocument();
+    expect(screen.getByTestId('label-effect-production')).toHaveTextContent('Ticking moves it from v2 to v3 · Protected label (only admins can move it)');
+    expect(screen.getByTestId('label-effect-staging')).toHaveTextContent('Not set yet; ticking sets it to v3');
+    expect(production).toHaveAccessibleDescription('Ticking moves it from v2 to v3 · Protected label (only admins can move it)');
+    // The rule is read before the choices it governs.
+    const note = screen.getByTestId('release-rule-note');
+    expect(note.compareDocumentPosition(production) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('status')).toHaveTextContent('Creates v3. Production stays on v2.');
+  });
+  it('says nothing about protection when no label is protected', () => {
+    api.currentSkill = { ...skill, protectedLabelNames: [] };
+    renderDialog();
+    expect(screen.getByText('No labels are protected.')).toBeInTheDocument();
+    expect(screen.getByTestId('label-effect-production')).not.toHaveTextContent(/Protected/);
+  });
+});

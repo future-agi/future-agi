@@ -48,7 +48,7 @@ export const useSkillSource = () => ({ ...q(null), isError: true, error: { code:
 export const useSkillLabelProtection = () => q({ protectedLabelNames: ['production'], releaseRevision: 4, canManage: true });
 export const useSkillLabelProtectionHistory = () => q(emptyPage);
 export const useSkillAdoption = () => q({ ...emptyPage, target: null, summary: { currentOnly: 0, otherOnly: 0, mixed: 0, notSeen: 0, ambiguous: 0 }, window: { start: '2026-10-31T00:00:00Z', end: '2026-11-07T00:00:00Z', asOf: '2026-11-07T00:00:00Z' } });
-export const useSkillUsage = () => q({ days: 30, total: 0, byDay: [], byChannel: {}, byVersion: [], consumers: [], lastFetchedAt: null });
+export const useSkillUsage = () => q({ days: 30, total: 0, byDay: [], byChannel: {}, byVersion: [], consumers: [], lastFetchedAt: null, firstFetchedOn: null });
 export const useSkillV11Query = () => q([]);
 export const isActiveSkillJob = (status) => ['queued', 'running', 'cancelling'].includes(status);
 export const getSkillErrorCode = (error) => error?.code;

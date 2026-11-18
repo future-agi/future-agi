@@ -66524,7 +66524,8 @@
         "/model-hub/skills/{skill_id}/usage/": {
             "get": {
                 "operationId": "model-hub_skills_usage_list",
-                "description": "",
+                "summary": "Fetch counts for a skill, or for an agent context with kind=agent_context.",
+                "description": "A fetch is a read of the resource, never proof that an agent used it.\nThe skill path keeps its selector and error contract; a context is\nresolved by its explicit kind in the caller's workspace scope.",
                 "parameters": [
                     {
                         "name": "days",
@@ -66537,6 +66538,17 @@
                             90
                         ],
                         "default": 7
+                    },
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "skill",
+                            "agent_context"
+                        ],
+                        "default": "skill"
                     },
                     {
                         "name": "skill_id",
@@ -167708,6 +167720,50 @@
                 }
             }
         },
+        "SkillsContextPolicyChange": {
+            "required": [
+                "field",
+                "before",
+                "after",
+                "changed_by",
+                "changed_at"
+            ],
+            "type": "object",
+            "properties": {
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "enum": [
+                        "protected_labels",
+                        "quarantine",
+                        "release_rules",
+                        "security_rules"
+                    ]
+                },
+                "before": {
+                    "title": "Before",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "after": {
+                    "title": "After",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "changed_by": {
+                    "title": "Changed by",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "changed_at": {
+                    "title": "Changed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
         "SkillsContextRenewalPreview": {
             "required": [
                 "packet",
@@ -167718,7 +167774,8 @@
                 "subject_id",
                 "previous_fingerprint",
                 "changes",
-                "removed_evidence"
+                "removed_evidence",
+                "policy_changes"
             ],
             "type": "object",
             "properties": {
@@ -167767,6 +167824,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/SkillsContextRemovedEvidence"
+                    }
+                },
+                "policy_changes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SkillsContextPolicyChange"
                     }
                 }
             }
@@ -172231,7 +172294,8 @@
                 "by_channel",
                 "by_version",
                 "consumers",
-                "last_fetched_at"
+                "last_fetched_at",
+                "first_fetched_on"
             ],
             "type": "object",
             "properties": {
@@ -172268,6 +172332,12 @@
                     "title": "Last fetched at",
                     "type": "string",
                     "format": "date-time",
+                    "x-nullable": true
+                },
+                "first_fetched_on": {
+                    "title": "First fetched on",
+                    "type": "string",
+                    "format": "date",
                     "x-nullable": true
                 }
             }

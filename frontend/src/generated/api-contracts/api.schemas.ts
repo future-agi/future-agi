@@ -21844,6 +21844,33 @@ export interface SkillsContextRemovedEvidenceApi {
   source: string;
 }
 
+export type SkillsContextPolicyChangeApiField =
+  (typeof SkillsContextPolicyChangeApiField)[keyof typeof SkillsContextPolicyChangeApiField];
+
+export const SkillsContextPolicyChangeApiField = {
+  protected_labels: "protected_labels",
+  quarantine: "quarantine",
+  release_rules: "release_rules",
+  security_rules: "security_rules",
+} as const;
+
+export type SkillsContextPolicyChangeApiBefore = {
+  [key: string]: unknown;
+} | null;
+
+export type SkillsContextPolicyChangeApiAfter = {
+  [key: string]: unknown;
+} | null;
+
+export interface SkillsContextPolicyChangeApi {
+  field: SkillsContextPolicyChangeApiField;
+  before: SkillsContextPolicyChangeApiBefore;
+  after: SkillsContextPolicyChangeApiAfter;
+  /** @minLength 1 */
+  changed_by: string | null;
+  changed_at: string | null;
+}
+
 export interface SkillsContextRenewalPreviewApi {
   packet: SkillsContextReleasePacketApi;
   /**
@@ -21864,6 +21891,7 @@ export interface SkillsContextRenewalPreviewApi {
   previous_fingerprint: string;
   changes: SkillsContextRenewalChangeApi[];
   removed_evidence: SkillsContextRemovedEvidenceApi[];
+  policy_changes: SkillsContextPolicyChangeApi[];
 }
 
 export interface SkillsRenewalPreviewResponseApi {
@@ -23608,6 +23636,7 @@ export interface SkillsHubUsageApi {
   by_version: SkillsHubUsageVersionApi[];
   consumers: SkillsHubConsumerApi[];
   last_fetched_at: string | null;
+  first_fetched_on: string | null;
 }
 
 export interface SkillsUsageResponseApi {
@@ -48070,6 +48099,7 @@ export const ModelHubSkillsTestRunsResultsListFilter = {
 
 export type ModelHubSkillsUsageListParams = {
   days?: ModelHubSkillsUsageListDays;
+  kind?: ModelHubSkillsUsageListKind;
 };
 
 export type ModelHubSkillsUsageListDays =
@@ -48079,6 +48109,14 @@ export const ModelHubSkillsUsageListDays = {
   NUMBER_7: 7,
   NUMBER_30: 30,
   NUMBER_90: 90,
+} as const;
+
+export type ModelHubSkillsUsageListKind =
+  (typeof ModelHubSkillsUsageListKind)[keyof typeof ModelHubSkillsUsageListKind];
+
+export const ModelHubSkillsUsageListKind = {
+  skill: "skill",
+  agent_context: "agent_context",
 } as const;
 
 export type ModelHubSkillsVersionsListParams = {

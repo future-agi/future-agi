@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canMoveFromTracker, checkedFiles, rollbackAcknowledgment, rollbackProgress, suggestRelease, suggestReviewer, trackerSteps } from "./recoverySuggestion";
+import { canMoveFromTracker, checkedFiles, resumedRollback, rollbackAcknowledgment, rollbackProgress, suggestRelease, suggestReviewer, trackerSteps } from "./recoverySuggestion";
 
 const release = (number, extra = {}) => ({ id: `v${number}`, number, eligible: true, selectable: true, isProduction: false, ...extra });
 const failure = (versionId) => ({ latestFailure: { versionId } });
@@ -114,5 +114,37 @@ describe("canMoveFromTracker", () => {
     const noRevision = { requestId: "req-1", fingerprint: "fp" };
     expect(canMoveFromTracker({ read, submitted: noRevision })).toBe(true);
     expect(canMoveFromTracker({ read: { ...read, preview: { current: true, fingerprint: "x" } }, submitted: noRevision })).toBe(false);
+  });
+});
+
+describe("resumedRollback (UXF-08)", () => {
+  const candidates = [
+    { id: "v3", number: 3, isProduction: true },
+    { id: "v2", number: 2, isProduction: false },
+    { id: "v4", number: 4, isProduction: false },
+  ];
+  const request = (patch = {}) => ({ requestId: "req-1", requestRevision: 1, status: "pending", candidateVersionId: "v2", label: "production", expectedReleaseRevision: 7, reviewer: "Priya Shah", ...patch });
+  it("resumes this person's production rollback made against the current release", () => {
+    expect(resumedRollback({ requests: [request()], candidates, releaseRevision: 7 })).toEqual({
+      candidateId: "v2", from: 3, revision: 7, reviewer: "Priya Shah", requestId: "req-1", requestRevision: 1, resumed: true,
+    });
+  });
+  it("never carries a packet fingerprint, so the tracker cannot move production itself", () => {
+    const resumed = resumedRollback({ requests: [request({ status: "approved" })], candidates, releaseRevision: 7 });
+    expect(resumed).not.toHaveProperty("fingerprint");
+    const read = { request: { id: "req-1", status: "approved", revision: 1 }, preview: { current: true, fingerprint: "fp" }, canExecute: true };
+    expect(canMoveFromTracker({ read, submitted: resumed })).toBe(false);
+  });
+  it.each([
+    ["a forward release", request({ candidateVersionId: "v4" })],
+    ["another label", request({ label: "staging" })],
+    ["a request made before production last moved", request({ expectedReleaseRevision: 6 })],
+    ["an unknown release", request({ candidateVersionId: "gone" })],
+  ])("does not resume %s", (_name, value) => {
+    expect(resumedRollback({ requests: [value], candidates, releaseRevision: 7 })).toBeNull();
+  });
+  it("needs a production release and a release revision", () => {
+    expect(resumedRollback({ requests: [request()], candidates: candidates.map((row) => ({ ...row, isProduction: false })), releaseRevision: 7 })).toBeNull();
+    expect(resumedRollback({ requests: [request()], candidates, releaseRevision: undefined })).toBeNull();
   });
 });
