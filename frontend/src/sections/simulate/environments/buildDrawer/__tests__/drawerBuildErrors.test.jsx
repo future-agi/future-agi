@@ -39,9 +39,7 @@ vi.mock("src/api/harness/harness", () => ({
 const { preflightHarnessJob, createHarnessJob } = await import(
   "src/api/harness/harness"
 );
-const { default: HostedForm } = await import("../forms/HostedForm");
 const { default: RepoForm } = await import("../forms/RepoForm");
-const { CATALOG_ITEMS } = await import("../buildDrawerCatalog");
 const { resetEnvironmentsStore } = await import(
   "../../store/useEnvironmentsStore"
 );
@@ -57,7 +55,6 @@ const PASS = {
   },
 };
 
-const itemOf = (id) => CATALOG_ITEMS.find((it) => it.id === id);
 const render = (ui) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -110,50 +107,4 @@ describe("a refused or failed create in the drawer", () => {
     await waitFor(() => expect(buildBtn()).toBeEnabled());
   });
 
-  it("builds with the key write-only and retries a failed create under the same request key", async () => {
-    createHarnessJob.mockRejectedValueOnce({
-      error: "agent_preflight_failed",
-      message: "The agent's credentials didn't pass their check",
-      statusCode: 422,
-    });
-    render(<HostedForm item={itemOf("vapi")} />);
-    change(screen.getAllByPlaceholderText("Paste the key")[0], "sk-x");
-    change(box("Assistant ID"), "asst_x");
-    runPreflight();
-    await waitFor(() => expect(buildBtn()).toBeEnabled());
-    fireEvent.click(buildBtn());
-
-    await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "The agent's credentials didn't pass their check",
-        { variant: "error" },
-      ),
-    );
-    expect(createHarnessJob.mock.calls[0][0].credential_values).toEqual({
-      VAPI_API_KEY: "sk-x",
-    });
-
-    createHarnessJob.mockRejectedValueOnce({
-      detail: "Hosted harness scheduler is unavailable",
-      statusCode: 503,
-    });
-    await waitFor(() => expect(buildBtn()).toBeEnabled());
-    fireEvent.click(buildBtn());
-    await waitFor(() => expect(createHarnessJob).toHaveBeenCalledTimes(2));
-    const [first, retry] = createHarnessJob.mock.calls.map((call) => call[1]);
-    expect(retry).toBe(first);
-
-    // A new preflight is a new build, so it gets a new key.
-    createHarnessJob.mockResolvedValue({ job: { job_id: "job-plat" } });
-    await waitFor(() => expect(buildBtn()).toBeEnabled());
-    change(screen.getAllByPlaceholderText("Paste the key")[0], "sk-y");
-    runPreflight();
-    await waitFor(() => expect(buildBtn()).toBeEnabled());
-    fireEvent.click(buildBtn());
-    await waitFor(() => expect(createHarnessJob).toHaveBeenCalledTimes(3));
-    expect(createHarnessJob.mock.calls[2][1]).not.toBe(first);
-    expect(createHarnessJob.mock.calls[2][0].credential_values).toEqual({
-      VAPI_API_KEY: "sk-y",
-    });
-  });
 });

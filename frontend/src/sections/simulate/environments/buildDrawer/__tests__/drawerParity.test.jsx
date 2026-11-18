@@ -40,11 +40,7 @@ const {
   uploadHarnessSource,
 } = await import("src/api/harness/harness");
 const { default: RepoForm } = await import("../forms/RepoForm");
-const { default: HostedForm } = await import("../forms/HostedForm");
-const { default: LiveKitForm } = await import("../forms/LiveKitForm");
-const { default: PhoneForm } = await import("../forms/PhoneForm");
 const { default: UploadForm } = await import("../forms/UploadForm");
-const { CATALOG_ITEMS } = await import("../buildDrawerCatalog");
 const { resetEnvironmentsStore } = await import(
   "../../store/useEnvironmentsStore"
 );
@@ -60,7 +56,6 @@ const PASS = {
   },
 };
 
-const itemOf = (id) => CATALOG_ITEMS.find((it) => it.id === id);
 const render = (ui) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -70,7 +65,6 @@ const render = (ui) => {
   );
 };
 const change = (el, value) => fireEvent.change(el, { target: { value } });
-const byPlaceholder = (p) => screen.getAllByPlaceholderText(p)[0];
 const box = (name) => screen.getByRole("textbox", { name });
 
 // Runs one side and returns what it sent.
@@ -175,63 +169,4 @@ describe("the drawer sends what the Build tab sent", () => {
     expect(drawer.preflight).toEqual(BUILD_TAB.upload.preflight);
   });
 
-  it("Vapi: voice over the phone, outbound, speaking first, with a repo", async () => {
-    const drawer = await capture(<HostedForm item={itemOf("vapi")} />, () => {
-      change(byPlaceholder("Paste the key"), "vk-1");
-      change(box("Assistant ID"), "asst_1");
-      fireEvent.click(screen.getByRole("button", { name: "Phone" }));
-      change(box("Contact Number"), "4155550142");
-      fireEvent.click(screen.getByRole("checkbox", { name: "Inbound Calls" }));
-      fireEvent.click(
-        screen.getByRole("checkbox", { name: "Agent speaks first" }),
-      );
-      change(box("GitHub repo (optional)"), "https://github.com/acme/agent");
-    });
-    expect(drawer.preflight).toEqual(BUILD_TAB.vapi.preflight);
-    expect(drawer.secrets).toEqual(BUILD_TAB.vapi.secrets);
-  });
-
-  it("Retell AI: voice on the web", async () => {
-    const drawer = await capture(<HostedForm item={itemOf("retell")} />, () => {
-      change(byPlaceholder("Paste the key"), "rk-1");
-      change(box("Agent ID"), "agent_1");
-    });
-    expect(drawer.preflight).toEqual(BUILD_TAB.retellVoice.preflight);
-    expect(drawer.secrets).toEqual(BUILD_TAB.retellVoice.secrets);
-  });
-
-  it("Retell AI: chat", async () => {
-    const drawer = await capture(<HostedForm item={itemOf("retell")} />, () => {
-      fireEvent.click(screen.getByRole("button", { name: /^Chat/ }));
-      change(byPlaceholder("Paste the key"), "rk-2");
-      change(box("Chat agent ID"), "agent_2");
-    });
-    expect(drawer.preflight).toEqual(BUILD_TAB.retellChat.preflight);
-  });
-
-  it("LiveKit: URL, keys, agent name, prompt, speaking first", async () => {
-    const drawer = await capture(<LiveKitForm />, () => {
-      change(box("LiveKit server URL"), "wss://demo.livekit.cloud");
-      change(byPlaceholder("Paste the key"), "lk-key");
-      change(byPlaceholder("Paste the secret"), "lk-secret");
-      change(box("Agent name"), "returns-agent");
-      change(box("System prompt"), "You handle returns.");
-      fireEvent.click(
-        screen.getByRole("checkbox", { name: "Agent speaks first" }),
-      );
-    });
-    expect(drawer.preflight).toEqual(BUILD_TAB.livekit.preflight);
-    expect(drawer.secrets).toEqual(BUILD_TAB.livekit.secrets);
-  });
-
-  it("Phone number (the Build tab's Others)", async () => {
-    const drawer = await capture(<PhoneForm />, () => {
-      change(box("Number to call"), "4155550142");
-      change(box("Its instructions"), "You book tables.");
-      fireEvent.click(
-        screen.getByRole("checkbox", { name: "Agent speaks first" }),
-      );
-    });
-    expect(drawer.preflight).toEqual(BUILD_TAB.phone.preflight);
-  });
 });

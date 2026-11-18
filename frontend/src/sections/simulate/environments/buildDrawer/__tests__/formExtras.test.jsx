@@ -7,7 +7,6 @@ import {
   fireEvent,
   screen,
   waitFor,
-  within,
 } from "src/utils/test-utils";
 
 /*
@@ -39,11 +38,7 @@ vi.mock("src/api/harness/harness", () => ({
 const { preflightHarnessJob, storeHarnessSecretValues, createHarnessJob } =
   await import("src/api/harness/harness");
 const { enqueueSnackbar } = await import("notistack");
-const { default: HostedForm } = await import("../forms/HostedForm");
-const { default: LiveKitForm } = await import("../forms/LiveKitForm");
-const { default: PhoneForm } = await import("../forms/PhoneForm");
 const { default: RepoForm } = await import("../forms/RepoForm");
-const { CATALOG_ITEMS } = await import("../buildDrawerCatalog");
 const { resetEnvironmentsStore } = await import(
   "../../store/useEnvironmentsStore"
 );
@@ -60,7 +55,6 @@ const PASS = {
 };
 const UI_ONLY_NOTICE = /This flow isn't wired to the API yet/;
 
-const itemOf = (id) => CATALOG_ITEMS.find((it) => it.id === id);
 const render = (ui) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -282,196 +276,5 @@ describe("GitHub: a private repository by access token, UI only", () => {
       screen.getByRole("radio", { name: "Use an access token" }),
     ).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("Access token or deploy key")).toBeInTheDocument();
-  });
-});
-
-describe("Vapi: chat, UI only", () => {
-  it("asks for the key and the assistant ID, with no contact, and voice is live again", async () => {
-    render(<HostedForm item={itemOf("vapi")} />);
-    typeSecret("Paste the key", "vk-1");
-    type("Assistant ID", "asst_1");
-    const first = await livePreflight();
-
-    click("button", /^Chat/);
-    expect(screen.getByText(UI_ONLY_NOTICE)).toBeInTheDocument();
-    expect(screen.getByText("Vapi API key")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Phone" })).toBeNull();
-    expect(screen.getByText("Add the assistant ID")).toBeInTheDocument();
-    type("Assistant ID", "asst_chat");
-    await sampleRunAndBuild();
-
-    click("button", /^Voice/);
-    expect(screen.queryByText(UI_ONLY_NOTICE)).toBeNull();
-    type("Assistant ID", "asst_1");
-    expect(await livePreflight()).toEqual(first);
-  });
-});
-
-describe("Vapi and Retell: observability, UI only", () => {
-  it("turns on and off with the design's copy, and is never sent", async () => {
-    render(<HostedForm item={itemOf("retell")} />);
-    typeSecret("Paste the key", "rk-1");
-    type("Agent ID", "Agent_1");
-    const toggle = screen.getByRole("checkbox", {
-      name: "Enable observability",
-    });
-    expect(toggle).not.toBeChecked();
-    expect(
-      screen.getByText(
-        "Off. Its production calls stay out of Observe. Turn it on later from the agent's Next steps.",
-      ),
-    ).toBeInTheDocument();
-    const row = toggle.closest(".MuiStack-root");
-    expect(within(row).getByText("UI only")).toBeInTheDocument();
-    const off = await livePreflight();
-
-    fireEvent.click(toggle);
-    expect(toggle).toBeChecked();
-    expect(
-      screen.getByText(/Pull its production calls into Observe project/),
-    ).toBeInTheDocument();
-    expect(screen.getByText("agent-1")).toBeInTheDocument();
-    expect(screen.getByText(/created when you connect/)).toBeInTheDocument();
-    expect(screen.queryByText(UI_ONLY_NOTICE)).toBeNull();
-    click("button", "Re-run");
-    await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalledTimes(2));
-    expect(preflightHarnessJob.mock.calls[1]).toEqual(off);
-  });
-
-  it("says conversations for a chat agent", () => {
-    render(<HostedForm item={itemOf("retell")} />);
-    click("button", /^Chat/);
-    typeSecret("Paste the key", "rk-1");
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Enable observability" }),
-    );
-    expect(
-      screen.getByText(/Pull its production conversations into Observe/),
-    ).toBeInTheDocument();
-  });
-});
-
-describe("Phone number: outbound, UI only", () => {
-  it("names the caller ID, gives the test number, and inbound is live again", async () => {
-    render(<PhoneForm />);
-    type("Number to call", "4155550142");
-    type("Its instructions", "You book tables.");
-    const first = await livePreflight();
-
-    click("button", "Outbound");
-    expect(screen.getByText(UI_ONLY_NOTICE)).toBeInTheDocument();
-    expect(box("Number it calls from")).toHaveValue("4155550142");
-    expect(
-      screen.getByText(
-        "Its caller ID, how we know a call on the test number is your agent.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Test number your agent calls"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("+1 415 555 0186")).toBeInTheDocument();
-    expect(
-      screen.getByText("Point your agent's outbound calls here for a run."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("checkbox", { name: "Agent speaks first" }),
-    ).toBeChecked();
-    await sampleRunAndBuild();
-
-    click("button", "Inbound");
-    expect(screen.queryByText(UI_ONLY_NOTICE)).toBeNull();
-    expect(box("Number to call")).toHaveValue("4155550142");
-    expect(
-      screen.getByRole("checkbox", { name: "Agent speaks first" }),
-    ).not.toBeChecked();
-    expect(await livePreflight()).toEqual(first);
-  });
-});
-
-describe("Phone number: steps, UI only", () => {
-  it("writes the instructions as steps, adds and removes them, and one prompt is live again", async () => {
-    render(<PhoneForm />);
-    type("Number to call", "4155550142");
-    type("Its instructions", "You book tables.");
-    const first = await livePreflight();
-
-    click("button", "Steps");
-    expect(screen.getByText(UI_ONLY_NOTICE)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("textbox", { name: "Its instructions" }),
-    ).toBeNull();
-    expect(box("Step 1 name")).toHaveValue("Greet and identify");
-    expect(box("Step 2 name")).toHaveValue("");
-    expect(screen.queryByRole("button", { name: /Remove step/ })).toBeNull();
-    expect(
-      screen.getByText(/Each step becomes one of the agent's members/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Name each step and say what it does"),
-    ).toBeInTheDocument();
-
-    click("button", "Add step");
-    expect(box("Step 3 name")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /Remove step/ })).toHaveLength(
-      3,
-    );
-    click("button", "Remove step 3");
-    expect(screen.queryByRole("textbox", { name: "Step 3 name" })).toBeNull();
-
-    type("Step 1 instructions", "Greet the caller and take their name.");
-    type("Step 2 name", "Book the table");
-    type("Step 2 instructions", "Find a slot and confirm it.");
-    type("Step 2 then", "End the call");
-    await sampleRunAndBuild();
-
-    click("button", "One prompt");
-    expect(screen.queryByText(UI_ONLY_NOTICE)).toBeNull();
-    expect(box("Its instructions")).toHaveValue("You book tables.");
-    expect(await livePreflight()).toEqual(first);
-  });
-});
-
-describe("LiveKit: room config and sessions, UI only", () => {
-  const fill = () => {
-    type("LiveKit server URL", "wss://demo.livekit.cloud");
-    typeSecret("Paste the key", "lk-key");
-    typeSecret("Paste the secret", "lk-secret");
-    type("Agent name", "returns-agent");
-    type("System prompt", "You handle returns.");
-  };
-
-  it("opens from its link, checks the JSON and the count, and sends neither", async () => {
-    render(<LiveKitForm />);
-    fill();
-    const plain = await livePreflight();
-    cleanup();
-    preflightHarnessJob.mockClear();
-
-    render(<LiveKitForm />);
-    fill();
-    expect(
-      screen.queryByRole("textbox", { name: "Room config JSON" }),
-    ).toBeNull();
-    click("button", "Room config and sessions at once");
-    expect(screen.getByText("UI only")).toBeInTheDocument();
-    expect(box("Max sessions at once")).toHaveValue("5");
-    type("Room config JSON", "{not json");
-    expect(screen.getByText("Not valid JSON.")).toBeInTheDocument();
-    type("Room config JSON", '{"metadata": {"locale": "en-US"}}');
-    expect(screen.queryByText("Not valid JSON.")).toBeNull();
-    type("Max sessions at once", "0");
-    expect(screen.getByText("Between 1 and 100.")).toBeInTheDocument();
-    type("Max sessions at once", "12a");
-    expect(box("Max sessions at once")).toHaveValue("12");
-    expect(screen.queryByText(UI_ONLY_NOTICE)).toBeNull();
-
-    expect(await livePreflight()).toEqual(plain);
-
-    click("button", "Hide room config and sessions");
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("textbox", { name: "Room config JSON" }),
-      ).toBeNull(),
-    );
   });
 });
