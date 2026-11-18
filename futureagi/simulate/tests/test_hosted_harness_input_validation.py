@@ -407,6 +407,84 @@ def test_receipt_replay_normalizes_timestamps_before_chat_arithmetic(
     ]
 
 
+def _ingest_text_receipt(job, capability, body):
+    content = json.dumps(
+        {
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi"},
+                {"role": "user", "content": "Thanks"},
+                {"role": "assistant", "content": "Welcome"},
+            ]
+        }
+    ).encode()
+    sha = hashlib.sha256(content).hexdigest()
+    storage = MagicMock()
+    storage.get_object.return_value.read.return_value = content
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        ingest_artifact(
+            capability.attempt,
+            digest=sha,
+            kind="transcript",
+            size=len(content),
+            stream=io.BytesIO(content),
+            content_type="application/json",
+            scenario_key="one",
+        )
+        body["call"]["transcript_artifact"] = f"sha256:{sha}"
+        body["digest"] = canonical_digest(body)
+        serializer = HarnessResultReceiptSerializer(data=body)
+        serializer.is_valid(raise_exception=True)
+        ingest_result_receipt(
+            capability.attempt,
+            serializer.validated_data,
+            digest_body=body,
+            replay_usage=False,
+        )
+    return CallExecution.objects.get(
+        id=job.scenario_registrations.get().call_execution_id
+    )
+
+
+def test_text_receipt_turns_become_the_call_turn_count(receipt_channel):
+    from django.db import connection
+
+    from simulate.serializers.test_execution import CallExecutionDetailSerializer
+    from simulate.utils.sql_query import get_kpi_metrics_query
+
+    job, capability, body = receipt_channel
+    call = _ingest_text_receipt(job, capability, body)
+
+    assert call.simulation_call_type == CallExecution.SimulationCallType.TEXT
+    assert ChatMessageModel.objects.filter(call_execution=call).count() == 4
+    assert call.conversation_metrics_data["turn_count"] == 2
+    assert CallExecutionDetailSerializer().get_turn_count(call) == 2
+    query, params = get_kpi_metrics_query(call.test_execution_id)
+    with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        columns = [column[0] for column in cursor.description]
+        metrics = dict(zip(columns, cursor.fetchone(), strict=True))
+    assert metrics["avg_turn_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("call_data", "expected"),
+    [({"turns": 2}, 2), ({"turns": 0}, 0), (None, None), ({}, None)],
+)
+def test_receipt_turn_count_replaces_the_previous_attempts(call_data, expected):
+    from simulate.services.hosted_harness_ingestion import _apply_receipt_turn_count
+
+    call = SimpleNamespace(
+        conversation_metrics_data={"turn_count": 7, "total_tokens": 9}
+    )
+    _apply_receipt_turn_count(call, call_data)
+    assert call.conversation_metrics_data.get("turn_count") == expected
+    assert call.conversation_metrics_data["total_tokens"] == 9
+
+
 @pytest.mark.parametrize("field", ["started_at", "ended_at"])
 @pytest.mark.parametrize(
     "invalid",

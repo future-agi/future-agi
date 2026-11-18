@@ -2733,6 +2733,62 @@ class TestBuildVoiceRunnerJob:
             with pytest.raises(HostedRunnerBuildError):
                 self._build(organization, workspace, simulator_agent, agent)
 
+    @pytest.mark.parametrize(
+        "draft", [True, False], ids=["active-not-latest", "credential-provider"]
+    )
+    def test_records_dispatched_voice_target(
+        self, organization, workspace, simulator_agent, draft
+    ):
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_call_execution_batch,
+            create_alk_sim_test_execution,
+            precreate_alk_sim_call_executions,
+        )
+        from simulate.services.call_provider import (
+            call_agent_provider,
+            call_agent_provider_expression,
+            execution_agent_provider,
+        )
+        from simulate.services.hosted_runner import build_start_runner_job
+
+        provider = "vapi" if draft else "retell"
+        agent = self._voice_agent(
+            organization, workspace, provider=provider, assistant_id="target"
+        )
+        active = agent.create_version("active", "published", status="active")
+        if draft:
+            agent.provider = "retell"
+            agent.save(update_fields=["provider"])
+            agent.create_version("draft", "later", status="draft")
+        else:
+            active.configuration_snapshot.pop("provider", None)
+            active.save(update_fields=["configuration_snapshot"])
+        scenario = self._scenario(organization, workspace, agent, simulator_agent)
+        rt = self._run_test(organization, workspace, agent, simulator_agent, scenario)
+        te = create_alk_sim_test_execution(rt)
+        # Hosted RunTest creation only carries an explicit run pin, unlike SDK creation.
+        te.agent_version = None
+        te.save(update_fields=["agent_version"])
+        ids = precreate_alk_sim_call_executions(te)
+        job = build_start_runner_job(
+            test_execution_id=str(te.id),
+            run_test_id=str(rt.id),
+            scenario_ids=[str(scenario.id)],
+            mode="voice_webrtc",
+        )
+        assert job["metadata"]["provider"] == provider
+        assert create_alk_sim_call_execution_batch(te).call_execution_ids == ids
+        call = te.calls.get()
+        assert call.agent_version_id == active.id
+        assert call_agent_provider(call) == provider
+        assert (
+            te.calls.annotate(result_provider=call_agent_provider_expression())
+            .get()
+            .result_provider
+            == provider
+        )
+        assert execution_agent_provider(te) == provider
+
     def test_pinned_version_snapshot_wins_over_definition_in_full_build(
         self, organization, workspace, simulator_agent
     ):

@@ -38,6 +38,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.call_provider import HOSTED_TARGET_PROVIDER
 from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.scoring_status import (
@@ -74,6 +75,7 @@ _ALK_BATCH_CLAIMED_KEY = "alk_batch_claimed"
 _RESERVED_CALL_METADATA_KEYS = frozenset(
     {
         _ALK_BATCH_CLAIMED_KEY,
+        HOSTED_TARGET_PROVIDER,
         "cost_deducted",
         "csat_dispatched",
         # Eval/CSAT idempotency guards + failure diagnostics the backend owns;
