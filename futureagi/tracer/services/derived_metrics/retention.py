@@ -37,6 +37,7 @@ from tracer.models.derived_metric import (
     MetricRefreshAttempt,
     MetricStateConflict,
 )
+from tracer.models.project import Project
 from tracer.services.derived_metrics.deletion_protocol import (
     revoke_generations,
     serialized_project,
@@ -830,7 +831,7 @@ def _published_live_expiry(writer, head, cutoff, span_dirty):
     )
 
 
-def _floor_ceilings(writer, head, cutoff, span_dirty):
+def _floor_ceilings(writer, head, cutoff, span_dirty, *, unproven_retirement=False):
     """The retention floor (stamped exactly as before) and its admission terms.
 
     retention_retired_live: whether any purge so far retired live published
@@ -861,7 +862,9 @@ def _floor_ceilings(writer, head, cutoff, span_dirty):
         if writer.retention_days is not None
         else None,
     }
-    if not _published_live_expiry(writer, head, cutoff, span_dirty):
+    if not unproven_retirement and not _published_live_expiry(
+        writer, head, cutoff, span_dirty
+    ):
         ceilings["retention_retired_live"] = bool(prior)
         ceilings["retention_floor_at"] = inherited.get("retention_floor_at")
         return ceilings
@@ -1244,16 +1247,8 @@ def _checkpoint_live_windows(writer, attempt, retained, params, recipe, starts):
         )
 
 
-def _uncovered_quarters(writer, head, fields, params, *, where, having=None):
-    """Check only requested recipe/quarter keys. A missing field count is zero.
-
-    Discovery additionally requires an actual removal on the field side. Do
-    not truncate an over-budget backfill nomination and publish the remainder.
-    """
-    from tracer.services.derived_metrics.changes import utc
-    from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
-    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
-
+def _uncovered_quarters_select(writer, head, fields, *, where, having=None):
+    """Committed totals not accounted for by live fields, including missing quarters."""
     totals, bp = committed_rows_select(
         BUCKET_TOTALS,
         head,
@@ -1274,18 +1269,55 @@ def _uncovered_quarters(writer, head, fields, params, *, where, having=None):
     if having:
         live += f" HAVING {having}"
     join = "INNER" if having else "LEFT"
-    rows = writer.store.execute(
+    return (
         f"SELECT t.field_id, t.field_version, t.bucket_start FROM ({total}) t "
         f"{join} JOIN ({live}) l ON t.field_id = l.field_id AND "
         "t.field_version = l.field_version AND t.bucket_start = l.bucket_start "
-        f"WHERE t.n > ifNull(l.n, 0) LIMIT {MAX_BATCH_ROWS + 1}",
-        {**params, **bp},
+        "WHERE t.n > ifNull(l.n, 0)",
+        bp,
     )
+
+
+def _uncovered_quarters(writer, head, fields, params, *, where, having=None):
+    """Never truncate an over-budget source backfill nomination."""
+    from tracer.services.derived_metrics.changes import utc
+    from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
+    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
+
+    sql, bp = _uncovered_quarters_select(
+        writer, head, fields, where=where, having=having
+    )
+    rows = writer.store.execute(f"{sql} LIMIT {MAX_BATCH_ROWS + 1}", {**params, **bp})
     if len(rows) > MAX_BATCH_ROWS:
         raise MetricAdmissionUnproven(
             "too many uncovered quarters; bounded backfill required"
         )
     return {(str(metric), version, utc(at)) for metric, version, at in rows}
+
+
+def _source_free_quarters(writer, head, fields, expired_units):
+    """Keys to discard, not a bounded list of candidates to repair from source.
+
+    Include the retained side of every disputed anchor and even a total with
+    no surviving field at all. Legacy retired parts have no owner proof either.
+    All inputs are collapsed rows of the *same* immutable metric manifest.
+    """
+    deficient, bp = _uncovered_quarters_select(writer, head, fields, where="1")
+    retired, rp = committed_rows_select(
+        RETIRED_PARTS,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+        param_prefix="unproven_retired",
+    )
+    return (
+        f"SELECT DISTINCT field_id, field_version, bucket_start FROM ({fields}) "
+        "WHERE (unit_start >= %(expiry_cutoff)s OR bucket_start >= %(expiry_cutoff)s) "
+        f"AND (level, unit_id) IN ({expired_units}) "
+        f"UNION ALL {deficient} UNION ALL "
+        f"SELECT metric_id, metric_version, bucket_start FROM ({retired}) WHERE is_deleted = 0",
+        {**bp, **rp},
+    )
 
 
 def _require_bucket_coverage(
@@ -2213,7 +2245,11 @@ def _expire_project(writer, definitions, retention_days, now, as_of, scratch):
         require_retirement_evidence,
     )
 
-    require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
+    source_allowed = writer.lease.expiry_source_allowed and (
+        Project.no_workspace_objects.filter(pk=project_id).exists()
+    )
+    if source_allowed:
+        require_retirement_evidence(writer, head, definitions, cutoff=cutoff)
     params = {
         "expiry_cutoff": cutoff,
         "expiry_project": str(project_id),
@@ -2234,6 +2270,12 @@ def _expire_project(writer, definitions, retention_days, now, as_of, scratch):
     span_dirty = (
         _expired_span_buckets(writer, head, cutoff) if span_definitions else set()
     )
+    discard_quarters = None
+    if not source_allowed:
+        unproven, bound = _source_free_quarters(writer, head, fields, expired_units)
+        params.update(bound)
+        if writer.store.execute(f"SELECT 1 FROM ({unproven}) LIMIT 1", params):
+            discard_quarters = unproven
     if (
         not MetricErasureRequest.objects.filter(
             project_key=project_id, store_payload__protocol="metric_policy_replan"
@@ -2258,6 +2300,7 @@ def _expire_project(writer, definitions, retention_days, now, as_of, scratch):
             writer, head, fields, params, cutoff_parameter="expiry_cutoff"
         )
         and not _expired_physical_payload(writer, head, cutoff)
+        and discard_quarters is None
     ):
         pending = (
             MetricErasureRequest.objects.filter(
@@ -2280,30 +2323,43 @@ def _expire_project(writer, definitions, retention_days, now, as_of, scratch):
     )
     recovery_pending = any(recovery.values())
     # Native reads stay outside the lifecycle lock below.
-    floor_terms = _floor_ceilings(writer, head, cutoff, span_dirty)
-    removal, disputed = _field_expiry(
+    floor_terms = _floor_ceilings(
         writer,
-        scratch,
-        fields,
-        params,
-        "expiry_cutoff",
-        expired_units,
-        spans=span_definitions,
+        head,
+        cutoff,
+        span_dirty,
+        unproven_retirement=discard_quarters is not None,
     )
     extra_keys, repaired, repair_drafts = None, set(), []
     parent_fields = fields
-    if disputed:
-        fields, extra_keys, repaired, repair_drafts = _repair_span_quarters(
+    if not source_allowed:
+        removal = "unit_start < %(expiry_cutoff)s"
+        if discard_quarters is not None:
+            removal += (
+                f" OR (field_id, field_version, bucket_start) IN ({discard_quarters})"
+            )
+    else:
+        removal, disputed = _field_expiry(
             writer,
             scratch,
-            head,
-            span_definitions,
             fields,
             params,
-            cutoff,
-            removal,
-            as_of or now,
+            "expiry_cutoff",
+            expired_units,
+            spans=span_definitions,
         )
+        if disputed:
+            fields, extra_keys, repaired, repair_drafts = _repair_span_quarters(
+                writer,
+                scratch,
+                head,
+                span_definitions,
+                fields,
+                params,
+                cutoff,
+                removal,
+                as_of or now,
+            )
     with serialized_project(project_id):
         # Classification ran without the lifecycle lock. Revocation need not
         # change the head id or lease when there were no open predecessors, so
@@ -2419,21 +2475,25 @@ def _expire_project(writer, definitions, retention_days, now, as_of, scratch):
             params=params,
             large_pages=True,
         )
-    # Only removal and source-repaired keys need new totals. Carried recovery
-    # nominations still belong to the next refresh; do not consume them here.
-    _freeze_retained_buckets(
-        writer,
-        attempt,
-        head,
-        definitions,
-        cutoff,
-        fields=fields,
-        removal=removal,
-        retained=retained,
-        params=params,
-        extra_keys=extra_keys,
-        repaired=repaired,
-    )
+    # A deletion-only checkpoint carries no anonymous totals. Even matching
+    # counts cannot prove a prior total used the *same* surviving identities
+    # (a contributor may have moved). Keep proven fields, not an unproven sum.
+    if source_allowed:
+        # Only removal and source-repaired keys need new totals. Carried recovery
+        # nominations still belong to the next refresh; do not consume them here.
+        _freeze_retained_buckets(
+            writer,
+            attempt,
+            head,
+            definitions,
+            cutoff,
+            fields=fields,
+            removal=removal,
+            retained=retained,
+            params=params,
+            extra_keys=extra_keys,
+            repaired=repaired,
+        )
     # The successor ledger now owns every output byte. Release source/repair
     # scratch before publication can revoke the parent and scrub those drafts.
     scratch.close()

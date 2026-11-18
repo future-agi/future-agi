@@ -35,6 +35,9 @@ class ProjectLease:
         self.clock = clock
         self.expires_at = grant.expires_at
         self.deadline = deadline
+        # Scheduled expiry may only narrow this; retention also rechecks
+        # project visibility for writers that did not come through dispatch.
+        self.expiry_source_allowed = True
         # The monotonic clock ``deadline`` is on (a fake in tests).
         self.ticker = ticker
 

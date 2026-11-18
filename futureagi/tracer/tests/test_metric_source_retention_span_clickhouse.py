@@ -1,14 +1,23 @@
 # ruff: noqa: F811 -- shared isolated native fixtures
 """Cross-version span expiry, starting only with source revisions and empty stores."""
 
+import re
+from contextlib import contextmanager
 from datetime import timedelta
+from functools import wraps
 from itertools import count
 from uuid import uuid4
 
 import pytest
 from django.utils import timezone
 
-from tracer.models.derived_metric import DerivedMetric, MetricProjectRefresh
+from tracer.models.derived_metric import (
+    DerivedMetric,
+    MetricErasureRequest,
+    MetricProjectRefresh,
+    MetricRefreshAttempt,
+)
+from tracer.services.derived_metrics import admission, erasure
 from tracer.services.derived_metrics.changes import Dependency
 from tracer.services.derived_metrics.deletion_protocol import capture_pin
 from tracer.services.derived_metrics.publication import committed_rows_select
@@ -26,6 +35,7 @@ from tracer.tests.test_derived_metric_refresh_clickhouse import (
     metric_bucket_rows,
     seed_span_revision,
 )
+from tracer.tests.test_metric_cleanup_visibility import hide
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -264,6 +274,172 @@ def uncovered_span_head(span_versions):
     assert case.totals(head, second) == [(3, 23, 3)]
 
     return case, first, second, head, truth, elsewhere
+
+
+@contextmanager
+def assert_source_free_native_sql(monkeypatch):
+    # The scheduled writer opens its own client. Observe the driver, not a
+    # particular writer or builder: ordinary and budgeted statements both count.
+    from clickhouse_driver import Client
+
+    forbidden = re.compile(
+        r"\b(?:spans\b|metric_span_sampling_|eval_sampling_|sampling_replay\b|tracer_eval_logger_v2\b)",
+        re.I,
+    )
+    source_tables = set()
+    saw_scrub = False
+
+    def capture(execute):
+        @wraps(execute)
+        def observe(client, query, *args, **kwargs):
+            nonlocal saw_scrub
+            source_tables.update(forbidden.findall(query))
+            saw_scrub |= query.startswith("ALTER TABLE metric_field_values DELETE")
+            return execute(client, query, *args, **kwargs)
+
+        return observe
+
+    with monkeypatch.context() as patch:
+        for method in ("execute", "execute_with_progress"):
+            patch.setattr(Client, method, capture(getattr(Client, method)))
+        yield
+    assert not source_tables, (
+        f"privacy writer issued source/sampler SQL: {source_tables}"
+    )
+    assert saw_scrub, "observer never saw the native physical field scrub"
+
+
+def one_day_policy(organization_id):
+    return 1
+
+
+def seven_day_policy(organization_id):
+    return 7
+
+
+@pytest.mark.parametrize(
+    "ineligible", ["hidden", "hidden-coverage-only", "rollout-off"]
+)
+def test_scheduled_expiry_discards_unproven_quarters_without_source(
+    span_versions, observe_project, user, settings, monkeypatch, ineligible
+):
+    from tracer.services.clickhouse import v2
+    from tracer.sql_workbench.access import Actor
+    from tracer.sql_workbench.metric_retention import guard_result
+    from tracer.sql_workbench.tests.test_permissions import create_job
+
+    case, first, second, base, truth, _ = uncovered_span_head(span_versions)
+    store = case.writer.store
+    settings.METRICS_ENABLED = 1
+    settings.METRICS_MAX_CONCURRENT_PROJECTS = 1
+    # With seven days, neither victim anchor has expired: missing quarterly
+    # coverage must also be dropped when *no* disputed removal nominates it.
+    policy = (
+        seven_day_policy if ineligible == "hidden-coverage-only" else one_day_policy
+    )
+    settings.METRICS_RETENTION_DAYS_PROVIDER = f"{__name__}.{policy.__name__}"
+    connection = store.client.connection
+    config = {
+        "host": connection.host,
+        "tcp_port": connection.port,
+        "user": connection.user,
+        "password": connection.password,
+        "database": connection.database,
+    }
+    monkeypatch.setattr(v2, "get_v2_config", lambda: config)
+    case.writer.lease.release()
+    state = MetricProjectRefresh.for_project(case.scope.project)
+    MetricProjectRefresh.objects.filter(pk=state.pk).update(pending_expiry=True)
+    job = create_job(
+        Actor(user.pk, case.scope.organization, case.scope.workspace),
+        observe_project,
+        sql="SELECT value FROM derived_metrics",
+        state="succeeded",
+        result={"rows": [[23]]},
+    )
+    if ineligible.startswith("hidden"):
+        hide(observe_project)
+    jobs = []
+    with assert_source_free_native_sql(monkeypatch):
+        assert admission.dispatch(jobs.append) == 1
+        assert jobs[0]["project_id"] == str(case.scope.project)
+        assert jobs[0]["purpose"] == "expiry"
+        if ineligible == "rollout-off":
+            # The queued delivery was authorized while visible and enabled.
+            settings.METRICS_ENABLED = 0
+        assert admission.execute_reservation(jobs[0])
+
+    state.refresh_from_db()
+    checkpoint = state.head_manifest
+    assert checkpoint.pk != base.pk and not state.pending_expiry
+    assert state.lease_token is None
+    receipt = MetricErasureRequest.objects.get(
+        deletion_key=f"expiry:{checkpoint.published_by_id}"
+    )
+    assert receipt.status == "done" and receipt.completed_at
+    assert receipt.receipts["final_scrub"]["private_payloads_remaining"] == 0
+    assert receipt.receipts["aggregate_scrub"]["remaining"] == 0
+    assert not MetricRefreshAttempt.objects.filter(
+        project_id=case.scope.project,
+        generation__gt=base.generation,
+        purpose="backfill",
+    ).exists()
+    # Proven v1 fields survive. The v2 quarter loses both the disputed
+    # value and its quarter-mate. Neither version borrows anonymous totals.
+    assert case.field_values(checkpoint, first, case.old) == (
+        [("victim", 13)] if ineligible == "hidden-coverage-only" else []
+    )
+    assert case.field_values(checkpoint, first, case.quarter) == truth
+    assert case.totals(checkpoint, first) == []
+    assert case.field_values(checkpoint, second, case.quarter) == []
+    assert case.totals(checkpoint, second) == []
+    for table, prefix in (
+        ("metric_field_values", "field"),
+        ("metric_field_values_checkpoint", "field"),
+        ("metric_bucket_totals", "metric"),
+        ("metric_bucket_totals_checkpoint", "metric"),
+    ):
+        assert store.execute(
+            f"SELECT count() FROM {table} WHERE project_id = %(project)s "
+            f"AND {prefix}_id = %(metric)s AND {prefix}_version = %(version)s "
+            "AND bucket_start = %(quarter)s",
+            {
+                "project": case.scope.project,
+                "metric": second.metric_id,
+                "version": second.version,
+                "quarter": case.quarter,
+            },
+        ) == [(0,)]
+    assert not guard_result(job)
+    assert not job.result and job.output_bytes == 0
+
+
+def test_hidden_subject_erasure_drains_without_source(
+    span_versions, observe_project, monkeypatch
+):
+    case, first, second, _, _, _ = uncovered_span_head(span_versions)
+    case.writer.lease.release()
+    hide(observe_project)
+    with assert_source_free_native_sql(monkeypatch):
+        request = erasure.erase_metric_data(
+            organization_id=case.scope.organization,
+            project_id=case.scope.project,
+            scope_kind="sessions",
+            subject_ids=[str(case.session)],
+        )
+        assert erasure.process_erasure(request.pk, store=case.writer.store)
+    request.refresh_from_db()
+    assert request.status == "done" and request.completed_at
+    head = MetricProjectRefresh.for_project(case.scope.project).head_manifest
+    for version in (first, second):
+        assert not case.field_values(head, version, case.quarter)
+        assert not metric_bucket_rows(case.writer, head, version)
+    for table in ("metric_field_values", "metric_field_values_checkpoint"):
+        assert case.writer.store.execute(
+            f"SELECT count() FROM {table} WHERE project_id = %(project)s "
+            "AND JSONExtractString(unit_id, 2) = 'victim'",
+            {"project": case.scope.project},
+        ) == [(0,)]
 
 
 def test_cross_version_expiry_preserves_uncovered_span_survivor(span_versions):

@@ -305,12 +305,7 @@ def _project_admission(
         if not project_lock(project_id, blocking=False):
             yield False
             return
-        if expiry_id is None and privacy_only:
-            yield MetricProjectRefresh.objects.filter(
-                project_id=project_id, project__deleted=False
-            ).exists()
-            return
-        if expiry_id is None:
+        if expiry_id is None and not privacy_only:
             yield metrics_enabled(project=project_id) and (
                 Project.no_workspace_objects.select_for_update(skip_locked=True)
                 .filter(pk=project_id)
@@ -325,6 +320,13 @@ def _project_admission(
             .filter(project_id=project_id, project__deleted=False)
             .first()
         )
+        if expiry_id is None:
+            # Flags alone cannot authorize expiry on a headless hidden project.
+            yield bool(
+                state
+                and (state.head_manifest_id or not state.project.simulation_agent_id)
+            )
+            return
         yield bool(
             state
             and _expiry_requests(project_id, state.project.organization_id)
@@ -641,6 +643,16 @@ def execute_reservation(
                 )
                 if not claimed:
                     return False
+                if reservation.purpose == "expiry":
+                    # A queued purpose (or a cleanup debt) isn't permission to
+                    # read telemetry. Bind this decision to the locked claim,
+                    # never to a caller-supplied reservation payload.
+                    lease.expiry_source_allowed = (
+                        metrics_enabled(project=lease.project_id)
+                        and Project.no_workspace_objects.filter(
+                            pk=lease.project_id
+                        ).exists()
+                    )
                 lease.renew()
             # Admission commits before the runner: publication/physical cleanup
             # require their existing independent commit boundaries.
