@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 import pytest
 from rest_framework import status
@@ -15,6 +16,16 @@ def prompt_config():
         "messages": [{"role": "user", "content": "Answer {{input}}"}],
         "output_format": "string",
     }
+
+
+def test_preview_passes_saved_template_format_to_placeholder_renderer():
+    """Preview must render with the same format used by persisted runs."""
+    repository_root = Path(__file__).resolve().parents[2]
+    source = (repository_root / "model_hub/views/run_prompt.py").read_text()
+    preview_source = source[source.index("class PreviewRunPromptColumnView"):]
+
+    assert 'template_format=(config.get("run_prompt_config") or {}).get(' in preview_source
+    assert '"template_format"' in preview_source
 
 
 # ────────────────────────────────────────────────────────────────────────
