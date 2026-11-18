@@ -19,6 +19,7 @@ from tfc.temporal.eval_tasks import client
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStartRequest
 from tracer.models.instant_eval import InstantEvalRun
 from tracer.models.observation_span import EvalLogger
+from tracer.selectors.eval_tasks.row_resolver import resolve_desired_rows
 from tracer.services.eval_tasks import start_requests
 from tracer.services.eval_tasks.recovery import recover_stranded_tasks
 from tracer.services.instant_eval_answers import record_answer
@@ -357,6 +358,62 @@ def test_retry_failed_on_active_task(
         assert entries.values().get() == entry_before
         assert task.instant_answers.values().get() == answer_before
         assert runs.get().answers_version == version
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("fake_view", "no_new_usage")
+@pytest.mark.parametrize(
+    "history,http_status,final_status",
+    [
+        pytest.param(TimeoutError(), 503, "completed", id="completed-timeout-preserves-answer"),
+        pytest.param(client.WF_PROGRESSING, 200, "running", id="stale-completed-requeues-only"),
+        pytest.param(client.WF_CLOSED, 200, "pending", id="completed-closed-restarts"),
+    ],
+)
+def test_retry_failed_on_completed_native_run(
+    auth_client, observe_project, yes_no, started, monkeypatch, history, http_status, final_status,  # noqa: F811
+):
+    monkeypatch.setattr("tracer.views.instant_eval_scale.credits_per_answer", lambda: None)
+    response = _start(auth_client, observe_project, [yes_no], sample_size=1)
+    assert response.status_code == 200, response.content
+    task = EvalTask.objects.get(pk=response.json()["result"]["task_id"])
+    [rid] = resolve_desired_rows(task).matched_ids
+    [entry] = EvalLogger.objects.bulk_create([_answer(task, yes_no, rid, error=True)])
+    assert record_answer(entry.pk) == 1
+    task.status = "completed"
+    task.save(update_fields=["status"])
+    run = InstantEvalRun.objects.get(eval_task=task)
+    assert _rows_left(task, run) == 0
+    entries = EvalLogger.objects.filter(pk=entry.pk)
+    entry_before = entries.values().get()
+    answer_before = task.instant_answers.values().get()
+    version = run.answers_version
+    started.clear()  # Exclude the original submission.
+    if history == client.WF_PROGRESSING:
+        # The writer moved on, but the control action loaded the older Completed row.
+        EvalTask.objects.filter(pk=task.pk).update(status="running")
+        monkeypatch.setattr("tracer.views.instant_eval_scale._load", lambda *_: (task, None))
+    describe = Mock(side_effect=[history])
+    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+
+    response = _control(auth_client, observe_project, task, "retry_failed")
+    assert response.status_code == http_status, response.content
+    describe.assert_called_once_with(task.pk)
+    task.refresh_from_db()
+    run.refresh_from_db()
+    assert task.status == final_status
+    assert started == ([(str(task.pk), {"replace_existing": True})] if history == client.WF_CLOSED else [])
+    if http_status == 503:
+        assert response.json()["message"] == "The run's status couldn't be checked. Try again shortly."
+        assert entries.values().get() == entry_before
+        assert task.instant_answers.values().get() == answer_before
+        assert run.answers_version == version
+    else:
+        assert response.json()["result"]["retried"] == 1
+        entry.refresh_from_db()
+        assert entry.status == "pending" and not entry.error
+        assert not task.instant_answers.exists()
+        assert run.answers_version == version + 1
 
 
 @pytest.mark.django_db

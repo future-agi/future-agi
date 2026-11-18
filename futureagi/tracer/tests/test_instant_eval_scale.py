@@ -133,9 +133,15 @@ def fake_view(monkeypatch):
 
 @pytest.fixture
 def started(monkeypatch):
+    from tfc.temporal.eval_tasks import client
+
     calls = []
+    # The fake starter records submissions but creates no Temporal execution.
     monkeypatch.setattr(
-        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+        client, "describe_eval_task_workflow_sync", lambda task_id, **kw: client.WF_ABSENT
+    )
+    monkeypatch.setattr(
+        client, "start_eval_task_workflow_sync",
         lambda task, **kw: calls.append((str(task.id), kw)) or "wf",
     )
     monkeypatch.setattr(
