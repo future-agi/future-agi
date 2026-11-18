@@ -79,6 +79,9 @@ const ChartsGenerator = ({
     },
     xaxis: {
       type: "datetime",
+      labels: {
+        datetimeUTC: false,
+      },
       // title: { text: "Time Period" },
     },
     yaxis: {
