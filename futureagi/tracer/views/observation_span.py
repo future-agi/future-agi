@@ -4203,8 +4203,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         custom_eval_config_id,
         project_id,
         analytics,
-        *,
-        organization=None,
     ):
         """Get evaluation details from ClickHouse."""
         # Span- and trace-target rows both anchor to observation_span_id;
@@ -4223,7 +4221,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if not output_metadata or not isinstance(output_metadata, dict):
             output_metadata = {}
         localization = self._observe_localization_payload(
-            row.get("id"), output_metadata, organization
+            row.get("id"), output_metadata, _get_request_organization(self.request)
         )
 
         # Handle error case — consistent with retrieve() and _retrieve_clickhouse()
@@ -4357,7 +4355,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 custom_eval_config_id,
                 project_id,
                 analytics,
-                organization=_get_request_organization(self.request),
             )
 
         except Exception as exc:
