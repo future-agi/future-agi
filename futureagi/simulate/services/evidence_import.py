@@ -668,7 +668,7 @@ def _with_cases(
     """The environment's authoring tree with each case's scenario folder added to
     its suite (the open draft's, else the default's)."""
     suite = dict(
-        drafts._piece_files(
+        drafts.piece_files(
             environment,
             "suite",
             drafts.fresh_draft(environment, "suite") or environment.suite_version,
@@ -688,7 +688,7 @@ def _with_cases(
         )
     suite["scenarios.json"] = json.dumps(documents, indent=2).encode()
     environment_files = dict(
-        drafts._piece_files(environment, "environment", environment_version)
+        drafts.piece_files(environment, "environment", environment_version)
     )
     if added := _checks(cases):
         catalogue = json.loads(environment_files[CATALOGUE])

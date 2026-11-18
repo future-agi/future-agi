@@ -489,6 +489,15 @@ def _pairs(
     return pairs
 
 
+def prepare_sealed_tree(environment: HostedHarnessJob, files: Mapping[str, bytes]):
+    """An edited tree prepared as a draft stores it; a bundle the chat sealed from this very tree runs the contract
+    it sealed."""
+    split = archives.split_authoring(files)
+    return prepare_tree(
+        environment, files, built=SEALED_MANIFEST in split.sealed and _stamped(split)
+    )
+
+
 def _targets_before(environment: HostedHarnessJob) -> list[Any] | None:
     """The fault targets of the environment's files before this write; None when they cannot be read or the contract
     says nothing about the door, so every scenario's faults are checked."""
@@ -535,13 +544,7 @@ def record_draft(
     wanted = set(DRAFT_PIECES if pieces is None else pieces)
     checked = wanted | set(checked or ())
     published = index_in_step(archives.read_archive(body))
-    sealed = archives.split_authoring(published)
-    # A bundle the chat sealed from this tree runs the contract it sealed.
-    split, prepared = prepare_tree(
-        environment,
-        published,
-        built=SEALED_MANIFEST in sealed.sealed and _stamped(sealed),
-    )
+    split, prepared = prepare_sealed_tree(environment, published)
     require_checkpoint_scenarios(prepared.scenarios)
     from simulate.selectors.environment_documents import recorded_contract
     from simulate.selectors.stage_outputs import stage_output

@@ -768,7 +768,7 @@ def test_a_draft_write_takes_the_suite_entry_from_an_edit_to_the_scenario_s_own_
     )
     seen = {}
 
-    def _stop(environment, tree):
+    def _stop(environment, tree, **kwargs):
         seen.update(tree)
         raise RuntimeError("stop")
 

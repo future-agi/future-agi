@@ -670,7 +670,7 @@ class TestNewChecks:
         environment.refresh_from_db()
         assert environment.environment_version_id != environment_before
         catalogue = json.loads(
-            drafts._piece_files(
+            drafts.piece_files(
                 environment, "environment", environment.environment_version
             )["sub_goals.json"]
         )

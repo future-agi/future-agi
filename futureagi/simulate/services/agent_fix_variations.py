@@ -56,7 +56,7 @@ from simulate.services.agent_fix_sandbox import claim
 from simulate.services.harness_scenarios import pair_scenarios
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.rebuild import hand_back_chat
-from simulate.services.harness_versioning.versions import _add_members, suite_documents
+from simulate.services.harness_versioning.versions import add_members, suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -472,7 +472,7 @@ def land(
         )
         # Not the default's pairing: no other scenario of the environment is touched.
         paired = pair_scenarios(locked_environment, documents, prune=False, exact=True)
-        _add_members(version, paired)
+        add_members(version, paired)
         # Hidden from the environment's scenarios; a run of the version still loads them.
         HostedHarnessScenario.no_workspace_objects.filter(
             id__in=[row.id for row, _document in paired]
@@ -497,7 +497,7 @@ def _private_suite(
     prepared pieces, the variations with the cases they vary, and their documents."""
     source_run = _source_run(fix_run)
     suite = archives.split_authoring(files).suite
-    base = drafts._piece_files(environment, "suite", source_run.suite_version)
+    base = drafts.piece_files(environment, "suite", source_run.suite_version)
     parents = {_scenario_token(key): key for key in failing_targets(fix_run)}
     sub_goals = {
         _scenario_token(one.get("scenario_key") or one.get("name")): one.get(
@@ -564,10 +564,10 @@ def _private_suite(
         tree["scenarios.json"] = json.dumps(
             [*json.loads(base["scenarios.json"]), *documents], indent=2
         ).encode()
-    _split, prepared = drafts._prepared(
+    _split, prepared = drafts.prepare_sealed_tree(
         environment,
         archives.compose(
-            drafts._piece_files(
+            drafts.piece_files(
                 environment, "environment", source_run.environment_version
             ),
             tree,

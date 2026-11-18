@@ -264,7 +264,7 @@ def _settle(
         _block(cases, NO_VERSION)
         return
     try:
-        split, prepared = drafts._prepared(environment, files)
+        split, prepared = drafts.prepare_sealed_tree(environment, files)
         added = _added_checks(environment, basis, files, prepared)
     except HostedHarnessError as exc:
         logger.warning(
@@ -335,11 +335,13 @@ def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
         return None
     if basis.hash == prepared.environment_hash:
         return []
-    before = drafts._piece_files(environment, "environment", basis).get(CATALOGUE)
+    before = drafts.piece_files(environment, "environment", basis).get(CATALOGUE)
     after = files.get(CATALOGUE)
     if before is None or after is None:
         return None
-    _split, restored = drafts._prepared(environment, {**files, CATALOGUE: before})
+    _split, restored = drafts.prepare_sealed_tree(
+        environment, {**files, CATALOGUE: before}
+    )
     if restored.environment_hash != basis.hash:
         return None
     try:
