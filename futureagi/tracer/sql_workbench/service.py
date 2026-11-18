@@ -816,11 +816,13 @@ def export_result(actor, project_id, job_id, format):
     job = execution(actor, project_id, job_id)
     from .metric_retention import guard_result
 
-    if not guard_result(job):
-        raise ResultExpired("This result has expired. Run the query again.")
+    # Fence first so a deleted or erased metric result is invalidated on read,
+    # but let job state decide the response: only a result that would
+    # otherwise be downloadable reports expiry/retention (410).
+    allowed = guard_result(job)
     if job.state != "succeeded":
         raise ResultNotReady("Only successful results can be downloaded.")
-    if job.expires_at <= timezone.now():
+    if not allowed or job.expires_at <= timezone.now():
         raise ResultExpired("This result has expired. Run the query again.")
     columns, rows = job.result["columns"], job.result["rows"]
     names = [column["name"] for column in columns]

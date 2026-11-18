@@ -2311,7 +2311,10 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
     from tfc.temporal.sql_workbench import SQLExecutionWorkflow, SQLRetentionWorkflow
     from tracer.services import exact_aggregation_cache as cache_module
     from tracer.sql_workbench.tasks import execute_sql, purge_expired_sql_results
-    from tracer.tasks.derived_metric import compute_derived_metric
+    from tracer.tasks.derived_metric import (
+        capture_derived_metric_snapshot,
+        compute_derived_metric,
+    )
     from tracer.tasks.exact_aggregation import (
         EXACT_AGGREGATION_TASK_QUEUE,
         refresh_exact_aggregation_snapshot,
@@ -2343,8 +2346,13 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         SQLRetentionWorkflow,
     }
     # SQL workflows use this control queue but never its single scan slot.
-    # Derived metrics still run on the admitted exact-aggregation worker.
-    admitted_tasks = (refresh_exact_aggregation_snapshot, compute_derived_metric)
+    # Derived metrics and saved-snapshot capture are native ClickHouse scans,
+    # so they run on the admitted exact-aggregation worker behind that slot.
+    admitted_tasks = (
+        refresh_exact_aggregation_snapshot,
+        compute_derived_metric,
+        capture_derived_metric_snapshot,
+    )
     registered_activities = get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE)
     admitted_activities = {_ACTIVITY_WRAPPERS[task.name] for task in admitted_tasks}
     assert {_ACTIVITY_REGISTRY[task.name]["queue"] for task in admitted_tasks} == {
