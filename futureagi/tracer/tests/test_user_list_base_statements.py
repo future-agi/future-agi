@@ -24,14 +24,27 @@ from tracer.tests._base_list_parity import (
 
 ORG, PROJECT = str(UUID(int=10)), str(UUID(int=20))
 START, END = datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 11, 1, tzinfo=UTC)
-ORACLE = Path(__file__).parent / "fixtures/base_list_parity/users_old_builder.json"
+FIXTURES = Path(__file__).parent / "fixtures/base_list_parity"
+ORACLE = FIXTURES / "users_old_builder.json"
+NATIVE_DEV_ORACLE = FIXTURES / "users_native_dev_builder.json"
+NATIVE_DEV_COMMIT = "8ddeb72ab0fa8d2f46dc38c212252f9ebb0d35ca"
 
 
 def old_user_builder():
+    """Historical 9fc537515 Users builder: the base-list parity control."""
     fixture = json.loads(ORACLE.read_text())
-    assert (
-        fixture["header"]["source_commit"] == "8ddeb72ab0fa8d2f46dc38c212252f9ebb0d35ca"
-    )
+    assert fixture["header"]["source_commit"].startswith("9fc537515")
+    return _load_user_builder(fixture)
+
+
+def native_dev_user_builder():
+    """Dev 8ddeb72ab0 Users builder: pins the installed native entry point."""
+    fixture = json.loads(NATIVE_DEV_ORACLE.read_text())
+    assert fixture["header"]["source_commit"] == NATIVE_DEV_COMMIT
+    return _load_user_builder(fixture)
+
+
+def _load_user_builder(fixture):
     sources = fixture["builders"]
     for entry in sources.values():
         assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
@@ -118,9 +131,17 @@ def builder(**kwargs):
     )
 
 
-def test_native_entry_point_is_historical_oracle_without_a_pin():
+def test_native_entry_point_is_dev_oracle_without_a_pin():
+    """Without a pin, the installed native entry point emits the dev oracle's SQL.
+
+    The oracles are split on purpose. The historical 9fc537515 oracle
+    (old_user_builder) stays the parity control for the base-list builder,
+    whose ClickHouse parity tests reproduce those historical semantics. The dev
+    8ddeb72ab0 oracle (native_dev_user_builder) pins the installed native path,
+    which dev legitimately changed after 9fc537515.
+    """
     native = builder()
-    old = old_user_builder()(
+    dev = native_dev_user_builder()(
         organization_id=ORG,
         project_id=PROJECT,
         filters=filters(START, END),
@@ -129,9 +150,9 @@ def test_native_entry_point_is_historical_oracle_without_a_pin():
     )
     # Sharing the curated SQL is a whitespace-only change to the native reader.
     assert " ".join(native.build_candidate_page_query()[0].split()) == " ".join(
-        old.build_candidate_page_query()[0].split()
+        dev.build_candidate_page_query()[0].split()
     )
-    assert native.build_candidate_page_query()[1] == old.build_candidate_page_query()[1]
+    assert native.build_candidate_page_query()[1] == dev.build_candidate_page_query()[1]
 
 
 @pytest.mark.parametrize("enabled", [0, 1])
