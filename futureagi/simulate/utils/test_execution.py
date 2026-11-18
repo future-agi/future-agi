@@ -2,7 +2,6 @@ import traceback
 
 import structlog
 
-logger = structlog.get_logger(__name__)
 from simulate.models import (
     CallExecution,
     Scenarios,
@@ -10,6 +9,9 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.utils.eval_summary import UNSCORED_OUTPUTS
+
+logger = structlog.get_logger(__name__)
 
 
 def calculate_aggregate_metrics(call_executions):
@@ -34,9 +36,6 @@ def calculate_aggregate_metrics(call_executions):
         ).count()
         failed_calls = call_executions.filter(
             status=CallExecution.CallStatus.FAILED
-        ).count()
-        cancelled_calls = call_executions.filter(
-            status=CallExecution.CallStatus.CANCELLED
         ).count()
         calls_attempted = total_calls - pending_calls - queued_calls
         connected_calls = call_executions.filter(duration_seconds__gt=0).count()
@@ -77,9 +76,10 @@ def calculate_aggregate_metrics(call_executions):
                         output_type = metric_data.get("output_type")
                         output_value = metric_data.get("output")
                         if output_type == "Pass/Fail":
-                            eval_scores[metric_name].append(
-                                100.0 if output_value == "Passed" else 0.0
-                            )
+                            if output_value not in UNSCORED_OUTPUTS:
+                                eval_scores[metric_name].append(
+                                    100.0 if output_value == "Passed" else 0.0
+                                )
                         elif output_type == "score" and isinstance(
                             output_value, (int, float)
                         ):
