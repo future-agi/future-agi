@@ -87,6 +87,28 @@ def test_character_amount_matches_independent_catalog_arithmetic(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("metadata", "source"),
+    [
+        ({"input_characters": 0}, "available_models"),
+        ({}, "unavailable"),
+        ({"input_characters": -0.5}, "unavailable"),
+    ],
+)
+def test_character_only_embedding_persists_zero_or_unavailable(
+    organization, metadata, source
+):
+    assert persist_cost(
+        organization,
+        metadata,
+        expected_source=source,
+        model="text-multilingual-embedding-002",
+        prompt_tokens=0,
+        completion_tokens=0,
+    ) == Decimal("0")
+
+
+@pytest.mark.django_db
 def test_explicit_cache_discounted_gateway_cost_is_preserved(organization):
     # The gateway already supplies the cache-aware amount. Ingestion must not
     # replace it with an undiscounted fallback; this is a compatibility control.

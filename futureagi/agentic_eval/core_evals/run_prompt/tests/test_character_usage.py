@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+from litellm import ModelResponse
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.response_formatter import (
@@ -88,6 +89,51 @@ def test_response_formatter_preserves_real_character_counts(characters):
     assert metadata["cost"]["total_cost"] == round(
         sum(characters.values()) / 1000 * 0.007, 6
     )
+
+
+@pytest.mark.parametrize(
+    "invalid", ["not-a-count", -2, True, float("inf"), float("nan")]
+)
+@pytest.mark.parametrize("side", ["input", "output"])
+def test_response_formatter_omits_invalid_character_count(side, invalid):
+    usage = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 100,
+        "total_tokens": 1100,
+        "input_characters": 1000,
+        "output_characters": 50,
+        f"{side}_characters": invalid,
+    }
+    response = ModelResponse(
+        model="gemini-1.5-pro",
+        choices=[{"message": {"role": "assistant", "content": "Synthetic reply"}}],
+        usage=usage,
+    )
+    reply, info = ResponseFormatter.format_llm_response(response, "gemini-1.5-pro", 0)
+    assert reply == "Synthetic reply"
+    metadata = info["metadata"]
+    assert metadata["usage"] == {
+        k: v for k, v in usage.items() if k != f"{side}_characters"
+    }
+    assert metadata["cost"]["pricing_source"] == "default"
+    assert metadata["cost"]["total_cost"] == (0.000210 if side == "input" else 0.015)
+
+
+@pytest.mark.parametrize(
+    "invalid", ["not-a-count", -2, True, float("inf"), float("nan")]
+)
+def test_raw_invalid_input_characters_use_token_estimate(invalid):
+    result = calculate_total_cost(
+        "gemini-1.5-pro",
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 100,
+            "input_characters": invalid,
+            "output_characters": 50,
+        },
+    )
+    assert result["pricing_source"] == "default"
+    assert result["total_cost"] == 0.000210
 
 
 def test_response_formatter_token_only_usage_is_labelled_estimate():

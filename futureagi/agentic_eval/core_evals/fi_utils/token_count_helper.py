@@ -215,6 +215,19 @@ def _is_nonnegative_number(value: Any) -> TypeGuard[int | float]:
     )
 
 
+def optional_character_count(value: object) -> int | None:
+    """Parse a reported whole count, preserving zero without manufacturing usage."""
+    if not isinstance(value, (int, str, float)) or isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
+    try:
+        count = int(value)
+        return count if count >= 0 and math.isfinite(count) else None
+    except (ValueError, OverflowError):
+        return None
+
+
 def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool]:
     """
     Compute (prompt_cost, completion_cost, recognized) for a pricing dict.
@@ -413,6 +426,15 @@ def calculate_total_cost(
         from evaluations.decision_pricing import calculate_decision_cost
 
         return calculate_decision_cost(model_name, token_usage)
+
+    # Raw provider usage (e.g. streaming chunks) may include unusable counts.
+    # Filter before selecting units so the fallback never prices a rejected count.
+    if "input_characters" in token_usage or "output_characters" in token_usage:
+        token_usage = token_usage.copy()
+        for key in ("input_characters", "output_characters"):
+            count = optional_character_count(token_usage.pop(key, None))
+            if count is not None:
+                token_usage[key] = count
 
     # Try to get pricing from available_models.py
     pricing = get_model_pricing(model_name)

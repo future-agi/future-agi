@@ -250,17 +250,6 @@ def _sanitize_headers(headers):
     return {k: "***" if k.lower() in sensitive_keys else v for k, v in headers.items()}
 
 
-def _optional_character_count(value):
-    """Keep explicit zero distinct from missing or malformed usage."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        count = int(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return count if count >= 0 else None
-
-
 def _compute_cost(entry):
     """Compatibility scalar for callers that only need the amount."""
     return _compute_cost_details(entry)["total_cost"]
@@ -304,9 +293,6 @@ def _compute_cost_details(entry):
     except (TypeError, ValueError):
         completion_tokens = 0
 
-    input_characters = _optional_character_count(metadata.get("input_characters"))
-    output_characters = _optional_character_count(metadata.get("output_characters"))
-
     try:
         audio_seconds = float(metadata.get("audio_seconds") or 0)
     except (TypeError, ValueError):
@@ -329,9 +315,14 @@ def _compute_cost_details(entry):
 
     quality = metadata.get("quality") or "standard"
 
-    from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+    from agentic_eval.core_evals.fi_utils.token_count_helper import (
+        calculate_total_cost,
+        optional_character_count,
+    )
     from agentic_eval.core_evals.run_prompt.model_pricing import get_model_info
 
+    input_characters = optional_character_count(metadata.get("input_characters"))
+    output_characters = optional_character_count(metadata.get("output_characters"))
     estimate = None
     for model in [entry.get("resolved_model"), entry.get("model")]:
         if not model:
@@ -345,8 +336,8 @@ def _compute_cost_details(entry):
         if (
             not prompt_tokens
             and not completion_tokens
-            and not input_characters
-            and not output_characters
+            and input_characters is None
+            and output_characters is None
             and not audio_seconds
             and not (images_generated or 0)
             and not num_images
