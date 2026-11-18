@@ -133,6 +133,140 @@ class PureFunctionTests(unittest.TestCase):
         self.assertIn('"ruff@${RUFF_VERSION}"', hook)
 
 
+WORKFLOW = ROOT / ".github" / "workflows" / "python-lint.yml"
+
+# The paths whose change makes Ruff run: Python under futureagi/, its ruff
+# config, and the gate, its tests, the pre-commit hook and this workflow.
+LINT_PATHS = (
+    "futureagi/**/*.py",
+    "futureagi/pyproject.toml",
+    "scripts/check_python_lint_delta.py",
+    "scripts/test_check_python_lint_delta.py",
+    "scripts/lint-staged-python.sh",
+    ".github/workflows/python-lint.yml",
+)
+
+
+def top_level_block(text, key):
+    """The lines under a column-0 key, up to the next column-0 key."""
+    return re.search(rf"(?ms)^{re.escape(key)}:[^\n]*\n(.*?)(?=^\S|\Z)", text).group(1)
+
+
+def job_block(text, job_id):
+    """A job's lines, up to the next job (two-space indent) or column-0 key."""
+    jobs = top_level_block(text, "jobs")
+    found = re.search(rf"(?ms)^  {re.escape(job_id)}:\n(.*?)(?=^  \S|\Z)", jobs)
+    if not found:
+        raise AssertionError(f"no job {job_id!r} in {WORKFLOW.name}")
+    return found.group(1)
+
+
+def run_script(block):
+    """The single `run: |` script in a job, dedented."""
+    runs = re.findall(r"(?m)^( *)run: \|\n((?:\1 .*\n|\s*\n)+)", block)
+    if len(runs) != 1:
+        raise AssertionError(f"expected one run: | script, found {len(runs)}")
+    return textwrap.dedent(runs[0][1])
+
+
+class WorkflowTests(unittest.TestCase):
+    """A required check must report on every PR, so the workflow always runs and
+    a summary job, "Python Lint Pass", is the one check to require."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = WORKFLOW.read_text()
+
+    def test_the_workflow_has_no_paths_or_branches_filter(self):
+        on = top_level_block(self.text, "on")
+        self.assertRegex(on, r"(?m)^  pull_request:\s*$")
+        self.assertRegex(on, r"(?m)^    types: \[opened, synchronize, reopened, edited\]\s*$")
+        # A workflow-level paths filter means no check at all on a PR without
+        # Python changes, and a required check that never starts never passes.
+        self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
+        # Stacked PRs into feature branches get the check too.
+        self.assertNotRegex(on, r"(?m)^\s*(branches|branches-ignore)\s*:")
+
+    def test_the_header_names_the_check_to_require(self):
+        header = self.text.split("\non:", 1)[0]
+        self.assertIn('The check to require is "Python Lint Pass"', header)
+        self.assertNotIn("Advisory", header)
+
+    def test_a_changes_job_decides_from_the_lint_paths(self):
+        changes = job_block(self.text, "changes")
+        self.assertIn("uses: dorny/paths-filter@v3", changes)
+        self.assertRegex(changes, r"(?m)^      pull-requests: read\b")
+        self.assertRegex(changes, r"(?m)^      python: \$\{\{ steps\.filter\.outputs\.python \}\}\s*$")
+        self.assertNotRegex(changes, r"(?m)^    if:", "the changes job must always run")
+        filters = changes.split("            python:\n", 1)[1]
+        listed = re.findall(r"(?m)^              - '([^']+)'\s*$", filters)
+        self.assertEqual(sorted(listed), sorted(LINT_PATHS))
+
+    def test_ruff_runs_only_when_changes_says_so(self):
+        ruff = job_block(self.text, "ruff-delta")
+        self.assertRegex(ruff, r"(?m)^    name: Ruff \(new violations only\)\s*$")
+        self.assertRegex(ruff, r"(?m)^    needs: changes\s*$")
+        self.assertRegex(ruff, r"(?m)^    if: needs\.changes\.outputs\.python == 'true'\s*$")
+
+    def test_the_summary_job_always_runs_after_both_jobs(self):
+        names = re.findall(r"(?m)^    name: Python Lint Pass\s*$", top_level_block(self.text, "jobs"))
+        self.assertEqual(len(names), 1, "exactly one job may carry the required check's name")
+        summary = job_block(self.text, "python-lint-pass")
+        self.assertRegex(summary, r"(?m)^    name: Python Lint Pass\s*$")
+        self.assertRegex(summary, r"(?m)^    needs: \[changes, ruff-delta\]\s*$")
+        # always(), not !cancelled(): a cancelled run must fail the check, not skip it.
+        self.assertRegex(summary, r"(?m)^    if: always\(\)\s*$")
+        # The script below reads these; wired to anything else, its test proves nothing.
+        self.assertRegex(summary, r"(?m)^          CHANGES: \$\{\{ needs\.changes\.result \}\}\s*$")
+        self.assertRegex(summary, r"(?m)^          PYTHON_CHANGED: \$\{\{ needs\.changes\.outputs\.python \}\}\s*$")
+        self.assertRegex(summary, r"(?m)^          RUFF: \$\{\{ needs\.ruff-delta\.result \}\}\s*$")
+
+    def test_nothing_turns_a_failure_into_a_pass(self):
+        # continue-on-error on any job or step can report a real failure as
+        # success to the summary, or make the summary itself green regardless.
+        self.assertNotIn("continue-on-error", self.text)
+        # The gate's exit status is the check: nothing may swallow it.
+        self.assertNotRegex(self.text, r"\|\|\s*(true\b|:(?=\s|$))")
+        self.assertNotRegex(self.text, r"(?m)^\s*set \+e\b")
+
+    def test_the_summary_fails_closed(self):
+        script = run_script(job_block(self.text, "python-lint-pass"))
+        cases = [
+            # (changes result, python output, ruff-delta result, passes)
+            ("success", "true", "success", True),
+            ("success", "false", "skipped", True),
+            ("success", "true", "failure", False),
+            ("success", "true", "cancelled", False),
+            # Skipped although Python changed, or without an answer from changes.
+            ("success", "true", "skipped", False),
+            ("success", "", "skipped", False),
+            ("success", "false", "failure", False),
+            ("failure", "", "skipped", False),
+            ("cancelled", "", "skipped", False),
+            ("skipped", "", "skipped", False),
+            ("failure", "true", "success", False),
+            # A changes job that set its output and then did not succeed.
+            ("failure", "false", "skipped", False),
+            ("cancelled", "false", "skipped", False),
+            ("skipped", "false", "skipped", False),
+        ]
+        with tempfile.TemporaryDirectory(prefix="lint-summary-test-") as tmp:
+            path = Path(tmp) / "summary.sh"
+            path.write_text(script)
+            for changes, python, ruff, passes in cases:
+                # The shell GitHub runs a step's script with.
+                proc = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(path)],
+                    capture_output=True,
+                    text=True,
+                    env={"PATH": os.environ["PATH"], "CHANGES": changes, "PYTHON_CHANGED": python, "RUFF": ruff},
+                )
+                with self.subTest(changes=changes, python=python, ruff=ruff):
+                    self.assertEqual(proc.returncode, 0 if passes else 1, proc.stdout + proc.stderr)
+                    if not passes:
+                        self.assertIn("::error::", proc.stdout)
+
+
 BASE_MOD = textwrap.dedent(
     """\
     def first():

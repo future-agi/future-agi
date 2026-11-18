@@ -13,7 +13,7 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import CharField, Exists, F, Func, OuterRef, Q
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
@@ -275,7 +275,14 @@ def harness_run_test_ids(run_test_ids) -> set:
         return owned
     with_a_result_column = set(
         SimulateEvalConfig.objects.filter(run_test_id__in=left, deleted=False)
-        .filter(Q(mapping={}) | Q(mapping__isnull=True))
+        # ``has_own_mapping`` reads any mapping that is not an object as
+        # empty, so the match is on the stored type, not on ``{}`` alone.
+        .annotate(
+            mapping_type=Func(
+                F("mapping"), function="jsonb_typeof", output_field=CharField()
+            )
+        )
+        .filter(Q(mapping={}) | Q(mapping__isnull=True) | ~Q(mapping_type="object"))
         .order_by()
         .values_list("run_test_id", flat=True)
     )

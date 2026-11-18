@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
+from structlog.testing import capture_logs
 
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
@@ -615,6 +616,85 @@ def test_a_removed_evals_placeholder_puts_its_harness_verdict_back(
     assert call_execution.eval_outputs[_CODE_CHECK_ID] == _code_check()
 
 
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NO_SKIP)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch("simulate.services.test_executor.run_eval_func")
+def test_a_keyless_call_of_a_harness_sdk_run_keeps_its_harness_checks(
+    mock_run, mock_transcript, run_test, test_execution, call_execution, organization
+):
+    from simulate.services.test_executor import _run_simulate_evaluations_task
+
+    mock_transcript.return_value = dict(_TRANSCRIPT)
+    claim_template = EvalTemplate.objects.create(
+        name=f"claim_{uuid.uuid4().hex[:6]}",
+        config={"required_keys": ["conversation"], "prompt": "Grade it"},
+        owner="user",
+        organization=organization,
+    )
+    column = _config(run_test, claim_template, mapping={})
+    # A sibling carries the harness's checks, so the run test is a harness
+    # run; this call lost the key but still holds the harness's verdict.
+    _call(test_execution, metadata={"harness_evaluations": []})
+    _awaiting_regrade(
+        call_execution,
+        {str(column.id): pending_placeholder(_harness_verdict(column.name))},
+    )
+
+    def run_inline(*, args, kwargs):
+        _run_simulate_evaluations_task._original_func(*args, **kwargs)
+        return SimpleNamespace(id="inline")
+
+    with patch(
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
+        side_effect=run_inline,
+    ):
+        run_new_evals_on_call_executions_task._original_func(
+            [str(call_execution.id)], [str(column.id)]
+        )
+
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(column.id)] == _harness_verdict(column.name)
+    mock_run.assert_not_called()
+
+
+# --- what the call APIs show ------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_the_raw_call_api_does_not_show_the_kept_verdict_in_a_pending_cell(
+    call_execution, suite_template, run_test
+):
+    from simulate.models import CallExecutionSnapshot
+    from simulate.serializers.test_execution import (
+        CallExecutionSerializer,
+        CallExecutionSnapshotSerializer,
+    )
+
+    suite = _config(run_test, suite_template, mapping={})
+    cell = pending_placeholder(_harness_verdict(suite.name))
+    call_execution.eval_outputs = {str(suite.id): cell, "other": {"status": "pending"}}
+    call_execution.save(update_fields=["eval_outputs"])
+    snapshot = CallExecutionSnapshot.objects.create(
+        call_execution=call_execution,
+        rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
+        eval_outputs={str(suite.id): cell},
+    )
+
+    shown = CallExecutionSerializer(call_execution).data["eval_outputs"]
+    shown_snapshot = CallExecutionSnapshotSerializer(snapshot).data["eval_outputs"]
+
+    assert shown == {
+        str(suite.id): {"status": "pending"},
+        "other": {"status": "pending"},
+    }
+    assert shown_snapshot == {str(suite.id): {"status": "pending"}}
+    # The stored cell is untouched: the put-back still needs it.
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(suite.id)] == cell
+
+
 # --- the sweep --------------------------------------------------------------
 
 
@@ -727,8 +807,32 @@ def test_a_crashed_grader_leaves_the_harness_verdict_to_the_sweep(
         _CODE_CHECK_ID: _code_check(),
     }
     assert call_execution.call_metadata["eval_completed"] is True
-    assert counts["timed_out"] == 1
+    # The verdict went back: no grading was lost to the clock, so the sweep
+    # does not report a time-out for it.
+    assert counts["timed_out"] == 0
+    assert counts["closed"] == 1
     assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+
+
+@pytest.mark.django_db
+def test_a_put_back_is_not_logged_as_a_time_out(
+    run_test, call_execution, suite_template
+):
+    suite = _config(run_test, suite_template, mapping={})
+    now = timezone.now()
+    _awaiting_regrade(
+        call_execution,
+        {str(suite.id): pending_placeholder(_harness_verdict(suite.name))},
+        **{EVAL_QUEUED_KEY: {str(suite.id): (now - 2 * _START).isoformat()}},
+    )
+
+    with capture_logs() as logs:
+        key = close_due_scoring(
+            _locked(call_execution), {}, now, {str(suite.id): suite.name}
+        )
+
+    assert key == "closed"
+    assert not [log for log in logs if log["event"] == "simulate_scoring_timed_out"]
 
 
 def test_a_bare_harness_verdict_is_left_alone():

@@ -16,6 +16,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
+from simulate.services.kept_harness_entry import without_kept_entries
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
 from tracer.models.observability_provider import ProviderChoices
@@ -149,6 +150,13 @@ class CallBranchDeviationCreateResponseSerializer(serializers.Serializer):
 
 class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
     """Serializer for CallExecutionSnapshot model"""
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # A pending cell keeps a harness verdict for the put-back; showing it
+        # would read as a result the call already has.
+        data["eval_outputs"] = without_kept_entries(data.get("eval_outputs"))
+        return data
 
     # Return customer_call_id from parent CallExecution for frontend compatibility
     service_provider_call_id = serializers.SerializerMethodField()
@@ -1503,6 +1511,13 @@ class OptimiserAnalysisRefreshResponseSerializer(serializers.Serializer):
 
 class CallExecutionSerializer(serializers.ModelSerializer):
     """Serializer for CallExecution model"""
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # A pending cell keeps a harness verdict for the put-back; showing it
+        # would read as a result the call already has.
+        data["eval_outputs"] = without_kept_entries(data.get("eval_outputs"))
+        return data
 
     transcripts = serializers.SerializerMethodField()
     scenario_name = serializers.CharField(source="scenario.name", read_only=True)

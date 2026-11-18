@@ -6,7 +6,7 @@ verdict travels inside that placeholder, so a grading that ends with no
 verdict of its own (skipped, failed, never started, timed out) puts it back
 instead of leaving the call without the check it had.
 
-Only these two functions build or read the kept field.
+Only these functions build or read the kept field.
 """
 
 from __future__ import annotations
@@ -48,6 +48,25 @@ def end_without_verdict(current: Any, replacement: dict) -> dict:
         return current
     kept = _kept_entry(current)
     return replacement if kept is None else kept
+
+
+def without_kept_entries(outputs: Any) -> Any:
+    """``outputs`` as an API shows it: no pending cell carries a kept verdict.
+
+    The kept verdict is the put-back's to read, and a reader of the raw cell
+    would take it for a result the call already has. Returns a copy; the
+    argument is never edited.
+    """
+    if not isinstance(outputs, dict):
+        return outputs
+    return {
+        key: (
+            {k: v for k, v in cell.items() if k != KEPT_KEY}
+            if _kept_entry(cell) is not None
+            else cell
+        )
+        for key, cell in outputs.items()
+    }
 
 
 def _kept_entry(cell: Any) -> dict | None:

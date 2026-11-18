@@ -425,3 +425,29 @@ def test_a_result_column_stored_with_a_null_mapping_counts_in_the_batch(make_run
     _config(run_test, None)
 
     assert harness_run_test_ids([run_test.id]) == {run_test.id}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "mapping",
+    [["conversation"], [], "conversation", 3],
+    ids=["list", "empty-list", "string", "number"],
+)
+def test_a_result_column_stored_with_a_non_object_mapping_counts_in_the_batch(
+    make_run_test, mapping
+):
+    # ``has_own_mapping`` reads any mapping that is not an object as empty.
+    run_test = make_run_test({"harness_evaluations": _HARNESS_CHECKS})
+    _config(run_test, mapping)
+
+    assert harness_run_test_ids([run_test.id]) == {run_test.id}
+
+
+@pytest.mark.django_db
+def test_an_object_mapping_with_a_key_still_does_not_count_in_the_batch(
+    make_run_test,
+):
+    run_test = make_run_test({"harness_evaluations": _HARNESS_CHECKS})
+    _config(run_test, {"conversation": "transcript"})
+
+    assert harness_run_test_ids([run_test.id]) == set()

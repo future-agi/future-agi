@@ -35,7 +35,7 @@ from django.db.models import Exists, OuterRef
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.models import CallExecution, RunTest, SimulateEvalConfig, TestExecution
 from simulate.services.harness_evals import regrade_mapping
 from simulate.services.kept_harness_entry import pending_placeholder
 
@@ -242,6 +242,22 @@ def _clear_queued_stamps(
     previous = previous or {}
     try:
         with transaction.atomic():
+            # The run test comes first, as in add-eval, which holds it while
+            # it locks the calls and the run. This runs after that add has
+            # committed, so without it the order here would be calls, run.
+            run_test_id = (
+                TestExecution.objects.filter(id=test_execution_id)
+                .values_list("run_test_id", flat=True)
+                .first()
+                if test_execution_id is not None
+                else None
+            )
+            if run_test_id is not None:
+                list(
+                    RunTest.objects.select_for_update(of=("self",)).filter(
+                        pk=run_test_id
+                    )
+                )
             # No `of=` needed: CallExecution has no workspace or organization
             # FK, so the manager adds no join to lock.
             calls = list(
@@ -460,6 +476,14 @@ def queue_eval_for_finished_calls(
     runnable_ids = runnable_eval_config_ids(test_execution.run_test_id)
     live_ids = live_eval_config_ids(test_execution.run_test_id)
     with transaction.atomic():
+        # The run test first, as the re-grade and `add_selected_eval` take it.
+        # An eval that is already bound never reaches `add_selected_eval`, so
+        # without this the calls' lock below would come before the run's
+        # update, the reverse of the re-grade's order, and the two could
+        # deadlock. Under `add_selected_eval` it is the same lock again.
+        RunTest.objects.select_for_update(of=("self",)).filter(
+            pk=test_execution.run_test_id
+        ).first()
         finished_calls = list(
             CallExecution.objects.select_for_update(of=("self",))
             .filter(

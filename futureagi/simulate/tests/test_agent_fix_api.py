@@ -2166,7 +2166,7 @@ class TestCheckRunsStayOutOfTheUsersRuns:
         evaluation = _mapped_eval(environment)
 
         with patch(
-            "simulate.views.run_test.regrade_run_evals", return_value=1
+            "simulate.views.run_test.regrade_run_evals", return_value=["call-1"]
         ) as grade:
             response = auth_client.post(
                 f"/simulate/run-tests/{environment.run_test_id}/run-new-evals/",
