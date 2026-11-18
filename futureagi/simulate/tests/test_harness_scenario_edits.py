@@ -283,3 +283,47 @@ def test_amend_to_a_blank_assumption_is_refused(user, workspace, storage, auth_c
     assert refused["receipts"][0]["why"] == (
         "sources[0]: an assumption source says what was assumed"
     )
+
+
+# A value for each field a Scenarios-tab edit sets, as the amend endpoint takes it.
+SETTABLE = {
+    "must_pass": True,
+    "tests": "The refund is issued once and the customer is told when it lands.",
+    "keywords": ["refund", "late"],
+    "max_turns": 7,
+}
+
+
+def test_every_field_an_edit_sets_is_kept_on_a_saved_member():
+    """Save (plain, or a validated promotion) stores each case's member through one field list: a field an edit
+    can set that is not on it is silently dropped."""
+    from simulate.services.harness_provider import HostedHarnessProvider
+    from simulate.services.harness_versioning.versions import MEMBER_FIELDS
+
+    settable = (
+        HostedHarnessProvider._DESCRIPTIVE_FIELDS
+        | HostedHarnessProvider._BEHAVIOURAL_FIELDS
+        | HostedHarnessProvider._REPROOF_FIELDS
+    )
+    assert settable <= set(MEMBER_FIELDS)
+    assert set(SETTABLE) <= settable
+
+
+@pytest.mark.parametrize("field, value", sorted(SETTABLE.items()))
+def test_a_scenario_edit_survives_amend_and_save(
+    user, workspace, storage, auth_client, field, value
+):
+    """A field a person sets on a case is on the saved member after Save."""
+    from simulate.models import HarnessSuiteMember
+
+    environment = _built(user, workspace, f"ed-survive-{field}")
+    _amend_with(auth_client, environment, NAMES[0], field, value)
+    assert _edited(environment, NAMES[0]).get(field) == value
+
+    _save(environment, user)
+
+    environment.refresh_from_db()
+    member = HarnessSuiteMember.no_workspace_objects.get(
+        suite_version=environment.suite_version, scenario_key=_key(NAMES[0])
+    )
+    assert member.content.get(field) == value, (field, member.content.get(field))

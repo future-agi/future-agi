@@ -84,6 +84,8 @@ MEMBER_FIELDS = (
     # Where each requirement comes from, and the wrong behaviours its checks must fail: read by the lifecycle.
     "sources",
     "negative_controls",
+    # A must-pass case gates its run's verdict.
+    "must_pass",
 )
 
 
@@ -610,6 +612,7 @@ OPTIONAL_MEMBER_FIELDS = (
     "limits",
     "sources",
     "negative_controls",
+    "must_pass",
 )
 
 
