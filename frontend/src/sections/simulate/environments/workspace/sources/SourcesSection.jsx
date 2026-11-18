@@ -379,6 +379,8 @@ function SourceRow({
     !source.ui?.personal_choice;
   const changed = Boolean(source.ui?.changed_upstream);
   const saved = isSaved(source);
+  const usage = usageOf(source);
+  const usedBy = usage.rules.length + usage.seeds.length;
 
   return (
     <Box
@@ -463,9 +465,14 @@ function SourceRow({
             ? COPY.yourCopy
             : COPY.version(source.version)}
         </Typography>
-        {/* The sources API doesn't say yet what uses a file. */}
-        <Typography noWrap sx={{ typography: "s1", color: "text.tertiary" }}>
-          {COPY.usedByNone}
+        <Typography
+          noWrap
+          sx={{
+            typography: "s1",
+            color: usedBy ? "text.primary" : "text.tertiary",
+          }}
+        >
+          {COPY.usedBy(usedBy)}
         </Typography>
         {readOnly ? (
           <span />
