@@ -410,7 +410,9 @@ def create_selected_harness_run(
         ),
     ).exists()
     if planned is not None and not repeated:
-        early = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
+        early = resolve_run_pins(
+            environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
+        )
         if early is not None:
             from simulate.services.harness_versioning.validation import (
                 require_pair_runnable,
@@ -975,7 +977,13 @@ def _readiness_plan(
         runtime=resolved.runtime,
     )
     try:
-        plan = select_for_run(pairing, keys=scenario_keys, trials=trials)
+        plan = select_for_run(
+            pairing,
+            keys=scenario_keys,
+            trials=trials,
+            # A fix's check run measures the cases it wrote for the fix; readiness still gates it.
+            lifecycle_gate=fix_run is None,
+        )
     except HostedHarnessError as exc:
         if exc.status_code != 400:
             raise

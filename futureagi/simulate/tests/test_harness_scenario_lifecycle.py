@@ -22,13 +22,10 @@ from simulate.tests.test_harness_affected_scenarios import (
 )
 from simulate.tests.test_harness_readiness import _environment
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 KEYS = REFUND_KEYS + LOOKUP_KEYS
 
 
@@ -95,15 +92,27 @@ def test_states_in_order(user, workspace, storage):
     HostedHarnessScenario.no_workspace_objects.filter(
         job=environment, scenario_key=LOOKUP_KEYS[0]
     ).update(archived_at=timezone.now(), archive_reason="old route")
-    other = _copy(environment.environment_version, HarnessEnvironmentVersion)
-    _proofs(environment, dict.fromkeys(KEYS, PROVED), version=other)
+    candidate = _copy(
+        environment.environment_version, HarnessEnvironmentVersion, status="candidate"
+    )
+    _proofs(environment, dict.fromkeys(KEYS, PROVED), version=candidate)
+    saved = _copy(
+        environment.environment_version,
+        HarnessEnvironmentVersion,
+        version_number=(environment.environment_version.version_number or 0) + 200,
+        hash=environment.environment_version.hash[:-5] + "saved",
+    )
+    _proofs(environment, dict.fromkeys(KEYS, PROVED), version=saved)
 
     on_default = _views(environment)
-    off_default = _views(environment, version=other)
+    on_candidate = _views(environment, version=candidate)
+    on_saved = _views(environment, version=saved)
 
     assert on_default[LOOKUP_KEYS[0]]["state"] == "archived"
     assert on_default[REFUND_KEYS[0]]["state"] == "active"
-    assert off_default[REFUND_KEYS[0]]["state"] == "validated"
+    # Proved on versions not saved yet: Validated, not Active; on another saved version: Active.
+    assert on_candidate[REFUND_KEYS[0]]["state"] == "validated"
+    assert on_saved[REFUND_KEYS[0]]["state"] == "active"
     assert (
         on_default[LOOKUP_KEYS[1]]["state"],
         on_default[LOOKUP_KEYS[1]]["reason"],
@@ -216,7 +225,9 @@ def test_format_two_beats_legacy(user, workspace, storage):
     )
 
 
-def test_legacy_survives_missing_control(user, workspace, storage):
+def test_a_legacy_case_without_a_negative_control_reads_draft(user, workspace, storage):
+    """A case written before controls were required is kept, recorded not proved: Draft with its reason, never
+    Kept as written, so it is held out of runs until it has one."""
     environment = _environment(user, workspace, storage, "lc-control")
     _suite(environment, _ten(), proved=False)
     HarnessSuiteVersion._base_manager.filter(id=environment.suite_version_id).update(
@@ -250,9 +261,12 @@ def test_legacy_survives_missing_control(user, workspace, storage):
 
     views = _views(environment)
 
-    assert views[REFUND_KEYS[0]]["state"] == "kept_as_written"
-    assert views[REFUND_KEYS[0]]["legacy"] is True
-    assert views[REFUND_KEYS[0]]["warning"] == "legacy_no_negative_control"
+    assert (views[REFUND_KEYS[0]]["state"], views[REFUND_KEYS[0]]["reason"]) == (
+        "draft",
+        "no_negative_control",
+    )
+    assert "negative control" in views[REFUND_KEYS[0]]["reason_text"]
+    assert views[REFUND_KEYS[0]]["warning"] is None
     assert views[REFUND_KEYS[1]]["state"] == "draft"
 
 
@@ -493,7 +507,9 @@ def test_list_shows_validated_on_a_named_candidate_pair(user, workspace, storage
 
     environment = _environment(user, workspace, storage, "lc-candidate-list")
     _suite(environment, _ten())
-    other = _copy(environment.environment_version, HarnessEnvironmentVersion)
+    other = _copy(
+        environment.environment_version, HarnessEnvironmentVersion, status="candidate"
+    )
     _proofs(environment, dict.fromkeys(KEYS, PROVED), version=other)
     _proofs(environment, dict.fromkeys(KEYS, PROVED))
 
@@ -717,7 +733,11 @@ def test_a_proof_blocked_on_a_source_names_that_source(user, workspace, storage)
             'its expected outcome contradicts a cited rule:\n  - rule:0 "Refund once": it refunds twice',
             'rule:0 "Refund once": it refunds twice',
         ),
-        ("not_ready", "the order the case cites is missing", "the order the case cites is missing"),
+        (
+            "not_ready",
+            "the order the case cites is missing",
+            "the order the case cites is missing",
+        ),
     ],
 )
 def test_a_listed_reason_reads_by_its_first_item_not_its_heading(code, why, detail):

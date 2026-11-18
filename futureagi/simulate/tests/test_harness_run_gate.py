@@ -23,9 +23,6 @@ from simulate.tests.test_harness_affected_scenarios import (
     _ten,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
@@ -34,7 +31,7 @@ from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
 from simulate.tests.test_harness_versioning_assembly import _row
 from simulate.tests.test_harness_versioning_runs import _run
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 KEYS = REFUND_KEYS + LOOKUP_KEYS
 
 
@@ -151,31 +148,21 @@ def _lifecycle(state, reason=None):
     return {"state": state, "reason": reason, "reason_text": None}
 
 
-def test_default_pair_runs_only_active():
+def test_only_active_and_kept_as_written_cases_run():
+    """Only Active cases (proved in a saved suite) and Kept as written ones run; a Validated case, proved on
+    versions not saved yet, waits until they are saved."""
     from simulate.services.harness_scenario_lifecycle import runnable
 
-    assert runnable(_lifecycle("active"), default_pair=True) is True
-    assert runnable(_lifecycle("validated"), default_pair=True) is False
-    assert runnable(_lifecycle("draft", "not_validated"), default_pair=True) is False
-    assert (
-        runnable(_lifecycle("draft", "validation_unavailable"), default_pair=True)
-        is True
-    )
-
-
-def test_candidate_pair_runs_validated():
-    from simulate.services.harness_scenario_lifecycle import runnable
-
-    assert runnable(_lifecycle("validated"), default_pair=False) is True
-    assert runnable(_lifecycle("draft", "in_draft"), default_pair=False) is False
-
-
-def test_kept_as_written_still_runs():
-    from simulate.services.harness_scenario_lifecycle import runnable
-
-    assert runnable(_lifecycle("kept_as_written"), default_pair=True) is True
-    assert runnable(_lifecycle("kept_as_written"), default_pair=False) is True
-    assert runnable(_lifecycle("archived"), default_pair=False) is False
+    assert runnable(_lifecycle("active")) is True
+    assert runnable(_lifecycle("kept_as_written")) is True
+    assert runnable(_lifecycle("validated")) is False
+    assert runnable(_lifecycle("draft", "not_validated")) is False
+    assert runnable(_lifecycle("draft", "in_draft")) is False
+    assert runnable(_lifecycle("draft", "no_negative_control")) is False
+    assert runnable(_lifecycle("archived")) is False
+    assert runnable(_lifecycle("draft", "validation_unavailable")) is True
+    # No lifecycle at all (a fix's own check run): nothing is held for it.
+    assert runnable(None) is True
 
 
 def test_the_dialog_preview_holds_back_what_the_run_holds_back(

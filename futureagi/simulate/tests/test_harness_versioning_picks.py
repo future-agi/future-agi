@@ -1552,6 +1552,10 @@ class TestProductionOnly:
             }
         )
         s1.refresh_from_db()
+        from simulate.tests.harness_validation import prove_pair
+
+        # Its cases are validated, so only the production-only tool holds them.
+        prove_pair(environment, environment.environment_version, s1)
         return environment, s1
 
     def test_a_run_every_scenario_of_which_needs_it_is_refused_naming_the_tool(

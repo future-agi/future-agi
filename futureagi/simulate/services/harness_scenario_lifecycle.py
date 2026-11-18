@@ -2,9 +2,9 @@
 
 Derived, never stored. Suite versions are immutable and proofs are per pair, so a stored state
 would duplicate both and drift on every Save, rebuild and candidate promotion. The one stored fact
-is archiving. A case runs when it is Active (or Kept as written) on the default pair, and also when
-it is Validated on a candidate pair, which is how a candidate is tried before it is saved.
-Kept as written runs but never reads Validated or Active: no proof showed its checks hold.
+is archiving. A proved case is Active on saved versions and Validated on unsaved (candidate) ones;
+only Active and Kept as written cases run. Kept as written runs but never reads Validated or
+Active: no proof showed its checks hold. A case with no negative control is Draft.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
 
 LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "archived"]
@@ -42,6 +43,8 @@ REASON_TEXTS = {
     "unchecked": "No check notices a wrong value for: {why}",
     "validation_incomplete": "Validation ran out of time before this case; validate again.",
     "no_negative_control": "No negative control: add a wrong behaviour that this case's checks must fail.",
+    "not_active": "Validated on these versions, which are not saved yet: save them to run it.",
+    "proved_on_other_agent": "Proved with another agent version; validate it with this one to run it.",
     "negative_control_passed": "The checks pass a wrong behaviour: {control} ({control_why}). Tighten {checks}.",
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
@@ -63,7 +66,6 @@ WARNING_TEXTS = {
         "Kept as written: this agent's world is its own service; the reference solution can only run against it live."
     ),
     "control_not_run": "Kept as written: negative control {name} could not run, because {tools} have no endpoint here.",
-    "legacy_no_negative_control": "Validated before negative controls existed; add one to confirm.",
     "judged_only": (
         "Kept as written: only a judge grades this case, and nothing has shown the judge fails a wrong behaviour."
     ),
@@ -119,7 +121,11 @@ def reason_text(
         return None
     entry = entry or {}
     why = str(entry.get("why") or "").strip().splitlines()
-    items = [line.strip().removeprefix("- ") for line in why[1:] if line.strip().startswith("- ")]
+    items = [
+        line.strip().removeprefix("- ")
+        for line in why[1:]
+        if line.strip().startswith("- ")
+    ]
     values = _Safe(why=items[0] if items else why[0] if why else "", **extra)
     if code == "negative_control_passed":
         passed = next(
@@ -229,20 +235,15 @@ def _view(
     )
 
 
-def runnable(view: LifecycleView | None, *, default_pair: bool = True) -> bool:
-    """Whether a case with this lifecycle may be picked for a run of its pair.
-
-    On the environment's saved (default) pair only Active and Kept as written cases run. On a
-    candidate pair a Validated case runs too: that is how a candidate is tried before it is saved,
-    and saving it is what makes those cases Active."""
+def runnable(view: LifecycleView | None) -> bool:
+    """Whether a case with this lifecycle may be picked for a run of its pair: only Active (validated in a saved
+    suite) and Kept as written cases run. A case Validated on unsaved versions waits until they are saved."""
     if view is None:
         return True
-    allowed = (
-        ("active", "kept_as_written")
-        if default_pair
-        else ("validated", "active", "kept_as_written")
+    return (
+        view["state"] in ("active", "kept_as_written")
+        or view["reason"] == "validation_unavailable"
     )
-    return view["state"] in allowed or view["reason"] == "validation_unavailable"
 
 
 def lifecycle_counts(views: Iterable[LifecycleView]) -> dict[str, int]:
@@ -353,8 +354,13 @@ def scenario_lifecycle(
     suite_version: HarnessSuiteVersion | None,
     environment_version: HarnessEnvironmentVersion | None,
     keys: list[str] | None = None,
+    agent_version_id: Any = None,
 ) -> dict[str, LifecycleView]:
-    """Every member's lifecycle on this pair, keyed by scenario key; empty without a pair."""
+    """Every member's lifecycle on this pair, keyed by scenario key; empty without a pair.
+
+    A proof counts only for the versions it was made with: the suite and environment version its row is kept for,
+    and the agent version its validation ran (``agent_version_id``, the environment's default when absent). A proof
+    made with another agent version reads Draft until the case is validated with this one."""
     from simulate.services.harness_scenario_sources import resolve
     from simulate.services.harness_versioning import validation
     from simulate.services.harness_versioning.versions import suite_cases
@@ -366,13 +372,19 @@ def scenario_lifecycle(
         for key, _, content in suite_cases(suite_version)
         if keys is None or key in keys
     }
-    proofs = (
+    proofs, proved_with = (
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=suite_version, environment_version=environment_version
         )
-        .values_list("proofs", flat=True)
+        .values_list("proofs", "job__agent_version_id")
         .first()
-    ) or {}
+    ) or ({}, None)
+    proofs = proofs or {}
+    agent = agent_version_id or environment.agent_version_id
+    # Proofs from a validation of another agent version; one whose agent is not recorded is kept as it was.
+    other_agent = (
+        proved_with is not None and agent is not None and str(proved_with) != str(agent)
+    )
     rows = {
         row["scenario_key"]: row
         for row in HostedHarnessScenario.no_workspace_objects.filter(
@@ -383,6 +395,11 @@ def scenario_lifecycle(
     default = (
         suite_version.id == environment.suite_version_id
         and environment_version.id == environment.environment_version_id
+    )
+    # Saved versions make an active suite; on unsaved (candidate) versions a proved case is Validated, not Active.
+    saved = default or (
+        suite_version.status == VersionStatus.ACTIVE
+        and environment_version.status == VersionStatus.ACTIVE
     )
     unavailable = not validation.can_validate(environment, environment.agent_version_id)
     ended = _last_check_ending(environment, suite_version, environment_version)
@@ -399,7 +416,7 @@ def scenario_lifecycle(
     from simulate.services.hosted_harness_conversation import failed_changes
 
     failed = failed_changes(environment) if default else {}
-    good: LifecycleState = "active" if default else "validated"
+    good: LifecycleState = "active" if saved else "validated"
     views: dict[str, LifecycleView] = {}
     for key in contents:
         row = rows.get(key) or {}
@@ -421,17 +438,12 @@ def scenario_lifecycle(
             and entry.get("blocked_reason") != "validation_incomplete"
         ):
             blocked = entry.get("blocked_reason")
-            if entry.get("proved") is True:
+            if entry.get("proved") is True and other_agent:
+                view = _view("draft", reason="proved_on_other_agent", entry=entry)
+            elif entry.get("proved") is True:
                 view = _view(good, entry=entry)
             elif entry.get("kept_as_written") is True and blocked in LANE_CODES:
                 view = _view("kept_as_written", entry=entry, warning=blocked)
-            elif blocked == "no_negative_control" and key in legacy:
-                view = _view(
-                    "kept_as_written",
-                    entry=entry,
-                    warning="legacy_no_negative_control",
-                    legacy=True,
-                )
             else:
                 view = _view(
                     "draft", reason=str(blocked or "not_solvable"), entry=entry

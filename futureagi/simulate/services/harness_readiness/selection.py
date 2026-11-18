@@ -52,6 +52,11 @@ from simulate.services.harness_readiness.workers import (
     case_hold,
     case_holds,
 )
+from simulate.services.harness_scenario_lifecycle import (
+    reason_text,
+    runnable,
+    scenario_lifecycle,
+)
 from simulate.services.harness_scenario_needs import (
     ACTING,
     TOOL_ROWS,
@@ -73,7 +78,13 @@ DROPPED_ROW = "scenario_dropped"
 # Held-back keys for a case not validated on the run's pair, and an archived case.
 NOT_VALIDATED_ROW = "not_validated"
 ARCHIVED_ROW = "scenario_archived"
-LIFECYCLE_LABELS = {NOT_VALIDATED_ROW: "Validation", ARCHIVED_ROW: "Archived"}
+# Held-back key for a case validated on versions not saved yet: only an active suite's cases run.
+NOT_ACTIVE_ROW = "not_active"
+LIFECYCLE_LABELS = {
+    NOT_VALIDATED_ROW: "Validation",
+    ARCHIVED_ROW: "Archived",
+    NOT_ACTIVE_ROW: "Not saved",
+}
 # A case whose actors act in the world or whose faults are set on a tool the world's door does not stand in front of.
 NO_DOOR_ROW = "no_world_door"
 NO_DOOR_REASON = (
@@ -469,7 +480,7 @@ def _held_back(
         reasons[NO_DOOR_ROW] = NO_DOOR_REASON
     # A worker is not a row: a case it holds back reads ALK's sealed cause, or its bypass.
     reasons.update(_worker_reasons(placed, workers))
-    for row in (NOT_VALIDATED_ROW, ARCHIVED_ROW):
+    for row in (NOT_VALIDATED_ROW, ARCHIVED_ROW, NOT_ACTIVE_ROW):
         texts = [
             one.lifecycle_reason
             for one in placed
@@ -497,7 +508,9 @@ def _unproved_next(
     return validation.unproved_next(pairing.environment, pairing.agent_version, bundle)
 
 
-def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan:
+def select_for_run(
+    pairing: Pairing, *, keys: list[str], trials: int, lifecycle_gate: bool = True
+) -> RunPlan:
     """The requested cases a run holds back, placed as ``selection_report`` places
     them: a case in the blocked bucket is held back and named, never sent.
 
@@ -526,6 +539,7 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         bundle=bundle,
         evidence=evidence,
         workers=report["workers"],
+        lifecycle_gate=lifecycle_gate,
     )
     held, by, reasons = _held_back(placement, report["rows"], report["workers"])
     return RunPlan(
@@ -674,6 +688,7 @@ def _place_all(
     bundle: HarnessAssembledBundle | None,
     evidence: Evidence,
     workers: list[WorkerBoundaryView],
+    lifecycle_gate: bool = True,
 ) -> _Placement:
     cases = case_needs(
         environment_version=pairing.environment_version,
@@ -699,13 +714,17 @@ def _place_all(
             )
         else:
             kept.append(one)
-    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
-
-    lifecycle = scenario_lifecycle(
-        pairing.environment,
-        suite_version=pairing.suite_version,
-        environment_version=pairing.environment_version,
-        keys=[one.key for one in kept],
+    # A fix's own check run measures the cases it wrote for the fix: it is gated by readiness, not by lifecycle.
+    lifecycle = (
+        scenario_lifecycle(
+            pairing.environment,
+            suite_version=pairing.suite_version,
+            environment_version=pairing.environment_version,
+            keys=[one.key for one in kept],
+            agent_version_id=getattr(pairing.agent_version, "id", None),
+        )
+        if lifecycle_gate
+        else {}
     )
     # A run of a pairing being validated, or a validation failed, is refused, whatever
     # its rows say.
@@ -719,10 +738,6 @@ def _place_all(
     voice = _voice(pairing)
     reach = _door_reach(pairing)
     many = len(kept) > 1 or trials > 1
-    default_pair = (
-        pairing.suite_version.id == pairing.environment.suite_version_id
-        and pairing.environment_version.id == pairing.environment.environment_version_id
-    )
     holds = case_holds(pairing, evidence)
     bypassed = frozenset(bypassed_workers(workers))
     placed = [
@@ -734,7 +749,6 @@ def _place_all(
             many=many,
             pair_validating=pair_validating,
             pair_failed=pair_failed,
-            default_pair=default_pair,
             no_door=_needs_a_missing_door(case, reach),
             judge_failed=judge_failed,
             hold=case_hold(holds, case.key),
@@ -870,14 +884,11 @@ def _place(
     many: bool,
     pair_validating: bool,
     pair_failed: bool,
-    default_pair: bool = True,
     no_door: bool = False,
     judge_failed: bool = False,
     hold: CaseHold = NO_HOLD,
     bypassed: frozenset[str] = frozenset(),
 ) -> Placed:
-    from simulate.services.harness_scenario_lifecycle import runnable
-
     needed = set(case.rows)
     if voice:
         # A voice case reaches the agent by audio, not by a test chat message.
@@ -908,7 +919,10 @@ def _place(
     if view is not None and view["state"] == "archived":
         blocked.append(ARCHIVED_ROW)
         lifecycle_reason = view["reason_text"]
-    elif not runnable(view, default_pair=default_pair):
+    elif view is not None and view["state"] == "validated":
+        blocked.append(NOT_ACTIVE_ROW)
+        lifecycle_reason = reason_text("not_active")
+    elif not runnable(view):
         blocked.append(NOT_VALIDATED_ROW)
         lifecycle_reason = view["reason_text"]
     if no_door:
