@@ -106,7 +106,6 @@ const FeatureCard = ({
               color="primary"
               variant="contained"
               onClick={() => navigate(actionLink)}
-              sx={{ height: "38px", padding: "8px 24px" }}
             >
               <Typography
                 variant="s1"

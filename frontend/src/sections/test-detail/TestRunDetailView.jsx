@@ -1,4 +1,5 @@
-import { Alert, Box, Button, Paper, useTheme } from "@mui/material";
+import { Alert, Box, Button, useTheme } from "@mui/material";
+import Section from "src/components/section";
 import { useQuery } from "@tanstack/react-query";
 import React, {
   lazy,
@@ -14,6 +15,7 @@ import TestDetailContextProvider from "./TestDetailContextProvider";
 import TestExecutionDetailTabs from "./TestExecutionDetailTabs";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import { getTabsBasedOnAgentType } from "./common";
+import useExecutionLinkBase from "./useExecutionLinkBase";
 import useTestRunDetails from "src/hooks/useTestRunDetails";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
@@ -29,6 +31,7 @@ const TestRunDetailView = () => {
   const navigate = useNavigate();
   const { executionId, testId } = useParams();
   const { pathname } = useLocation();
+  const basePath = useExecutionLinkBase();
   const [newExecutionId, setNewExecutionId] = useState(null);
 
   const { data: latestExecutionId, refetch: refetchLatestExecution } = useQuery(
@@ -90,8 +93,9 @@ const TestRunDetailView = () => {
           sourceType === SourceType.PROMPT ? AGENT_TYPES.CHAT : agentType,
         testId,
         executionId,
+        basePath,
       }),
-    [agentType, sourceType, testId, executionId],
+    [agentType, sourceType, testId, executionId, basePath],
   );
 
   // Get current tab from URL - memoized for performance
@@ -129,18 +133,15 @@ const TestRunDetailView = () => {
         }}
       >
         {/* Header Section */}
-        <Paper
+        <Section
           sx={{
             paddingX: theme.spacing(2),
             paddingTop: theme.spacing(2),
-            borderRadius: 0,
-            boxShadow: "none",
-            backgroundColor: "background.paper",
-            flexShrink: 0, // Prevent header from shrinking
+            flexShrink: 0,
           }}
         >
           <TestRunDetailHeader />
-        </Paper>
+        </Section>
         {newExecutionId && (
           <Alert
             severity="info"
@@ -151,7 +152,7 @@ const TestRunDetailView = () => {
                 size="small"
                 onClick={() =>
                   navigate(
-                    `/dashboard/simulate/test/${testId}/${newExecutionId}/call-details`,
+                    `${basePath.slice(0, -(executionId.length + 1))}/${newExecutionId}/call-details`,
                   )
                 }
               >

@@ -11,20 +11,25 @@ import {
   Stack,
   Typography,
   Link,
-  Collapse,
+  Divider,
   IconButton,
-  Tooltip,
+  ButtonBase,
   useTheme,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
 import { useSetupChecks } from "src/api/ossSetup/oss-setup";
 import {
   CHECK_STATUS,
   CHECK_REVEAL_STAGGER_MS,
   CONNECTION_STATE,
   LAUNCH_MODE,
+  getSetupMeta,
+  nextSteps,
 } from "./constants";
 
 const { PENDING, PASSED, WARNING, FAILED, SKIPPED } = CHECK_STATUS;
@@ -47,46 +52,77 @@ const STALL_TIMEOUT_MS = 60000;
 
 const PANEL_MAX_WIDTH = 460;
 
-// `warning.main` disappears on a light surface.
-const WARNING_COLOR = "amber.600";
+// The list scrolls inside the card past this many rows, so the page doesn't.
+// The half row peeking out says there is more below.
+const VISIBLE_ROWS = 4.5;
+
+const SUPPORT_EMAIL = "support@futureagi.com";
+
+// A `fix` string (and a next step) carries inline code spans and nothing else,
+// so a markdown dependency would be overkill.
+function renderInlineCode(text) {
+  return String(text)
+    .split("`")
+    .map((part, i) =>
+      i % 2 === 1 ? (
+        <Box
+          key={`${i}:${part}`}
+          component="code"
+          sx={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: "0.92em",
+            color: "text.primary",
+            bgcolor: "background.neutral",
+            px: 0.6,
+            py: 0.15,
+            borderRadius: "4px",
+          }}
+        >
+          {part}
+        </Box>
+      ) : (
+        part
+      ),
+    );
+}
 
 const STATUS_META = {
   [PASSED]: {
     icon: "solar:check-circle-bold",
-    color: "success.main",
+    role: "success",
     label: "Ready",
   },
   [WARNING]: {
     icon: "solar:danger-triangle-bold",
-    color: WARNING_COLOR,
+    role: "warning",
     label: "Caution",
   },
   [FAILED]: {
     icon: "solar:close-circle-bold",
-    color: "error.main",
+    role: "danger",
     label: "Failed",
   },
   [SKIPPED]: {
     icon: "solar:minus-circle-linear",
-    color: "text.disabled",
+    role: "neutral",
     label: "Optional",
   },
   [PENDING]: {
     icon: "svg-spinners:90-ring",
-    color: "primary.main",
-    labelColor: "text.primary",
+    role: "info",
     label: "Checking…",
   },
 };
 
 export default function ValidationStep({
   mode,
-  onBack,
+  onSwitchMode,
   onContinue,
   onProgress,
+  authenticated = false,
 }) {
   const theme = useTheme();
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [revealCount, setRevealCount] = useState(0);
   const [pollInterval, setPollInterval] = useState(FAST_POLL_MS);
   const [revalidating, setRevalidating] = useState(false);
@@ -96,12 +132,20 @@ export default function ValidationStep({
   const lastSignature = useRef(null);
   const stalledSince = useRef(null);
   const spinTimer = useRef(null);
+  const rowsRef = useRef(null);
 
   const { data, isError, refetch, errorUpdatedAt } = useSetupChecks(mode, {
     refetchInterval: pollInterval,
   });
 
   const checks = useMemo(() => data?.checks ?? [], [data]);
+  const setupMeta = getSetupMeta(data?.setup);
+  const collectorUrl = data?.collector_http_url;
+  const accountExists = Boolean(data?.account_exists);
+  const steps = useMemo(
+    () => nextSteps({ authenticated, accountExists, collectorUrl }),
+    [authenticated, accountExists, collectorUrl],
+  );
 
   let connectionState = CONNECTION_STATE.CONNECTING;
   if (isError) connectionState = CONNECTION_STATE.UNREACHABLE;
@@ -212,6 +256,32 @@ export default function ValidationStep({
     [checks, revealCount],
   );
 
+  // Every row shows while the checks reveal. After that the passing ones fold
+  // into the summary line, leaving only what needs a look (or is optional);
+  // expanding adds them underneath, so those rows stay where they were.
+  const showAll = expanded || stillRevealing;
+  const visibleChecks = useMemo(() => {
+    if (stillRevealing) return displayChecks;
+    const rest = displayChecks.filter((check) => check.status !== PASSED);
+    if (!expanded) return rest;
+    return [
+      ...rest,
+      ...displayChecks.filter((check) => check.status === PASSED),
+    ];
+  }, [displayChecks, expanded, stillRevealing]);
+
+  // Follow the newest row inside the card only: scrollIntoView would move the
+  // page too.
+  useEffect(() => {
+    const list = rowsRef.current;
+    const row = list?.children[revealCount - 1];
+    if (!stillRevealing || !row) return;
+    list.scrollTop = Math.max(
+      0,
+      row.offsetTop + row.offsetHeight - list.clientHeight,
+    );
+  }, [revealCount, stillRevealing]);
+
   const counts = useMemo(() => {
     const c = { passed: 0, warning: 0, failed: 0, optional: 0 };
     resolved.forEach((check) => {
@@ -235,32 +305,59 @@ export default function ValidationStep({
     return parts.join(" · ") || "Running pre-flight…";
   }, [counts, reachable]);
 
-  const amberMain = theme.palette.amber[600];
-  const tint = (key, opacity = 0.16) => alpha(theme.palette[key].main, opacity);
+  // One line per check that is actually down, warnings included: on a test
+  // flight a stopped minio comes back WARNING and its uploads still fail, so
+  // the operator needs the same remedy. The row itself already says what
+  // breaks, so this stays a single sentence.
+  const needsFix = useMemo(
+    () =>
+      checks.filter(
+        (c) => (c.status === FAILED || c.status === WARNING) && c.fix,
+      ),
+    [checks],
+  );
+
+  const supportHref = useMemo(() => {
+    const ids = checks
+      .filter((c) => c.status === FAILED)
+      .map((c) => c.id)
+      .join(", ");
+    const subject = `Self-hosted pre-flight: ${ids || "need a hand"}`;
+    const body = `Launch mode: ${mode}\nFailed checks: ${ids || "none"}\n\nWhat I have already tried:\n`;
+    // mailto, not Gmail's web compose: that sends anyone on Outlook, Fastmail
+    // or a corporate client to a Google sign-in page instead of a draft.
+    return (
+      `mailto:${SUPPORT_EMAIL}` +
+      `?subject=${encodeURIComponent(subject)}` +
+      `&body=${encodeURIComponent(body)}`
+    );
+  }, [checks, mode]);
+
+  const roleColors = (role) => statusColors(theme, role);
 
   // An unreachable server shows a spinner, never a wall of failed checks.
   let summaryIcon = {
     icon: "svg-spinners:90-ring-with-bg",
     color: "text.secondary",
-    bg: alpha(theme.palette.text.primary, 0.08),
+    bg: theme.palette.action.selected,
   };
   if (reachable && counts.failed) {
     summaryIcon = {
       icon: "solar:close-circle-bold",
-      color: "error.main",
-      bg: tint("error"),
+      color: roleColors("danger").fg,
+      bg: roleColors("danger").bg,
     };
   } else if (reachable && counts.warning) {
     summaryIcon = {
       icon: "solar:danger-triangle-bold",
-      color: WARNING_COLOR,
-      bg: alpha(amberMain, 0.16),
+      color: roleColors("warning").fg,
+      bg: roleColors("warning").bg,
     };
   } else if (reachable) {
     summaryIcon = {
       icon: "solar:check-circle-bold",
-      color: "success.main",
-      bg: tint("success"),
+      color: roleColors("success").fg,
+      bg: roleColors("success").bg,
     };
   }
 
@@ -284,7 +381,7 @@ export default function ValidationStep({
   };
 
   const renderHead = (
-    <Stack sx={{ mb: 2.5 }}>
+    <Stack sx={{ mb: 2 }}>
       <Typography
         variant="l2"
         component="h1"
@@ -295,7 +392,7 @@ export default function ValidationStep({
       </Typography>
       <Typography
         variant="s1_2"
-        sx={{ color: "text.secondary", maxWidth: PANEL_MAX_WIDTH, mt: 1 }}
+        sx={{ color: "text.secondary", maxWidth: PANEL_MAX_WIDTH, mt: 0.75 }}
       >
         We&apos;re running through your onboard systems now. Re-run anything
         that needs attention. The{" "}
@@ -309,6 +406,30 @@ export default function ValidationStep({
         </Link>{" "}
         are your co-pilot if a check needs a hand.
       </Typography>
+      {setupMeta && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="flex-start"
+          sx={{ mt: 1.5, maxWidth: PANEL_MAX_WIDTH }}
+          data-testid="oss-setup-kind"
+        >
+          <Iconify
+            icon={setupMeta.icon}
+            width={18}
+            sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }}
+          />
+          <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+            <Box
+              component="span"
+              sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+            >
+              {setupMeta.title}.
+            </Box>{" "}
+            {setupMeta.description}
+          </Typography>
+        </Stack>
+      )}
     </Stack>
   );
 
@@ -323,44 +444,50 @@ export default function ValidationStep({
         alignItems="center"
         spacing={1.5}
         sx={{
-          px: 2,
-          py: 1.5,
+          px: 1.5,
+          py: 0.5,
+          minHeight: check.detail ? ROW_HEIGHT.twoLine : ROW_HEIGHT.default,
           borderTop: "1px solid",
-          borderColor: failed ? tint("error", 0.28) : "divider",
-          bgcolor: failed ? tint("error", 0.1) : "transparent",
+          borderColor: failed ? roleColors("danger").border : "border.subtle",
+          bgcolor: failed ? roleColors("danger").bg : "transparent",
         }}
       >
         <Box
           sx={{
-            width: 22,
+            width: 20,
             display: "flex",
             justifyContent: "center",
             flexShrink: 0,
           }}
         >
-          <Iconify icon={meta.icon} width={22} sx={{ color: meta.color }} />
+          <Iconify
+            icon={meta.icon}
+            width={16}
+            sx={{ color: roleColors(meta.role).solid }}
+          />
         </Box>
 
         <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Typography
-            variant="s1"
+            variant="s2_1"
             fontWeight="fontWeightMedium"
             sx={{ color: "text.primary" }}
           >
             {check.label}
           </Typography>
           {check.detail && (
-            <Typography variant="s2" sx={{ color: "text.secondary" }}>
+            <Typography variant="s2" sx={{ color: "text.tertiary" }}>
               {check.detail}
             </Typography>
           )}
         </Stack>
 
         {canRerun && (
-          <Tooltip title="Re-run pre-flight">
+          <CustomTooltip show title="Re-run pre-flight" size="small" arrow>
             <span>
               <IconButton
                 size="small"
+                aria-label="Re-run pre-flight"
                 disabled={rerunDisabled}
                 onClick={handleRevalidate}
                 sx={{ color: "text.primary", flexShrink: 0 }}
@@ -368,16 +495,15 @@ export default function ValidationStep({
                 <Iconify icon="solar:refresh-linear" width={16} sx={spinSx} />
               </IconButton>
             </span>
-          </Tooltip>
+          </CustomTooltip>
         )}
 
-        <Typography
-          variant="s2_1"
-          fontWeight="fontWeightSemiBold"
-          sx={{ color: meta.labelColor || meta.color, flexShrink: 0 }}
-        >
-          {meta.label}
-        </Typography>
+        <StatusBadge
+          status={check.status}
+          label={meta.label}
+          role={meta.role}
+          dot={false}
+        />
       </Stack>
     );
   };
@@ -386,23 +512,31 @@ export default function ValidationStep({
     <Box
       sx={{
         border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
+        borderColor: "border.default",
+        borderRadius: "8px",
         overflow: "hidden",
         maxWidth: PANEL_MAX_WIDTH,
       }}
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.5}
-        sx={{ px: 2, py: 1.75 }}
+      <ButtonBase
+        aria-expanded={showAll}
+        disabled={stillRevealing || !checks.length}
+        onClick={() => setExpanded((v) => !v)}
+        sx={{
+          width: "100%",
+          gap: 1.5,
+          px: 1.5,
+          py: 1.25,
+          justifyContent: "flex-start",
+          textAlign: "left",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
       >
         <Box
           sx={{
-            width: 36,
-            height: 36,
-            borderRadius: "50%",
+            width: 28,
+            height: 28,
+            borderRadius: "6px",
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
@@ -411,9 +545,9 @@ export default function ValidationStep({
             color: summaryIcon.color,
           }}
         >
-          <Iconify icon={summaryIcon.icon} width={20} />
+          <Iconify icon={summaryIcon.icon} width={16} />
         </Box>
-        <Stack sx={{ flex: 1 }}>
+        <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Typography
             variant="s1_2"
             fontWeight="fontWeightSemiBold"
@@ -425,21 +559,31 @@ export default function ValidationStep({
             {summary}
           </Typography>
         </Stack>
-        <IconButton size="small" onClick={() => setExpanded((v) => !v)}>
+        {checks.length > 0 && (
           <Iconify
             icon={
-              expanded
+              showAll
                 ? "solar:alt-arrow-up-linear"
                 : "solar:alt-arrow-down-linear"
             }
-            width={18}
+            width={20}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-        </IconButton>
-      </Stack>
+        )}
+      </ButtonBase>
 
-      <Collapse in={expanded}>
-        {displayChecks.map(renderRow)}
+      <Box
+        ref={rowsRef}
+        sx={{
+          position: "relative",
+          maxHeight: ROW_HEIGHT.default * VISIBLE_ROWS,
+          overflowY: "auto",
+        }}
+      >
+        {visibleChecks.map(renderRow)}
+      </Box>
 
+      {expanded && (
         <Stack
           direction="row"
           alignItems="center"
@@ -447,10 +591,10 @@ export default function ValidationStep({
           spacing={1}
           onClick={rerunDisabled ? undefined : handleRevalidate}
           sx={{
-            px: 2,
-            py: 1.5,
+            px: 1.5,
+            py: 1,
             borderTop: "1px solid",
-            borderColor: "divider",
+            borderColor: "border.subtle",
             cursor: rerunDisabled ? "default" : "pointer",
             color: rerunDisabled ? "text.disabled" : "text.primary",
             userSelect: "none",
@@ -465,7 +609,120 @@ export default function ValidationStep({
             {revalidating ? "Re-running…" : "Re-run pre-flight"}
           </Typography>
         </Stack>
-      </Collapse>
+      )}
+    </Box>
+  );
+
+  const renderDetails = needsFix.length > 0 && !stillRevealing && (
+    <Box
+      sx={{
+        maxWidth: PANEL_MAX_WIDTH,
+        mt: 1.25,
+        border: "1px solid",
+        borderColor: "border.default",
+        borderRadius: "8px",
+      }}
+    >
+      <Typography
+        variant="s2_1"
+        fontWeight="fontWeightSemiBold"
+        sx={{
+          display: "block",
+          px: 1.5,
+          pt: 1.5,
+          color: "text.tertiary",
+        }}
+      >
+        Details
+      </Typography>
+      {needsFix.map((check, i) => (
+        <Stack
+          key={check.id}
+          direction="row"
+          spacing={1.25}
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderTop: i === 0 ? "none" : "1px solid",
+            borderColor: "border.subtle",
+          }}
+        >
+          <Link
+            href={check.docs_url || undefined}
+            target="_blank"
+            rel="noopener"
+            variant="s2_2"
+            fontWeight="fontWeightSemiBold"
+            sx={{ width: 150, flexShrink: 0, color: "text.primary" }}
+          >
+            {check.label}
+          </Link>
+          <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+            {renderInlineCode(check.fix)}
+          </Typography>
+        </Stack>
+      ))}
+    </Box>
+  );
+
+  // Plain-language next moves, once nothing stands between the operator and
+  // Continue.
+  const renderNextSteps = !blocked && (
+    <Box
+      sx={{
+        maxWidth: PANEL_MAX_WIDTH,
+        mt: 1.25,
+        border: "1px solid",
+        borderColor: "border.default",
+        borderRadius: "8px",
+        px: 1.5,
+        py: 1.5,
+      }}
+    >
+      <Typography
+        variant="s2_1"
+        fontWeight="fontWeightSemiBold"
+        sx={{
+          display: "block",
+          color: "text.tertiary",
+        }}
+      >
+        Next up
+      </Typography>
+      <Stack component="ol" spacing={1} sx={{ m: 0, mt: 1, p: 0 }}>
+        {steps.map((next) => (
+          <Stack
+            key={next.id}
+            component="li"
+            direction="row"
+            spacing={1.25}
+            alignItems="flex-start"
+            sx={{ listStyle: "none" }}
+          >
+            <Iconify
+              icon={next.icon}
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+            />
+            <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+              {renderInlineCode(next.text)}
+              {next.link && (
+                <>
+                  {" "}
+                  <Link
+                    href={next.link.href}
+                    target="_blank"
+                    rel="noopener"
+                    underline="always"
+                  >
+                    {next.link.label}
+                  </Link>
+                </>
+              )}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
     </Box>
   );
 
@@ -473,33 +730,63 @@ export default function ValidationStep({
     <>
       {renderHead}
       {renderChecks}
+      {renderDetails}
+      {renderNextSteps}
 
       <Stack spacing={0.5} sx={{ maxWidth: PANEL_MAX_WIDTH, mt: 2 }}>
         <LoadingButton
           fullWidth
           color="primary"
           variant="contained"
-          onClick={onContinue}
+          onClick={() => onContinue({ accountExists })}
           disabled={blocked}
-          sx={{ height: 40, borderRadius: 0.5 }}
         >
           Continue
         </LoadingButton>
         {blockedByFailure && !stillRevealing && (
-          <Typography
-            variant="s2_1"
-            sx={{ color: "error.main", textAlign: "center", pt: 0.5 }}
+          <>
+            <Typography
+              variant="s2_1"
+              sx={{
+                color: roleColors("danger").fg,
+                textAlign: "center",
+                pt: 0.5,
+              }}
+            >
+              Fix the failed systems to continue with a production launch.
+            </Typography>
+            <Divider sx={{ my: 1, color: "text.disabled" }}>
+              <Typography variant="s2_1">or</Typography>
+            </Divider>
+            <LoadingButton
+              fullWidth
+              variant="outlined"
+              onClick={() => onSwitchMode(LAUNCH_MODE.EXPERIMENT)}
+            >
+              Continue with Test flight
+            </LoadingButton>
+          </>
+        )}
+        {/* Once a mode is picked the only moves are forward: there is no Back. */}
+        {mode === LAUNCH_MODE.EXPERIMENT && (
+          <LoadingButton
+            fullWidth
+            variant="text"
+            onClick={() => onSwitchMode(LAUNCH_MODE.LIVE)}
+            sx={{ color: "text.secondary" }}
           >
-            Fix the failed systems to continue with a production launch.
-          </Typography>
+            Switch to Production
+          </LoadingButton>
         )}
         <LoadingButton
           fullWidth
           variant="text"
-          onClick={onBack}
-          sx={{ height: 34, borderRadius: 0.5, color: "text.secondary" }}
+          href={supportHref}
+          target="_blank"
+          rel="noopener"
+          sx={{ color: "text.secondary" }}
         >
-          Back
+          Contact support
         </LoadingButton>
       </Stack>
     </>
@@ -508,7 +795,8 @@ export default function ValidationStep({
 
 ValidationStep.propTypes = {
   mode: PropTypes.string,
-  onBack: PropTypes.func.isRequired,
+  onSwitchMode: PropTypes.func.isRequired,
   onContinue: PropTypes.func.isRequired,
   onProgress: PropTypes.func,
+  authenticated: PropTypes.bool,
 };

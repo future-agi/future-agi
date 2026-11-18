@@ -1,7 +1,10 @@
 import uuid
+from unittest.mock import Mock
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
+from structlog.testing import capture_logs
+
 from ee.falcon_ai.models import (
     Conversation,
     FalconFile,
@@ -10,6 +13,7 @@ from ee.falcon_ai.models import (
     Message,
     Skill,
 )
+from tfc.utils.storage_client import storage_http_client
 
 
 @pytest.mark.django_db
@@ -242,17 +246,29 @@ class TestMessageFeedbackView:
 class TestFileUploadView:
     URL = "/falcon-ai/files/upload/"
 
+    @pytest.mark.parametrize("endpoint_env", ["MINIO_ENDPOINT", "S3_ENDPOINT_URL"])
+    @pytest.mark.parametrize(
+        ("endpoint", "host", "secure"),
+        [
+            ("minio:9000", "minio:9000", False),
+            ("localhost:9000", "localhost:9000", False),
+            ("http://minio:9000", "minio:9000", False),
+            ("https://storage.example.test:9443", "storage.example.test:9443", True),
+            (None, "minio:9000", False),
+        ],
+    )
     def test_upload_text_file_uses_s3_env_and_extracts_text(
-        self, auth_client, monkeypatch
+        self, auth_client, monkeypatch, endpoint_env, endpoint, host, secure
     ):
         class FakeMinio:
             instances = []
 
-            def __init__(self, endpoint, access_key, secret_key, secure):
+            def __init__(self, endpoint, access_key, secret_key, secure, http_client):
                 self.endpoint = endpoint
                 self.access_key = access_key
                 self.secret_key = secret_key
                 self.secure = secure
+                self.http_client = http_client
                 self.put_calls = []
                 self.__class__.instances.append(self)
 
@@ -273,7 +289,9 @@ class TestFileUploadView:
         monkeypatch.delenv("MINIO_ENDPOINT", raising=False)
         monkeypatch.delenv("MINIO_ROOT_USER", raising=False)
         monkeypatch.delenv("MINIO_ROOT_PASSWORD", raising=False)
-        monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+        monkeypatch.delenv("S3_ENDPOINT_URL", raising=False)
+        if endpoint is not None:
+            monkeypatch.setenv(endpoint_env, endpoint)
         monkeypatch.setenv("S3_ACCESS_KEY", "futureagi")
         monkeypatch.setenv("S3_SECRET_KEY", "futureagi")
         monkeypatch.setattr("minio.Minio", FakeMinio)
@@ -291,11 +309,131 @@ class TestFileUploadView:
         falcon_file = FalconFile.objects.get(id=resp.data["result"]["id"])
         assert falcon_file.text_content == "Falcon file upload text"
         assert falcon_file.storage_key.endswith("/falcon notes.txt")
-        assert FakeMinio.instances[0].endpoint == "minio:9000"
+        assert FakeMinio.instances[0].endpoint == host
         assert FakeMinio.instances[0].access_key == "futureagi"
         assert FakeMinio.instances[0].secret_key == "futureagi"
-        assert FakeMinio.instances[0].secure is False
+        assert FakeMinio.instances[0].secure is secure
         assert FakeMinio.instances[0].put_calls[0]["content_type"] == "text/plain"
+        # The proxy-aware transport the app's own storage client uses.
+        assert type(FakeMinio.instances[0].http_client) is type(storage_http_client())
+
+    @pytest.mark.parametrize(
+        "setting", ["MINIO_ENDPOINT", "S3_ENDPOINT_URL", "MINIO_URL"]
+    )
+    @pytest.mark.parametrize(
+        "endpoint", ["", "http://", "minio:bad", "http://user:secret@storage.example"]
+    )
+    def test_invalid_storage_configuration_is_logged_without_creating_file(
+        self, auth_client, monkeypatch, setting, endpoint
+    ):
+        monkeypatch.setenv("MINIO_ENDPOINT", "")
+        monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+        failing_setting = setting
+        if setting == "MINIO_URL":
+            monkeypatch.setattr("tfc.settings.settings.MINIO_URL", endpoint)
+        else:
+            monkeypatch.setenv(setting, endpoint)
+            if setting == "MINIO_ENDPOINT" and not endpoint:
+                # An empty MINIO_ENDPOINT falls through to S3_ENDPOINT_URL.
+                monkeypatch.setenv("S3_ENDPOINT_URL", "")
+                failing_setting = "S3_ENDPOINT_URL"
+        client_factory = Mock()
+        monkeypatch.setattr("minio.Minio", client_factory)
+        upload = SimpleUploadedFile(
+            "notes.txt", b"Synthetic notes", content_type="text/plain"
+        )
+
+        with capture_logs() as logs:
+            resp = auth_client.post(self.URL, {"file": upload}, format="multipart")
+
+        # A server-side misconfiguration, not a client validation error.
+        assert resp.status_code == 503
+        assert resp.data["status"] is False
+        assert resp.data["type"] == "service_unavailable"
+        assert resp.data["code"] == "storage_configuration_error"
+        assert resp.data["detail"] == (
+            "File upload failed because the server storage endpoint is not configured "
+            "correctly. Contact your administrator."
+        )
+        assert FalconFile.objects.count() == 0
+        client_factory.assert_not_called()
+        errors = [
+            row
+            for row in logs
+            if row["event"] == "falcon_upload_storage_configuration_error"
+        ]
+        assert len(errors) == 1
+        assert errors[0]["log_level"] == "error"
+        # Name the setting an administrator has to fix, never its value.
+        assert errors[0]["setting"] == failing_setting
+        assert errors[0]["reason"] == (
+            "Storage endpoint must be a host[:port] or an HTTP(S) URL"
+        )
+        assert "secret" not in str(errors)
+        assert "secret" not in str(resp.data)
+        assert not errors[0].get("exc_info")
+
+    @pytest.mark.parametrize(
+        ("endpoint", "public_url", "host", "secure", "base_url"),
+        [
+            # MINIO_URL's path prefix stays in Falcon's URLs, as it always has.
+            (
+                "http://minio:9000",
+                "http://localhost:29005/storage",
+                "minio:9000",
+                False,
+                "http://localhost:29005/storage",
+            ),
+            (
+                "http://minio:9000/",
+                "http://localhost:29005/",
+                "minio:9000",
+                False,
+                "http://localhost:29005",
+            ),
+            # A trailing newline, as a secret file or YAML block scalar leaves.
+            (
+                "http://minio:9000\n",
+                "http://localhost:29005\n",
+                "minio:9000",
+                False,
+                "http://localhost:29005",
+            ),
+            (
+                "https://storage.example.test:9443/prefix",
+                "https://storage.example.test/minio/",
+                "storage.example.test:9443",
+                True,
+                "https://storage.example.test/minio",
+            ),
+        ],
+    )
+    def test_upload_accepts_endpoint_forms_that_worked_before(
+        self, auth_client, monkeypatch, endpoint, public_url, host, secure, base_url
+    ):
+        from tfc.settings.settings import UPLOAD_BUCKET_NAME
+
+        client = Mock()
+        client.bucket_exists.return_value = True
+        client_factory = Mock(return_value=client)
+        monkeypatch.delenv("MINIO_ENDPOINT", raising=False)
+        monkeypatch.setenv("S3_ENDPOINT_URL", endpoint)
+        monkeypatch.setattr("tfc.settings.settings.MINIO_URL", public_url)
+        monkeypatch.setattr("minio.Minio", client_factory)
+        upload = SimpleUploadedFile(
+            "notes.txt", b"Synthetic notes", content_type="text/plain"
+        )
+
+        resp = auth_client.post(self.URL, {"file": upload}, format="multipart")
+
+        assert resp.status_code == 201
+        falcon_file = FalconFile.objects.get(id=resp.data["result"]["id"])
+        expected_url = f"{base_url}/{UPLOAD_BUCKET_NAME}/{falcon_file.storage_key}"
+        assert resp.data["result"]["url"] == expected_url
+        assert falcon_file.storage_url == expected_url
+        assert client_factory.call_args.args == (host,)
+        assert client_factory.call_args.kwargs["secure"] is secure
+        client.put_object.assert_called_once()
 
     def test_upload_rejects_unsupported_type(self, auth_client):
         upload = SimpleUploadedFile(
@@ -592,10 +730,11 @@ class TestSkillListView:
     URL = "/falcon-ai/skills/"
 
     def test_create_rejects_unknown_fields(self, auth_client):
+        skill_name = f"invalid-skill-{uuid.uuid4().hex}"
         resp = auth_client.post(
             self.URL,
             {
-                "name": "Custom Skill",
+                "name": skill_name,
                 "description": "",
                 "instructions": "Help safely",
                 "trigger_phrases": ["help safely"],
@@ -605,4 +744,6 @@ class TestSkillListView:
         )
 
         assert resp.status_code == 400
-        assert Skill.objects.count() == 0
+        # URL import can seed built-in skills on first request; only assert
+        # that this rejected request did not create its unique skill.
+        assert not Skill.objects.filter(name=skill_name).exists()

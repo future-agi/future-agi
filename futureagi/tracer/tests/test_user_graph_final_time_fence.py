@@ -191,12 +191,12 @@ def test_native_users_actual_paths(engine, path, minute):
             interval="day",
             metric_id="active_users",
         )
-        by_trace = defaultdict(list)
-        for row in gold:
-            if row["latency_ms"] is not None:
-                by_trace[row["trace_id"]].append(row["latency_ms"])
+        # The users latency graph is the pooled mean of every non-NULL span
+        # latency of the bucket's user traces, never a mean of trace means.
         expected = {
-            "avg_latency": mean([mean(v) for v in by_trace.values()]),
+            "avg_latency": mean(
+                [r["latency_ms"] for r in gold if r["latency_ms"] is not None]
+            ),
             "total_tokens": 2 * total,
             "avg_cost": total,
             "traffic_count": 1,

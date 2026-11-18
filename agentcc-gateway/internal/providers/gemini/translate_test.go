@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -261,8 +262,48 @@ func TestTranslateRequest_Tools(t *testing.T) {
 	if decl.Description != "Get current weather" {
 		t.Errorf("Description = %q, want %q", decl.Description, "Get current weather")
 	}
-	if string(decl.Parameters) != string(params) {
-		t.Errorf("Parameters = %s, want %s", decl.Parameters, params)
+	if string(decl.ParametersJSONSchema) != string(params) {
+		t.Errorf("ParametersJSONSchema = %s, want %s", decl.ParametersJSONSchema, params)
+	}
+}
+
+func TestTranslateRequest_NormalizesJSONToolSchemaForGemini(t *testing.T) {
+	params := json.RawMessage(`{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"name": {"type": ["string", "null"]},
+			"options": {
+				"type": ["object", "null"],
+				"propertyNames": {"pattern": "^[a-z]+$"},
+				"properties": {
+					"limit": {"type": ["integer", "null"], "exclusiveMinimum": 0},
+					"labels": {
+						"type": ["array", "null"],
+						"items": {"type": ["string", "null"]}
+					}
+				}
+			}
+		}
+	}`)
+	req := &models.ChatCompletionRequest{
+		Model:    "gemini-3.7-flash",
+		Messages: []models.Message{{Role: "user", Content: mustJSON("Inspect the agent")}},
+		Tools: []models.Tool{{
+			Type: "function",
+			Function: models.ToolFunction{
+				Name:       "inspect_agent",
+				Parameters: params,
+			},
+		}},
+	}
+
+	gr, _ := translateRequest(req)
+
+	got := string(gr.Tools[0].FunctionDeclarations[0].ParametersJSONSchema)
+	want := string(normalizeToolSchema(params))
+	if got != want {
+		t.Errorf("ParametersJSONSchema = %s, want %s", got, want)
 	}
 }
 
@@ -297,6 +338,29 @@ func TestTranslateRequest_ToolsSkipNonFunction(t *testing.T) {
 	}
 	if gr.Tools[0].FunctionDeclarations[0].Name != "real_func" {
 		t.Errorf("Name = %q, want %q", gr.Tools[0].FunctionDeclarations[0].Name, "real_func")
+	}
+}
+
+func TestTranslateRequest_ToolsRemoveUnsupportedVertexSchemaKeywords(t *testing.T) {
+	params := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"count":{"type":"integer","exclusiveMinimum":0},"labels":{"type":"object","propertyNames":{"type":"string"}}}}`)
+	req := &models.ChatCompletionRequest{
+		Model:    "gemini-3.7-flash",
+		Messages: []models.Message{{Role: "user", Content: mustJSON("Use a tool")}},
+		Tools: []models.Tool{{
+			Type:     "function",
+			Function: models.ToolFunction{Name: "claude_builtin", Parameters: params},
+		}},
+	}
+
+	gr, _ := translateRequest(req)
+	got := string(gr.Tools[0].FunctionDeclarations[0].ParametersJSONSchema)
+	for _, unsupported := range []string{"$schema", "exclusiveMinimum", "propertyNames"} {
+		if strings.Contains(got, unsupported) {
+			t.Errorf("Parameters still contain unsupported keyword %q: %s", unsupported, got)
+		}
+	}
+	if !strings.Contains(got, `"count"`) || !strings.Contains(got, `"labels"`) {
+		t.Errorf("Parameters lost supported properties: %s", got)
 	}
 }
 
@@ -800,9 +864,9 @@ func TestTranslateVisionContent_Gemini_HTTPUrl(t *testing.T) {
 	}
 }
 
-// The ``file`` content block used to only accept ``file_id`` (a URL).
+// The “file“ content block used to only accept “file_id“ (a URL).
 // Callers (OpenAI-format chat completion with inline PDFs) send a
-// ``file_data`` data URI instead, which must be translated into a Gemini
+// “file_data“ data URI instead, which must be translated into a Gemini
 // inlineData part rather than silently dropped.
 func TestTranslateVisionContent_Gemini_FileDataInlinePdf(t *testing.T) {
 	content := json.RawMessage(`[
@@ -828,8 +892,8 @@ func TestTranslateVisionContent_Gemini_FileDataInlinePdf(t *testing.T) {
 	}
 }
 
-// Remote files via ``file_id`` should still be forwarded as a fileData
-// part (with default MIME type fallback when ``format`` is absent).
+// Remote files via “file_id“ should still be forwarded as a fileData
+// part (with default MIME type fallback when “format“ is absent).
 func TestTranslateVisionContent_Gemini_FileIDWithDefaultMime(t *testing.T) {
 	content := json.RawMessage(`[
 		{"type":"file","file":{"file_id":"https://example.com/doc.pdf"}}
@@ -1204,8 +1268,8 @@ func TestTranslateResponse_FunctionCallResponse(t *testing.T) {
 		t.Fatalf("ToolCalls length = %d, want 1", len(msg.ToolCalls))
 	}
 	tc := msg.ToolCalls[0]
-	if tc.ID != "call_0" {
-		t.Errorf("ToolCall.ID = %q, want %q", tc.ID, "call_0")
+	if !strings.HasPrefix(tc.ID, "call_") {
+		t.Errorf("ToolCall.ID = %q, want call_ prefix", tc.ID)
 	}
 	if tc.Type != "function" {
 		t.Errorf("ToolCall.Type = %q, want %q", tc.Type, "function")
@@ -1248,17 +1312,88 @@ func TestTranslateResponse_MultipleFunctionCalls(t *testing.T) {
 	if len(result.Choices[0].Message.ToolCalls) != 2 {
 		t.Fatalf("ToolCalls length = %d, want 2", len(result.Choices[0].Message.ToolCalls))
 	}
-	if result.Choices[0].Message.ToolCalls[0].ID != "call_0" {
-		t.Errorf("ToolCall[0].ID = %q, want %q", result.Choices[0].Message.ToolCalls[0].ID, "call_0")
-	}
-	if result.Choices[0].Message.ToolCalls[1].ID != "call_1" {
-		t.Errorf("ToolCall[1].ID = %q, want %q", result.Choices[0].Message.ToolCalls[1].ID, "call_1")
+	if a, b := result.Choices[0].Message.ToolCalls[0].ID, result.Choices[0].Message.ToolCalls[1].ID; a == b {
+		t.Errorf("ToolCall ids both %q, want distinct", a)
 	}
 	if result.Choices[0].Message.ToolCalls[0].Function.Name != "func_a" {
 		t.Errorf("ToolCall[0].Function.Name = %q, want %q", result.Choices[0].Message.ToolCalls[0].Function.Name, "func_a")
 	}
 	if result.Choices[0].Message.ToolCalls[1].Function.Name != "func_b" {
 		t.Errorf("ToolCall[1].Function.Name = %q, want %q", result.Choices[0].Message.ToolCalls[1].Function.Name, "func_b")
+	}
+}
+
+// twoCallResponse is one Gemini turn with two parallel function calls. Only
+// the first part carries a thoughtSignature, the way Gemini 3 returns them.
+func twoCallResponse(sig, nameA, nameB string) *geminiResponse {
+	return &geminiResponse{
+		Candidates: []geminiCandidate{{
+			Content: geminiContent{Parts: []geminiPart{
+				{ThoughtSignature: sig, FunctionCall: &geminiFunctionCall{Name: nameA, Args: json.RawMessage(`{}`)}},
+				{FunctionCall: &geminiFunctionCall{Name: nameB, Args: json.RawMessage(`{}`)}},
+			}},
+			FinishReason: "STOP",
+		}},
+	}
+}
+
+// Clients keep tool call ids across rounds, so an id must not repeat in a
+// later response.
+func TestTranslateResponse_ToolCallIDsUniqueAcrossResponses(t *testing.T) {
+	seen := map[string]bool{}
+	for _, sig := range []string{"sig-a", "sig-b"} {
+		calls := translateResponse(twoCallResponse(sig, "f1", "f2"), "gemini-3").Choices[0].Message.ToolCalls
+		if len(calls) != 2 {
+			t.Fatalf("ToolCalls length = %d, want 2", len(calls))
+		}
+		if got := toolCallIDSignature(calls[0].ID); got != sig {
+			t.Errorf("signature of %q = %q, want %q", calls[0].ID, got, sig)
+		}
+		if got := toolCallIDSignature(calls[1].ID); got != "" {
+			t.Errorf("signature of %q = %q, want none", calls[1].ID, got)
+		}
+		for _, tc := range calls {
+			if seen[tc.ID] {
+				t.Errorf("tool call id %q repeats across responses", tc.ID)
+			}
+			seen[tc.ID] = true
+		}
+	}
+}
+
+// Ids from two rounds, echoed back as tool_call_id without a name, still
+// restore each call's thoughtSignature and functionResponse name.
+func TestTranslateRequest_ToolCallIDsRoundTripAcrossRounds(t *testing.T) {
+	msgs := []models.Message{{Role: "user", Content: json.RawMessage(`"go"`)}}
+	for _, resp := range []*geminiResponse{
+		twoCallResponse("sig-1", "get_weather", "get_time"),
+		twoCallResponse("sig-2", "get_stock", "get_news"),
+	} {
+		turn := translateResponse(resp, "gemini-3").Choices[0].Message
+		msgs = append(msgs, turn)
+		for _, tc := range turn.ToolCalls {
+			msgs = append(msgs, models.Message{Role: "tool", ToolCallID: tc.ID, Content: json.RawMessage(`"ok"`)})
+		}
+	}
+
+	gr, _ := translateRequest(&models.ChatCompletionRequest{Model: "gemini-3", Messages: msgs})
+
+	var sigs, names []string
+	for _, c := range gr.Contents {
+		for _, p := range c.Parts {
+			if p.FunctionCall != nil {
+				sigs = append(sigs, p.ThoughtSignature)
+			}
+			if p.FunctionResponse != nil {
+				names = append(names, p.FunctionResponse.Name)
+			}
+		}
+	}
+	if want := []string{"sig-1", "", "sig-2", ""}; !slices.Equal(sigs, want) {
+		t.Errorf("functionCall signatures = %q, want %q", sigs, want)
+	}
+	if want := []string{"get_weather", "get_time", "get_stock", "get_news"}; !slices.Equal(names, want) {
+		t.Errorf("functionResponse names = %q, want %q", names, want)
 	}
 }
 
@@ -1673,6 +1808,54 @@ func TestParseStreamData_FunctionCallChunk(t *testing.T) {
 	}
 }
 
+// Ids must not repeat across streams, while each delta Index stays the
+// per-stream position clients key chunks by. The first stream sends both
+// parallel calls in one chunk, the second sends one call per chunk.
+func TestParseStreamData_ToolCallIDsUniqueAcrossStreams(t *testing.T) {
+	streams := []struct {
+		sig    string
+		chunks []string
+	}{
+		{"sig-a", []string{
+			`{"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"sig-a","functionCall":{"name":"f1","args":{}}},{"functionCall":{"name":"f2","args":{}}}]}}]}`,
+		}},
+		{"sig-b", []string{
+			`{"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"sig-b","functionCall":{"name":"f1","args":{}}}]}}]}`,
+			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"f2","args":{}}}]}}]}`,
+		}},
+	}
+	seen := map[string]bool{}
+	for _, s := range streams {
+		state := newStreamState("gemini-3")
+		var deltas []models.ToolCallDelta
+		for _, data := range s.chunks {
+			chunk, err := state.parseStreamData(data)
+			if err != nil {
+				t.Fatalf("parseStreamData: %v", err)
+			}
+			deltas = append(deltas, chunk.Choices[0].Delta.ToolCalls...)
+		}
+		if len(deltas) != 2 {
+			t.Fatalf("tool call deltas = %d, want 2", len(deltas))
+		}
+		if got := toolCallIDSignature(deltas[0].ID); got != s.sig {
+			t.Errorf("signature of %q = %q, want %q", deltas[0].ID, got, s.sig)
+		}
+		if got := toolCallIDSignature(deltas[1].ID); got != "" {
+			t.Errorf("signature of %q = %q, want none", deltas[1].ID, got)
+		}
+		for i, d := range deltas {
+			if d.Index != i {
+				t.Errorf("delta %q Index = %d, want %d", d.ID, d.Index, i)
+			}
+			if seen[d.ID] {
+				t.Errorf("tool call id %q repeats across streams", d.ID)
+			}
+			seen[d.ID] = true
+		}
+	}
+}
+
 func TestParseStreamData_FunctionCallChunkUsesToolCallsFinishReason(t *testing.T) {
 	data := `{
 		"candidates": [{
@@ -2060,5 +2243,25 @@ func TestTranslateResponse_FoldsThinkingTokensIntoCompletion(t *testing.T) {
 	}
 	if got, want := out.Usage.PromptTokens, 100; got != want {
 		t.Fatalf("PromptTokens = %d, want %d", got, want)
+	}
+}
+
+func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *testing.T) {
+	for _, value := range []*int{nil, new(int)} {
+		resp := &geminiResponse{UsageMetadata: &geminiUsageMetadata{PromptTokenCount: 100,
+			CachedContentTokenCount: value}}
+		out := translateResponse(resp, "gemini-3.8-flash")
+		if value == nil && out.Usage.PromptTokensDetails != nil {
+			t.Fatal("absent provider cache usage must remain unknown")
+		}
+		if value != nil && (out.Usage.PromptTokensDetails == nil || string(*out.Usage.PromptTokensDetails) != `{"cached_tokens":0}`) {
+			t.Fatal("explicit zero cache usage must be preserved")
+		}
+	}
+	cached := 75
+	out := translateResponse(&geminiResponse{UsageMetadata: &geminiUsageMetadata{
+		PromptTokenCount: 100, CachedContentTokenCount: &cached}}, "gemini-3.8-flash")
+	if out.Usage.PromptTokens != 100 || string(*out.Usage.PromptTokensDetails) != `{"cached_tokens":75}` {
+		t.Fatal("cached tokens must be retained without subtracting input context")
 	}
 }

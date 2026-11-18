@@ -1,7 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Divider } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Iconify from "src/components/iconify";
 import { LAUNCH_MODES, MODE_NOTE } from "./constants";
@@ -46,14 +45,11 @@ export default function LaunchModeStep({ value, onChange, onContinue }) {
             }}
             sx={{
               cursor: "pointer",
-              borderRadius: 1,
+              borderRadius: "8px",
               border: "1px solid",
-              borderColor: selected ? "primary.main" : "divider",
-              bgcolor: (theme) =>
-                selected
-                  ? alpha(theme.palette.primary.main, 0.12)
-                  : "background.paper",
-              p: 2,
+              borderColor: selected ? "primary.main" : "border.default",
+              bgcolor: selected ? "action.selected" : "background.paper",
+              p: 1.5,
               transition: "border-color 0.2s ease, background-color 0.2s ease",
               "&:hover": {
                 borderColor: selected ? "primary.main" : "text.disabled",
@@ -63,9 +59,9 @@ export default function LaunchModeStep({ value, onChange, onContinue }) {
             <Stack direction="row" spacing={1.5} alignItems="flex-start">
               <Box
                 sx={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 1,
+                  width: 28,
+                  height: 28,
+                  borderRadius: "6px",
                   flexShrink: 0,
                   display: "flex",
                   alignItems: "center",
@@ -74,7 +70,7 @@ export default function LaunchModeStep({ value, onChange, onContinue }) {
                   color: selected ? "primary.contrastText" : "text.secondary",
                 }}
               >
-                <Iconify icon={mode.icon} width={20} />
+                <Iconify icon={mode.icon} width={16} />
               </Box>
               <Stack sx={{ flex: 1 }}>
                 <Stack
@@ -83,7 +79,7 @@ export default function LaunchModeStep({ value, onChange, onContinue }) {
                   justifyContent="space-between"
                 >
                   <Typography
-                    variant="s1_2"
+                    variant="s2_1"
                     fontWeight="fontWeightSemiBold"
                     sx={{ color: "text.primary" }}
                   >
@@ -126,7 +122,7 @@ export default function LaunchModeStep({ value, onChange, onContinue }) {
         variant="contained"
         onClick={onContinue}
         disabled={!value}
-        sx={{ height: 42, borderRadius: 0.5, mt: 1 }}
+        sx={{ mt: 1 }}
       >
         Continue
       </LoadingButton>

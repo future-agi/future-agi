@@ -9,21 +9,30 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
+import { useSharedIssue } from "../sharedIssueContext";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
+import { statusColors } from "src/utils/runStatus";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EMPTY_AGG = {
   total_traces: 0,
-  avg_score: 0,
-  avg_turns: 0,
+  avg_score: null,
+  avg_turns: null,
   p50_latency: 0,
   p95_latency: 0,
 };
+
+// The API sends null when nothing was measured; a zero there would read as data.
+const formatOrDash = (value, digits) =>
+  value == null ? "—" : value.toFixed(digits);
 
 const TRACES_GRID_THEME_PARAMS = {
   wrapperBorder: { width: 0 },
@@ -31,11 +40,14 @@ const TRACES_GRID_THEME_PARAMS = {
 };
 
 // ── Aggregate bar (no Failing / Passing) ────────────────────────────────────
-function AggregateBar({ agg }) {
+function AggregateBar({ agg, showTurns }) {
   const items = [
     { label: "Total traces", value: agg.total_traces.toLocaleString() },
-    { label: "Avg score", value: agg.avg_score.toFixed(2) },
-    { label: "Avg turns", value: agg.avg_turns.toFixed(1) },
+    { label: "Avg score", value: formatOrDash(agg.avg_score, 2) },
+    // Turns only mean something for a call or conversation.
+    ...(showTurns
+      ? [{ label: "Avg turns", value: formatOrDash(agg.avg_turns, 1) }]
+      : []),
     { label: "P50 latency", value: `${(agg.p50_latency / 1000).toFixed(1)}s` },
     { label: "P95 latency", value: `${(agg.p95_latency / 1000).toFixed(1)}s` },
   ];
@@ -44,7 +56,7 @@ function AggregateBar({ agg }) {
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "repeat(5, 1fr)",
+        gridTemplateColumns: `repeat(${items.length}, 1fr)`,
         gap: 1,
         mb: 1.5,
       }}
@@ -60,10 +72,10 @@ function AggregateBar({ agg }) {
             textAlign: "center",
           }}
         >
-          <Typography fontSize="17px" fontWeight={700} color="text.primary">
+          <Typography fontSize="16px" fontWeight={600} color="text.primary">
             {item.value}
           </Typography>
-          <Typography fontSize="10px" color="text.disabled" mt={0.25}>
+          <Typography fontSize="12px" color="text.disabled" mt={0.25}>
             {item.label}
           </Typography>
         </Box>
@@ -71,24 +83,23 @@ function AggregateBar({ agg }) {
     </Box>
   );
 }
-AggregateBar.propTypes = { agg: PropTypes.object.isRequired };
+AggregateBar.propTypes = {
+  agg: PropTypes.object.isRequired,
+  showTurns: PropTypes.bool,
+};
 
 // ── Score cell renderer — full-cell fill, green ≥ 70%, red < 70% ─────────────
-function scoreColors(pct, isDark) {
-  if (pct >= 70)
-    return {
-      backgroundColor: "rgba(90,206,109,0.12)",
-      color: isDark ? "#94DFA0" : "#3a9e50",
-    };
-  if (pct >= 50)
-    return {
-      backgroundColor: "rgba(245,166,35,0.12)",
-      color: isDark ? "#E8A13A" : "#c47d00",
-    };
-  return {
-    backgroundColor: "rgba(219,47,45,0.10)",
-    color: isDark ? "#E87876" : "#c0392b",
-  };
+function scoreColors(pct, theme) {
+  if (pct >= 70) {
+    const c = statusColors(theme, "success");
+    return { backgroundColor: c.bg, color: c.fg };
+  }
+  if (pct >= 50) {
+    // Amber stays on the cell fill; the number reads in the theme text colour.
+    return { backgroundColor: statusColors(theme, "warning").bg, color: null };
+  }
+  const c = statusColors(theme, "danger");
+  return { backgroundColor: c.bg, color: c.fg };
 }
 
 function ScoreCellRenderer({ value }) {
@@ -110,10 +121,7 @@ function ScoreCellRenderer({ value }) {
     );
   }
   const pct = Math.round(value * 100);
-  const { backgroundColor, color } = scoreColors(
-    pct,
-    theme.palette.mode === "dark",
-  );
+  const { backgroundColor, color } = scoreColors(pct, theme);
   return (
     <div
       style={{
@@ -124,7 +132,7 @@ function ScoreCellRenderer({ value }) {
         backgroundColor,
         paddingInline: 12,
         fontWeight: 500,
-        fontSize: 13,
+        fontSize: 12,
         color,
       }}
     >
@@ -146,7 +154,7 @@ function TracesGrid({ rows, onRowClick }) {
         field: "id",
         width: 155,
         sortable: true,
-        cellStyle: { fontSize: "11px" },
+        cellStyle: { fontSize: "12px" },
       },
       {
         headerName: "Input",
@@ -168,7 +176,7 @@ function TracesGrid({ rows, onRowClick }) {
                 minute: "2-digit",
               })
             : "—",
-        cellStyle: { fontSize: "11px" },
+        cellStyle: { fontSize: "12px" },
       },
       {
         headerName: "Duration",
@@ -237,7 +245,7 @@ function TracesGrid({ rows, onRowClick }) {
         rowData={rows}
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
-        rowHeight={40}
+        rowHeight={ROW_HEIGHT.default}
         headerHeight={38}
         rowBuffer={10}
         suppressCellFocus
@@ -258,16 +266,25 @@ TracesGrid.propTypes = {
 export default function TracesTab({ error }) {
   const clusterId = error?.cluster_id;
   const projectId = error?.project_id;
-  const { data, isLoading } = useErrorFeedTraces(clusterId, { limit: 200 });
+  // A shared issue carries its traces; signed-out viewers can't fetch them.
+  const shared = useSharedIssue();
+  const fetched = useErrorFeedTraces(shared ? null : clusterId, { limit: 200 });
+  const data = shared ? shared.traces : fetched.data;
+  const isLoading = shared ? false : fetched.isLoading;
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
   // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.
-  const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
+  const { data: projectDetail } = useGetProjectDetails(
+    projectId,
+    !!projectId && !shared,
+  );
   const isVoiceProject = projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
   const { data: voiceCallData, isFetching: voiceLoading } = useVoiceCallDetail(
     drawerTraceId,
-    isVoiceProject && !!drawerTraceId,
+    { enabled: isVoiceProject && !!drawerTraceId, projectId },
   );
+  // The trace branch registers inside TraceDetailDrawerV2.
+  const voiceCovered = useDrawerCovered(isVoiceProject && !!drawerTraceId);
 
   const agg = data?.aggregates ?? EMPTY_AGG;
   const rows = useMemo(() => data?.traces ?? [], [data]);
@@ -312,11 +329,14 @@ export default function TracesTab({ error }) {
 
   return (
     <Stack gap={2}>
-      <AggregateBar agg={agg} />
+      <AggregateBar
+        agg={agg}
+        showTurns={isVoiceProject && agg.avg_turns != null}
+      />
 
       <Box>
         <TracesGrid rows={rows} onRowClick={setDrawerTraceId} />
-        <Typography fontSize="11px" color="text.disabled" mt={1}>
+        <Typography fontSize="12px" color="text.disabled" mt={1}>
           {isLoading
             ? "Loading traces…"
             : `Showing ${rows.length} of ${total.toLocaleString()} total traces in this cluster`}
@@ -333,6 +353,7 @@ export default function TracesTab({ error }) {
           variant="persistent"
           open={!!drawerTraceId}
           onClose={() => setDrawerTraceId(null)}
+          sx={coveredDrawerSx(voiceCovered)}
           PaperProps={{
             sx: {
               width: "auto",
@@ -382,6 +403,8 @@ export default function TracesTab({ error }) {
           onNext={handleNext}
           hasPrev={traceIndex > 0}
           hasNext={traceIndex < rows.length - 1}
+          readOnly={!!shared}
+          sharedToken={shared?.token ?? null}
         />
       )}
     </Stack>

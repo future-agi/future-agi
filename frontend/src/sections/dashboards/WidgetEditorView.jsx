@@ -1,3 +1,5 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
+import { statusColors } from "src/utils/runStatus";
 import React, {
   useState,
   useEffect,
@@ -36,8 +38,10 @@ import {
   useTheme,
   InputAdornment,
   CircularProgress,
+  ButtonBase,
 } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { alpha } from "@mui/material/styles";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
 import WidgetPieCharts from "./WidgetPieCharts";
@@ -77,6 +81,8 @@ import {
   useLegacyCursorAttributeInventory,
 } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
+import { seriesColors } from "src/theme/data-colors";
 import {
   coerceFilterValue,
   FILTER_STRING_MAX_UTF8_BYTES,
@@ -102,12 +108,19 @@ import {
   getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
+  getChartTimeWindow,
+  getTableBucketPlan,
+  describeTableBuckets,
+  isDenseChartSeries,
+  getChartMarkerSizes,
+  isAbsentChartPoint,
   getSeriesScalar,
   groupPieSeries,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
-  shouldConnectAcrossMissingBuckets,
+  getVisibleIndices,
+  resolveWidgetAxisPlan,
   resolveSavedSelection,
   toAxisConfigPayload,
 } from "./widgetUtils";
@@ -200,35 +213,60 @@ function getAllowedGranularities(preset, customDays) {
 }
 
 const CHART_TYPES = [
-  { label: "Line", value: "line", icon: "mdi:chart-line", group: "line" },
+  {
+    label: "Line",
+    value: "line",
+    icon: "solar:graph-up-linear",
+    group: "line",
+  },
   {
     label: "Stacked Line",
     value: "stacked_line",
-    icon: "mdi:chart-line-stacked",
+    icon: "solar:graph-up-linear",
     group: "line",
   },
-  { label: "Column", value: "column", icon: "mdi:chart-bar", group: "column" },
+  {
+    label: "Column",
+    value: "column",
+    icon: "solar:chart-2-linear",
+    group: "column",
+  },
   {
     label: "Stacked Column",
     value: "stacked_column",
-    icon: "mdi:chart-bar-stacked",
+    icon: "solar:chart-2-linear",
     group: "column",
   },
   {
     label: "Bar",
     value: "bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
+    icon: "solar:stars-minimalistic-linear",
     group: "bar",
   },
   {
     label: "Stacked Bar",
     value: "stacked_bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
+    icon: "solar:stars-minimalistic-linear",
     group: "bar",
   },
-  { label: "Pie", value: "pie", icon: "mdi:chart-pie", group: "other" },
-  { label: "Table", value: "table", icon: "mdi:table", group: "other" },
-  { label: "Metric", value: "metric", icon: "mdi:pound", group: "other" },
+  {
+    label: "Pie",
+    value: "pie",
+    icon: "solar:pie-chart-2-linear",
+    group: "other",
+  },
+  {
+    label: "Table",
+    value: "table",
+    icon: "solar:table-linear",
+    group: "other",
+  },
+  {
+    label: "Metric",
+    value: "metric",
+    icon: "solar:hashtag-linear",
+    group: "other",
+  },
 ];
 
 // Curated list of unit presets shown in the widget editor's Unit
@@ -248,24 +286,24 @@ const UNIT_PRESETS = [
 ];
 
 const METRIC_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
   {
     key: "trace",
     label: "Traces",
-    icon: "mdi:chart-timeline-variant",
+    icon: "solar:chart-2-linear",
     source: "traces",
     category: "system_metric",
   },
   {
     key: "eval_metric",
     label: "Evals",
-    icon: "mdi:check-circle-outline",
+    icon: "solar:check-circle-linear",
     category: "eval_metric",
   },
   {
     key: "prompt",
     label: "Prompts",
-    icon: "mdi:text-box-edit-outline",
+    icon: "solar:pen-new-square-linear",
     source: "traces",
     category: "system_metric",
     nameFilter: "prompt_",
@@ -273,19 +311,19 @@ const METRIC_CATEGORIES = [
   {
     key: "dataset",
     label: "Datasets",
-    icon: "mdi:table-large",
+    icon: "solar:table-linear",
     source: "datasets",
   },
   {
     key: "simulation",
     label: "Simulate",
-    icon: "mdi:robot-outline",
+    icon: "solar:bot-linear",
     source: "simulation",
   },
   {
     key: "user",
     label: "Users",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     source: "traces",
     category: "system_metric",
     nameFilter: "user",
@@ -293,13 +331,13 @@ const METRIC_CATEGORIES = [
   {
     key: "annotation",
     label: "Annotations",
-    icon: "mdi:format-quote-close",
+    icon: "solar:quote-linear",
     category: "annotation_metric",
   },
   {
     key: "custom_attribute",
     label: "Trace Attributes",
-    icon: "mdi:tune-variant",
+    icon: "solar:tuning-2-linear",
     source: "traces",
     category: "custom_attribute",
   },
@@ -334,6 +372,69 @@ const WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY = {
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
 };
+
+const toDashboardFilterType = (type) =>
+  WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY[type] ||
+  {
+    systemMetric: "system",
+    evalMetric: "eval_metric",
+    annotationMetric: "annotation",
+    customAttribute: "custom_attribute",
+    customColumn: "custom_column",
+  }[type] ||
+  type ||
+  "system";
+
+// Saved query names may be display labels (annotations) or backend keys
+// (legacy system/eval metrics). Keep explicit typed identities authoritative;
+// never reconstruct them from a catalog label or property_id.
+// eslint-disable-next-line react-refresh/only-export-components
+export function restoreWidgetQueryItem(
+  item,
+  fallbackSource = "traces",
+  fallbackDataType = "number",
+) {
+  const type = toDashboardFilterType(item.type);
+  const identity = {
+    annotation: item.label_id || item.labelId,
+    custom_column: item.column_id || item.columnId,
+    custom_attribute: item.attribute_key || item.attributeKey,
+  }[type];
+  const outputType = item.output_type || item.outputType;
+  const dataType =
+    type === "custom_attribute"
+      ? item.attribute_type ||
+        item.attributeType ||
+        item.dataType ||
+        item.data_type
+      : outputType && ["annotation", "eval_metric"].includes(type)
+        ? getWidgetMetricDataType({
+            category: type === "annotation" ? "annotation_metric" : type,
+            outputType,
+          })
+        : item.dataType || item.data_type;
+  return {
+    ...item,
+    id: identity || item.name || item.id,
+    registryId: item.property_id || item.propertyId || item.registryId,
+    name: item.displayName || item.display_name || item.name || item.id,
+    type,
+    dataType: dataType || fallbackDataType,
+    columnDataType: item.columnDataType || item.data_type || item.dataType,
+    outputType,
+    // Saved widgets do not carry current catalog capabilities. Preserve their
+    // requested operation, but offer only supported choices when editing text.
+    allowedAggregations:
+      item.allowedAggregations ||
+      item.allowed_aggregations ||
+      (type === "annotation" && outputType?.toLowerCase() === "text"
+        ? ["count", "count_distinct"]
+        : undefined),
+    evalKey: item.eval_key || item.evalKey,
+    configId: item.config_id || item.configId,
+    source: item.source || fallbackSource,
+  };
+}
 
 const getEligibleWidgetAttributeTypes = (attributeTypes, pickerMode) =>
   attributeTypes.filter((dataType) =>
@@ -370,6 +471,71 @@ const widgetOptionSources = (option) =>
   new Set(
     [option?.source, ...(option?.sources || [])].filter(Boolean).map(String),
   );
+
+export function WidgetCatalogOption({ option, onSelect }) {
+  const sourceNames = {
+    all: "All sources",
+    both: "Traces, Datasets",
+    traces: "Traces",
+    datasets: "Datasets",
+    simulation: "Simulate",
+    users: "Users",
+    sessions: "Sessions",
+    prompts: "Prompts",
+  };
+  // `sources` also contains search/category tokens; `source` owns identity.
+  const source = option.source || "all";
+  const sourceLabel = sourceNames[source] || source;
+  const outputLabel =
+    { SCORE: "score", PASS_FAIL: "P/F", CHOICE: "choice" }[option.outputType] ||
+    option.outputType;
+  const typeLabel = option.type === "custom_attribute" ? option.dataType : null;
+  const labels = [outputLabel, typeLabel, sourceLabel].filter(Boolean);
+
+  return (
+    <ListItemButton
+      component="button"
+      type="button"
+      aria-label={`${option.name} (${labels.join(", ")})`}
+      onClick={() => onSelect(option)}
+      sx={{ width: "100%", gap: 1, px: 1.5, py: 0.75 }}
+    >
+      <Iconify
+        icon={METRIC_TYPE_ICONS[option.type] || "solar:settings-linear"}
+        width={16}
+        sx={{ color: "text.disabled", flexShrink: 0 }}
+      />
+      <Typography
+        variant="body2"
+        title={option.name}
+        sx={{
+          fontSize: "12px",
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          textAlign: "left",
+        }}
+      >
+        {option.name}
+      </Typography>
+      {labels.map((label, index) => (
+        <Chip
+          key={`${index}:${label}`}
+          size="small"
+          variant="outlined"
+          label={label}
+          sx={{ flexShrink: 0 }}
+        />
+      ))}
+    </ListItemButton>
+  );
+}
+
+WidgetCatalogOption.propTypes = {
+  option: PropTypes.object.isRequired,
+  onSelect: PropTypes.func.isRequired,
+};
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function isWidgetPickerOptionInCategory(option, pickerCategory) {
@@ -448,6 +614,10 @@ export function buildWidgetCatalogPickerOptions({
   search = "",
   requestSettled = true,
   selectedMetricSources = [],
+  selectedMetrics = [],
+  metricTargetIndex = null,
+  selectedBreakdowns = [],
+  otherBreakdownCount = 0,
   targetMetricSource = null,
 }) {
   if (!requestSettled) return [];
@@ -457,6 +627,10 @@ export function buildWidgetCatalogPickerOptions({
     .filter((metric) =>
       isWidgetCatalogOptionAllowed(metric, pickerMode, {
         selectedMetricSources,
+        selectedMetrics,
+        metricTargetIndex,
+        selectedBreakdowns,
+        otherBreakdownCount,
         targetMetricSource,
       }),
     )
@@ -533,11 +707,30 @@ export function buildWidgetCatalogPickerOptions({
 // eslint-disable-next-line react-refresh/only-export-components
 export function getWidgetCatalogExactResultCount({
   request,
+  countRequest = request,
   categoryCounts,
   categoryCountsExact,
   requestSettled,
+  pickerMode = "metric",
+  selectedBreakdowns = [],
 }) {
   if (!requestSettled || !categoryCountsExact || !categoryCounts) return null;
+  // Search-wide counts can serve a category, but not a narrower source/search.
+  if (
+    ["source", "search", "role"].some(
+      (key) => (request?.[key] || "") !== (countRequest?.[key] || ""),
+    )
+  ) {
+    return null;
+  }
+  // Inventory counts do not include local adapter/grouping capability gates.
+  // A loaded-page count cannot stand in for the restricted result total.
+  if (
+    pickerMode !== "metric" ||
+    selectedBreakdowns.some((item) => item.id || item.name)
+  ) {
+    return null;
+  }
   const countKey = request?.category || "all";
   const count = categoryCounts[countKey];
   return Number.isSafeInteger(count) && count >= 0 ? count : null;
@@ -594,6 +787,7 @@ export function resolveWidgetCatalogSidebarCounts({
 export function buildWidgetCursorAttributeOptions(
   cursorAttributes,
   pickerMode,
+  context = {},
 ) {
   return (cursorAttributes || [])
     .flatMap((attribute) => {
@@ -622,7 +816,13 @@ export function buildWidgetCursorAttributeOptions(
         pickerMode,
       });
     })
-    .filter(Boolean);
+    .filter(
+      (option) =>
+        isWidgetCatalogOptionAllowed(option, pickerMode, {
+          selectedMetricSources: ["traces"],
+          ...context,
+        }) && isWidgetPickerOptionInCategory(option, context.pickerCategory),
+    );
 }
 
 export function mergeWidgetCursorAttributeOptions(
@@ -811,13 +1011,81 @@ const SIMULATION_BREAKDOWN_DIMENSIONS = new Set([
   "test_execution",
 ]);
 
+function isTraceAnnotationMetric(metric) {
+  return (
+    ["annotation", "annotation_metric"].includes(
+      metric.category || metric.type,
+    ) && !["datasets", "simulation"].includes(metric.source)
+  );
+}
+
+function isOwnAnnotationBreakdown(breakdown, metric) {
+  const label = metric.label_id || metric.id || metric.name;
+  const breakdownLabel = breakdown.label_id || breakdown.id || breakdown.name;
+  return Boolean(
+    label &&
+      isTraceAnnotationMetric(breakdown) &&
+      String(breakdownLabel).toLowerCase() === String(label).toLowerCase(),
+  );
+}
+
 export function isWidgetCatalogOptionAllowed(
   metric,
   pickerMode,
-  { selectedMetricSources = [], targetMetricSource = null } = {},
+  {
+    selectedMetricSources = [],
+    selectedMetrics = [],
+    metricTargetIndex = null,
+    selectedBreakdowns = [],
+    otherBreakdownCount = 0,
+    targetMetricSource = null,
+  } = {},
 ) {
+  if (pickerMode === "metric") {
+    const dimensions = selectedBreakdowns.filter(
+      (item) => item.id || item.name,
+    );
+    const prospectiveMetrics = [
+      ...selectedMetrics.filter((_, index) => index !== metricTargetIndex),
+      metric,
+    ];
+    // Reuse the breakdown guard for both selection orders. A replacement must
+    // remove only its target; retained metrics and saved dimensions stay intact.
+    return dimensions.every((breakdown) =>
+      isWidgetCatalogOptionAllowed(breakdown, "breakdown", {
+        selectedMetrics: prospectiveMetrics,
+        selectedMetricSources: prospectiveMetrics.map(
+          getWidgetMetricAdapterSource,
+        ),
+        otherBreakdownCount: dimensions.length - 1,
+      }),
+    );
+  }
   if (!["filter", "metric_filter", "breakdown"].includes(pickerMode)) {
     return true;
+  }
+  if (pickerMode === "breakdown") {
+    // _build_custom_attr_query cannot consume annotation/eval joined dimensions.
+    if (
+      ["annotation", "annotation_metric", "eval_metric"].includes(
+        metric.category || metric.type,
+      ) &&
+      selectedMetrics.some(
+        (item) =>
+          (item.category || item.type) === "custom_attribute" &&
+          getWidgetMetricAdapterSource(item) === "traces",
+      )
+    ) {
+      return false;
+    }
+    const annotations = selectedMetrics.filter(isTraceAnnotationMetric);
+    if (
+      annotations.length &&
+      (otherBreakdownCount > 0 ||
+        !annotations.every((item) => isOwnAnnotationBreakdown(metric, item)))
+    ) {
+      return false;
+    }
   }
   const declaredSources = [
     ...(metric.source ? [metric.source] : []),
@@ -833,15 +1101,18 @@ export function isWidgetCatalogOptionAllowed(
     optionSources.has(source),
   );
   const targetsSimulation = optionSources.has("simulation");
+  const isSystem = ["system", "system_metric"].includes(
+    metric.category || metric.type,
+  );
+  const dimensionName = metric.id || metric.name;
   const isSupportedDatasetDimension =
-    metric.category === "system_metric" &&
-    DATASET_WIDGET_DIMENSIONS.has(metric.name);
+    isSystem && DATASET_WIDGET_DIMENSIONS.has(dimensionName);
   const isSupportedSimulationDimension =
-    metric.category === "system_metric" &&
+    isSystem &&
     (pickerMode === "breakdown"
       ? SIMULATION_BREAKDOWN_DIMENSIONS
       : SIMULATION_FILTER_DIMENSIONS
-    ).has(metric.name);
+    ).has(dimensionName);
 
   if (pickerMode === "metric_filter") {
     if (targetMetricSource === "datasets") {
@@ -876,7 +1147,10 @@ export function isWidgetCatalogOptionAllowed(
 
 function getWidgetMetricAdapterSource(metric) {
   if (metric.source === "datasets") return "datasets";
-  if (metric.source === "simulation" && metric.type !== "custom_attribute") {
+  if (
+    metric.source === "simulation" &&
+    (metric.category || metric.type) !== "custom_attribute"
+  ) {
     return "simulation";
   }
   return "traces";
@@ -1103,25 +1377,12 @@ export function restoreWidgetFilterConfig(config) {
 }
 
 const METRIC_TYPE_ICONS = {
-  system: "mdi:cog-outline",
-  eval_metric: "mdi:check-circle-outline",
-  annotation: "mdi:format-quote-close",
-  custom_attribute: "mdi:tune-variant",
-  custom_column: "mdi:table-column",
+  system: "solar:settings-linear",
+  eval_metric: "solar:check-circle-linear",
+  annotation: "solar:quote-linear",
+  custom_attribute: "solar:tuning-2-linear",
+  custom_column: "solar:columns-3-linear",
 };
-
-const SERIES_COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
 
 const hashSeriesName = (name) => {
   const s = String(name || "");
@@ -1131,27 +1392,27 @@ const hashSeriesName = (name) => {
   }
   return Math.abs(h);
 };
-const buildSeriesColorMap = (names) => {
+// `palette` is the theme's data palette (seriesColors(theme)).
+const buildSeriesColorMap = (names, palette) => {
   const map = {};
   const used = new Set();
   (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % SERIES_COLORS.length;
+    const start = hashSeriesName(name) % palette.length;
     let picked = start;
-    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
-      const candidate = (start + i) % SERIES_COLORS.length;
+    for (let i = 0; i < palette.length; i += 1) {
+      const candidate = (start + i) % palette.length;
       if (!used.has(candidate)) {
         picked = candidate;
         break;
       }
     }
     used.add(picked);
-    map[name] = SERIES_COLORS[picked];
+    map[name] = palette[picked];
   });
   return map;
 };
-const getSeriesColor = (name, map) =>
-  (map && map[name]) ||
-  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
+const getSeriesColor = (name, map, palette) =>
+  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -1173,18 +1434,13 @@ function ToggleButtons({ options, value, onChange, theme }) {
             px: 1.5,
             py: 0.5,
             cursor: "pointer",
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: value === opt.value ? 600 : 400,
             color:
               value === opt.value
                 ? theme.palette.text.primary
                 : theme.palette.text.secondary,
-            bgcolor:
-              value === opt.value
-                ? theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.08)"
-                  : "rgba(0,0,0,0.06)"
-                : "transparent",
+            bgcolor: value === opt.value ? "action.selected" : "transparent",
             borderRight:
               i < options.length - 1
                 ? `1px solid ${theme.palette.divider}`
@@ -1193,10 +1449,7 @@ function ToggleButtons({ options, value, onChange, theme }) {
             userSelect: "none",
             transition: "all 0.15s",
             "&:hover": {
-              bgcolor:
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.05)"
-                  : "rgba(0,0,0,0.03)",
+              bgcolor: "action.hover",
             },
           }}
         >
@@ -1228,7 +1481,7 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
         alignItems="center"
         sx={{ mb: 1.5 }}
       >
-        <Typography variant="subtitle2" fontWeight={700}>
+        <Typography variant="subtitle2" fontWeight={600}>
           {title}
         </Typography>
         {showReset && (
@@ -1283,7 +1536,7 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
           onChange={(e) => onChange("label", e.target.value)}
           placeholder="e.g. Cost ($)"
           inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
-          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
         />
       </Stack>
 
@@ -1308,20 +1561,14 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
           onChange={(e) =>
             onChange("unit", e.target.value === "custom" ? "" : e.target.value)
           }
-          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
         >
           {UNIT_PRESETS.map((opt) => (
-            <MenuItem
-              key={opt.value}
-              value={opt.value}
-              sx={{ fontSize: "13px" }}
-            >
+            <MenuItem key={opt.value} value={opt.value}>
               {opt.label}
             </MenuItem>
           ))}
-          <MenuItem value="custom" sx={{ fontSize: "13px" }}>
-            Custom
-          </MenuItem>
+          <MenuItem value="custom">Custom</MenuItem>
         </TextField>
       </Stack>
 
@@ -1430,14 +1677,14 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
             value={config.min}
             onChange={(e) => onChange("min", e.target.value)}
             placeholder="Min"
-            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
           />
           <TextField
             size="small"
             value={config.max}
             onChange={(e) => onChange("max", e.target.value)}
             placeholder="Max"
-            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
           />
         </Stack>
       </Stack>
@@ -1494,7 +1741,6 @@ AxisSection.propTypes = {
 function AggregationPicker({
   value,
   onChange,
-  theme,
   extraOptions,
   allowedAggregations,
 }) {
@@ -1544,9 +1790,9 @@ function AggregationPicker({
         size="small"
         variant="outlined"
         onClick={handleOpen}
-        deleteIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        deleteIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onDelete={handleOpen}
-        sx={{ mt: 1, cursor: "pointer", fontSize: "12px" }}
+        sx={{ mt: 1, cursor: "pointer" }}
       />
       <Popper
         open={open}
@@ -1555,15 +1801,7 @@ function AggregationPicker({
         sx={{ zIndex: 1400 }}
       >
         <ClickAwayListener onClickAway={handleClose}>
-          <Paper
-            elevation={8}
-            sx={{
-              minWidth: 180,
-              border: `1px solid ${theme.palette.divider}`,
-              borderRadius: 1,
-              overflow: "hidden",
-            }}
-          >
+          <Paper elevation={8} sx={{ minWidth: 180, overflow: "hidden" }}>
             {!showPercentiles ? (
               <List dense disablePadding>
                 {primaryAggs.map((opt) => (
@@ -1577,7 +1815,7 @@ function AggregationPicker({
                       primary={opt.label}
                       primaryTypographyProps={{
                         variant: "body2",
-                        fontSize: "13px",
+                        fontSize: "12px",
                       }}
                     />
                   </ListItemButton>
@@ -1596,7 +1834,7 @@ function AggregationPicker({
                           primary={opt.label}
                           primaryTypographyProps={{
                             variant: "body2",
-                            fontSize: "13px",
+                            fontSize: "12px",
                           }}
                         />
                       </ListItemButton>
@@ -1614,7 +1852,7 @@ function AggregationPicker({
                         primary="Percentile"
                         primaryTypographyProps={{
                           variant: "body2",
-                          fontSize: "13px",
+                          fontSize: "12px",
                           fontWeight: percentileAggs.some(
                             (p) => p.value === value,
                           )
@@ -1623,7 +1861,7 @@ function AggregationPicker({
                         }}
                       />
                       <Iconify
-                        icon="mdi:chevron-right"
+                        icon="solar:alt-arrow-right-linear"
                         width={16}
                         sx={{ color: "text.secondary" }}
                       />
@@ -1638,7 +1876,7 @@ function AggregationPicker({
                   sx={{ py: 0.75 }}
                 >
                   <Iconify
-                    icon="mdi:chevron-left"
+                    icon="solar:alt-arrow-left-linear"
                     width={16}
                     sx={{ color: "text.secondary", mr: 0.5 }}
                   />
@@ -1646,7 +1884,7 @@ function AggregationPicker({
                     primary="Percentile"
                     primaryTypographyProps={{
                       variant: "body2",
-                      fontSize: "13px",
+                      fontSize: "12px",
                       fontWeight: 600,
                     }}
                   />
@@ -1663,7 +1901,7 @@ function AggregationPicker({
                       primary={opt.label}
                       primaryTypographyProps={{
                         variant: "body2",
-                        fontSize: "13px",
+                        fontSize: "12px",
                       }}
                     />
                   </ListItemButton>
@@ -1680,7 +1918,6 @@ function AggregationPicker({
 AggregationPicker.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
-  theme: PropTypes.object.isRequired,
   extraOptions: PropTypes.arrayOf(
     PropTypes.shape({
       label: PropTypes.string.isRequired,
@@ -1704,7 +1941,12 @@ const selectedEntriesFromFilter = (filter) => {
   const valueTypes = Array.isArray(filter?.valueTypes) ? filter.valueTypes : [];
   return values.map((value, index) => ({
     value,
-    type: inferFilterValueStorageType(value, valueTypes[index]),
+    // Array membership keeps its scalar member values, but option identity
+    // carries the array storage family, not persisted scalar type tags.
+    type: inferFilterValueStorageType(
+      value,
+      filter?.dataType === "array" ? "array" : valueTypes[index],
+    ),
   }));
 };
 
@@ -1719,6 +1961,7 @@ const filterValuePickerScopeKey = (filter, source) =>
       filter?.id ||
       null,
     filter?.metric_type || filter?.metricType || filter?.type || null,
+    filter?.dataType || null,
     filter?.value || [],
     filter?.valueTypes || [],
   ]);
@@ -1868,7 +2111,7 @@ export function FilterValuePickerPopup({
     });
   };
 
-  const exactValueType = ["string", "number", "boolean"].includes(
+  const exactValueType = ["string", "number", "boolean", "array"].includes(
     filter?.dataType,
   )
     ? filter.dataType
@@ -1889,17 +2132,20 @@ export function FilterValuePickerPopup({
       placement="bottom-start"
       sx={{ zIndex: 1400 }}
     >
-      <ClickAwayListener onClickAway={onClose}>
+      <ClickAwayListener
+        onClickAway={(event) => {
+          // A newly added filter auto-opens this picker ~150 ms after it
+          // renders. A click on the trigger that lands after that would
+          // otherwise close the popup (click-away) in the same event that
+          // re-opens it, and the later state update wins: the picker vanishes.
+          // The trigger owns the popup, so a click on it is never "away".
+          if (anchorEl?.contains?.(event.target)) return;
+          onClose?.(event);
+        }}
+      >
         <Paper
           elevation={8}
-          sx={{
-            width: 300,
-            display: "flex",
-            flexDirection: "column",
-            border: `1px solid ${theme.palette.divider}`,
-            borderRadius: 1,
-            bgcolor: "background.paper",
-          }}
+          sx={{ width: 300, display: "flex", flexDirection: "column" }}
         >
           {/* Search */}
           <Box sx={{ p: 1.5 }}>
@@ -1921,8 +2167,8 @@ export function FilterValuePickerPopup({
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
-                      width={18}
+                      icon="solar:magnifier-linear"
+                      width={16}
                       sx={{ color: "text.disabled" }}
                     />
                   </InputAdornment>
@@ -1959,9 +2205,12 @@ export function FilterValuePickerPopup({
           )}
 
           {/* Select all */}
-          <Box
+          <ButtonBase
+            component="div"
             onClick={toggleAll}
             sx={{
+              justifyContent: "flex-start",
+              textAlign: "left",
               display: "flex",
               alignItems: "center",
               gap: 1,
@@ -1981,7 +2230,7 @@ export function FilterValuePickerPopup({
             <Typography variant="body2" fontWeight={600} color="primary.main">
               Select all in list ({filteredOptions.length})
             </Typography>
-          </Box>
+          </ButtonBase>
           <Divider />
 
           {/* Options list */}
@@ -1990,10 +2239,13 @@ export function FilterValuePickerPopup({
             sx={{ flex: 1, overflow: "auto", maxHeight: 240 }}
           >
             {canSpecifyExactValue && (
-              <Box
+              <ButtonBase
+                component="div"
                 data-widget-filter-exact-value={exactSearchValue}
                 onClick={() => toggleValue(exactSearchValue, exactValueType)}
                 sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   gap: 1,
@@ -2015,11 +2267,11 @@ export function FilterValuePickerPopup({
                   variant="body2"
                   noWrap
                   title={`Specify: ${exactSearchValue}`}
-                  sx={{ minWidth: 0, fontSize: "13px" }}
+                  sx={{ minWidth: 0, fontSize: "12px" }}
                 >
                   Specify: <strong>{exactSearchValue}</strong>
                 </Typography>
-              </Box>
+              </ButtonBase>
             )}
             {isLoading ? (
               <Box sx={{ p: 2, textAlign: "center" }}>
@@ -2048,10 +2300,13 @@ export function FilterValuePickerPopup({
               </Box>
             ) : (
               filteredOptions.map((opt) => (
-                <Box
+                <ButtonBase
+                  component="div"
                   key={`${opt.type || ""}:${typeof opt.value}:${JSON.stringify(opt.value)}`}
                   onClick={() => toggleValue(opt.value, optionStorageType(opt))}
                   sx={{
+                    justifyContent: "flex-start",
+                    textAlign: "left",
                     display: "flex",
                     alignItems: "center",
                     gap: 1,
@@ -2073,11 +2328,11 @@ export function FilterValuePickerPopup({
                     variant="body2"
                     noWrap
                     title={String(opt.label ?? opt.value ?? "")}
-                    sx={{ minWidth: 0, fontSize: "13px" }}
+                    sx={{ minWidth: 0, fontSize: "12px" }}
                   >
                     {opt.label || opt.value}
                   </Typography>
-                </Box>
+                </ButtonBase>
               ))
             )}
             <BoundedCursorPaginationControl
@@ -2249,6 +2504,10 @@ export default function WidgetEditorView() {
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
   const lineChartRef = useRef(null);
+  // Stable ancestor for the tooltip-clamp observer: lineChartRef only mounts
+  // once the preview query resolves, but this container is present from the
+  // first render.
+  const chartAncestorRef = useRef(null);
   const saveNavTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
 
@@ -2514,9 +2773,19 @@ export default function WidgetEditorView() {
         ? activeLegacyMetricCatalog.total
         : getWidgetCatalogExactResultCount({
             request: activeCatalogRequest,
-            categoryCounts: activeCategoryCounts,
-            categoryCountsExact: activeCategoryCountsExact,
+            countRequest: activeCategoryCountsExact
+              ? activeCatalogRequest
+              : trimmedDebouncedPickerSearch
+                ? allSearchWidgetCatalogRequest
+                : baseWidgetCatalogRequest,
+            categoryCounts: activeCategoryCountsExact
+              ? activeCategoryCounts
+              : pickerSidebarCategoryCounts,
+            categoryCountsExact:
+              activeCategoryCountsExact || pickerSidebarCategoryCountsExact,
             requestSettled: activeRequestSettled,
+            pickerMode,
+            selectedBreakdowns: breakdowns,
           });
   const fetchNextPage = activeUsesLegacyCatalog
     ? activeLegacyMetricCatalog.fetchNextPage
@@ -2555,6 +2824,26 @@ export default function WidgetEditorView() {
     pickerMetricIndex == null
       ? null
       : getWidgetMetricAdapterSource(metrics[pickerMetricIndex] || {});
+  const pickerCapabilityContext = useMemo(
+    () => ({
+      selectedMetricSources,
+      selectedMetrics: metrics,
+      selectedBreakdowns: breakdowns,
+      metricTargetIndex: pickerMode === "metric" ? pickerTargetIndex : null,
+      otherBreakdownCount: breakdowns.filter(
+        (item, index) => item.id && index !== pickerTargetIndex,
+      ).length,
+      targetMetricSource,
+    }),
+    [
+      metrics,
+      breakdowns,
+      pickerMode,
+      pickerTargetIndex,
+      selectedMetricSources,
+      targetMetricSource,
+    ],
+  );
   const catalogMetricOptions = useMemo(
     () =>
       buildWidgetCatalogPickerOptions({
@@ -2563,23 +2852,25 @@ export default function WidgetEditorView() {
         pickerCategory,
         search: trimmedDebouncedPickerSearch,
         requestSettled: activeRequestSettled,
-        selectedMetricSources,
-        targetMetricSource,
+        ...pickerCapabilityContext,
       }),
     [
       activeRequestSettled,
       paginatedMetrics,
       pickerCategory,
       pickerMode,
-      selectedMetricSources,
-      targetMetricSource,
+      pickerCapabilityContext,
       trimmedDebouncedPickerSearch,
     ],
   );
 
   const cursorAttributeOptions = useMemo(
-    () => buildWidgetCursorAttributeOptions(cursorAttributes, pickerMode),
-    [cursorAttributes, pickerMode],
+    () =>
+      buildWidgetCursorAttributeOptions(cursorAttributes, pickerMode, {
+        ...pickerCapabilityContext,
+        pickerCategory,
+      }),
+    [cursorAttributes, pickerMode, pickerCategory, pickerCapabilityContext],
   );
 
   const pickerMetricOptions = useMemo(
@@ -2682,73 +2973,34 @@ export default function WidgetEditorView() {
           }));
         }
         // Restore metrics with frontend type keys + source
+        const fallbackSource =
+          qc.workflow === "simulation"
+            ? "simulation"
+            : qc.workflow === "dataset"
+              ? "datasets"
+              : "traces";
         const savedMetrics = (qc.metrics || []).map((m) => {
-          const frontendType = toDashboardFilterType(m.type);
-          // Infer source from old workflow field if metric lacks source
-          const source =
-            m.source ||
-            (qc.workflow === "simulation"
-              ? "simulation"
-              : qc.workflow === "dataset"
-                ? "datasets"
-                : "traces");
+          const restored = restoreWidgetQueryItem(m, fallbackSource, "number");
           // Restore per-metric filters from saved backend format
           const restoredFilters = (m.filters || []).map((f) =>
-            restoreFilterPayload(f, source),
+            restoreFilterPayload(f, restored.source),
           );
           return {
-            ...m,
-            id: m.name || m.id,
-            registryId: m.property_id || m.propertyId,
-            name: m.displayName || m.display_name || m.name || m.id,
-            type: frontendType,
-            dataType: m.dataType || m.data_type || m.attribute_type || "number",
-            source,
+            ...restored,
             filters: restoredFilters,
           };
         });
         setMetrics(savedMetrics);
         setFilters(
           (qc.filters || []).map((f) =>
-            restoreFilterPayload(
-              f,
-              qc.workflow === "simulation"
-                ? "simulation"
-                : qc.workflow === "dataset"
-                  ? "datasets"
-                  : "traces",
-            ),
+            restoreFilterPayload(f, fallbackSource),
           ),
         );
         // Restore breakdowns — saved format uses "name" as the key,
         // but the frontend picker/filter logic expects "id".
-        const bdTypeMap = {
-          system_metric: "system",
-          systemMetric: "system",
-          annotation_metric: "annotation",
-          annotationMetric: "annotation",
-          custom_column: "custom_column",
-          customColumn: "custom_column",
-          custom_attribute: "custom_attribute",
-          customAttribute: "custom_attribute",
-          eval_metric: "eval_metric",
-          evalMetric: "eval_metric",
-        };
-        const savedBreakdowns = (qc.breakdowns || []).map((b) => ({
-          ...b,
-          id: b.id || b.name,
-          registryId: b.property_id || b.propertyId,
-          name: b.displayName || b.display_name || b.name || b.id,
-          type: bdTypeMap[b.type] || b.type || "system",
-          dataType: b.dataType || b.data_type || b.attribute_type || "string",
-          source:
-            b.source ||
-            (qc.workflow === "simulation"
-              ? "simulation"
-              : qc.workflow === "dataset"
-                ? "datasets"
-                : "traces"),
-        }));
+        const savedBreakdowns = (qc.breakdowns || []).map((b) =>
+          restoreWidgetQueryItem(b, fallbackSource, "string"),
+        );
         setBreakdowns(savedBreakdowns);
         setInitialized(true);
       }
@@ -2765,17 +3017,6 @@ export default function WidgetEditorView() {
       custom_column: "custom_column",
     };
     return map[type] || type;
-  };
-
-  const toDashboardFilterType = (backendType) => {
-    const map = {
-      system_metric: "system",
-      eval_metric: "eval_metric",
-      annotation_metric: "annotation",
-      custom_attribute: "custom_attribute",
-      custom_column: "custom_column",
-    };
-    return map[backendType] || backendType || "system";
   };
 
   const buildFilterPayload = (f) => {
@@ -2834,15 +3075,14 @@ export default function WidgetEditorView() {
 
   const buildMetricPayload = (m, i) => {
     const backendType = toBackendType(m.type);
-    const aggregation =
-      m.allowedAggregations?.length &&
-      !m.allowedAggregations.includes(m.aggregation)
-        ? m.allowedAggregations[0]
-        : m.aggregation || "avg";
+    // Choose a supported default only when adding a metric. A saved operation
+    // must reach validation unchanged, not silently turn Average into Count.
+    const aggregation = m.aggregation || "avg";
     const base = {
       id: m.id || `m${i}`,
       name: m.id,
       ...(m.registryId && { property_id: m.registryId }),
+      ...(m.configId && { config_id: m.configId }),
       display_name: m.name || m.id,
       type: backendType,
       source: m.source || "traces",
@@ -2885,11 +3125,13 @@ export default function WidgetEditorView() {
     const base = {
       name: b.id,
       ...(b.registryId && { property_id: b.registryId }),
+      ...(b.configId && { config_id: b.configId }),
       display_name: b.name || b.id,
       type: backendType,
       source: b.source || "traces",
     };
     if (backendType === "custom_attribute") {
+      if (b.attribute_key || b.attributeKey) base.attribute_key = b.id;
       base.attribute_type = normalizeWidgetDashboardDataType(
         b.dataType || b.data_type || "string",
       );
@@ -2901,6 +3143,11 @@ export default function WidgetEditorView() {
     if (backendType === "eval_metric") {
       // b.id is eval_template_id
       if (b.outputType) base.output_type = b.outputType;
+      if (b.evalKey) base.eval_key = b.evalKey;
+    }
+    if (backendType === "custom_column") {
+      if (b.column_id || b.columnId) base.column_id = b.id;
+      if (b.columnDataType) base.data_type = b.columnDataType;
     }
     return base;
   };
@@ -3484,8 +3731,6 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
-  const connectsAcrossMissingBuckets =
-    shouldConnectAcrossMissingBuckets(apexType);
 
   const aggColumnLabel = useMemo(
     () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
@@ -3498,16 +3743,33 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
+  // See WidgetChart.jsx: series_axis is keyed by the unfiltered index.
+  const chartSeriesIndices = useMemo(
+    () => getVisibleIndices(previewSeries, visibleSeries),
+    [previewSeries, visibleSeries],
+  );
+
   // Match the saved-dashboard renderer: null means an absent aggregate
-  // bucket, not zero, so line previews connect the neighbouring exact points.
+  // bucket, not zero (see getPlottedChartSeries). Memoized so the big
+  // chartOptions memo below (which depends on this object) doesn't recompute
+  // on every render from a fresh {min,max}.
+  const chartTimeWindow = useMemo(
+    () => getChartTimeWindow(previewResult),
+    [previewResult],
+  );
+
   const plottedChartSeries = useMemo(
-    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
-    [chartSeries, connectsAcrossMissingBuckets],
+    () => getPlottedChartSeries(chartSeries, { stacked: isStacked }),
+    [chartSeries, isStacked],
   );
 
   const outOfRangeWarning = useMemo(
-    () => getYAxisRangeWarning(chartSeries, axisConfig),
-    [chartSeries, axisConfig],
+    () =>
+      getYAxisRangeWarning(chartSeries, chartSeriesIndices, axisConfig, {
+        stacked: isStacked,
+        chartType,
+      }),
+    [chartSeries, chartSeriesIndices, axisConfig, isStacked, chartType],
   );
 
   const autoDecimals = useMemo(
@@ -3561,30 +3823,37 @@ export default function WidgetEditorView() {
   }, [axisConfig.leftY.unit, autoAppliedLeftAxisUnit, suggestedLeftAxisUnit]);
 
   // Hash-derived colors give cross-reload stability; the map walker
-  // advances to the next free slot on collision so ≤10 series never
-  // share a color inside one widget. Built from previewSeries so hidden
-  // series keep their color when re-checked.
+  // advances to the next free slot on collision so series never share a
+  // color inside one widget until the palette runs out. Built from
+  // previewSeries so hidden series keep their color when re-checked.
+  const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(previewSeries.map((s) => s.name)),
-    [previewSeries],
+    () =>
+      buildSeriesColorMap(
+        previewSeries.map((s) => s.name),
+        palette,
+      ),
+    [previewSeries, palette],
   );
   const chartColors = useMemo(
-    () => chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap)),
-    [chartSeries, seriesColorMap],
+    () =>
+      chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap, palette)),
+    [chartSeries, seriesColorMap, palette],
   );
 
   // Pie slices are breakdown values, which repeat across metrics — key their
   // colours by the raw breakdown name so a project stays one colour in every pie.
   const pieColorMap = useMemo(
     () =>
-      buildSeriesColorMap([
-        ...new Set(previewSeries.map((s) => s.breakdownName)),
-      ]),
-    [previewSeries],
+      buildSeriesColorMap(
+        [...new Set(previewSeries.map((s) => s.breakdownName))],
+        palette,
+      ),
+    [previewSeries, palette],
   );
   const pieColorFor = useCallback(
-    (name) => getSeriesColor(name, pieColorMap),
-    [pieColorMap],
+    (name) => getSeriesColor(name, pieColorMap, palette),
+    [pieColorMap, palette],
   );
 
   // A pie needs a category to slice by. `hasBreakdown` mirrors the filter in
@@ -3601,6 +3870,8 @@ export default function WidgetEditorView() {
     () => (isPie && pieHasBreakdown ? groupPieSeries(previewSeries) : []),
     [isPie, pieHasBreakdown, previewSeries],
   );
+
+  useClampedChartTooltips(lineChartRef, chartAncestorRef);
 
   // Legend hover → highlight series by dimming others via SVG opacity
   const handleLegendHover = useCallback((seriesIndex) => {
@@ -3623,6 +3894,16 @@ export default function WidgetEditorView() {
   }, []);
 
   const isDark = theme.palette.mode === "dark";
+
+  const markerSizes = useMemo(
+    () =>
+      getChartMarkerSizes(
+        plottedChartSeries,
+        isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      ),
+    [plottedChartSeries, isLineChart, apexType],
+  );
+
   const formatValFn = useCallback(
     (val) =>
       formatValueWithConfig(val, leftAxisFormatConfig, {
@@ -3637,13 +3918,18 @@ export default function WidgetEditorView() {
       (val) =>
         formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
     const formatVal = makeFormatter(leftAxisFormatConfig);
+    const isDenseSeries = isDenseChartSeries(plottedChartSeries);
     return {
       chart: {
         type: apexType,
         toolbar: { show: false },
         zoom: { enabled: true },
         stacked: isStacked,
-        animations: { enabled: true, easing: "easeinout", speed: 400 },
+        animations: {
+          enabled: !isDenseSeries,
+          easing: "easeinout",
+          speed: 400,
+        },
         events: {
           mouseMove: (event, chartContext, config) => {
             const el = chartContext?.el;
@@ -3756,7 +4042,7 @@ export default function WidgetEditorView() {
       dataLabels: isHorizontal
         ? {
             enabled: true,
-            style: { fontSize: "13px", fontWeight: 500 },
+            style: { fontSize: "12px", fontWeight: 500 },
             formatter: formatVal,
             offsetX: 6,
           }
@@ -3774,17 +4060,19 @@ export default function WidgetEditorView() {
         ? {
             labels: {
               show: false,
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             },
             axisBorder: { show: false },
             axisTicks: { show: false },
           }
         : {
             type: "datetime",
-            tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
+            // Span the window that was queried, not just the buckets that
+            // reported.
+            ...(chartTimeWindow || {}),
             labels: {
               show: axisConfig.xAxis.visible,
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               datetimeUTC: false,
               datetimeFormatter: {
                 year: "MMMM",
@@ -3816,21 +4104,23 @@ export default function WidgetEditorView() {
             },
           },
       yaxis: (() => {
-        const hasRightAxis =
-          axisConfig.rightY.visible &&
-          Object.values(axisConfig.seriesAxis).some((s) => s === "right");
+        // Shared with WidgetChart.jsx so the preview matches the saved widget.
+        const { hasRightAxis, sideOf, bounds } = resolveWidgetAxisPlan(
+          chartSeries,
+          chartSeriesIndices,
+          axisConfig,
+          { stacked: isStacked, chartType },
+        );
         if (!hasRightAxis) {
+          const { min, max } = bounds.left;
           return {
             show: axisConfig.leftY.visible,
             tickAmount: 5,
             forceNiceScale: axisConfig.leftY.outOfBounds !== "hidden",
             logarithmic: axisConfig.leftY.scale === "logarithmic",
-            ...(axisConfig.leftY.min !== "" && {
-              min: Number(axisConfig.leftY.min),
-            }),
-            ...(axisConfig.leftY.max !== "" && {
-              max: Number(axisConfig.leftY.max),
-            }),
+            // Never emit null — see the note in WidgetChart.jsx.
+            ...(min != null && { min }),
+            ...(max != null && { max }),
             ...(axisConfig.leftY.label && {
               title: {
                 text: axisConfig.leftY.label,
@@ -3841,34 +4131,29 @@ export default function WidgetEditorView() {
               },
             }),
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               formatter: formatVal,
             },
           };
         }
-        // Dual axis
+        // Dual axis: one shared {min,max} per side — see WidgetChart.jsx.
         return chartSeries.map((_, i) => {
-          const origIdx = visibleSeries === null ? i : [...visibleSeries][i];
-          const side = axisConfig.seriesAxis[origIdx] || "left";
+          const side = sideOf(i);
           const cfg = side === "right" ? axisConfig.rightY : axisConfig.leftY;
+          const { min, max } = bounds[side];
           return {
             show:
               i === 0 ||
               (side === "right" &&
                 !chartSeries
                   .slice(0, i)
-                  .some(
-                    (__, j) =>
-                      (axisConfig.seriesAxis[
-                        visibleSeries === null ? j : [...visibleSeries][j]
-                      ] || "left") === "right",
-                  )),
+                  .some((__, j) => sideOf(j) === "right")),
             opposite: side === "right",
             tickAmount: 5,
             forceNiceScale: cfg.outOfBounds !== "hidden",
             logarithmic: cfg.scale === "logarithmic",
-            ...(cfg.min !== "" && { min: Number(cfg.min) }),
-            ...(cfg.max !== "" && { max: Number(cfg.max) }),
+            ...(min != null && { min }),
+            ...(max != null && { max }),
             ...(cfg.label && {
               title: {
                 text: cfg.label,
@@ -3879,14 +4164,19 @@ export default function WidgetEditorView() {
               },
             }),
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               formatter: makeFormatter(cfg),
             },
           };
         });
       })(),
       stroke: {
-        curve: "monotoneCubic",
+        // Not monotoneCubic: it derives each control handle from the
+        // neighbouring gap widths, so a tight cluster beside a long empty
+        // stretch gets a handle hundreds of px past its own segment and the
+        // line visibly runs forward then doubles back. "smooth" does not, and
+        // is what every other chart in the app already uses.
+        curve: "smooth",
         width: apexType === "area" ? 2 : apexType === "line" ? 2.5 : 0,
       },
       fill: (() => {
@@ -3904,9 +4194,9 @@ export default function WidgetEditorView() {
         };
       })(),
       markers: {
-        size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
+        size: markerSizes,
         strokeWidth: 2,
-        strokeColors: isDark ? theme.palette.background.paper : "#fff",
+        strokeColors: theme.palette.background.paper,
         hover: isLineChart
           ? { size: 8, sizeOffset: 2 }
           : { size: 6, sizeOffset: 3 },
@@ -3939,16 +4229,22 @@ export default function WidgetEditorView() {
               format: "MMM dd, yyyy",
             },
             y: {
-              formatter: formatVal,
+              formatter: (val, { seriesIndex, dataPointIndex, w } = {}) =>
+                isAbsentChartPoint(w, seriesIndex, dataPointIndex)
+                  ? "-"
+                  : formatVal(val),
             },
           }
         : {
             enabled: true,
             shared: false,
-            intersect: isLineChart,
+            // A series without markers has nothing to intersect, so a dense chart
+            // finds the hovered point by position instead.
+            intersect: isLineChart && !isDenseSeries,
             custom: ({ series, seriesIndex, dataPointIndex, w }) => {
               const sName = w.globals.seriesNames[seriesIndex] || "";
-              const color = w.globals.colors[seriesIndex] || "#6366F1";
+              const color =
+                w.globals.colors[seriesIndex] || seriesColors(theme)[0];
               const val = series[seriesIndex]?.[dataPointIndex];
               const prevVal =
                 dataPointIndex > 0
@@ -3957,28 +4253,26 @@ export default function WidgetEditorView() {
               const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
               const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
               const fmtVal = formatVal(val);
-              const bg = isDark ? "#1e1e2e" : "#fff";
-              const _border = isDark
-                ? "rgba(255,255,255,0.08)"
-                : "rgba(0,0,0,0.06)";
-              const textPrimary = isDark ? "#fff" : "#1a1a2e";
-              const textSecondary = isDark
-                ? "rgba(255,255,255,0.5)"
-                : "rgba(0,0,0,0.45)";
+              const bg = theme.palette.background.paper;
+              const border = theme.palette.divider;
+              const textPrimary = theme.palette.text.primary;
+              const textSecondary = theme.palette.text.secondary;
               let changeHtml = "";
               if (prevVal != null && prevVal !== 0 && val != null) {
                 const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
                 const sign = pct >= 0 ? "+" : "";
-                const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
-                changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
+                const changeColor = statusColors(
+                  theme,
+                  pct >= 0 ? "success" : "danger",
+                ).fg;
+                changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:12px">from previous</span></div>`;
               }
-              return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
-                <div style="width:4px;flex-shrink:0;background:${color}"></div>
-                <div style="padding:14px 16px;flex:1">
-                  <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
+              return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+                                <div style="padding:14px 16px;flex:1">
+                  <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;color:${textPrimary};line-height:1.3"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${color}"></span>${escapeHtml(sName)}</div>
                   <div style="font-size:12px;color:${textSecondary};margin-top:3px">${escapeHtml(dateStr)}</div>
                   <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px">
-                    <span style="font-weight:700;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
+                    <span style="font-weight:600;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
                   </div>
                   ${changeHtml}
                 </div>
@@ -3991,14 +4285,18 @@ export default function WidgetEditorView() {
     isLineChart,
     isStacked,
     isHorizontal,
+    chartType,
     chartSeries,
+    plottedChartSeries,
+    chartTimeWindow,
+    chartSeriesIndices,
     chartColors,
+    markerSizes,
     theme,
     axisConfig,
     autoDecimals,
     isDark,
     leftAxisFormatConfig,
-    visibleSeries,
   ]);
 
   // Horizontal bar: aggregate each series into one bar
@@ -4173,13 +4471,13 @@ export default function WidgetEditorView() {
       >
         {/* Breadcrumb links */}
         <Breadcrumbs
-          separator={<Iconify icon="mdi:chevron-right" width={14} />}
+          separator={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
           sx={{ flexShrink: 0 }}
         >
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate(paths.dashboard.dashboards.root)}
           >
             Dashboards
@@ -4189,7 +4487,7 @@ export default function WidgetEditorView() {
             color="text.secondary"
             sx={{
               cursor: "pointer",
-              fontSize: "13px",
+              fontSize: "12px",
               maxWidth: 140,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -4202,7 +4500,7 @@ export default function WidgetEditorView() {
           </Link>
         </Breadcrumbs>
         <Iconify
-          icon="mdi:chevron-right"
+          icon="solar:alt-arrow-right-linear"
           width={14}
           sx={{ color: "text.disabled", flexShrink: 0 }}
         />
@@ -4225,7 +4523,7 @@ export default function WidgetEditorView() {
               maxWidth: 350,
               "& .MuiOutlinedInput-input": {
                 py: 0.5,
-                fontSize: "14px",
+                fontSize: "12px",
                 fontWeight: 500,
               },
             }}
@@ -4234,7 +4532,7 @@ export default function WidgetEditorView() {
           <Typography
             onClick={() => !isReadOnly && setEditingName(true)}
             sx={{
-              fontSize: "14px",
+              fontSize: "12px",
               fontWeight: 500,
               cursor: isReadOnly ? "default" : "pointer",
               maxWidth: 300,
@@ -4293,14 +4591,14 @@ export default function WidgetEditorView() {
                   }}
                 >
                   <Iconify
-                    icon="mdi:text-box-outline"
+                    icon="solar:notes-linear"
                     width={14}
                     sx={{ flexShrink: 0 }}
                   />
                   <Typography
                     ref={measureRef}
                     noWrap
-                    sx={{ fontSize: "13px", minWidth: 0 }}
+                    sx={{ fontSize: "12px", minWidth: 0 }}
                   >
                     {trimmedDescription}
                   </Typography>
@@ -4311,12 +4609,10 @@ export default function WidgetEditorView() {
             !isReadOnly && (
               <Button
                 size="small"
-                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 onClick={() => setDescOpen(true)}
                 sx={{
                   flexShrink: 0,
-                  fontSize: "13px",
-                  fontWeight: 400,
                   color: "text.disabled",
                   "&:hover": { color: "text.secondary" },
                 }}
@@ -4344,7 +4640,7 @@ export default function WidgetEditorView() {
           onClick={(e) => setMoreMenuAnchor(e.currentTarget)}
           sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:dots-horizontal" width={20} />
+          <Iconify icon="solar:menu-dots-linear" width={20} />
         </IconButton>
 
         {/* More menu */}
@@ -4354,7 +4650,7 @@ export default function WidgetEditorView() {
           onClose={() => setMoreMenuAnchor(null)}
           anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
           transformOrigin={{ vertical: "top", horizontal: "right" }}
-          slotProps={{ paper: { sx: { minWidth: 180 } } }}
+          slotProps={{ paper: { sx: { minWidth: 200 } } }}
         >
           {isEditing && canDelete && (
             <MenuItem
@@ -4362,14 +4658,9 @@ export default function WidgetEditorView() {
                 setMoreMenuAnchor(null);
                 setConfirmDeleteOpen(true);
               }}
-              sx={{ color: "error.main" }}
             >
               <ListItemIcon>
-                <Iconify
-                  icon="mdi:delete-outline"
-                  width={18}
-                  sx={{ color: "error.main" }}
-                />
+                <Iconify icon="solar:trash-bin-trash-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Delete</ListItemText>
             </MenuItem>
@@ -4383,7 +4674,7 @@ export default function WidgetEditorView() {
               }}
             >
               <ListItemIcon>
-                <Iconify icon="mdi:pencil-outline" width={18} />
+                <Iconify icon="solar:pen-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Rename</ListItemText>
             </MenuItem>
@@ -4422,7 +4713,7 @@ export default function WidgetEditorView() {
               }}
             >
               <ListItemIcon>
-                <Iconify icon="mdi:content-copy" width={18} />
+                <Iconify icon="solar:copy-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Duplicate</ListItemText>
             </MenuItem>
@@ -4462,7 +4753,7 @@ export default function WidgetEditorView() {
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:download-outline" width={18} />
+              <Iconify icon="solar:download-minimalistic-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Export CSV</ListItemText>
           </MenuItem>
@@ -4493,7 +4784,7 @@ export default function WidgetEditorView() {
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:clipboard-outline" width={18} />
+              <Iconify icon="solar:clipboard-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Copy CSV</ListItemText>
           </MenuItem>
@@ -4511,7 +4802,7 @@ export default function WidgetEditorView() {
               {isPreviewRefreshing ? (
                 <CircularProgress size={16} />
               ) : (
-                <Iconify icon="mdi:refresh" width={18} />
+                <Iconify icon="solar:refresh-linear" width={16} />
               )}
             </ListItemIcon>
             <ListItemText>
@@ -4540,7 +4831,7 @@ export default function WidgetEditorView() {
 
         <Button
           onClick={() => navigate(dashboardDetailUrl)}
-          sx={{ color: "text.primary", fontWeight: 500 }}
+          sx={{ color: "text.primary" }}
         >
           Close
         </Button>
@@ -4559,7 +4850,7 @@ export default function WidgetEditorView() {
               color={saveStatus === "saved" ? "success" : "primary"}
               startIcon={
                 saveStatus === "saved" ? (
-                  <Iconify icon="mdi:check" width={18} />
+                  <Iconify icon="solar:check-linear" width={20} />
                 ) : undefined
               }
             >
@@ -4614,7 +4905,7 @@ export default function WidgetEditorView() {
                     px: 1.5,
                     py: 0.6,
                     cursor: "pointer",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: timePreset === p.value ? 600 : 400,
                     color:
                       timePreset === p.value
@@ -4622,9 +4913,7 @@ export default function WidgetEditorView() {
                         : theme.palette.text.secondary,
                     bgcolor:
                       timePreset === p.value
-                        ? theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(0,0,0,0.06)"
+                        ? "action.selected"
                         : "transparent",
                     borderRight:
                       i < DATE_PRESETS.length - 1
@@ -4637,18 +4926,15 @@ export default function WidgetEditorView() {
                     alignItems: "center",
                     gap: 0.5,
                     "&:hover": {
-                      bgcolor:
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.05)"
-                          : "rgba(0,0,0,0.03)",
+                      bgcolor: "action.hover",
                     },
                   }}
                 >
                   {p.value === "custom" && (
-                    <Iconify icon="mdi:calendar-outline" width={15} />
+                    <Iconify icon="solar:calendar-linear" width={16} />
                   )}
                   {p.value === "custom" && customDateRange
-                    ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                    ? `${format(customDateRange[0], "MMM dd")} - ${format(getDateRangeDisplayEnd(customDateRange), "MMM dd")}`
                     : p.label}
                 </Box>
               ))}
@@ -4677,7 +4963,7 @@ export default function WidgetEditorView() {
               <Select
                 value={granularity}
                 onChange={(e) => setGranularity(e.target.value)}
-                sx={{ fontSize: "13px", "& .MuiSelect-select": { py: 0.7 } }}
+                sx={{ fontSize: "12px", "& .MuiSelect-select": { py: 0.7 } }}
               >
                 {allowedGranularities.map((g) => (
                   <MenuItem key={g.value} value={g.value}>
@@ -4692,12 +4978,15 @@ export default function WidgetEditorView() {
               <Select
                 value={chartType}
                 onChange={(e) => setChartType(e.target.value)}
-                sx={{ fontSize: "13px", "& .MuiSelect-select": { py: 0.7 } }}
+                sx={{ fontSize: "12px", "& .MuiSelect-select": { py: 0.7 } }}
                 renderValue={(val) => {
                   const ct = CHART_TYPES.find((t) => t.value === val);
                   return (
                     <Stack direction="row" alignItems="center" gap={0.5}>
-                      <Iconify icon={ct?.icon || "mdi:chart-line"} width={16} />
+                      <Iconify
+                        icon={ct?.icon || "solar:graph-up-linear"}
+                        width={16}
+                      />
                       {ct?.label || val}
                     </Stack>
                   );
@@ -4757,6 +5046,7 @@ export default function WidgetEditorView() {
 
           {/* Chart + View toggles + Data table */}
           <Box
+            ref={chartAncestorRef}
             sx={{
               flex: 1,
               border: `1px solid ${theme.palette.divider}`,
@@ -4849,7 +5139,11 @@ export default function WidgetEditorView() {
                         sx={{ px: 2, pt: 2, pb: 1 }}
                       >
                         {chartSeries.map((s, i) => {
-                          const color = getSeriesColor(s.name, seriesColorMap);
+                          const color = getSeriesColor(
+                            s.name,
+                            seriesColorMap,
+                            palette,
+                          );
                           return (
                             <Stack
                               key={i}
@@ -4861,7 +5155,7 @@ export default function WidgetEditorView() {
                                 sx={{
                                   width: 10,
                                   height: 10,
-                                  borderRadius: "2px",
+                                  borderRadius: "4px",
                                   bgcolor: color,
                                   flexShrink: 0,
                                 }}
@@ -4871,7 +5165,7 @@ export default function WidgetEditorView() {
                                 sx={{
                                   color: "text.secondary",
                                   fontWeight: 500,
-                                  fontSize: "13px",
+                                  fontSize: "12px",
                                 }}
                               >
                                 {s.name}
@@ -4935,6 +5229,7 @@ export default function WidgetEditorView() {
                               const color = getSeriesColor(
                                 row.name || row.label,
                                 seriesColorMap,
+                                palette,
                               );
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
@@ -4960,7 +5255,7 @@ export default function WidgetEditorView() {
                                       minWidth: 160,
                                       flexShrink: 0,
                                       fontWeight: 500,
-                                      fontSize: "13px",
+                                      fontSize: "12px",
                                       color: "text.primary",
                                       overflow: "hidden",
                                       textOverflow: "ellipsis",
@@ -4986,9 +5281,7 @@ export default function WidgetEditorView() {
                                       sx={{
                                         flex: 1,
                                         height: 22,
-                                        bgcolor: isDark
-                                          ? "rgba(255,255,255,0.04)"
-                                          : "rgba(0,0,0,0.02)",
+                                        bgcolor: "action.hover",
                                         borderRadius: "4px",
                                         overflow: "hidden",
                                       }}
@@ -5009,7 +5302,7 @@ export default function WidgetEditorView() {
                                         minWidth: 70,
                                         textAlign: "right",
                                         fontWeight: 600,
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                         color: "text.primary",
                                         fontVariantNumeric: "tabular-nums",
                                         flexShrink: 0,
@@ -5046,7 +5339,7 @@ export default function WidgetEditorView() {
                                 startAdornment: (
                                   <InputAdornment position="start">
                                     <Iconify
-                                      icon="eva:search-fill"
+                                      icon="solar:magnifier-linear"
                                       width={16}
                                       sx={{ color: "text.disabled" }}
                                     />
@@ -5065,15 +5358,18 @@ export default function WidgetEditorView() {
                             <Typography
                               variant="caption"
                               color="text.secondary"
-                              sx={{ fontSize: "11px" }}
+                              sx={{ fontSize: "12px" }}
                             >
                               Metric {chartSeries.length} of{" "}
                               {previewSeries.length}
                             </Typography>
                           </Box>
                           {/* Select all */}
-                          <Box
+                          <ButtonBase
+                            component="div"
                             sx={{
+                              justifyContent: "flex-start",
+                              textAlign: "left",
                               px: 1.5,
                               pb: 0.5,
                               display: "flex",
@@ -5094,11 +5390,11 @@ export default function WidgetEditorView() {
                             />
                             <Typography
                               variant="body2"
-                              sx={{ fontWeight: 600, fontSize: "13px" }}
+                              sx={{ fontWeight: 600, fontSize: "12px" }}
                             >
                               Select all
                             </Typography>
-                          </Box>
+                          </ButtonBase>
                           {/* Individual checkboxes */}
                           <Box sx={{ flex: 1, overflow: "auto", px: 0.5 }}>
                             {previewSeries.map((s, si) => {
@@ -5115,17 +5411,21 @@ export default function WidgetEditorView() {
                               const color = getSeriesColor(
                                 s.name,
                                 seriesColorMap,
+                                palette,
                               );
                               return (
-                                <Box
+                                <ButtonBase
+                                  component="div"
                                   key={si}
                                   sx={{
+                                    justifyContent: "flex-start",
+                                    textAlign: "left",
                                     display: "flex",
                                     alignItems: "center",
                                     gap: 0.5,
                                     px: 1,
                                     py: 0.6,
-                                    borderRadius: 0.5,
+                                    borderRadius: "4px",
                                     cursor: "pointer",
                                     "&:hover": { bgcolor: "action.hover" },
                                   }}
@@ -5153,7 +5453,7 @@ export default function WidgetEditorView() {
                                   >
                                     {s.name}
                                   </Typography>
-                                </Box>
+                                </ButtonBase>
                               );
                             })}
                           </Box>
@@ -5232,7 +5532,10 @@ export default function WidgetEditorView() {
                     ) : isTable ? (
                       /* Data table — Time as rows, Segments as columns */
                       (() => {
-                        const timeData = chartSeries[0]?.data || [];
+                        // One row per bucket becomes thousands of rows at
+                        // minute granularity, so empty buckets are dropped and
+                        // the remainder capped (TH-7757).
+                        const bucketPlan = getTableBucketPlan(chartSeries);
                         const dateFmt =
                           granularity === "minute"
                             ? "HH:mm"
@@ -5254,7 +5557,7 @@ export default function WidgetEditorView() {
                               style={{
                                 width: "100%",
                                 borderCollapse: "collapse",
-                                fontSize: "13px",
+                                fontSize: "12px",
                               }}
                             >
                               <thead>
@@ -5277,6 +5580,20 @@ export default function WidgetEditorView() {
                                     }}
                                   >
                                     Time
+                                    {describeTableBuckets(bucketPlan) && (
+                                      <Box
+                                        component="span"
+                                        sx={{
+                                          display: "block",
+                                          fontWeight: 400,
+                                          fontSize: "11px",
+                                          color: "text.disabled",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        {describeTableBuckets(bucketPlan)}
+                                      </Box>
+                                    )}
                                   </th>
                                   {chartSeries.map((s, i) => (
                                     <th
@@ -5308,10 +5625,11 @@ export default function WidgetEditorView() {
                                           sx={{
                                             width: 8,
                                             height: 8,
-                                            borderRadius: "2px",
+                                            borderRadius: "4px",
                                             bgcolor: getSeriesColor(
                                               s.name,
                                               seriesColorMap,
+                                              palette,
                                             ),
                                             display: "inline-block",
                                           }}
@@ -5323,7 +5641,15 @@ export default function WidgetEditorView() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {timeData.map((pt, ri) => {
+                                {bucketPlan.indices.map((ri) => {
+                                  // The plan is sized by the widest series, so
+                                  // a shorter chartSeries[0] must not drop a
+                                  // row another series still reports
+                                  // (TH-7757 review).
+                                  const pt = chartSeries.find(
+                                    (s) => s?.data?.[ri],
+                                  )?.data?.[ri];
+                                  if (!pt) return null;
                                   const hasData = chartSeries.some(
                                     (s) =>
                                       s.data[ri]?.y != null &&
@@ -5500,19 +5826,18 @@ export default function WidgetEditorView() {
                       borderRadius: "8px",
                       overflow: "hidden",
                       bgcolor: "background.paper",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
                     }}
                   >
                     {[
                       {
                         mode: "table",
-                        icon: "mdi:table",
+                        icon: "solar:table-linear",
                         height: 0,
                         tip: "Table",
                       },
                       {
                         mode: "split-table",
-                        icon: "mdi:page-layout-header",
+                        icon: "solar:panel-top-linear",
                         height: 180,
                         tip: "Chart + Table",
                       },
@@ -5524,7 +5849,7 @@ export default function WidgetEditorView() {
                       },
                       {
                         mode: "chart",
-                        icon: "mdi:chart-line",
+                        icon: "solar:graph-up-linear",
                         height: 600,
                         tip: "Chart only",
                       },
@@ -5539,9 +5864,6 @@ export default function WidgetEditorView() {
                           }}
                           onMouseDown={(e) => e.stopPropagation()}
                           sx={{
-                            borderRadius: 0,
-                            px: 1.2,
-                            py: 0.6,
                             bgcolor:
                               viewMode === mode
                                 ? "action.selected"
@@ -5556,7 +5878,7 @@ export default function WidgetEditorView() {
                         >
                           <Iconify
                             icon={icon}
-                            width={18}
+                            width={20}
                             sx={{
                               color:
                                 viewMode === mode
@@ -5602,7 +5924,7 @@ export default function WidgetEditorView() {
                       variant="body2"
                       sx={{
                         fontWeight: 600,
-                        fontSize: "13px",
+                        fontSize: "12px",
                         color: "text.primary",
                       }}
                     >
@@ -5612,7 +5934,7 @@ export default function WidgetEditorView() {
                       variant="caption"
                       sx={{
                         color: "text.secondary",
-                        fontSize: "11px",
+                        fontSize: "12px",
                         display: "block",
                       }}
                     >
@@ -5639,12 +5961,19 @@ export default function WidgetEditorView() {
                   visibleSeries !== null &&
                   visibleSeries.size > 0 &&
                   visibleSeries.size < previewSeries.length;
-                // Show all time columns — the table scrolls horizontally
-                const allDataPoints = previewSeries[0]?.data || [];
-                const displayData = allDataPoints;
-                const displayIndicesSet = new Set(
-                  allDataPoints.map((_, i) => i),
-                );
+                // Empty buckets are dropped and the remainder capped, so a
+                // minute-granularity range cannot render thousands of columns.
+                // The CSV export above still writes every bucket.
+                const bucketPlan = getTableBucketPlan(previewSeries);
+                // The plan is sized by the widest series, so a shorter
+                // previewSeries[0] must not drop a row another series still
+                // reports (TH-7757 review).
+                const displayData = bucketPlan.indices
+                  .map(
+                    (i) => previewSeries.find((s) => s?.data?.[i])?.data?.[i],
+                  )
+                  .filter(Boolean);
+                const displayIndicesSet = new Set(bucketPlan.indices);
 
                 const toggleSeries = (si) => {
                   const current = visibleSeries || new Set(allIndices);
@@ -5710,7 +6039,7 @@ export default function WidgetEditorView() {
                           startAdornment: (
                             <InputAdornment position="start">
                               <Iconify
-                                icon="eva:search-fill"
+                                icon="solar:magnifier-linear"
                                 width={16}
                                 sx={{ color: "text.disabled" }}
                               />
@@ -5720,7 +6049,7 @@ export default function WidgetEditorView() {
                         sx={{
                           flex: 1,
                           maxWidth: 300,
-                          "& .MuiOutlinedInput-root": { fontSize: "13px" },
+                          "& .MuiOutlinedInput-root": { fontSize: "12px" },
                         }}
                       />
                     </Box>
@@ -5730,7 +6059,7 @@ export default function WidgetEditorView() {
                         style={{
                           width: "100%",
                           borderCollapse: "collapse",
-                          fontSize: "13px",
+                          fontSize: "12px",
                           tableLayout: "auto",
                         }}
                       >
@@ -5801,6 +6130,20 @@ export default function WidgetEditorView() {
                               }}
                             >
                               {aggColumnLabel}
+                              {describeTableBuckets(bucketPlan) && (
+                                <Box
+                                  component="span"
+                                  sx={{
+                                    display: "block",
+                                    fontWeight: 400,
+                                    fontSize: "11px",
+                                    color: "text.disabled",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {describeTableBuckets(bucketPlan)}
+                                </Box>
+                              )}
                             </th>
                             {displayData.map((pt, ci) => (
                               <th
@@ -5841,6 +6184,7 @@ export default function WidgetEditorView() {
                             const color = getSeriesColor(
                               s.name,
                               seriesColorMap,
+                              palette,
                             );
                             return (
                               <tr
@@ -5881,7 +6225,7 @@ export default function WidgetEditorView() {
                                       style={{
                                         color: theme.palette.text.primary,
                                         fontWeight: 500,
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                       }}
                                     >
                                       {s.name}
@@ -5960,20 +6304,12 @@ export default function WidgetEditorView() {
             }}
           >
             {/* Tabs */}
-            <Tabs
-              value={rightTab}
-              onChange={(_, v) => setRightTab(v)}
-              sx={{ px: 2, minHeight: 40 }}
-            >
-              <Tab
-                label="Query"
-                sx={{ minHeight: 40, textTransform: "none" }}
-              />
-              <Tab
-                label="Chart"
-                sx={{ minHeight: 40, textTransform: "none" }}
-              />
-            </Tabs>
+            <Box sx={{ px: 2 }}>
+              <Tabs value={rightTab} onChange={(_, v) => setRightTab(v)}>
+                <Tab label="Query" />
+                <Tab label="Chart" />
+              </Tabs>
+            </Box>
             <Divider />
 
             {rightTab === 0 && (
@@ -5983,29 +6319,21 @@ export default function WidgetEditorView() {
                 {/* Metric section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: isDark ? "#1a1a2e" : "#fff",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          boxShadow: isDark
-                            ? "0 4px 20px rgba(0,0,0,0.5)"
-                            : "0 4px 20px rgba(0,0,0,0.12)",
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: isDark ? "#1a1a2e" : "#fff",
-                          "&::before": {
-                            border: isDark ? "none" : "1px solid",
-                            borderColor: isDark ? "transparent" : "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
@@ -6024,11 +6352,7 @@ export default function WidgetEditorView() {
                             y1="75"
                             x2="15"
                             y2="10"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.15)"
-                                : "rgba(0,0,0,0.1)"
-                            }
+                            stroke={theme.palette.border.default}
                             strokeWidth="1"
                           />
                           <line
@@ -6036,11 +6360,7 @@ export default function WidgetEditorView() {
                             y1="75"
                             x2="110"
                             y2="75"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.15)"
-                                : "rgba(0,0,0,0.1)"
-                            }
+                            stroke={theme.palette.border.default}
                             strokeWidth="1"
                           />
                           {/* Grid lines */}
@@ -6049,11 +6369,7 @@ export default function WidgetEditorView() {
                             y1="55"
                             x2="110"
                             y2="55"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.06)"
-                                : "rgba(0,0,0,0.04)"
-                            }
+                            stroke={theme.palette.divider}
                             strokeWidth="1"
                             strokeDasharray="3 3"
                           />
@@ -6062,11 +6378,7 @@ export default function WidgetEditorView() {
                             y1="35"
                             x2="110"
                             y2="35"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.06)"
-                                : "rgba(0,0,0,0.04)"
-                            }
+                            stroke={theme.palette.divider}
                             strokeWidth="1"
                             strokeDasharray="3 3"
                           />
@@ -6074,7 +6386,7 @@ export default function WidgetEditorView() {
                           <polyline
                             points="20,60 35,45 50,50 65,28 80,32 95,18 105,22"
                             fill="none"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
@@ -6083,68 +6395,26 @@ export default function WidgetEditorView() {
                           <polyline
                             points="20,68 35,62 50,58 65,48 80,52 95,42 105,45"
                             fill="none"
-                            stroke={isDark ? "#5BE49B" : "#22C55E"}
+                            stroke={palette[2]}
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
                           {/* Data points - purple */}
-                          <circle
-                            cx="20"
-                            cy="60"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
-                          <circle
-                            cx="50"
-                            cy="50"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
-                          <circle
-                            cx="65"
-                            cy="28"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
-                          <circle
-                            cx="95"
-                            cy="18"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
+                          <circle cx="20" cy="60" r="2.5" fill={palette[0]} />
+                          <circle cx="50" cy="50" r="2.5" fill={palette[0]} />
+                          <circle cx="65" cy="28" r="2.5" fill={palette[0]} />
+                          <circle cx="95" cy="18" r="2.5" fill={palette[0]} />
                           {/* Data points - teal */}
-                          <circle
-                            cx="20"
-                            cy="68"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="50"
-                            cy="58"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="65"
-                            cy="48"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="95"
-                            cy="42"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
+                          <circle cx="20" cy="68" r="2.5" fill={palette[2]} />
+                          <circle cx="50" cy="58" r="2.5" fill={palette[2]} />
+                          <circle cx="65" cy="48" r="2.5" fill={palette[2]} />
+                          <circle cx="95" cy="42" r="2.5" fill={palette[2]} />
                         </svg>
                         <Typography
                           variant="caption"
                           sx={{
-                            color: isDark
-                              ? "rgba(255,255,255,0.7)"
-                              : "text.secondary",
+                            color: "text.secondary",
                             mt: 0.5,
                             display: "block",
                             lineHeight: 1.3,
@@ -6172,10 +6442,7 @@ export default function WidgetEditorView() {
                         "&:hover":
                           metrics.length < 5
                             ? {
-                                bgcolor: (t) =>
-                                  t.palette.mode === "dark"
-                                    ? "rgba(145, 107, 255, 0.12)"
-                                    : "rgba(105, 65, 198, 0.08)",
+                                bgcolor: "action.hover",
                                 "& .metric-section-title": {
                                   color: "primary.main",
                                 },
@@ -6195,8 +6462,8 @@ export default function WidgetEditorView() {
                         </Typography>
                       </Typography>
                       <Iconify
-                        icon="mdi:plus"
-                        width={18}
+                        icon="solar:add-linear"
+                        width={20}
                         sx={{
                           color:
                             metrics.length >= 5
@@ -6228,9 +6495,6 @@ export default function WidgetEditorView() {
                           variant="outlined"
                           sx={{
                             minWidth: 24,
-                            height: 24,
-                            fontSize: "12px",
-                            fontWeight: 600,
                             "& .MuiChip-label": {
                               paddingLeft: "0px !important",
                               paddingRight: "0px !important",
@@ -6240,7 +6504,9 @@ export default function WidgetEditorView() {
                           }}
                         />
                         <Iconify
-                          icon={METRIC_TYPE_ICONS[m.type] || "mdi:cog-outline"}
+                          icon={
+                            METRIC_TYPE_ICONS[m.type] || "solar:settings-linear"
+                          }
                           width={16}
                           sx={{ color: "text.secondary" }}
                         />
@@ -6269,11 +6535,6 @@ export default function WidgetEditorView() {
                               size="small"
                               color="info"
                               variant="outlined"
-                              sx={{
-                                height: 20,
-                                fontSize: "10px",
-                                "& .MuiChip-label": { px: 0.75 },
-                              }}
                             />
                           </Tooltip>
                         )}
@@ -6293,7 +6554,7 @@ export default function WidgetEditorView() {
                                   : "text.secondary",
                             }}
                           >
-                            <Iconify icon="mdi:filter-outline" width={16} />
+                            <Iconify icon="solar:filter-linear" width={16} />
                           </IconButton>
                         </Tooltip>
                         <IconButton
@@ -6305,20 +6566,14 @@ export default function WidgetEditorView() {
                             transition: "opacity 0.15s",
                           }}
                         >
-                          <Iconify icon="mdi:close" width={14} />
+                          <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
                       <AggregationPicker
-                        value={
-                          m.allowedAggregations?.length &&
-                          !m.allowedAggregations.includes(m.aggregation)
-                            ? m.allowedAggregations[0]
-                            : m.aggregation
-                        }
+                        value={m.aggregation}
                         onChange={(val) =>
                           handleUpdateMetricAggregation(i, val)
                         }
-                        theme={theme}
                         allowedAggregations={m.allowedAggregations}
                         extraOptions={
                           m.source === "datasets" ||
@@ -6352,7 +6607,7 @@ export default function WidgetEditorView() {
                               <Iconify
                                 icon={
                                   METRIC_TYPE_ICONS[mf.type] ||
-                                  "mdi:filter-outline"
+                                  "solar:filter-linear"
                                 }
                                 width={14}
                                 sx={{ color: "primary.main" }}
@@ -6374,9 +6629,8 @@ export default function WidgetEditorView() {
                               <IconButton
                                 size="small"
                                 onClick={() => handleRemoveMetricFilter(i, fi)}
-                                sx={{ p: 0.25 }}
                               >
-                                <Iconify icon="mdi:close" width={12} />
+                                <Iconify icon="solar:close-linear" width={12} />
                               </IconButton>
                             </Stack>
                             <Stack
@@ -6422,6 +6676,9 @@ export default function WidgetEditorView() {
                                 <FilterValueLabel
                                   filter={mf}
                                   source={mf.source || "traces"}
+                                  disableTooltip={Boolean(
+                                    filterValueAnchor || mfValueAnchor,
+                                  )}
                                   variant="caption"
                                   innerRef={(el) => {
                                     mfValueRefs.current[`${i}_${fi}`] = el;
@@ -6544,9 +6801,9 @@ export default function WidgetEditorView() {
                                   mt: 0.5,
                                   px: 1,
                                   py: 0.25,
-                                  borderRadius: 0.5,
+                                  borderRadius: "4px",
                                   bgcolor: "action.hover",
-                                  fontSize: "11px",
+                                  fontSize: "12px",
                                 }}
                               >
                                 And
@@ -6573,8 +6830,8 @@ export default function WidgetEditorView() {
                     >
                       <Stack direction="row" alignItems="center" gap={0.75}>
                         <Iconify
-                          icon="mdi:plus-circle-outline"
-                          width={18}
+                          icon="solar:add-circle-linear"
+                          width={20}
                           sx={{ color: "primary.main" }}
                         />
                         <Typography variant="body2" color="primary.main">
@@ -6590,29 +6847,21 @@ export default function WidgetEditorView() {
                 {/* Filter section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: isDark ? "#1a1a2e" : "#fff",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          boxShadow: isDark
-                            ? "0 4px 20px rgba(0,0,0,0.5)"
-                            : "0 4px 20px rgba(0,0,0,0.12)",
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: isDark ? "#1a1a2e" : "#fff",
-                          "&::before": {
-                            border: isDark ? "none" : "1px solid",
-                            borderColor: isDark ? "transparent" : "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
@@ -6637,7 +6886,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.25)"
                                 : "rgba(105,65,198,0.1)"
                             }
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           <rect
@@ -6651,7 +6900,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.4)"
                                 : "rgba(105,65,198,0.18)"
                             }
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           <rect
@@ -6665,7 +6914,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.6)"
                                 : "rgba(105,65,198,0.28)"
                             }
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           {/* Connecting lines */}
@@ -6674,7 +6923,7 @@ export default function WidgetEditorView() {
                             y1="26"
                             x2="25"
                             y2="34"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -6683,7 +6932,7 @@ export default function WidgetEditorView() {
                             y1="26"
                             x2="95"
                             y2="34"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -6692,7 +6941,7 @@ export default function WidgetEditorView() {
                             y1="50"
                             x2="40"
                             y2="58"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -6701,7 +6950,7 @@ export default function WidgetEditorView() {
                             y1="50"
                             x2="80"
                             y2="58"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -6710,63 +6959,61 @@ export default function WidgetEditorView() {
                             cx="30"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="50"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="70"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                            fill={theme.palette.status.danger.solid}
                           />
                           <circle
                             cx="90"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="40"
                             cy="42"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="60"
                             cy="42"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="80"
                             cy="42"
                             r="2"
-                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                            fill={theme.palette.status.danger.solid}
                           />
                           <circle
                             cx="52"
                             cy="66"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="68"
                             cy="66"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                         </svg>
                         <Typography
                           variant="caption"
                           sx={{
-                            color: isDark
-                              ? "rgba(255,255,255,0.7)"
-                              : "text.secondary",
+                            color: "text.secondary",
                             mt: 0.5,
                             display: "block",
                             lineHeight: 1.3,
@@ -6790,10 +7037,7 @@ export default function WidgetEditorView() {
                         mx: -1,
                         transition: "background-color 0.15s",
                         "&:hover": {
-                          bgcolor: (t) =>
-                            t.palette.mode === "dark"
-                              ? "rgba(145, 107, 255, 0.12)"
-                              : "rgba(105, 65, 198, 0.08)",
+                          bgcolor: "action.hover",
                           "& .filter-section-title": {
                             color: "primary.main",
                           },
@@ -6809,8 +7053,8 @@ export default function WidgetEditorView() {
                         Filter
                       </Typography>
                       <Iconify
-                        icon="mdi:plus"
-                        width={18}
+                        icon="solar:add-linear"
+                        width={20}
                         sx={{ color: "text.secondary" }}
                       />
                     </Stack>
@@ -6831,7 +7075,7 @@ export default function WidgetEditorView() {
                       <Stack direction="row" alignItems="center" gap={1}>
                         <Iconify
                           icon={
-                            METRIC_TYPE_ICONS[f.type] || "mdi:filter-outline"
+                            METRIC_TYPE_ICONS[f.type] || "solar:filter-linear"
                           }
                           width={16}
                           sx={{ color: "text.secondary" }}
@@ -6856,7 +7100,7 @@ export default function WidgetEditorView() {
                             transition: "opacity 0.15s",
                           }}
                         >
-                          <Iconify icon="mdi:close" width={14} />
+                          <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
                       {f.name &&
@@ -6899,7 +7143,7 @@ export default function WidgetEditorView() {
                                     setFilters(updated);
                                   }}
                                   variant="standard"
-                                  sx={{ fontSize: "13px" }}
+                                  sx={{ fontSize: "12px" }}
                                 >
                                   {ops.map((op) => (
                                     <MenuItem key={op.value} value={op.value}>
@@ -6912,6 +7156,9 @@ export default function WidgetEditorView() {
                                 <FilterValueLabel
                                   filter={f}
                                   source={f.source || "traces"}
+                                  disableTooltip={Boolean(
+                                    filterValueAnchor || mfValueAnchor,
+                                  )}
                                   variant="body2"
                                   innerRef={(el) => {
                                     filterValueRefs.current[i] = el;
@@ -6951,7 +7198,7 @@ export default function WidgetEditorView() {
                                       };
                                       setFilters(updated);
                                     }}
-                                    sx={{ flex: 1, fontSize: "13px" }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
                                   />
                                   <Typography
                                     variant="caption"
@@ -6981,7 +7228,7 @@ export default function WidgetEditorView() {
                                       };
                                       setFilters(updated);
                                     }}
-                                    sx={{ flex: 1, fontSize: "13px" }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
                                   />
                                 </Stack>
                               ) : f.dataType === "boolean" ? (
@@ -7005,7 +7252,7 @@ export default function WidgetEditorView() {
                                     }}
                                     variant="standard"
                                     renderValue={(value) => value || "Value"}
-                                    sx={{ fontSize: "13px" }}
+                                    sx={{ fontSize: "12px" }}
                                   >
                                     <MenuItem disabled value="">
                                       Value
@@ -7031,7 +7278,7 @@ export default function WidgetEditorView() {
                                     };
                                     setFilters(updated);
                                   }}
-                                  sx={{ flex: 1, fontSize: "13px" }}
+                                  sx={{ flex: 1, fontSize: "12px" }}
                                 />
                               )}
                             </Stack>
@@ -7046,74 +7293,51 @@ export default function WidgetEditorView() {
                 {/* Breakdown section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: isDark ? "#1a1a2e" : "#fff",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          boxShadow: isDark
-                            ? "0 4px 20px rgba(0,0,0,0.5)"
-                            : "0 4px 20px rgba(0,0,0,0.12)",
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: isDark ? "#1a1a2e" : "#fff",
-                          "&::before": {
-                            border: isDark ? "none" : "1px solid",
-                            borderColor: isDark ? "transparent" : "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
                     title={
                       <Box sx={{ textAlign: "center" }}>
                         {(() => {
-                          const teal = isDark ? "#5BE49B" : "#16A34A";
-                          const tealFill1 = isDark
-                            ? "rgba(91,228,155,0.2)"
-                            : "rgba(22,163,74,0.12)";
-                          const tealFill2 = isDark
-                            ? "rgba(91,228,155,0.3)"
-                            : "rgba(22,163,74,0.2)";
-                          const tealFill3 = isDark
-                            ? "rgba(91,228,155,0.15)"
-                            : "rgba(22,163,74,0.08)";
-                          const tealFill4 = isDark
-                            ? "rgba(91,228,155,0.25)"
-                            : "rgba(22,163,74,0.15)";
-                          const purple = isDark ? "#916BFF" : "#7C4DFF";
-                          const purpleFill1 = isDark
-                            ? "rgba(145,107,255,0.2)"
-                            : "rgba(105,65,198,0.12)";
-                          const purpleFill2 = isDark
-                            ? "rgba(145,107,255,0.3)"
-                            : "rgba(105,65,198,0.2)";
-                          const purpleFill3 = isDark
-                            ? "rgba(145,107,255,0.15)"
-                            : "rgba(105,65,198,0.08)";
-                          const purpleFill4 = isDark
-                            ? "rgba(145,107,255,0.25)"
-                            : "rgba(105,65,198,0.15)";
-                          const coral = isDark ? "#FF6B6B" : "#EF4444";
-                          const coralFill1 = isDark
-                            ? "rgba(255,107,107,0.2)"
-                            : "rgba(239,68,68,0.12)";
-                          const coralFill2 = isDark
-                            ? "rgba(255,107,107,0.3)"
-                            : "rgba(239,68,68,0.2)";
-                          const coralFill3 = isDark
-                            ? "rgba(255,107,107,0.15)"
-                            : "rgba(239,68,68,0.08)";
-                          const coralFill4 = isDark
-                            ? "rgba(255,107,107,0.25)"
-                            : "rgba(239,68,68,0.15)";
+                          const teal = palette[2];
+                          const tealFill1 = alpha(teal, isDark ? 0.2 : 0.12);
+                          const tealFill2 = alpha(teal, isDark ? 0.3 : 0.2);
+                          const tealFill3 = alpha(teal, isDark ? 0.15 : 0.08);
+                          const tealFill4 = alpha(teal, isDark ? 0.25 : 0.15);
+                          const purple = palette[0];
+                          const purpleFill1 = alpha(
+                            purple,
+                            isDark ? 0.2 : 0.12,
+                          );
+                          const purpleFill2 = alpha(purple, isDark ? 0.3 : 0.2);
+                          const purpleFill3 = alpha(
+                            purple,
+                            isDark ? 0.15 : 0.08,
+                          );
+                          const purpleFill4 = alpha(
+                            purple,
+                            isDark ? 0.25 : 0.15,
+                          );
+                          const coral = palette[4];
+                          const coralFill1 = alpha(coral, isDark ? 0.2 : 0.12);
+                          const coralFill2 = alpha(coral, isDark ? 0.3 : 0.2);
+                          const coralFill3 = alpha(coral, isDark ? 0.15 : 0.08);
+                          const coralFill4 = alpha(coral, isDark ? 0.25 : 0.15);
                           return (
                             <svg
                               width="120"
@@ -7263,9 +7487,7 @@ export default function WidgetEditorView() {
                         <Typography
                           variant="caption"
                           sx={{
-                            color: isDark
-                              ? "rgba(255,255,255,0.7)"
-                              : "text.secondary",
+                            color: "text.secondary",
                             mt: 0.5,
                             display: "block",
                             lineHeight: 1.3,
@@ -7289,10 +7511,7 @@ export default function WidgetEditorView() {
                         mx: -1,
                         transition: "background-color 0.15s",
                         "&:hover": {
-                          bgcolor: (t) =>
-                            t.palette.mode === "dark"
-                              ? "rgba(145, 107, 255, 0.12)"
-                              : "rgba(105, 65, 198, 0.08)",
+                          bgcolor: "action.hover",
                           "& .breakdown-section-title": {
                             color: "primary.main",
                           },
@@ -7308,8 +7527,8 @@ export default function WidgetEditorView() {
                         Breakdown
                       </Typography>
                       <Iconify
-                        icon="mdi:plus"
-                        width={18}
+                        icon="solar:add-linear"
+                        width={20}
                         sx={{ color: "text.secondary" }}
                       />
                     </Stack>
@@ -7330,8 +7549,7 @@ export default function WidgetEditorView() {
                       <Stack direction="row" alignItems="center" gap={1}>
                         <Iconify
                           icon={
-                            METRIC_TYPE_ICONS[b.type] ||
-                            "mdi:chart-timeline-variant"
+                            METRIC_TYPE_ICONS[b.type] || "solar:chart-2-linear"
                           }
                           width={16}
                           sx={{ color: "text.secondary" }}
@@ -7356,7 +7574,7 @@ export default function WidgetEditorView() {
                             transition: "opacity 0.15s",
                           }}
                         >
-                          <Iconify icon="mdi:close" width={14} />
+                          <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
                     </Box>
@@ -7384,7 +7602,7 @@ export default function WidgetEditorView() {
                     {/* AXIS collapsible section */}
                     <Typography
                       variant="overline"
-                      fontWeight={700}
+                      fontWeight={600}
                       sx={{ mb: 2, display: "block", letterSpacing: 1.5 }}
                     >
                       AXIS
@@ -7394,7 +7612,7 @@ export default function WidgetEditorView() {
                     <Box>
                       <Typography
                         variant="subtitle2"
-                        fontWeight={700}
+                        fontWeight={600}
                         sx={{ mb: 1.5 }}
                       >
                         Axis Assignment
@@ -7403,6 +7621,7 @@ export default function WidgetEditorView() {
                         const seriesColor = getSeriesColor(
                           s.name,
                           seriesColorMap,
+                          palette,
                         );
                         return (
                           <Stack
@@ -7422,20 +7641,20 @@ export default function WidgetEditorView() {
                                 sx={{
                                   width: 22,
                                   height: 22,
-                                  borderRadius: 0.5,
+                                  borderRadius: "4px",
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "center",
                                   bgcolor: seriesColor + "22",
                                   color: seriesColor,
-                                  fontSize: "11px",
-                                  fontWeight: 700,
+                                  fontSize: "12px",
+                                  fontWeight: 600,
                                 }}
                               >
                                 {LETTER_LABELS[si] || si}
                               </Box>
                               <Iconify
-                                icon="mdi:chart-line"
+                                icon="solar:graph-up-linear"
                                 width={16}
                                 sx={{
                                   color: seriesColor,
@@ -7535,7 +7754,7 @@ export default function WidgetEditorView() {
                     <Box sx={{ mb: 3 }}>
                       <Typography
                         variant="subtitle2"
-                        fontWeight={700}
+                        fontWeight={600}
                         sx={{ mb: 1.5 }}
                       >
                         X-Axis
@@ -7577,7 +7796,7 @@ export default function WidgetEditorView() {
                           inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
                           sx={{
                             width: 180,
-                            "& .MuiOutlinedInput-root": { fontSize: "13px" },
+                            "& .MuiOutlinedInput-root": { fontSize: "12px" },
                           }}
                         />
                       </Stack>
@@ -7605,8 +7824,6 @@ export default function WidgetEditorView() {
               maxHeight: 440,
               display: "flex",
               flexDirection: "column",
-              border: `1px solid ${theme.palette.divider}`,
-              borderRadius: 2,
             }}
           >
             {/* Search + count */}
@@ -7622,8 +7839,8 @@ export default function WidgetEditorView() {
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="eva:search-fill"
-                        width={18}
+                        icon="solar:magnifier-linear"
+                        width={16}
                         sx={{ color: "text.disabled" }}
                       />
                     </InputAdornment>
@@ -7637,15 +7854,15 @@ export default function WidgetEditorView() {
                     </InputAdornment>
                   ) : !cursorAttributePickerActive &&
                     Number.isSafeInteger(paginatedTotal) ? (
-                      <InputAdornment position="end">
-                        <Typography
-                          variant="caption"
-                          sx={{ color: "text.disabled", fontSize: 11 }}
-                        >
-                          {paginatedTotal} results
-                        </Typography>
-                      </InputAdornment>
-                    ) : null,
+                    <InputAdornment position="end">
+                      <Typography
+                        variant="caption"
+                        sx={{ color: "text.disabled", fontSize: 12 }}
+                      >
+                        {paginatedTotal} results
+                      </Typography>
+                    </InputAdornment>
+                  ) : null,
                 }}
               />
             </Box>
@@ -7670,10 +7887,13 @@ export default function WidgetEditorView() {
                   const categoryCountPresentation =
                     getWidgetCatalogCategoryCountPresentation(categoryCount);
                   return (
-                    <Box
+                    <ButtonBase
+                      component="div"
                       key={cat.key}
                       onClick={() => setPickerCategory(cat.key)}
                       sx={{
+                        justifyContent: "flex-start",
+                        textAlign: "left",
                         display: "flex",
                         alignItems: "center",
                         gap: 1,
@@ -7726,11 +7946,11 @@ export default function WidgetEditorView() {
                             : "exact count unavailable"
                         }`}
                         title={categoryCountPresentation.title || undefined}
-                        sx={{ color: "text.disabled", fontSize: 10 }}
+                        sx={{ color: "text.disabled", fontSize: 12 }}
                       >
                         {categoryCountPresentation.text}
                       </Typography>
-                    </Box>
+                    </ButtonBase>
                   );
                 })}
               </Box>
@@ -7773,7 +7993,7 @@ export default function WidgetEditorView() {
                         sx={{
                           width: 15,
                           height: 15,
-                          borderRadius: 0.5,
+                          borderRadius: "4px",
                           bgcolor: "action.hover",
                           flexShrink: 0,
                         }}
@@ -7781,7 +8001,7 @@ export default function WidgetEditorView() {
                       <Box
                         sx={{
                           height: 12,
-                          borderRadius: 0.5,
+                          borderRadius: "4px",
                           bgcolor: "action.hover",
                           flex: 1,
                           maxWidth: `${55 + Math.random() * 35}%`,
@@ -7808,103 +8028,13 @@ export default function WidgetEditorView() {
                       />
                     </Box>
                   ))}
-                {pickerMetricOptions.map((opt) => {
-                  const alreadyUsed = false;
-
-                  const sourceBadge =
-                    opt.type === "eval_metric" || opt.type === "annotation"
-                      ? null
-                      : opt.sources && opt.sources.length > 1
-                        ? null
-                        : opt.source === "simulation"
-                          ? { label: "Sim", color: "secondary" }
-                          : opt.source === "datasets"
-                            ? { label: "Dataset", color: "default" }
-                            : opt.source === "traces"
-                              ? { label: "Trace", color: "primary" }
-                              : null;
-
-                  return (
-                    <Box
-                      key={`${opt.source || "all"}-${opt.type}-${opt.id}-${opt.dataType || ""}`}
-                      onClick={
-                        alreadyUsed ? undefined : () => handlePickerSelect(opt)
-                      }
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                        px: 1.5,
-                        py: 0.75,
-                        cursor: alreadyUsed ? "default" : "pointer",
-                        opacity: alreadyUsed ? 0.4 : 1,
-                        "&:hover": {
-                          bgcolor: alreadyUsed ? "transparent" : "action.hover",
-                        },
-                      }}
-                    >
-                      <Iconify
-                        icon={METRIC_TYPE_ICONS[opt.type] || "mdi:cog-outline"}
-                        width={15}
-                        sx={{ color: "text.disabled", flexShrink: 0 }}
-                      />
-                      <Typography
-                        variant="body2"
-                        title={opt.name}
-                        sx={{
-                          fontSize: "13px",
-                          flex: 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {opt.name}
-                      </Typography>
-                      {opt.outputType && (
-                        <Chip
-                          size="small"
-                          variant="outlined"
-                          label={
-                            opt.outputType === "SCORE"
-                              ? "score"
-                              : opt.outputType === "PASS_FAIL"
-                                ? "P/F"
-                                : opt.outputType === "CHOICE"
-                                  ? "choice"
-                                  : opt.outputType
-                          }
-                          sx={{
-                            height: 18,
-                            fontSize: 10,
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
-                      {opt.type === "custom_attribute" && opt.dataType && (
-                        <Chip
-                          size="small"
-                          variant="outlined"
-                          label={opt.dataType}
-                          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
-                        />
-                      )}
-                      {sourceBadge && (
-                        <Chip
-                          size="small"
-                          label={sourceBadge.label}
-                          color={sourceBadge.color}
-                          variant="outlined"
-                          sx={{
-                            height: 18,
-                            fontSize: 10,
-                            flexShrink: 0,
-                          }}
-                        />
-                      )}
-                    </Box>
-                  );
-                })}
+                {pickerMetricOptions.map((opt) => (
+                  <WidgetCatalogOption
+                    key={`${opt.registryId || `${opt.source || "all"}:${opt.type}:${opt.id}`}:${opt.dataType || ""}`}
+                    option={opt}
+                    onSelect={handlePickerSelect}
+                  />
+                ))}
                 <WidgetCatalogPaginationControl
                   key={`${pickerCatalogSession}:${pickerMode}:${pickerCategory}:${debouncedPickerSearch}`}
                   pickerCategory={pickerCategory}

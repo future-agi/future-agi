@@ -2,10 +2,29 @@ name: E2E CI
 
 on:
   pull_request:
-    branches: [dev, main]
+    # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
   merge_group:
+  # The Standalone leg (E2E_STACK=standalone): nightly, on demand, and next to
+  # the Distributed leg on a PR that carries the e2e-standalone label.
+  schedule:
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: Which setup the suite runs against
+        type: choice
+        options: [distributed, standalone]
+        default: standalone
+      host_update_fallibility:
+        description: Prove SET-E2E-002 assertion fallibility after the normal suite (distributed only)
+        type: boolean
+        default: false
+      sdk-ref:
+        description: "futureagi-sdk branch, tag or full 40-character SHA. Automatic selection requires live-test prerequisites; explicit overrides fail closed."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -16,6 +35,8 @@ concurrency:
 
 env:
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
+  # The release builds' layer cache, read only (the slim backend's).
+  BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
 
 jobs:
   changes:
@@ -29,7 +50,13 @@ jobs:
       backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
+      stacks: ${{ steps.stacks.outputs.stacks }}
     steps:
+      - name: Validate host update fallibility opt-in
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
+        run: |
+          printf '%s\n' '::error::host_update_fallibility=true requires stack=distributed; no builds were started.'
+          exit 1
       - uses: actions/checkout@v4
       - id: filter
         if: github.event_name == 'pull_request'
@@ -51,7 +78,17 @@ jobs:
               - 'e2e/**'
               - 'bin/e2e'
               - 'docker-compose.yml'
+              - 'docker-compose.distributed.yml'
+              - 'docker-compose.dev.yml'
+              - 'docker-compose.distributed.dev.yml'
+              - 'deploy/**'
+              - 'bin/install*'
+              - 'bin/lib/**'
+              - 'bin/uninstall'
+              - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/e2e-ci.yml'
+              - '.github/scripts/resolve-sdk-test-ref.py'
+              - '.github/scripts/test_resolve_sdk_test_ref.py'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
@@ -61,41 +98,80 @@ jobs:
             echo "frontend=true"
             echo "gateway=true"
           } >> "$GITHUB_OUTPUT"
+      - id: stacks
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCHED: ${{ inputs.stack }}
+          # The labels the PR had when this run started: a re-run keeps them,
+          # so add the label, then push.
+          STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
+        run: |
+          case "$EVENT" in
+            schedule) stacks='["standalone"]' ;;
+            workflow_dispatch) stacks="[\"$DISPATCHED\"]" ;;
+            pull_request)
+              if [ "$STANDALONE_LABEL" = true ]; then
+                stacks='["distributed","standalone"]'
+              else
+                stacks='["distributed"]'
+              fi ;;
+            *) stacks='["distributed"]' ;;
+          esac
+          echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
 
   e2e:
+    name: e2e (${{ matrix.stack }})
     needs: changes
     if: needs.changes.outputs.any == 'true'
+    strategy:
+      # A labelled PR runs both legs; one failing must not cancel the other.
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Image builds (~20 min), the Playwright suite (~70 min and growing with
+    # the flow catalog) and the SDK live suites run in this one job. Dev runs
+    # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
     env:
-      BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+      # bin/e2e and lib/managed-mock.ts pick the stack from this.
+      E2E_STACK: ${{ matrix.stack }}
+      # Always from source: the stack's compose file runs backend modules at
+      # boot (e.g. tracer.services.clickhouse.oss_cdc_install), so a released
+      # :latest that predates them fails the boot for every PR that does not
+      # touch futureagi/ — the same drift BUILD_FRONTEND/BUILD_GATEWAY avoid.
+      BUILD_BACKEND: "true"
       # Always from source: specs land with the frontend behavior they assert,
       # so the released frontend image can be too old for them (TH-7733).
       BUILD_FRONTEND: "true"
-      BUILD_GATEWAY: ${{ needs.changes.outputs.gateway }}
+      # Always from source for the same reason: gateway flows (GW-E2E-002)
+      # land with the gateway behavior they assert, so a PR that does not
+      # touch agentcc-gateway/ would otherwise run them against a released
+      # :latest that predates that behavior.
+      BUILD_GATEWAY: "true"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Tag for the images built below
+        # Standalone runs the tag e2e/stack/standalone-e2e.env names
+        # (FUTURE_AGI_VERSION), which `bin/e2e build standalone-app` reads too;
+        # Distributed runs e2e-ci, which a later step writes into e2e.env.
+        run: |
+          if [ "$E2E_STACK" = standalone ]; then
+            tag=$(sed -n 's/^FUTURE_AGI_VERSION=//p' e2e/stack/standalone-e2e.env)
+          else
+            tag=e2e-ci
+          fi
+          echo "IMAGE_TAG=${tag:?no FUTURE_AGI_VERSION in e2e/stack/standalone-e2e.env}" >> "$GITHUB_ENV"
 
       - name: Reclaim runner disk
         # / is the small volume and the backend image alone unpacks ~15GB of
         # CUDA/nvidia libs, so docker moves to /mnt (~65GB free). Must run
         # before setup-buildx creates its builder container under the old root.
-        run: |
-          df -h / /mnt
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          # Unguarded on purpose: a half-applied move leaves docker broken, so
-          # every step below must fail the job rather than be tolerated.
-          sudo systemctl stop docker docker.socket
-          sudo mv /var/lib/docker /mnt/docker
-          sudo ln -s /mnt/docker /var/lib/docker
-          sudo systemctl start docker
-          timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
-          docker info --format 'docker root: {{.DockerRootDir}}'
-          df -h / /mnt
+        run: scripts/reclaim-runner-disk.sh
 
       - uses: docker/setup-buildx-action@v3
 
@@ -107,20 +183,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: ghcr login (cache reads on internal PRs)
+      - name: ghcr login (cache reads on internal PRs and the Standalone leg)
         # Fork PRs get no token and read anonymously, which works only once the
         # e2e-cache package is made public — a one-time manual step in the org's
         # package settings. Until then forks build cold.
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+        if: >-
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
+          || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A backend/gateway image whose filter did not fire is NOT built from
-      # this PR — the stack runs the released :latest for it. Deliberate speed
-      # trade. The frontend is exempt (see BUILD_FRONTEND above).
+      # The backend, frontend and gateway images are always built from this
+      # PR's code (see the env block above); the registry cache keeps the
+      # backend build short.
       - name: Build backend image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
@@ -130,9 +208,38 @@ jobs:
           context: futureagi
           file: futureagi/Dockerfile.oss
           load: true
-          tags: futureagi/future-agi:e2e-ci
-          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:backend
+          # Standalone assembles its app image on the slim variant, as a release
+          # does. It shares the default variant's dependency layers; the
+          # release builds keep its own cache.
+          build-args: ${{ matrix.stack == 'standalone' && 'IMAGE_VARIANT=slim' || '' }}
+          tags: futureagi/future-agi:${{ env.IMAGE_TAG }}
+          cache-from: |
+            type=registry,ref=${{ env.CACHE_REPO }}:backend
+            ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Add E2E-only fixtures and telemetry isolation to backend image
+        if: env.BUILD_BACKEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/future-agi:$IMAGE_TAG"
+          -f e2e/stack/backend/Dockerfile .
+
+      # Both topologies exercise the mandatory executor's policy propagation.
+      # Never select :latest for a PR: it cannot contain the unmerged source.
+      - name: Build code-executor image from PR code
+        uses: docker/build-push-action@v5
+        with:
+          context: futureagi/code-executor
+          file: futureagi/code-executor/Dockerfile
+          load: true
+          tags: futureagi/code-executor:${{ env.IMAGE_TAG }}
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:code-executor
+          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:code-executor,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Select the source-built executor in both stacks
+        run: echo "CODE_EXECUTOR_VERSION=$IMAGE_TAG" >> "$GITHUB_ENV"
 
       - name: Build fi-collector image from PR code
         if: env.BUILD_BACKEND == 'true'
@@ -141,7 +248,7 @@ jobs:
           context: fi-collector
           file: fi-collector/Dockerfile
           load: true
-          tags: futureagi/fi-collector:e2e-ci
+          tags: futureagi/fi-collector:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:fi-collector,mode=max', env.CACHE_REPO) || '' }}
 
@@ -152,9 +259,17 @@ jobs:
           context: frontend
           file: frontend/Dockerfile
           load: true
-          tags: futureagi/frontend:e2e-ci
+          tags: futureagi/frontend:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Add local editor assets to the E2E frontend
+        if: env.BUILD_FRONTEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/frontend:$IMAGE_TAG"
+          -f e2e/stack/frontend/Dockerfile .
 
       - name: Build agentcc-gateway image from PR code
         # The eval flow routes the mock LLM through the gateway, so gateway
@@ -165,9 +280,17 @@ jobs:
           context: agentcc-gateway
           file: agentcc-gateway/Dockerfile
           load: true
-          tags: futureagi/agentcc-gateway:e2e-ci
+          tags: futureagi/agentcc-gateway:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:gateway,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Assemble futureagi/standalone from those images
+        if: matrix.stack == 'standalone'
+        # The docker driver's builder sees the images loaded above; the buildx
+        # container builder would look for them on Docker Hub.
+        env:
+          BUILDX_BUILDER: default
+        run: bin/e2e build standalone-app
 
       - name: Drop the buildkit copy of the built images
         # buildx holds a second copy of every loaded image; the cross-run
@@ -178,30 +301,69 @@ jobs:
 
       - name: Point the stack at the built images
         # printf, not echo: e2e.env's last line may lack a trailing newline.
+        # standalone-e2e.env already names the Standalone leg's tag.
+        if: matrix.stack == 'distributed'
         run: |
           if [ "$BUILD_BACKEND" = "true" ]; then
-            printf '\n%s\n' "FUTURE_AGI_VERSION=e2e-ci" >> e2e/stack/e2e.env
-            printf '%s\n' "E2E_FI_COLLECTOR_VERSION=e2e-ci" >> e2e/stack/e2e.env
+            printf '\n%s\n' "FUTURE_AGI_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
+            printf '%s\n' "E2E_FI_COLLECTOR_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
           if [ "$BUILD_FRONTEND" = "true" ]; then
-            printf '\n%s\n' "FRONTEND_VERSION=e2e-ci" >> e2e/stack/e2e.env
+            printf '\n%s\n' "FRONTEND_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
           if [ "$BUILD_GATEWAY" = "true" ]; then
-            printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=e2e-ci" >> e2e/stack/e2e.env
+            printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
 
-      - name: Prefetch vendor images
-        # fi-collector, agentcc-gateway and the app images are deliberately
-        # absent: when their filter fires their tag is the locally-built
-        # e2e-ci and a pull would 404 (failing the whole invocation, not just
-        # that image); `up` resolves whatever is left.
+      - name: Prepare public host status directory
+        if: matrix.stack == 'distributed'
         run: |
-          nohup bin/e2e compose pull --quiet \
-            postgres clickhouse redis rabbitmq minio temporal mock-llm \
-            peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker \
-            peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init \
-            peerdb-minio \
-            > /tmp/e2e-pull.log 2>&1 &
+          status_dir="$HOME/.cache/futureagi-e2e/futureagi-e2e/host-update-status"
+          install -d -m 0755 "$status_dir"
+          echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
+
+      - name: Prefetch vendor images
+        # Await vendor-only pulls before boot. App/collector/gateway images and
+        # peerdb-temporal-init (the backend image) use the locally built tag.
+        # Pull one service at a time so a transient error cannot hide another
+        # image's permanent failure. Only pulls retry; bootstrap stays single-shot.
+        shell: bash
+        run: |
+          if [ "$E2E_STACK" = standalone ]; then
+            services=(postgres clickhouse mock-llm)
+          else
+            services=(postgres clickhouse redis minio temporal mock-llm mock-slack
+              peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
+              peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
+              property-catalog-kafka property-catalog-topic-init
+              property-catalog-runtime-volume-init)
+          fi
+          attempt_log=$(mktemp)
+          trap 'rm -f "$attempt_log"' EXIT
+          : > /tmp/e2e-pull.log
+          # Fail closed for unknown errors, auth/tag/configuration failures and
+          # rate limits. An auth-token request returning 5xx IS transient.
+          permanent='unauthorized|authentication required|denied|manifest unknown|name unknown|no matching manifest|not found|too many requests|toomanyrequests|certificate|invalid reference|no such service|no space left|(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)4[0-9]{2}([^0-9]|$)'
+          transient='(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)5[0-9]{2}([^0-9]|$)|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|i/o timeout|TLS handshake timeout|connection reset by peer|dial tcp.*connection refused|(: |unexpected )EOF([[:space:]]|$)|temporary failure in name resolution|Client.Timeout exceeded'
+          for service in "${services[@]}"; do
+            for attempt in 1 2 3; do
+              echo "Prefetch $service: attempt $attempt/3" | tee -a /tmp/e2e-pull.log
+              status=0
+              bin/e2e compose pull --policy missing "$service" > "$attempt_log" 2>&1 || status=$?
+              cat "$attempt_log" | tee -a /tmp/e2e-pull.log
+              if [ "$status" -eq 0 ]; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ] || grep -Eiq "$permanent" "$attempt_log" || ! grep -Eiq "$transient" "$attempt_log"; then
+                echo "::error::Vendor prefetch failed for $service (attempt $attempt/3, exit $status)."
+                exit "$status"
+              fi
+              delay=$((attempt * 10))
+              echo "Transient registry failure for $service; retrying in ${delay}s." | tee -a /tmp/e2e-pull.log
+              sleep "$delay"
+            done
+          done
+          echo "Vendor image prefetch completed for $E2E_STACK." | tee -a /tmp/e2e-pull.log
 
       - uses: actions/setup-node@v4
         with:
@@ -235,21 +397,186 @@ jobs:
         working-directory: e2e
         run: yarn catalog:check
 
+      # The @saml flows start e2e/lib/saml_idp_server.py on the runner. It
+      # signs with the backend's own pysaml2 fixtures, which need pysaml2,
+      # cryptography and the xmlsec1 binary; the runner's python3 lacks pysaml2
+      # and xmlsec1. Versions match futureagi/uv.lock.
+      - name: Install the local SAML IdP's dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xmlsec1
+          python3 -m venv "$RUNNER_TEMP/saml-idp"
+          "$RUNNER_TEMP/saml-idp/bin/pip" install --quiet pysaml2==7.5.0 cryptography==46.0.5
+          echo "E2E_SAML_PYTHON=$RUNNER_TEMP/saml-idp/bin/python" >> "$GITHUB_ENV"
+
       - name: Boot the e2e stack
+        id: boot
         run: bin/e2e up
 
+      - name: Start Redis diagnostics
+        continue-on-error: true
+        run: node e2e/scripts/redis-diagnostics.mjs start --output-dir "$RUNNER_TEMP/redis-diagnostics"
+
       - name: Run E2E suite
+        id: suite
         run: bin/e2e test
+
+      - name: Prove host update assertion fallibility
+        id: host-update-fallibility
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'
+        # Default success() gating: the unchanged normal suite must pass first.
+        # Driver: 20m aggregate cap, 360s per child, <=7s termination grace.
+        timeout-minutes: 22
+        env:
+          HOST_UPDATE_FALLIBILITY: ${{ inputs.host_update_fallibility }}
+        run: node e2e/scripts/host-update-fallibility.mjs --output-dir "$RUNNER_TEMP/host-update-fallibility"
+
+      - name: Upload host update fallibility evidence
+        if: >-
+          !cancelled() && github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility
+          && matrix.stack == 'distributed' && steps.host-update-fallibility.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-update-fallibility-distributed
+          path: ${{ runner.temp }}/host-update-fallibility
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Stop Redis diagnostics
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          SUITE_OUTCOME: ${{ steps.suite.outcome }}
+        run: node e2e/scripts/redis-diagnostics.mjs stop --output-dir "$RUNNER_TEMP/redis-diagnostics" --suite-outcome "$SUITE_OUTCOME"
+
+      - name: Upload Redis diagnostics
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-diagnostics-${{ matrix.stack }}
+          path: ${{ runner.temp }}/redis-diagnostics/redis-diagnostics.json
+          retention-days: 3
+          if-no-files-found: warn
 
       - name: Upload report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
           path: e2e/playwright-report
           retention-days: 7
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.
+          if-no-files-found: warn
+
+      # --- SDK live suites -------------------------------------------------
+      # The futureagi-sdk repository's E2E tests against this stack, so a
+      # backend change that breaks the SDKs fails here, before a release:
+      # python/tests/platform calls every operation of the generated client,
+      # src/platform/__tests__/live.test.ts covers the TypeScript transport.
+      # Resolve a full SDK commit with the required live suites. Explicit refs
+      # fail closed; defaults lacking the harness use the pinned bootstrap from
+      # SDK PR #35. Both suites still run after Playwright on a booted stack.
+      - name: Resolve the futureagi-sdk ref
+        id: sdk-ref
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        env:
+          SDK_REF_INPUT: ${{ inputs.sdk-ref }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          BASE_REF: ${{ github.base_ref || github.ref_name }}
+        run: |
+          python3 -I .github/scripts/test_resolve_sdk_test_ref.py
+          python3 -I .github/scripts/resolve-sdk-test-ref.py
+
+      - name: Check out futureagi-sdk
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk
+          ref: ${{ steps.sdk-ref.outputs.ref }}
+          path: futureagi-sdk
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        with:
+          python-version: "3.12"
+
+      - name: Install the Python SDK and sign up an account on the stack
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -e ./python pytest pyyaml
+          # Writes futureagi-sdk/.env.local, which both suites read. :8100 is
+          # BACKEND_PORT in both e2e/stack/e2e.env and standalone-e2e.env.
+          python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
+
+      - name: Python SDK live suite
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk
+        env:
+          FI_E2E_REQUIRED: "1"
+        run: PYTHONPATH=python pytest -q python/tests/platform
+
+      - name: TypeScript SDK live suite
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk/typescript/futureagi
+        env:
+          FI_E2E_REQUIRED: "1"
+        run: |
+          npx --yes pnpm@8.15.0 install --ignore-workspace --frozen-lockfile --ignore-scripts
+          npx --yes pnpm@8.15.0 run test:live
+
+      - name: SDK operation names match the MCP tools (warning only)
+        # The SDK catalog records, per operation, the MCP tool it corresponds
+        # to; the tool list itself is generated here (scripts/generate-mcp-tools.py).
+        # A tool added or renamed here that the SDK catalog does not know yet is
+        # reported as a warning, never a failure: the SDK calls the REST endpoints,
+        # not the tools, so a name gap breaks no SDK call, and the SDK's own CI
+        # enforces parity at the backend release it is pinned to
+        # (futureagi-sdk: sdkgen/check_mcp_parity.py). A tool this tree gained
+        # since that release shows up here first, as the reminder to add its
+        # catalog entry.
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import json, yaml
+          tools = {t["name"] for t in json.load(open("futureagi/mcp_server/catalog/tools.generated.json"))["tools"]}
+          catalog = yaml.safe_load(open("futureagi-sdk/sdkgen/catalog/operations.yaml"))["operations"]
+          sdk = {(e["surfaces"]["mcp"].get("name") or e["id"].replace(".", "_"))
+                 for e in catalog if e.get("surfaces", {}).get("mcp") not in (None, False)}
+          if tools - sdk:
+              print(f"::warning title=MCP tools without an SDK catalog entry::{', '.join(sorted(tools - sdk))} (add them to futureagi-sdk/sdkgen/catalog/operations.yaml)")
+          if sdk - tools:
+              print(f"::warning title=SDK catalog entries without an MCP tool::{', '.join(sorted(sdk - tools))}")
+          if tools == sdk:
+              print(f"{len(tools)} MCP tools, same names in the SDK catalog")
+          EOF
+
+      - name: Capture backend lifecycle on failure
+        if: failure() && steps.boot.outcome == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/backend-lifecycle"
+          if [ "$E2E_STACK" = standalone ]; then
+            services=(app)
+          else
+            services=(backend fi-collector)
+          fi
+          bin/e2e compose logs --no-color --timestamps "${services[@]}" > "$RUNNER_TEMP/backend-lifecycle/logs.txt" 2>&1
+          for id in $(bin/e2e compose ps -aq "${services[@]}"); do
+            docker inspect --format '{{.Name}} restartCount={{.RestartCount}} state={{json .State}}' "$id"
+          done > "$RUNNER_TEMP/backend-lifecycle/state.txt"
+
+      - name: Upload backend lifecycle diagnostics
+        if: failure() && steps.boot.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-lifecycle-${{ matrix.stack }}
+          path: ${{ runner.temp }}/backend-lifecycle
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Dump stack state on failure

@@ -1,4 +1,5 @@
-import { Box, CircularProgress } from "@mui/material";
+import { Box } from "@mui/material";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Loading overlay component
 const LoadingOverlay = () => (
@@ -16,7 +17,7 @@ const LoadingOverlay = () => (
     }}
   >
     <Box sx={{ textAlign: "center" }}>
-      <CircularProgress size={44} />
+      <ContentSkeleton variant="panel" />
     </Box>
   </Box>
 );

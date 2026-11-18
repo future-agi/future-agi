@@ -189,18 +189,12 @@ export default function EvaluationMappingFormContent({
             }}
             variant="outlined"
             sx={{
-              borderRadius: theme.spacing(0.5),
-              paddingX: theme.spacing(1.5),
-              paddingY: theme.spacing(0.5),
               borderColor: "action.hover",
             }}
             startIcon={
-              <Iconify
-                icon="lucide:chevron-left"
-                sx={{
-                  width: theme.spacing(2),
-                  height: theme.spacing(2),
-                  marginRight: "-4px",
+              <Iconify width={16}
+                icon="solar:alt-arrow-left-linear"
+                sx={{ marginRight: "-4px",
                   // background:'red',
                 }}
               />
@@ -225,7 +219,7 @@ export default function EvaluationMappingFormContent({
             }}
           >
             <Iconify
-              icon="line-md:close"
+              icon="solar:close-linear"
               sx={{
                 width: theme.spacing(3),
                 height: theme.spacing(3),
@@ -269,7 +263,6 @@ export default function EvaluationMappingFormContent({
                 minWidth: "100px",
                 maxWidth: "100px",
                 marginLeft: "auto",
-                fontSize: "12px",
                 whiteSpace: "nowrap",
                 borderColor: "text.disabled",
               }}
@@ -356,7 +349,7 @@ export default function EvaluationMappingFormContent({
                       >
                         <Iconify
                           sx={{ height: 12, width: 12 }}
-                          icon="mingcute:close-line"
+                          icon="solar:close-linear"
                         />
                       </IconButton>
                     )}
@@ -372,7 +365,7 @@ export default function EvaluationMappingFormContent({
                   gap: 0.5,
                   height: "18px",
 
-                  fontSize: "10px",
+                  fontSize: "12px",
                   fontWeight: 500,
                   color: "primary.main",
                 }}
@@ -390,7 +383,11 @@ export default function EvaluationMappingFormContent({
                   sx={{ padding: 0 }}
                 >
                   <Iconify
-                    icon={showAll ? "tabler:chevron-up" : "tabler:chevron-down"}
+                    icon={
+                      showAll
+                        ? "solar:alt-arrow-up-linear"
+                        : "solar:alt-arrow-down-linear"
+                    }
                     width={16}
                     height={16}
                     sx={{ color: "primary.main" }}
@@ -582,8 +579,6 @@ export default function EvaluationMappingFormContent({
                 <IconButton
                   sx={{
                     paddingY: 0,
-                    paddingX: 0.5,
-                    height: theme.spacing(3),
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -594,12 +589,9 @@ export default function EvaluationMappingFormContent({
                     });
                   }}
                 >
-                  <Iconify
-                    icon="tabler:copy"
-                    sx={{
-                      width: theme.spacing(2),
-                      height: theme.spacing(2),
-                    }}
+                  <Iconify width={16}
+                    icon="solar:copy-linear"
+                    sx={{ }}
                   />
                 </IconButton>
               </Box>
@@ -631,7 +623,7 @@ export default function EvaluationMappingFormContent({
                 sx={{
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   padding: theme.spacing(2, 1.5),
                   display: "flex",
                   flexDirection: "column",
@@ -807,8 +799,6 @@ export default function EvaluationMappingFormContent({
                   <IconButton
                     sx={{
                       paddingY: 0,
-                      paddingX: 0.5,
-                      height: theme.spacing(3),
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -819,12 +809,9 @@ export default function EvaluationMappingFormContent({
                       });
                     }}
                   >
-                    <Iconify
-                      icon="tabler:copy"
-                      sx={{
-                        width: theme.spacing(2),
-                        height: theme.spacing(2),
-                      }}
+                    <Iconify width={16}
+                      icon="solar:copy-linear"
+                      sx={{ }}
                     />
                   </IconButton>
                 </Box>
@@ -841,7 +828,7 @@ export default function EvaluationMappingFormContent({
           py={theme.spacing(2)}
           px={theme.spacing(1.5)}
           border={`1px solid`}
-          borderColor={"black.50"}
+          borderColor={"divider"}
           borderRadius={theme.spacing(0.5)}
           flexDirection={"column"}
           gap={theme.spacing(2)}
@@ -877,7 +864,7 @@ export default function EvaluationMappingFormContent({
           py={theme.spacing(2)}
           px={theme.spacing(1.5)}
           border={`1px solid`}
-          borderColor={"black.50"}
+          borderColor={"divider"}
           borderRadius={theme.spacing(0.5)}
           flexDirection={"column"}
           gap={theme.spacing(2)}
@@ -1066,15 +1053,7 @@ export default function EvaluationMappingFormContent({
               ? handleSubmit((formData) => onFormSave(formData, removedEvals))
               : undefined
           }
-          startIcon={
-            <SvgColor
-              sx={{
-                height: "20px",
-                width: "20px",
-              }}
-              src={"/assets/icons/ic_add.svg"}
-            />
-          }
+          startIcon={<SvgColor width={20} src={"/assets/icons/ic_add.svg"} />}
           variant="contained"
           color="primary"
         >

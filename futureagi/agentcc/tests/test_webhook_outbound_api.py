@@ -126,9 +126,7 @@ class TestAgentccWebhookTest:
         assert response.json()["result"]["success"] is True
 
         # An event row is written for the test delivery.
-        event = AgentccWebhookEvent.objects.get(
-            webhook=webhook, event_type="test"
-        )
+        event = AgentccWebhookEvent.objects.get(webhook=webhook, event_type="test")
         assert event.status == AgentccWebhookEvent.DELIVERED
         assert event.last_response_code == 200
 
@@ -150,9 +148,7 @@ class TestAgentccWebhookTest:
         assert response.json()["result"]["success"] is False
         assert "connection refused" in response.json()["result"]["error"]
 
-        event = AgentccWebhookEvent.objects.get(
-            webhook=webhook, event_type="test"
-        )
+        event = AgentccWebhookEvent.objects.get(webhook=webhook, event_type="test")
         assert event.status == AgentccWebhookEvent.FAILED
 
 
@@ -173,9 +169,7 @@ class TestAgentccWebhookEvent:
         _make_event(webhook, user, status=AgentccWebhookEvent.DELIVERED)
         _make_event(webhook, user, status=AgentccWebhookEvent.FAILED)
 
-        response = auth_client.get(
-            "/agentcc/webhook-events/?status=failed"
-        )
+        response = auth_client.get("/agentcc/webhook-events/?status=failed")
         assert response.status_code == 200
         rows = response.json()["result"]
         assert len(rows) == 1
@@ -187,9 +181,7 @@ class TestAgentccWebhookEvent:
         _make_event(w1, user)
         _make_event(w2, user)
 
-        response = auth_client.get(
-            f"/agentcc/webhook-events/?webhook_id={w1.id}"
-        )
+        response = auth_client.get(f"/agentcc/webhook-events/?webhook_id={w1.id}")
         assert response.status_code == 200
         rows = response.json()["result"]
         assert len(rows) == 1
@@ -212,9 +204,7 @@ class TestAgentccWebhookEvent:
             last_error="boom",
         )
 
-        response = auth_client.post(
-            f"/agentcc/webhook-events/{event.id}/retry/"
-        )
+        response = auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/")
         assert response.status_code == 200
         event.refresh_from_db()
         assert event.status == AgentccWebhookEvent.PENDING
@@ -223,11 +213,7 @@ class TestAgentccWebhookEvent:
 
     def test_retry_rejects_already_delivered(self, auth_client, user):
         webhook = _make_webhook(user)
-        event = _make_event(
-            webhook, user, status=AgentccWebhookEvent.DELIVERED
-        )
+        event = _make_event(webhook, user, status=AgentccWebhookEvent.DELIVERED)
 
-        response = auth_client.post(
-            f"/agentcc/webhook-events/{event.id}/retry/"
-        )
+        response = auth_client.post(f"/agentcc/webhook-events/{event.id}/retry/")
         assert response.status_code == 400

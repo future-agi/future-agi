@@ -15,8 +15,47 @@ import { ShowComponent } from "src/components/show";
 import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadOnlyView";
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
+import { decisionModelsQueryKey } from "src/api/evaluations/decision-models";
 
-const KeyCardComponent = ({ data, onDeleteClick }) => {
+// Providers without a hosted logo (e.g. TypeSafe) show their initial
+// instead of a broken image.
+const ProviderLogo = ({ data }) =>
+  data?.logoUrl ? (
+    <Image
+      src={data.logoUrl}
+      alt={data?.display_name}
+      width={25}
+      height={25}
+      disableThemeFilter={
+        !LOGO_WITH_BLACK_BACKGROUND.includes(data?.provider?.toLowerCase())
+      }
+      style={{ objectFit: "contain" }}
+    />
+  ) : (
+    <Box
+      aria-hidden
+      sx={{
+        width: 25,
+        height: 25,
+        borderRadius: "6px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: "action.hover",
+        color: "text.secondary",
+        fontSize: 12,
+        fontWeight: 600,
+      }}
+    >
+      {(data?.display_name || data?.provider || "?").charAt(0).toUpperCase()}
+    </Box>
+  );
+
+ProviderLogo.propTypes = {
+  data: PropTypes.object,
+};
+
+const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
   const theme = useTheme();
   const hasClearedOnceRef = useRef(false);
   const focusTimeoutRef = useRef(null);
@@ -94,8 +133,10 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
         queryKey: ["model-list"],
       });
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
+      queryClient.invalidateQueries({ queryKey: decisionModelsQueryKey });
       setEditMode(false);
       hasClearedOnceRef.current = false;
+      onKeySaved?.(data.provider);
     },
   });
 
@@ -107,8 +148,10 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
         queryKey: ["model-list"],
       });
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
+      queryClient.invalidateQueries({ queryKey: decisionModelsQueryKey });
       setEditMode(false);
       hasClearedOnceRef.current = false;
+      onKeySaved?.(data.provider);
     },
   });
   const handleFormSubmit = async (formData) => {
@@ -272,18 +315,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                 gap: theme.spacing(1),
               }}
             >
-              <Image
-                src={data?.logoUrl}
-                alt={data?.display_name}
-                width={25}
-                height={25}
-                disableThemeFilter={
-                  !LOGO_WITH_BLACK_BACKGROUND.includes(
-                    data?.provider?.toLowerCase(),
-                  )
-                }
-                style={{ objectFit: "contain" }}
-              />
+              <ProviderLogo data={data} />
               <Typography
                 component="div"
                 typography="s1"
@@ -299,7 +331,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                 width={16}
                 height={16}
                 style={{
-                  color: theme.palette.green[400],
+                  color: theme.palette.status.success.fg,
                   marginRight: "2px",
                   marginLeft: "0px",
                 }}
@@ -339,18 +371,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                   gap: theme.spacing(1),
                 }}
               >
-                <Image
-                  src={data?.logoUrl}
-                  alt={data?.display_name}
-                  width={25}
-                  height={25}
-                  disableThemeFilter={
-                    !LOGO_WITH_BLACK_BACKGROUND.includes(
-                      data?.provider?.toLowerCase(),
-                    )
-                  }
-                  style={{ objectFit: "contain" }}
-                />
+                <ProviderLogo data={data} />
                 <Typography
                   component="div"
                   typography="s1"
@@ -366,7 +387,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                   width={16}
                   height={16}
                   style={{
-                    color: theme.palette.green[400],
+                    color: theme.palette.status.success.fg,
                     marginRight: "2px",
                     marginLeft: "0px",
                   }}
@@ -419,6 +440,7 @@ KeyCardComponent.propTypes = {
   onClose: PropTypes.func,
   isFetching: PropTypes.bool,
   onDeleteClick: PropTypes.func,
+  onKeySaved: PropTypes.func,
 };
 
 const KeyCard = React.memo(KeyCardComponent);

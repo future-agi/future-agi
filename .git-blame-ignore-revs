@@ -1,0 +1,12 @@
+# Commits that only reformat code. git blame skips them once you run:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub's blame view reads this file automatically.
+
+# style: format backend Python with ruff format (mechanical, no behaviour change)
+7e98398ca28e264b44b65e41bede825062654991
+# style: format backend Python files changed since the first pass
+897384e98dab3e21c5985e8cd57703d58f0fcb80
+# style: format backend Python files changed since the last formatting pass
+895b996aa947e9239e807cf1760a2c57523a41f2
+# style: format backend Python files changed since the last formatting pass
+449b8980976034f5d52c468170555b638babc7d9

@@ -8,6 +8,7 @@ import {
 import { PromptCardWrapper } from "./PromptCardStyleComponents";
 import PromptTopSection from "./PromptCardTopSection";
 import PromptEditor from "./PromptEditor";
+import { ALL_MEDIA_KINDS, NO_MEDIA_KINDS } from "./clipboard/constants";
 import { usePromptCardDefaultValues } from "./usePromptCardDefaultValues";
 import UploadMedia from "./UploadMedia/UploadMedia";
 import {
@@ -155,6 +156,7 @@ const PromptCard = ({
           allVariablesValid={allVariablesValid}
           variableValidator={variableValidator}
           jinjaMode={jinjaMode}
+          allowedMediaTypes={allowAttachment ? ALL_MEDIA_KINDS : NO_MEDIA_KINDS}
         />
         <ShowComponent condition={isRecorderActive}>
           <PromptRecorder

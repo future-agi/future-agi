@@ -12,6 +12,9 @@ ALLOWED_INGESTION_STATUSES = (
 
 class ALKSimulateTranscriptSegmentSerializer(serializers.Serializer):
     speaker_role = serializers.ChoiceField(choices=CallTranscript.SpeakerRole.values)
+    speaker_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=255
+    )
     content = serializers.CharField(allow_blank=True)
     start_time_ms = serializers.IntegerField(required=False, default=0, min_value=0)
     end_time_ms = serializers.IntegerField(required=False, default=0, min_value=0)
@@ -228,6 +231,8 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     )
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    # Off by default; the caller opts in explicitly.
+    enable_tool_evaluation = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         # ALK contracts call conversational text agents "chat" while the

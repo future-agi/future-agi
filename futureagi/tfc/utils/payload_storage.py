@@ -20,7 +20,7 @@ Usage:
 import json
 import os
 import uuid
-from typing import Any, Optional, Union
+from typing import Any
 
 import redis
 import structlog
@@ -39,7 +39,7 @@ class PayloadStorage:
     Temporal workflow inputs (which have a 4MB hard limit).
     """
 
-    def __init__(self, redis_url: Optional[str] = None, key_prefix: str = "payload:"):
+    def __init__(self, redis_url: str | None = None, key_prefix: str = "payload:"):
         """
         Initialize payload storage.
 
@@ -49,7 +49,7 @@ class PayloadStorage:
         """
         self.key_prefix = key_prefix
         self._redis_url = redis_url or os.getenv("REDIS_URL")
-        self._redis_client: Optional[redis.Redis] = None
+        self._redis_client: redis.Redis | None = None
         self._redis_available = False
 
         self._connect_redis()
@@ -85,7 +85,7 @@ class PayloadStorage:
             self._redis_available = False
             self._redis_client = None
 
-    def store(self, data: Union[str, bytes], ttl: int = PAYLOAD_DEFAULT_TTL) -> str:
+    def store(self, data: str | bytes, ttl: int = PAYLOAD_DEFAULT_TTL) -> str:
         """
         Store a payload in Redis and return a reference key.
 
@@ -112,7 +112,10 @@ class PayloadStorage:
             self._redis_client.setex(key, ttl, raw)
             return key
         except RedisError as e:
-            logger.exception(
+            # WARNING, without the traceback: this frame holds the raw payload, and Sentry
+            # attaches frame variables to every error event. The caller decides what the
+            # failure means.
+            logger.warning(
                 "failed to store payload in redis",
                 key=key,
                 error=str(e),
@@ -149,7 +152,7 @@ class PayloadStorage:
             return None
         return json.loads(raw)
 
-    def retrieve(self, key: str, delete_after: bool = True) -> Optional[bytes]:
+    def retrieve(self, key: str, delete_after: bool = True) -> bytes | None:
         """
         Retrieve a payload from Redis using its reference key.
 
@@ -165,8 +168,7 @@ class PayloadStorage:
         """
         if not self._redis_available or not self._redis_client:
             raise RuntimeError(
-                "Redis is not available for payload storage. "
-                "Cannot retrieve payloads."
+                "Redis is not available for payload storage. Cannot retrieve payloads."
             )
 
         try:
@@ -192,7 +194,7 @@ class PayloadStorage:
             raise RuntimeError(f"Failed to retrieve payload: {e}") from e
 
 
-_payload_storage: Optional[PayloadStorage] = None
+_payload_storage: PayloadStorage | None = None
 
 
 def get_payload_storage() -> PayloadStorage:

@@ -128,13 +128,12 @@ const ScheduledRuns = ({ control, dayLimit, isEdit = false }) => {
                           sx={{
                             p: 0.2,
                             minWidth: "10px",
-                            height: "10px",
                             lineHeight: 0,
                           }}
                         >
                           <Iconify
-                            icon="heroicons:chevron-up-20-solid"
-                            width={18}
+                            icon="solar:alt-arrow-up-linear"
+                            width={20}
                             color="text.primary"
                           />
                         </IconButton>
@@ -144,13 +143,12 @@ const ScheduledRuns = ({ control, dayLimit, isEdit = false }) => {
                           sx={{
                             p: 0.2,
                             minWidth: "10px",
-                            height: "10px",
                             lineHeight: 0,
                           }}
                         >
                           <Iconify
-                            icon="heroicons:chevron-down-20-solid"
-                            width={18}
+                            icon="solar:alt-arrow-down-linear"
+                            width={20}
                             color="text.primary"
                           />
                         </IconButton>

@@ -27,22 +27,34 @@ class TestExtractRecordingUrlsFromSpans:
     def test_prefers_mono_over_stereo(self):
         from tracer.utils import replay_session
 
-        spans = [self._span(
-            mono="https://bucket.s3.amazonaws.com/mono.mp3",
-            stereo="https://bucket.s3.amazonaws.com/stereo.mp3",
-        )]
-        with patch.object(replay_session, "merge_span_attrs", side_effect=lambda span: span["span_attributes"]):
+        spans = [
+            self._span(
+                mono="https://bucket.s3.amazonaws.com/mono.mp3",
+                stereo="https://bucket.s3.amazonaws.com/stereo.mp3",
+            )
+        ]
+        with patch.object(
+            replay_session,
+            "merge_span_attrs",
+            side_effect=lambda span: span["span_attributes"],
+        ):
             out = replay_session._extract_recording_urls_from_spans(spans)
         assert out == {"t1": "https://bucket.s3.amazonaws.com/mono.mp3"}
 
     def test_falls_back_to_stereo_when_mono_missing(self):
         from tracer.utils import replay_session
 
-        spans = [self._span(
-            mono=None,
-            stereo="https://bucket.s3.amazonaws.com/stereo.mp3",
-        )]
-        with patch.object(replay_session, "merge_span_attrs", side_effect=lambda span: span["span_attributes"]):
+        spans = [
+            self._span(
+                mono=None,
+                stereo="https://bucket.s3.amazonaws.com/stereo.mp3",
+            )
+        ]
+        with patch.object(
+            replay_session,
+            "merge_span_attrs",
+            side_effect=lambda span: span["span_attributes"],
+        ):
             out = replay_session._extract_recording_urls_from_spans(spans)
         assert out == {"t1": "https://bucket.s3.amazonaws.com/stereo.mp3"}
 
@@ -75,7 +87,13 @@ class TestCallExecutionDetailSerializerGetRecordings:
         )
         serializer, obj = self._serializer(obj=obj)
         result = serializer.get_recordings(obj)
-        assert set(result.keys()) == {"combined", "stereo", "customer", "assistant"}
+        assert set(result.keys()) == {
+            "combined",
+            "stereo",
+            "customer",
+            "assistant",
+            "stereo_channels",
+        }
         assert result["combined"] == "https://bucket.s3.amazonaws.com/combined.mp3"
         assert result["stereo"] == "https://bucket.s3.amazonaws.com/stereo.mp3"
         assert result["customer"] == "https://bucket.s3.amazonaws.com/customer.mp3"
@@ -141,7 +159,9 @@ class TestFetchSimulatedCallRecordingsMirrorFirst:
                 "vapi": {
                     "artifact": {
                         "recording": {
-                            "mono": {"combinedUrl": "https://shortcut.s3.amazonaws.com/mono.mp3"},
+                            "mono": {
+                                "combinedUrl": "https://shortcut.s3.amazonaws.com/mono.mp3"
+                            },
                             "stereoUrl": "https://shortcut.s3.amazonaws.com/stereo.mp3",
                         }
                     }
@@ -162,7 +182,9 @@ class TestDownloadAudioFromUrlSyncRouting:
         from tfc.utils import storage
         from tracer.utils.vapi_recording import VapiRecordingService
 
-        with patch.object(VapiRecordingService, "download_artifact_sync", return_value=b"mp3-bytes") as mock_download:
+        with patch.object(
+            VapiRecordingService, "download_artifact_sync", return_value=b"mp3-bytes"
+        ) as mock_download:
             out = storage.download_audio_from_url(
                 audio_url="https://storage.vapi.ai/x.mp3",
                 provider="vapi",
@@ -180,11 +202,17 @@ class TestDownloadAudioFromUrlSyncRouting:
 
         fake_response = Mock(status_code=200)
         fake_response.iter_content = Mock(return_value=[b"legacy-bytes"])
-        with patch.object(VapiRecordingService, "download_artifact_sync") as mock_download, \
-             patch("tfc.utils.storage._ssrf_safe_get") as mock_get:
+        with (
+            patch.object(
+                VapiRecordingService, "download_artifact_sync"
+            ) as mock_download,
+            patch("tfc.utils.storage._ssrf_safe_get") as mock_get,
+        ):
             mock_get.return_value.__enter__ = Mock(return_value=fake_response)
             mock_get.return_value.__exit__ = Mock(return_value=False)
-            with patch("tfc.utils.storage._ensure_min_duration", side_effect=lambda b, _: b):
+            with patch(
+                "tfc.utils.storage._ensure_min_duration", side_effect=lambda b, _: b
+            ):
                 storage.download_audio_from_url(
                     audio_url="https://other-host.com/x.mp3",
                     api_key=None,
@@ -208,7 +236,9 @@ class TestDownloadAudioFromUrlAsyncRouting:
         async def _fake_download(**kwargs):
             return b"mp3-bytes"
 
-        with patch.object(VapiRecordingService, "download_artifact_async", side_effect=_fake_download) as mock_download:
+        with patch.object(
+            VapiRecordingService, "download_artifact_async", side_effect=_fake_download
+        ) as mock_download:
             out = await async_storage.download_audio_from_url_async(
                 audio_url=None,
                 provider="vapi",

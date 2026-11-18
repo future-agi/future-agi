@@ -1,0 +1,22 @@
+# CI only: a pull-through cache of Docker Hub alone, over examples/bundled.yaml,
+# as the global.imageRegistry doc describes: the Future AGI images and each
+# Docker Hub datastore name it, the bundled MinIO keeps ghcr.io, and every
+# image keeps its digest pin (hack/rendered_checks.py).
+image:
+  registry: registry.example.com/dockerhub
+postgres:
+  bundled:
+    image:
+      registry: registry.example.com/dockerhub
+clickhouse:
+  bundled:
+    image:
+      registry: registry.example.com/dockerhub
+redis:
+  bundled:
+    image:
+      registry: registry.example.com/dockerhub
+temporal:
+  bundled:
+    image:
+      registry: registry.example.com/dockerhub

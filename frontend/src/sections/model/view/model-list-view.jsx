@@ -67,7 +67,7 @@ export default function ModelListView() {
   return (
     <>
       <Container maxWidth={settings.themeStretch ? false : "lg"}>
-        <Typography variant="h4">Models</Typography>
+        <Typography variant="h2">Models</Typography>
 
         <Card>
           <TableContainer sx={{ position: "relative", overflow: "unset" }}>

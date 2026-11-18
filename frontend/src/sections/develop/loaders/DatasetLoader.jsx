@@ -92,7 +92,7 @@ export default function DatasetLoader({
               justifyContent: "center",
               alignItems: "center",
               borderRadius: "50%",
-              bgcolor: "red.o5",
+              bgcolor: "status.danger.bg",
               height: "68px",
               width: "68px",
             }}
@@ -101,7 +101,7 @@ export default function DatasetLoader({
               sx={{
                 height: "29px",
                 width: "29px",
-                bgcolor: "red.500",
+                bgcolor: "status.danger.solid",
               }}
               src="/assets/icons/ic_critical.svg"
             />
@@ -157,10 +157,9 @@ export default function DatasetLoader({
           onClick={onAction}
           startIcon={
             <SvgColor
+              width={16}
               src={icon}
               sx={{
-                height: 16,
-                width: 16,
                 color: "text.primary",
               }}
             />

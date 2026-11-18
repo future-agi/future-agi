@@ -167,6 +167,7 @@ class FetchPromptMetricsNullView(APIView):
 import openai
 import opentelemetry
 from fi_instrumentation import register, using_prompt_template
+from fi_instrumentation.fi_types import ProjectType
 from openai import OpenAI
 from traceai_openai import OpenAIInstrumentor
 
