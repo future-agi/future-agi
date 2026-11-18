@@ -174,7 +174,7 @@ export const SOURCES_COPY = {
   },
   yourCopy: "your copy",
   version: (n) => `v${n}`,
-  usedByNone: "Nothing yet",
+  usedBy: (n) => (n ? `${n} item${n === 1 ? "" : "s"}` : "Nothing yet"),
   remove: (name) => `Remove ${name}`,
   removeHint: (saved) =>
     saved
