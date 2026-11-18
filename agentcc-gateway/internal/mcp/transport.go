@@ -160,6 +160,7 @@ type StdioTransport struct {
 	stderrDone chan struct{}
 	writeGate  chan struct{} // one complete JSON line at a time
 	done       chan struct{} // closed by Close to wake senders
+	untrack    func()        // ends live collection of the command's workers
 }
 
 // NewStdioTransport creates a transport that launches a subprocess.
@@ -211,6 +212,7 @@ func (t *StdioTransport) Start(ctx context.Context) error {
 	}
 
 	t.cmd = cmd
+	t.untrack = trackStdioGroup(cmd.Process.Pid)
 	t.stdin = stdin
 	t.scanner = bufio.NewScanner(stdout)
 	t.scanner.Buffer(make([]byte, 0, 64*1024), maxStdioMessageSize)
@@ -366,6 +368,7 @@ func (t *StdioTransport) Close() error {
 	if t.cmd == nil || t.cmd.Process == nil {
 		return nil
 	}
+	t.untrack()
 	err := stopStdioCommand(t.cmd)
 	done := make(chan error, 1)
 	go func() {
