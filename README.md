@@ -155,11 +155,11 @@ downloads the images (about 800 MB) and waits until everything answers. The
 first boot sets up the database and takes a few minutes; <http://localhost:3000>
 shows its progress meanwhile.
 
-**2. Sign in and copy your keys**
+**2. Sign in and create your keys**
 
 Open <http://localhost:3000>, create your account (or sign in with the one the
-installer made), then copy the API key and secret key from **Keys** in the
-sidebar.
+installer made), then open **Keys** in the sidebar. Select **Add API Key** and
+copy the new API key and secret key from the creation dialog before closing it.
 
 **3. Send your first trace**
 
