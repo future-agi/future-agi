@@ -184,7 +184,7 @@ func (t *StdioTransport) Start(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	cmd := exec.Command(t.command, t.args...)
+	cmd := stdioCommand(t.command, t.args...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -338,24 +338,24 @@ func (t *StdioTransport) Close() error {
 	if t.closed.Swap(true) {
 		return nil // already closed
 	}
+	t.healthy.Store(false)
 	close(t.done)
 
 	if t.stdin != nil {
 		t.stdin.Close()
 	}
-	if t.cmd != nil && t.cmd.Process != nil {
-		// Send SIGTERM, wait up to 5s, then SIGKILL.
-		t.cmd.Process.Kill()
-		done := make(chan error, 1)
-		go func() { done <- t.cmd.Wait() }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
+	if t.cmd == nil || t.cmd.Process == nil {
+		return nil
 	}
-
-	t.healthy.Store(false)
-	return nil
+	err := stopStdioCommand(t.cmd)
+	done := make(chan struct{})
+	go func() { _ = t.cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("timed out waiting for stdio command to exit")
+	}
 }
 
 func (t *StdioTransport) Healthy() bool {

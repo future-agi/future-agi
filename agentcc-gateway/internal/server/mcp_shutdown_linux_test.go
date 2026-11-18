@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,9 +18,9 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
 
-func TestShutdownReapsConnectedStdioChild(t *testing.T) {
+func serverWithStdioFixture(t *testing.T, cfg *config.Config) (*Server, int) {
+	t.Helper()
 	pidFile := filepath.Join(t.TempDir(), "fixture.pid")
-	cfg := config.DefaultConfig()
 	cfg.MCP.Enabled = true
 	cfg.MCP.Servers = map[string]config.MCPServerConfig{"fixture": {
 		Transport: "stdio", Command: os.Args[0], Args: []string{"-test.run=^TestShutdownStdioFixture$", "--", pidFile},
@@ -37,6 +38,30 @@ func TestShutdownReapsConnectedStdioChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return srv, pid
+}
+
+func TestFailedListenerReapsConnectedStdioChild(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	cfg := config.DefaultConfig()
+	cfg.Server.Host = "127.0.0.1"
+	cfg.Server.Port = occupied.Addr().(*net.TCPAddr).Port
+	srv, pid := serverWithStdioFixture(t, cfg)
+	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+	if err := srv.Start(); err == nil {
+		t.Fatal("Start unexpectedly acquired the occupied listener")
+	}
+	if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("Start returned a listener error before reaping its connected stdio child")
+	}
+}
+
+func TestShutdownReapsConnectedStdioChild(t *testing.T) {
+	srv, pid := serverWithStdioFixture(t, config.DefaultConfig())
 	child, err := os.FindProcess(pid)
 	if err != nil {
 		t.Fatal(err)

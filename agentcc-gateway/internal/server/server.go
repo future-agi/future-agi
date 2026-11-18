@@ -1130,7 +1130,14 @@ func (s *Server) listen() ([]gatewayListener, error) {
 }
 
 // Start begins listening for HTTP requests. Blocks until the server stops.
-func (s *Server) Start() error {
+func (s *Server) Start() (err error) {
+	// New may already have connected MCP children. On a failed Start the
+	// caller can exit immediately, without ever entering Shutdown.
+	defer func() {
+		if err != nil && s.closeMCP != nil {
+			s.closeMCP()
+		}
+	}()
 	if s.videoInitErr != nil {
 		return fmt.Errorf("video initialization failed: %w", s.videoInitErr)
 	}
