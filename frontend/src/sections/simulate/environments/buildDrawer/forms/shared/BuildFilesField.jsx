@@ -3,10 +3,14 @@ import { useRef, useState } from "react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { formatFileSize } from "src/utils/utils";
 import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import { OUTLINED_BTN_SX, ROW_BOX_SX, T12, T13 } from "../../drawerStyles";
 import { BUILD_FILES_ACCEPT, extOf, mergeBuildFiles } from "./buildFiles";
+
+const kb = (n) =>
+  n >= 1024 * 1024
+    ? `${(n / (1024 * 1024)).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(n / 1024))} KB`;
 
 // How the builder will likely read a file, from its name alone. Drag and drop
 // skips `accept`, so a type outside it says it can't be read.
@@ -173,7 +177,7 @@ export default function BuildFilesField({
                 </Typography>
                 <Typography
                   noWrap
-                  sx={{ ...T12, color: "text.disabled", flex: 1, minWidth: 0 }}
+                  sx={{ ...T12, color: "text.tertiary", flex: 1, minWidth: 0 }}
                 >
                   {role ? `Read as ${role}` : "Can't be read"}
                 </Typography>
@@ -185,7 +189,7 @@ export default function BuildFilesField({
                     flexShrink: 0,
                   }}
                 >
-                  {formatFileSize(f.size)}
+                  {kb(f.size)}
                 </Typography>
                 <IconButton
                   size="small"
