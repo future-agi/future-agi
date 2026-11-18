@@ -263,7 +263,6 @@ def test_another_organizations_agent_version_is_refused(
 ):
     """A request names an agent version by id: validation and the scenarios list take only this environment's."""
     from accounts.models import Organization
-
     from simulate.models import AgentVersion
     from simulate.tests.test_harness_readiness import _with_a2
 
