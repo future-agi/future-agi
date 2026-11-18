@@ -34,6 +34,8 @@ const errorText = (error, drafts, fallback) => {
   return COPY.errors[error?.error] || refusalText(error, fallback);
 };
 
+const FILE_KINDS = ["source", "file"];
+
 const noteSx = { typography: "s3", color: "text.secondary", flexBasis: "100%" };
 
 /**
@@ -70,7 +72,11 @@ export default function DraftBar({
     if (failed.current) resetSave();
   }, [signature, resetSave]);
 
-  if (!enabled || !drafts?.any) return null;
+  // Edits added from files sit in the review cache before any draft is open.
+  const fromFiles = (review?.changes || []).some((one) =>
+    FILE_KINDS.includes(one.kind),
+  );
+  if (!enabled || !(drafts?.any || fromFiles)) return null;
 
   const kept = keptChanges(review?.changes);
   const counts = reviewCounts(review?.changes);
@@ -83,7 +89,7 @@ export default function DraftBar({
   if (!uncounted && !counts.total && !failedCount) return null;
 
   const line = saveLine(review?.changes, versions);
-  const staleReason = drafts.stale ? staleText(drafts) : null;
+  const staleReason = drafts?.stale ? staleText(drafts) : null;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
 

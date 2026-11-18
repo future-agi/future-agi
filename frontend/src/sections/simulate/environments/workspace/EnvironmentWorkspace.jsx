@@ -684,6 +684,7 @@ export default function EnvironmentWorkspace() {
                 runMutation.isPending,
                 backedScenarioCount,
               )}
+              onReviewChanges={() => setReviewOpen(true)}
             />
           )}
         </ChatSplitPane>

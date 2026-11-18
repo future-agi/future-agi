@@ -157,9 +157,19 @@ export default function ReviewChangesDrawer({
   else if (counts.undecided) saveReason = COPY.saveWaiting(counts.undecided);
   else if (!counts.accepted) saveReason = COPY.saveAllRejected;
 
-  const goTab = (tab) => {
+  // (tab, params?): `params` opens a file there, e.g. { source, at }.
+  const goTab = (...to) => {
     onClose?.();
-    onOpenTab?.(tab);
+    onOpenTab?.(...to);
+  };
+  const openLink = (link, tab) => {
+    if (link.kind === "chat") onClose?.();
+    else if (link.sourceId) {
+      goTab("world", {
+        source: link.sourceId,
+        ...(link.at && { at: link.at }),
+      });
+    } else goTab(tab);
   };
   const save = () => {
     if (review?.is_sample) {
@@ -208,7 +218,11 @@ export default function ReviewChangesDrawer({
                   key={one.id}
                   failed={one}
                   canEdit={canEdit}
-                  onFix={() => goTab("world")}
+                  onFix={() =>
+                    one.source_name
+                      ? goTab("world", { source: one.source_id })
+                      : goTab("world")
+                  }
                   onDismiss={() => {
                     beforeRemoval(COPY.dismissed(one.detail));
                     dismiss(one.id);
@@ -238,9 +252,7 @@ export default function ReviewChangesDrawer({
                   changes={changes}
                   canEdit={canEdit}
                   onDecide={(decision) => decideChange(change, decision)}
-                  onOpen={(link) =>
-                    link.kind === "chat" ? onClose?.() : goTab(group.tab)
-                  }
+                  onOpen={(link) => openLink(link, group.tab)}
                 />
               ))}
             </Box>
@@ -417,6 +429,6 @@ ReviewChangesDrawer.propTypes = {
   onClose: PropTypes.func,
   // ({ name }): the kept changes are saved.
   onSaved: PropTypes.func,
-  // (tab id): show the tab that holds a change.
+  // (tab id, params?): show the tab that holds a change, or the file it came from.
   onOpenTab: PropTypes.func,
 };

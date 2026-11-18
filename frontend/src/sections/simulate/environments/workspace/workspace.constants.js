@@ -506,7 +506,7 @@ export const REVIEW_COPY = {
   dismissed: (detail) => `Dismissed: ${detail}`,
   groupTitle: (label, n) => `${label} · ${n}`,
   failed: "Couldn't apply",
-  failedMeta: ({ source_id: source, scenarios }) => {
+  failedMeta: ({ source_id: id, source_name: source = id, scenarios }) => {
     let held = "no scenario depends on it";
     if (scenarios?.length) {
       const more =
@@ -523,6 +523,7 @@ export const REVIEW_COPY = {
   },
   fix: "Fix",
   fixIn: (name) => `Fix in ${name}`,
+  fixes: { supply: "Supply the records", attach: "Attach a file" },
   dismiss: "Dismiss",
   noSource: "Source not recorded",
   fromChat: "From the builder chat",
@@ -537,6 +538,7 @@ export const REVIEW_COPY = {
   accepted: "Accepted",
   rejected: "Rejected",
   change: "Change",
+  undo: "Undo",
   restore: "Restore",
   rejectBlocked: (title) => `"${title}" needs this. Reject that one first.`,
   restoreBlocked: (title) =>

@@ -30,6 +30,7 @@ export default function ChangeDecision({
   decision = null,
   rejectReason = null,
   restoreReason = null,
+  undoText = COPY.change,
   onDecide,
 }) {
   const rootRef = useRef(null);
@@ -68,7 +69,7 @@ export default function ChangeDecision({
             onClick={() => decide(null)}
             sx={undoSx}
           >
-            {COPY.change}
+            {undoText}
           </Button>
         </Outcome>
       )}
@@ -121,6 +122,8 @@ ChangeDecision.propTypes = {
   // Why it can't be rejected, or restored, right now.
   rejectReason: PropTypes.string,
   restoreReason: PropTypes.string,
+  // The way back from Accepted.
+  undoText: PropTypes.string,
   // (decision or null): null clears the decision.
   onDecide: PropTypes.func,
 };
