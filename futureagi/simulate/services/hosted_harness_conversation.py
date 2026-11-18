@@ -40,8 +40,8 @@ from simulate.services.hosted_harness import (
     canonical_digest,
     hash_secret,
 )
-from simulate.services.run_results_v3_page import run_outcome_summaries
 from simulate.services.hosted_harness_validation import validate_jsonb_strings
+from simulate.services.run_results_v3_page import run_outcome_summaries
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 

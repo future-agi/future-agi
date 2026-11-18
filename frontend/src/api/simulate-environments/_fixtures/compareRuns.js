@@ -42,6 +42,7 @@ const summary = (passed, failed, extra = {}) => ({
     failed,
     error: 0,
     inconclusive: 0,
+    no_score: 0,
   },
   measured: passed + failed,
   pass_rate: passed + failed ? (passed / (passed + failed)) * 100 : null,
@@ -67,6 +68,7 @@ const statusCounts = (passed, failed) => ({
   failed,
   inconclusive: 0,
   error: 0,
+  no_score: 0,
 });
 
 const execution = (id, ordinal, agent, env, wholeRun) => ({

@@ -95,7 +95,10 @@ export function buildTraceFilterFields(facets = {}, levelLabels = {}) {
             type: "enum",
             choices: facets.actor.map((item) => item.value),
             choiceLabels: Object.fromEntries(
-              facets.actor.map((item) => [item.value, callActorChoiceLabel(item)]),
+              facets.actor.map((item) => [
+                item.value,
+                callActorChoiceLabel(item),
+              ]),
             ),
           },
         ]

@@ -26,7 +26,14 @@ function CallTranscript({ callId }) {
         <CircularProgress size={18} />
       </Stack>
     );
-  return <ChatTranscriptPane turns={callDetail?.turns ?? []} />;
+  return (
+    <ChatTranscriptPane
+      turns={callDetail?.turns ?? []}
+      customerName={callDetail?.persona}
+      participants={callDetail?.participants || []}
+      hasCustomer={callDetail?.hasCustomer}
+    />
+  );
 }
 CallTranscript.propTypes = { callId: PropTypes.string.isRequired };
 
