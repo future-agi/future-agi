@@ -4,7 +4,6 @@ from typing import Any
 
 from agentic_eval.core_evals.fi_utils.json import JsonHelper
 
-
 # Skip prose placeholders: a supported object begins with a quoted key or is empty.
 _OBJECT_START = re.compile(r"""\{(?=(?:\s|\\[tr])*["'}])""")
 
