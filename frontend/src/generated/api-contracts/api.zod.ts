@@ -40135,6 +40135,10 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         }),
         zod.null(),
       ]),
+      environment_version: zod.object({
+        id: zod.string().uuid(),
+        version_number: zod.number(),
+      }),
       agent_policy: zod.enum(["follow", "pinned"]),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
@@ -40221,6 +40225,12 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       }),
     }),
   ),
+  status_counts: zod.object({
+    building: zod.number(),
+    running: zod.number(),
+    completed: zod.number(),
+    failed: zod.number(),
+  }),
 });
 
 /**
@@ -40255,6 +40265,10 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       }),
       zod.null(),
     ]),
+    environment_version: zod.object({
+      id: zod.string().uuid(),
+      version_number: zod.number(),
+    }),
     agent_policy: zod.enum(["follow", "pinned"]),
     last_updated: zod.string().datetime({ offset: true }),
     created_at: zod.string().datetime({ offset: true }),
@@ -40816,6 +40830,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       }),
       zod.null(),
     ]),
+    environment_version: zod.object({
+      id: zod.string().uuid(),
+      version_number: zod.number(),
+    }),
     agent_policy: zod.enum(["follow", "pinned"]),
     last_updated: zod.string().datetime({ offset: true }),
     created_at: zod.string().datetime({ offset: true }),
@@ -46533,6 +46551,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
         }),
         zod.null(),
       ]),
+      environment_version: zod.object({
+        id: zod.string().uuid(),
+        version_number: zod.number(),
+      }),
       agent_policy: zod.enum(["follow", "pinned"]),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),

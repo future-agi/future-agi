@@ -144711,6 +144711,7 @@
                 "tools_count",
                 "runs_count",
                 "agent_version",
+                "environment_version",
                 "agent_policy",
                 "last_updated",
                 "created_at",
@@ -144790,6 +144791,9 @@
                 "agent_version": {
                     "$ref": "#/definitions/AgentVersionRef"
                 },
+                "environment_version": {
+                    "$ref": "#/definitions/EnvironmentVersionRef"
+                },
                 "agent_policy": {
                     "title": "Agent policy",
                     "type": "string",
@@ -144817,6 +144821,33 @@
                 }
             }
         },
+        "HarnessEnvironmentStatusCounts": {
+            "required": [
+                "building",
+                "running",
+                "completed",
+                "failed"
+            ],
+            "type": "object",
+            "properties": {
+                "building": {
+                    "title": "Building",
+                    "type": "integer"
+                },
+                "running": {
+                    "title": "Running",
+                    "type": "integer"
+                },
+                "completed": {
+                    "title": "Completed",
+                    "type": "integer"
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessEnvironmentListResponse": {
             "required": [
                 "count",
@@ -144824,7 +144855,8 @@
                 "previous",
                 "total_pages",
                 "current_page",
-                "results"
+                "results",
+                "status_counts"
             ],
             "type": "object",
             "properties": {
@@ -144857,6 +144889,9 @@
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironment"
                     }
+                },
+                "status_counts": {
+                    "$ref": "#/definitions/HarnessEnvironmentStatusCounts"
                 }
             }
         },
@@ -144943,6 +144978,7 @@
                 "tools_count",
                 "runs_count",
                 "agent_version",
+                "environment_version",
                 "agent_policy",
                 "last_updated",
                 "created_at",
@@ -145025,6 +145061,9 @@
                 },
                 "agent_version": {
                     "$ref": "#/definitions/AgentVersionRef"
+                },
+                "environment_version": {
+                    "$ref": "#/definitions/EnvironmentVersionRef"
                 },
                 "agent_policy": {
                     "title": "Agent policy",

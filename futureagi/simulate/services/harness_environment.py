@@ -148,8 +148,13 @@ def annotate_for_list(
                 .values("id")[:1]
             ),
         )
-        .select_related("agent_version")
-        .defer("agent_version__configuration_snapshot")
+        .select_related("agent_version", "environment_version")
+        .defer(
+            "agent_version__configuration_snapshot",
+            "environment_version__diff",
+            "environment_version__documents",
+            "environment_version__snapshot_diff",
+        )
         .prefetch_related(
             Prefetch(
                 "normalized_stage_outputs",
@@ -209,6 +214,13 @@ def _blank_as_null(expression: Any) -> NullIf:
     return NullIf(Trim(expression), Value(""))
 
 
+def status_counts(queryset: QuerySet[HostedHarnessJob]) -> dict[str, int]:
+    statuses = (STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+    return queryset.order_by().aggregate(
+        **{status: Count("id", filter=_status_q(status)) for status in statuses}
+    )
+
+
 def _status_q(status: str) -> Q:
     known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED}
     if status == STATUS_COMPLETED:
@@ -262,6 +274,7 @@ def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
         "tools_count": _tools_count(contract),
         "runs_count": runs_count,
         "agent_version": version_ref(job.agent_version),
+        "environment_version": version_ref(job.environment_version),
         "agent_policy": environment_policy(job),
         "last_updated": _isoformat(job.content_updated_at or job.created_at),
         "created_at": _isoformat(job.created_at),

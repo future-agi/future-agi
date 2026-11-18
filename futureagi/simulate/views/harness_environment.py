@@ -120,6 +120,7 @@ from simulate.services.harness_environment import (
     environment_rows,
     eval_modality,
     filter_for_list,
+    status_counts,
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
@@ -278,17 +279,18 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _queryset(self, request):
-        return annotate_for_list(
-            scope_jobs(
-                HostedHarnessJob.no_workspace_objects.filter(
-                    organization=request_organization(request),
-                    environment__isnull=True,
-                    deleted=False,
-                ),
-                request,
-            )
+    def _scoped_jobs(self, request):
+        return scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(
+                organization=request_organization(request),
+                environment__isnull=True,
+                deleted=False,
+            ),
+            request,
         )
+
+    def _queryset(self, request):
+        return annotate_for_list(self._scoped_jobs(request))
 
     def _job(self, request, pk):
         identifier = _uuid_or_none(pk)
@@ -1283,7 +1285,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
-        return paginator.get_paginated_response(environment_rows(page))
+        response = paginator.get_paginated_response(environment_rows(page))
+        response.data["status_counts"] = status_counts(self._scoped_jobs(request))
+        return response
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
     def retrieve(self, request, pk=None):

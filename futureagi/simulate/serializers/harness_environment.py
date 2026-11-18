@@ -113,6 +113,7 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     # The agent version this environment tests by default; null before
     # versioning recorded one.
     agent_version = AgentVersionRefSerializer(allow_null=True)
+    environment_version = EnvironmentVersionRefSerializer(allow_null=True)
     # Whether the environment follows its agent's production version or stays
     # pinned to the one above.
     agent_policy = serializers.ChoiceField(choices=("follow", "pinned"))
@@ -181,6 +182,13 @@ class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
     last_run = HarnessRunSummarySerializer(allow_null=True)
 
 
+class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):
+    building = serializers.IntegerField()
+    running = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    failed = serializers.IntegerField()
+
+
 class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     count = serializers.IntegerField()
     next = serializers.CharField(allow_null=True)
@@ -188,6 +196,7 @@ class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
     current_page = serializers.IntegerField()
     results = HarnessEnvironmentSerializer(many=True)
+    status_counts = HarnessEnvironmentStatusCountsSerializer()
 
 
 class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):
