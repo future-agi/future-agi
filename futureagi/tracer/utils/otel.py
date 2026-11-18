@@ -825,6 +825,8 @@ def convert_otel_span_to_observation_span(
             user_id,
             workspace_id,
         )
+        if project is None:
+            raise ValueError("Project not found for span")
         metadata = otel_span.get("metadata") or attributes.get(SpanAttributes.METADATA)
         project_version_id = otel_span.get("project_version_id")
         project_version = get_or_create_project_version(
