@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { DraftReviewSchema } from "../draftReview.contract";
-import { draftReviewKey } from "../draftReview";
+import { draftReviewKey, freshSampleReview } from "../draftReview";
 import {
   appendAcceptedEdits,
   sourceSummaryKey,
@@ -94,7 +94,18 @@ describe("edits added from files", () => {
       rejected: 0,
       undecided: 0,
     });
+    expect(review.changes.map((one) => one.kind)).toEqual([
+      "rule",
+      "rule",
+      "world_state",
+    ]);
     expect(review.failed.map((one) => one.fix)).toEqual(["supply", "attach"]);
+    // A refetch (chat nudge, save) keeps what files added.
+    const refetched = freshSampleReview(review);
+    expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 3);
+    expect(refetched.failed).toHaveLength(
+      sampleDraftReview().failed.length + 2,
+    );
     expect(review.changes[0].sources[0].used[0]).toMatchObject({
       source_id: "src_1",
       name: "policy.pdf",

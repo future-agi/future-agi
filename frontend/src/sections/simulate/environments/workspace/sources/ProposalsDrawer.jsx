@@ -18,6 +18,7 @@ import {
 import SideDrawer from "../../components/SideDrawer";
 import AddSourceMenu from "./AddSourceMenu";
 import ProposalItem from "./ProposalItem";
+import { applyFileChoice, columnsOf } from "./personalData";
 import {
   PROPOSALS_COPY as COPY,
   groupProposals,
@@ -175,7 +176,19 @@ export function Proposals({
             ...current,
             sources: current.sources.map((source) =>
               source.source_id === sourceId
-                ? { ...source, ui: { ...source.ui, personal_choice: choice } }
+                ? {
+                    ...source,
+                    // The same column map the file's Personal data tab writes.
+                    ui: {
+                      ...source.ui,
+                      personal_choice: choice,
+                      privacy: Object.fromEntries(
+                        applyFileChoice(columnsOf(source), choice).map(
+                          (column) => [column.name, column.mode],
+                        ),
+                      ),
+                    },
+                  }
                 : source,
             ),
           }

@@ -15,7 +15,8 @@ vi.mock("notistack", async () => ({
   ...(await vi.importActual("notistack")),
   enqueueSnackbar: vi.fn(),
 }));
-vi.mock("src/api/simulate-environments/draftReview", () => ({
+vi.mock("src/api/simulate-environments/draftReview", async () => ({
+  ...(await vi.importActual("src/api/simulate-environments/draftReview")),
   useDraftReview: vi.fn(() => ({
     data: state.review,
     isError: state.reviewFailed,
@@ -113,7 +114,14 @@ describe("DraftBar", () => {
     state.drafts = { environment: null, suite: null, set_aside: [] };
     state.review = {
       is_sample: true,
-      changes: [{ ...KEPT, id: "source:rule-1", kind: "source" }],
+      changes: [
+        {
+          ...KEPT,
+          sources: [
+            { used: [{ kind: "source", source_id: "src_1", name: "a.pdf" }] },
+          ],
+        },
+      ],
       failed: [],
     };
     render(<DraftBar env={ENV} />);
