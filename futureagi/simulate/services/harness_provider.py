@@ -3454,18 +3454,11 @@ def _lifecycle_for_list(
             job=job, archived_at__isnull=False, deleted=False
         ).order_by("-archived_at")
     )
-    from simulate.services.harness_scenario_lifecycle import _view, reason_text
+    from simulate.services.harness_scenario_lifecycle import archived_view
 
-    archived = []
-    for row in archived_rows:
-        view = _view("archived", reason="archived")
-        view["reason_text"] = reason_text(
-            "archived",
-            None,
-            date=f"{row.archived_at:%d %b %Y}",
-            archive_reason=row.archive_reason or "no reason given",
-        )
-        archived.append(view)
+    archived = [
+        archived_view(row.archived_at, row.archive_reason) for row in archived_rows
+    ]
     archived_keys = {row.scenario_key for row in archived_rows}
     from simulate.services.harness_scenario_sources import resolve
     from simulate.services.harness_versioning.drafts import open_draft

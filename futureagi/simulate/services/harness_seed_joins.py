@@ -1,4 +1,4 @@
-"""Broken joins between the seed-record files attached to an environment (TH-8919).
+"""Broken joins between the seed-record files attached to an environment.
 
 A seed-records file (role `seed_records` in `knowledge/roles.json`) holds rows the world starts with, as CSV or as a
 JSON list of objects. A field named `<thing>_id` points at the row whose `id` it names in the seed file named after

@@ -10,6 +10,7 @@ Active: no proof showed its checks hold. A case with no negative control is Draf
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from typing import Any, Literal, NotRequired, TypedDict
 
 from django.db.models import F
@@ -272,7 +273,7 @@ def lifecycle_counts(views: Iterable[LifecycleView]) -> dict[str, int]:
     )
     for view in views:
         counts[view["state"]] += 1
-        # Only a proof that ran counts as proved (TH-8752): a lane code or a legacy proof
+        # Only a proof that ran counts as proved: a lane code or a legacy proof
         # runs, kept as written.
         if view["state"] in ("validated", "active"):
             counts["proved"] += 1
@@ -778,6 +779,18 @@ def must_pass_failures(execution: Any) -> list[str]:
 
 def in_draft_view() -> LifecycleView:
     return _view("draft", reason="in_draft")
+
+
+def archived_view(archived_at: datetime, archive_reason: str) -> LifecycleView:
+    """An archived case's lifecycle: when, and the person's reason."""
+    view = _view("archived", reason="archived")
+    view["reason_text"] = reason_text(
+        "archived",
+        None,
+        date=f"{archived_at:%d %b %Y}",
+        archive_reason=archive_reason or "no reason given",
+    )
+    return view
 
 
 def _parent_documents(

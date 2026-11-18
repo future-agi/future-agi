@@ -236,16 +236,16 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, A
 
 
 def _row(environment: HostedHarnessJob, key: str) -> HostedHarnessScenario | None:
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
-    token = _scenario_token(key)
+    token = scenario_token(key)
     return next(
         (
             row
             for row in HostedHarnessScenario.no_workspace_objects.filter(
                 job=environment, deleted=False
             )
-            if _scenario_token(row.scenario_key) == token
+            if scenario_token(row.scenario_key) == token
         ),
         None,
     )
@@ -278,10 +278,10 @@ def archive_scenario(
     environment: HostedHarnessJob, key: str, *, reason: str, user: Any
 ) -> dict[str, Any]:
     """Take a case out of future selection, keeping its identity, runs and evidence."""
+    from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning import read as version_reads
     from simulate.services.harness_versioning.drafts import draft_rows
     from simulate.services.harness_versioning.versions import lock_environment
-    from simulate.services.hosted_harness_gateway import _scenario_token
 
     version_reads.require_versioning()
     with transaction.atomic():
@@ -290,7 +290,7 @@ def archive_scenario(
         drafted = draft_rows(locked)
         if row is None:
             added = any(
-                _scenario_token(one.scenario_key) == _scenario_token(key)
+                scenario_token(one.scenario_key) == scenario_token(key)
                 and one.draft_change == "added"
                 for one in drafted or []
             )
@@ -310,8 +310,8 @@ def archive_scenario(
             (
                 one
                 for one in suite
-                if _scenario_token(one.get("scenario_key"))
-                == _scenario_token(row.scenario_key)
+                if scenario_token(one.get("scenario_key"))
+                == scenario_token(row.scenario_key)
             ),
             None,
         )
