@@ -302,7 +302,10 @@ def test_a_duplicate_commit_receipt_is_the_agent_s_failure_with_no_failure_objec
         )
         assert uploaded.status_code == 201, uploaded.content
         result = client.post(
-            f"{BASE}/{capability.attempt.id}/results/", receipt, format="json", **headers
+            f"{BASE}/{capability.attempt.id}/results/",
+            receipt,
+            format="json",
+            **headers,
         )
     assert result.status_code == 200, result.content
     accepted = result.json()
@@ -317,6 +320,7 @@ def test_a_duplicate_commit_receipt_is_the_agent_s_failure_with_no_failure_objec
     assert (kept["status"], kept["failure"], kept["reason"]) == ("failed", None, reason)
     # Its sub-goal held, but the agent's failure stands: the platform does not recompute a pass from the sub-goals.
     assert call.call_metadata["harness_outcome_status"] == "failed"
+
 
 @pytest.mark.django_db
 def test_a_receipt_with_an_actor_transcript_through_the_real_endpoints_is_served_on_the_call_detail(
