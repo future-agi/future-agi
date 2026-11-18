@@ -355,14 +355,22 @@ class EvalTaskReferenceTests(unittest.TestCase):
         legacy_tasks,members=legacy['payloads'](CONTEXT,0,2500)
         tasks,latest_members=env['payloads'](CONTEXT,0,2500)
         self.assertEqual(latest_members,members)
-        self.assertEqual([{k:v for k,v in row.items() if k!='sampling_policy'} for row in tasks],legacy_tasks)
+        self.assertEqual(len(tasks),len(legacy_tasks))
         self.assertEqual(sum(row['sampling_policy'] is not None for row in tasks),25)
-        for row in tasks:
+        removed_ranges=0
+        for row,legacy_row in zip(tasks,legacy_tasks):
             policy=row['sampling_policy']
+            expected_filters=dict(legacy_row['filters'])
             if policy is not None:
                 self.assertEqual((row['status'],row['run_type']),('completed','historical'))
                 self.assertEqual(policy,dict(version=1,sampling_unit=row['row_type'][:-1],mode='closed',
                     window=dict(start=row['start_time'].isoformat(),end=row['end_time'].isoformat()),default=dict(rate=25)))
+                self.assertNotIn('date_range',row['filters'])
+                if 'date_range' in expected_filters:
+                    removed_ranges+=1
+                    del expected_filters['date_range']
+            self.assertEqual(row,dict(legacy_row,filters=expected_filters,sampling_policy=policy))
+        self.assertEqual(removed_ranges,16)
         projects,templates,configs=legacy['support_payloads'](CONTEXT)
         self.assertEqual(env['support_payloads'](CONTEXT),(
             [dict(row,analysis_source_generation=index,sampling_contact_attribute='contact_id' if index else '')

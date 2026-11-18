@@ -217,9 +217,13 @@ def payloads(context,start,stop):
             deleted_at=created+timedelta(hours=2) if status=='deleted' else None))
         if 'sampling_policy' in SOURCE_FIELDS['EvalTask']:
             # Exercise non-default preservation without making any task runnable.
-            tasks[-1]['sampling_policy']=(dict(version=1,sampling_unit=row_type[:-1],mode='closed',
-                window=dict(start=start_time.isoformat(),end=end_time.isoformat()),default=dict(rate=25))
-                if status=='completed' and ordinal%100==0 else None)
+            policy=None
+            if status=='completed' and ordinal%100==0:
+                policy=dict(version=1,sampling_unit=row_type[:-1],mode='closed',
+                    window=dict(start=start_time.isoformat(),end=end_time.isoformat()),default=dict(rate=25))
+                # The released sampler requires the policy window to be the sole date range.
+                filters.pop('date_range',None)
+            tasks[-1]['sampling_policy']=policy
         for index in range(1+ordinal%2):
             members.append(dict(evaltask_id=task,customevalconfig_id=identity('config',row_type+str(index))))
     return tasks,members
