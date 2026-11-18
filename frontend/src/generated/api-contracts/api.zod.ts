@@ -55014,6 +55014,11 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
       archived: zod.number(),
       proved: zod.number(),
       not_proved: zod.number(),
+      legacy_without_control: zod
+        .number()
+        .describe(
+          "Legacy cases running kept as written with no negative control: a Validate holds each as `no_negative_control`, so they stop running once validated.",
+        ),
     })
     .optional()
     .describe("Present for a versioned environment."),

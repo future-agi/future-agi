@@ -915,3 +915,20 @@ def test_a_case_proved_by_a_check_that_never_read_the_agent_is_not_active(
     assert views[REFUND_KEYS[0]]["state"] == "active"
     assert views[REFUND_KEYS[1]]["state"] == "active"
     assert _views(environment)[LOOKUP_KEYS[0]]["state"] == "active"
+
+
+def test_legacy_cases_a_validate_would_hold_for_no_negative_control_are_counted():
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+
+    control = [{"name": "wrong_order", "why": "w", "steps": [], "must_fail": []}]
+    views = [
+        {"state": "kept_as_written", "legacy": True, "negative_controls": []},
+        {"state": "kept_as_written", "legacy": True, "negative_controls": control},
+        {"state": "kept_as_written", "legacy": False, "negative_controls": []},
+        {"state": "active", "legacy": False, "negative_controls": []},
+    ]
+
+    counts = lifecycle_counts(views)
+
+    assert counts["legacy_without_control"] == 1
+    assert counts["kept_as_written"] == 3

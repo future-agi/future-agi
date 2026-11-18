@@ -112557,6 +112557,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "archived",
         "proved",
         "not_proved",
+        "legacy_without_control",
       ],
       type: "object",
       properties: {
@@ -112586,6 +112587,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         not_proved: {
           title: "Not proved",
+          type: "integer",
+        },
+        legacy_without_control: {
+          title: "Legacy without control",
+          description:
+            "Legacy cases running kept as written with no negative control: a Validate holds each as `no_negative_control`, so they stop running once validated.",
           type: "integer",
         },
       },

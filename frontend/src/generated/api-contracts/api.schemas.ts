@@ -24796,6 +24796,8 @@ export interface HarnessLifecycleCountsApi {
   archived: number;
   proved: number;
   not_proved: number;
+  /** Legacy cases running kept as written with no negative control: a Validate holds each as `no_negative_control`, so they stop running once validated. */
+  legacy_without_control: number;
 }
 
 /**

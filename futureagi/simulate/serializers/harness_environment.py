@@ -1120,6 +1120,10 @@ class HarnessLifecycleCountsSerializer(serializers.Serializer):
     archived = serializers.IntegerField()
     proved = serializers.IntegerField()
     not_proved = serializers.IntegerField()
+    legacy_without_control = serializers.IntegerField(
+        help_text="Legacy cases running kept as written with no negative control: a Validate holds each as "
+        "`no_negative_control`, so they stop running once validated."
+    )
 
 
 class HarnessScenarioRowSerializer(serializers.Serializer):
