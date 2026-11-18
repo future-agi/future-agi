@@ -11,7 +11,10 @@ import {
   Typography,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
-import { kbChangesOf } from "src/api/simulate-environments/_fixtures/sources";
+import {
+  kbChangesOf,
+  kbRefreshed,
+} from "src/api/simulate-environments/_fixtures/sources";
 import {
   sourceSummaryKey,
   useEnvironmentSources,
@@ -73,7 +76,7 @@ export default function ReviewRefreshDrawer({ envId, sourceId, onClose }) {
   const source = summary?.sources.find((one) => one.source_id === sourceId);
   if (!source) return null;
   // shortcut: the change list is fixture-only; read it from the API once it reports Knowledge base changes.
-  const changes = kbChangesOf(source.origin);
+  const changes = kbChangesOf(source);
   const accepted = changes.filter((change) => !rejected.has(change.id));
   const touched = [...new Set(accepted.flatMap((change) => change.scenarios))];
   const next = `v${source.version + 1}`;
@@ -104,13 +107,7 @@ export default function ReviewRefreshDrawer({ envId, sourceId, onClose }) {
           ? {
               ...current,
               sources: current.sources.map((one) =>
-                one.source_id === sourceId
-                  ? {
-                      ...one,
-                      version: one.version + 1,
-                      ui: { ...one.ui, changed_upstream: false },
-                    }
-                  : one,
+                one.source_id === sourceId ? kbRefreshed(one, accepted) : one,
               ),
             }
           : current,
@@ -143,7 +140,7 @@ export default function ReviewRefreshDrawer({ envId, sourceId, onClose }) {
             <UiOnlyFlag feature="environmentSources" />
           </Stack>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {`Changed in the Knowledge base since you added it · ${plural(changes.length, "change")}, each accepted unless you reject it, then Save as ${next}`}
+            {`Changed in the Knowledge base since you added it · your copy vs the current file · ${plural(changes.length, "change")}, each accepted unless you reject it, then Save as ${next}`}
           </Typography>
         </Box>
 
