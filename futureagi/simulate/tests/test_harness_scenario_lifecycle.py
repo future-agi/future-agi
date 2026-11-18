@@ -806,3 +806,80 @@ def test_a_legacy_suite_kept_as_written_is_not_warned_as_never_proved(
     assert (
         "0 proved, 10 kept as written, 0 not proved" in warnings["suite_partly_proved"]
     )
+
+
+def _on_agent(environment, monkeypatch, tools):
+    """A second agent version paired with the environment, its tools as read when asked (``None``: never read)."""
+    from simulate.services import agent_setup
+    from simulate.tests.test_harness_versioning_picks import _second_agent
+
+    agent = _second_agent(environment)
+    monkeypatch.setattr(
+        agent_setup,
+        "stored_agent",
+        lambda version_id, **_: (
+            {"tools": [{"name": one} for one in tools]}
+            if tools is not None and str(version_id) == str(agent.id)
+            else None
+        ),
+    )
+    return agent
+
+
+def _views_with(environment, agent):
+    return scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+        agent_version_id=agent.id,
+    )
+
+
+def test_a_case_whose_reference_needs_a_tool_the_agent_dropped_is_held_until_it_comes_back(
+    user, workspace, storage, monkeypatch
+):
+    from simulate.services.harness_readiness import selection
+    from simulate.services.harness_readiness.report import resolve_pairing
+
+    environment = _environment(user, workspace, storage, "tool-dropped")
+    _suite(environment, _ten())
+    _proofs(environment, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED))
+    tools = ["lookup_order"]
+    agent = _on_agent(environment, monkeypatch, tools)
+
+    held = _views_with(environment, agent)
+    plan = selection.select_for_run(
+        resolve_pairing(environment, agent_version_id=agent.id),
+        keys=[REFUND_KEYS[0], LOOKUP_KEYS[0]],
+        trials=1,
+    )
+    tools.append("issue_refund")
+    back = _views_with(environment, agent)
+
+    assert (held[REFUND_KEYS[0]]["state"], held[REFUND_KEYS[0]]["reason"]) == (
+        "draft",
+        "tool_not_on_agent",
+    )
+    assert held[REFUND_KEYS[0]]["reason_text"] == (
+        f"Needs issue_refund, which agent version v{agent.version_number} doesn't have."
+    )
+    assert held[LOOKUP_KEYS[0]]["state"] == "active"
+    assert plan.view["held_back"]["by"]["tool_not_on_agent"] == 1
+    assert "Needs issue_refund" in plan.view["reasons"]["tool_not_on_agent"]
+    assert back[REFUND_KEYS[0]]["state"] == "active"
+
+
+def test_a_case_on_an_agent_whose_tools_were_never_read_is_not_active(
+    user, workspace, storage, monkeypatch
+):
+    environment = _environment(user, workspace, storage, "tools-unread")
+    _suite(environment, _ten())
+    _proofs(environment, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED))
+    agent = _on_agent(environment, monkeypatch, None)
+
+    views = _views_with(environment, agent)
+    built = _views(environment)
+
+    assert {view["reason"] for view in views.values()} == {"tools_unread"}
+    assert not any(view["state"] == "active" for view in views.values())
+    assert built[LOOKUP_KEYS[0]]["state"] == "active"

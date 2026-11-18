@@ -27,6 +27,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_scenario_needs import case_needs
 from simulate.services.harness_scenario_sources import SourceView, file_path
 from simulate.services.harness_seed_joins import (
     broken_join_text,
@@ -68,6 +69,8 @@ REASON_TEXTS = {
     "seed_records_unread": "Its seed records could not be read just now, so it is held back. Try again in a few minutes.",
     "storage_unreadable": "The files it cites could not be read just now, so it is held back. Try again in a few minutes.",
     "proofs_unread": "The last validation's proofs could not be read, so it is held back. Validate these versions again.",
+    "tool_not_on_agent": "Needs {tool}, which agent version {agent} doesn't have.",
+    "tools_unread": "Agent version {agent}'s tools have not been read yet: it is held until they are, then proved again.",
     "negative_control_passed": "The checks pass a wrong behaviour: {control} ({control_why}). Tighten {checks}.",
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
@@ -497,6 +500,18 @@ def scenario_lifecycle(
             if isinstance(entry, Mapping) and entry.get("format") == 2
         },
     )
+    agent_tools = _agent_tool_names(agent, environment_version)
+    # The tools on every path of each case's reference, read only when the agent's tools are.
+    needed = (
+        {
+            one.key: one.tools
+            for one in case_needs(
+                environment_version=environment_version, suite_version=suite_version
+            )
+        }
+        if agent_tools is not None and agent_tools[0] is not None
+        else {}
+    )
     unread: set[str] = set()
     changed = changed_refs(environment_version, contents, unread=unread)
     proofs_lost = _proofs_unread(environment, suite_version, environment_version)
@@ -629,6 +644,19 @@ def scenario_lifecycle(
             # Unknown just now, never "not validated": the case is held until the read works.
             reason = "proofs_unread" if proofs_lost else "storage_unreadable"
             _demote(view, reason, reason_text(reason))
+        if agent_tools is not None and view["state"] in RUNNABLE_STATES | {"validated"}:
+            names, label = agent_tools
+            if names is None:
+                # Proved, but against tools nobody has read for this agent: unknown, never Active.
+                _demote(view, "tools_unread", reason_text("tools_unread", agent=label))
+            elif missing := sorted(needed.get(key, frozenset()) - names):
+                _demote(
+                    view,
+                    "tool_not_on_agent",
+                    reason_text(
+                        "tool_not_on_agent", tool=", ".join(missing), agent=label
+                    ),
+                )
         if default and key in failed and view["state"] != "archived":
             _demote(
                 view,
@@ -697,6 +725,36 @@ def _last_check_ending(
     if last is None or last.state != HostedHarnessJob.State.FAILED:
         return None
     return check_ending(last)
+
+
+def _agent_tool_names(
+    agent_version_id: Any, environment_version: HarnessEnvironmentVersion
+) -> tuple[set[str] | None, str] | None:
+    """The tools of the pairing's agent version, by name, and its label: ``None`` for the agent the environment
+    version was built with (its tools are the contract's the cases were written against), names ``None`` when no
+    document of its tools was read."""
+    from simulate.models import AgentVersion
+    from simulate.services.agent_setup import stored_agent
+    from simulate.services.harness_versioning.read import _label
+
+    if agent_version_id is None or str(agent_version_id) == str(
+        environment_version.agent_version_id
+    ):
+        return None
+    number = (
+        AgentVersion.no_workspace_objects.filter(id=agent_version_id)
+        .values_list("version_number", flat=True)
+        .first()
+    )
+    label = _label(number) or "this one"
+    document = stored_agent(agent_version_id)
+    if document is None:
+        return None, label
+    return {
+        str(one.get("name"))
+        for one in document.get("tools") or []
+        if isinstance(one, Mapping) and one.get("name")
+    }, label
 
 
 def _proofs_unread(

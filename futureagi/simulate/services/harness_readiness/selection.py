@@ -88,6 +88,8 @@ PROOF_FAILED_ROW = "proof_failed"
 # Held-back key for a case something it needs could not be read for (its seed records, its cited files, its pair's
 # last proofs): nothing failed, it is unknown.
 SEED_UNREAD_ROW = "unreadable"
+# Held-back key for a case whose reference calls a tool the pairing's agent version does not have.
+TOOL_MISSING_ROW = "tool_not_on_agent"
 # The Draft reasons a validation can settle; any other Draft reason is a proof's verdict on the case itself.
 UNVALIDATED_REASONS = frozenset(
     {
@@ -96,6 +98,7 @@ UNVALIDATED_REASONS = frozenset(
         "validation_failed",
         "validation_ended_on_our_side",
         "proved_on_other_agent",
+        "tools_unread",
     }
 )
 LIFECYCLE_LABELS = {
@@ -104,6 +107,7 @@ LIFECYCLE_LABELS = {
     ARCHIVED_ROW: "Archived",
     NOT_ACTIVE_ROW: "Not saved",
     SEED_UNREAD_ROW: "Seed records",
+    TOOL_MISSING_ROW: "Agent tools",
 }
 # A case whose actors act in the world or whose faults are set on a tool the world's door does not stand in front of.
 NO_DOOR_ROW = "no_world_door"
@@ -512,6 +516,7 @@ def _held_back(
         NOT_ACTIVE_ROW,
         PROOF_FAILED_ROW,
         SEED_UNREAD_ROW,
+        TOOL_MISSING_ROW,
     ):
         texts = [
             one.lifecycle_reason
@@ -958,6 +963,9 @@ def _place(
         lifecycle_reason = view["reason_text"]
     elif not runnable(view) and view["reason"] in UNREAD_REASONS:
         blocked.append(SEED_UNREAD_ROW)
+        lifecycle_reason = view["reason_text"]
+    elif not runnable(view) and view["reason"] == TOOL_MISSING_ROW:
+        blocked.append(TOOL_MISSING_ROW)
         lifecycle_reason = view["reason_text"]
     elif not runnable(view):
         blocked.append(PROOF_FAILED_ROW)
