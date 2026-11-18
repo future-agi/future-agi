@@ -77,11 +77,10 @@ def test_pending_empty_transcripts_do_not_resolve_provider(
 
     obj = SimpleNamespace(
         simulation_call_type="voice",
-        transcripts=Mock(),
+        transcripts=test_execution.CallTranscript.objects.none(),
         provider_call_data=metadata,
         call_metadata={},
     )
-    obj.transcripts.exclude.return_value = []
     with patch.object(SpeakerRoleResolver, "detect_provider") as detect:
         serializer = getattr(test_execution, serializer_name)()
         assert getattr(serializer, method_name)(obj) == []
