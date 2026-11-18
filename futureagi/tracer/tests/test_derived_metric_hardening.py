@@ -6,6 +6,7 @@ ClickHouse. The scheduler edge cases build committed run rows directly and patch
 only ``read_results`` so a stored overall value can be chosen per run.
 """
 
+import os
 import time
 from contextlib import ExitStack, contextmanager
 from datetime import timedelta
@@ -107,11 +108,17 @@ def clean_admission_cache():
 
 
 @pytest.fixture
-def native_run_database(metric_ch, monkeypatch):
-    # Native submission now owns a separate no-reconnect connection. Point its
-    # configuration at the seeded isolated database, not the empty default DB.
+def native_run_ch(request, monkeypatch):
     from tracer.services.clickhouse import v2
 
+    if os.getenv("DERIVED_METRIC_TEST_CHDB") == "1":
+        pytest.skip(
+            "Persisted runs require a native ClickHouse sidecar for no-reconnect "
+            "submission; unset DERIVED_METRIC_TEST_CHDB to run this test."
+        )
+    # Request the guarded sidecar only after checking the mode. The worker's
+    # separate connection must see the same isolated database as the reader.
+    metric_ch = request.getfixturevalue("metric_ch")
     native = metric_ch.connection
     monkeypatch.setattr(
         v2,
@@ -124,6 +131,7 @@ def native_run_database(metric_ch, monkeypatch):
             "database": native.database,
         },
     )
+    return metric_ch
 
 
 @pytest.fixture
@@ -225,17 +233,16 @@ def seed_two_sessions(client, scope, when):
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.usefixtures("native_run_database")
 def test_failed_delivery_is_retried_after_the_alert_window_and_stays_deduplicated(
-    auth_client, observe_project, workspace, saved, scope, metric_ch
+    native_run_ch, auth_client, observe_project, workspace, saved, scope
 ):
-    seed_two_sessions(metric_ch, scope, timezone.now() - timedelta(hours=1))
+    seed_two_sessions(native_run_ch, scope, timezone.now() - timedelta(hours=1))
     monitor = make_monitor(workspace, observe_project, saved["id"])
     with (
         patch("tracer.views.derived_metric._enqueue"),
         patch(
             "tracer.services.derived_metrics.service.get_clickhouse_client",
-            return_value=metric_ch,
+            return_value=native_run_ch,
         ),
     ):
         run_id = auth_client.post(
@@ -277,17 +284,16 @@ def test_failed_delivery_is_retried_after_the_alert_window_and_stays_deduplicate
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.usefixtures("native_run_database")
 def test_scheduler_does_not_reemit_an_earlier_run_after_a_later_one(
-    auth_client, observe_project, workspace, saved, scope, metric_ch
+    native_run_ch, auth_client, observe_project, workspace, saved, scope
 ):
-    seed_two_sessions(metric_ch, scope, timezone.now() - timedelta(hours=1))
+    seed_two_sessions(native_run_ch, scope, timezone.now() - timedelta(hours=1))
     monitor = make_monitor(workspace, observe_project, saved["id"])
     with (
         patch("tracer.views.derived_metric._enqueue"),
         patch(
             "tracer.services.derived_metrics.service.get_clickhouse_client",
-            return_value=metric_ch,
+            return_value=native_run_ch,
         ),
     ):
         first = auth_client.post(f"{ROOT}{saved['id']}/runs/", window(), format="json")
@@ -969,12 +975,12 @@ def test_preview_uses_a_tighter_server_side_budget_than_a_persisted_run(
 
 
 @pytest.mark.django_db(transaction=True)
-@pytest.mark.usefixtures("native_run_database")
-def test_persisted_runs_keep_their_own_budget(auth_client, saved, scope, metric_ch):
+def test_persisted_runs_keep_their_own_budget(native_run_ch, auth_client, saved, scope):
     from tracer.services.derived_metrics import snapshots
+    from tracer.services.derived_metrics.publication import WRITE_SETTINGS
 
-    seed_two_sessions(metric_ch, scope, timezone.now() - timedelta(hours=1))
-    spy = SpyClient(metric_ch)
+    seed_two_sessions(native_run_ch, scope, timezone.now() - timedelta(hours=1))
+    spy = SpyClient(native_run_ch)
     native_statements = []
     snapshot_store = snapshots.snapshot_store
 
@@ -1022,9 +1028,23 @@ def test_persisted_runs_keep_their_own_budget(auth_client, saved, scope, metric_
             "enable_analyzer": 0,
             "log_queries": 0 if private else 1,
         }
-    for _, used in native_statements:
-        for name in ("max_execution_time", "max_memory_usage", "max_threads"):
-            assert 0 < used[name] <= QUERY_SETTINGS[name]
+    clock_sql = "SELECT toString(serverUUID()), toUnixTimestamp(now()), uptime()"
+    probes = [used for sql, used in native_statements if sql == clock_sql]
+    assert probes == [WRITE_SETTINGS] * 7  # one pre-dispatch probe per write
+
+    # The capture's sampling scope, result count and prior commit version are
+    # computation reads. Even a complete preview budget is wrong for these.
+    reads = [
+        (sql, used)
+        for sql, used in native_statements
+        if sql.startswith("SELECT") and sql != clock_sql
+    ]
+    assert len(reads) == 3
+    for table in ("inputs", "results", "commits"):
+        budgets = [
+            used for sql, used in reads if f" FROM derived_metric_{table} " in sql
+        ]
+        assert budgets == [QUERY_SETTINGS], table
 
 
 @pytest.mark.django_db

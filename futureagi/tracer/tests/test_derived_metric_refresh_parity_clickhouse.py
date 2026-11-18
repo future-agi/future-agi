@@ -9,10 +9,19 @@ import pytest
 from django.core.cache import cache
 from django.utils import timezone
 
-from tracer.models.derived_metric import DerivedMetric, DerivedMetricVersion
+from tracer.models.derived_metric import (
+    DerivedMetric,
+    DerivedMetricVersion,
+    MetricProjectRefresh,
+)
 from tracer.services.derived_metrics import refresh as refresh_module
 from tracer.services.derived_metrics import service
-from tracer.services.derived_metrics.changes import ChangeBatch, UnitKey
+from tracer.services.derived_metrics.admission import NativeMetricAnalytics
+from tracer.services.derived_metrics.changes import (
+    ChangeBatch,
+    UnitKey,
+    discover_changes,
+)
 from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.storage import BUCKET_TOTALS, FIELD_VALUES
@@ -22,7 +31,10 @@ from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F
     metric_ch,
     publication_store,
 )
-from tracer.tests.test_derived_metric_refresh_clickhouse import definition_for
+from tracer.tests.test_derived_metric_refresh_clickhouse import (
+    definition_for,
+    metric_bucket_rows,
+)
 
 
 def saved_version(base, filters, *, version=2):
@@ -186,74 +198,108 @@ def test_saved_filters_never_supply_the_conversation_anchor_or_arrival_clock(
     scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
     session, trace = uuid4(), uuid4()
 
-    def seed(name, at, model, revision):
+    def seed(name, at, model, arrival, *, created=None):
         writer.store.execute(
-            "INSERT INTO spans (id, trace_id, project_id, org_id, trace_session_id, start_time, created_at, updated_at, _version, model, attrs_number) "
-            "VALUES (%(name)s, %(trace)s, %(project_id)s, %(org_id)s, %(session)s, %(at)s, %(at)s, %(at)s, %(revision)s, %(model)s, map('resolved', 4.))",
+            "INSERT INTO spans (id, trace_id, project_id, org_id, trace_session_id, "
+            "start_time, created_at, updated_at, _version, model, attrs_number) "
+            "VALUES (%(name)s, %(trace)s, %(project_id)s, %(org_id)s, %(session)s, "
+            "%(at)s, %(created)s, %(arrival)s, %(revision)s, %(model)s, map('resolved', 4.))",
             {
                 **scope.parameters(),
                 "name": name,
                 "trace": str(trace),
                 "session": str(session),
                 "at": at,
+                "created": created or arrival,
+                "arrival": arrival,
                 "model": model,
-                "revision": revision,
+                "revision": int(arrival.timestamp()) * 10**9,
             },
         )
 
-    seed("recent", now - timedelta(hours=12), "included", 1)
-    change = ChangeBatch(
-        (),
-        (UnitKey("conversation", str(session)),),
-        (),
-        (),
-        (),
-        {"watermark_ns": int(now.timestamp()) * 10**9},
-    )
-    kwargs = {"start": now - timedelta(days=4), "end": now, "as_of": now}
-    writer.refresh(change, [definition], scope, **kwargs)
-    seed(
-        "earlier-filtered-out",
-        now - timedelta(hours=anchor_age_hours),
-        "excluded",
-        1,
-    )
+    def refresh(cut, changed_ids):
+        state = MetricProjectRefresh.for_project(scope.project)
+        head = state.head_manifest
+        attempts = [str(a) for _, a in head.allowed_attempts()] if head else []
+        change = discover_changes(
+            NativeMetricAnalytics(writer.store.client),
+            org_id=str(scope.organization),
+            project_id=str(scope.project),
+            committed_attempts=attempts,
+            watermark_ns=state.watermark_ns,
+            eval_watermark_ns=state.eval_watermark_ns,
+            remap_cursor_ns=state.remap_cursor_ns,
+            ceiling=cut,
+        )
+        assert {key.span_id for key in change.source_keys} == changed_ids
+        assert change.units == (UnitKey("conversation", str(session)),)
+        head = writer.refresh(
+            change,
+            [definition],
+            scope,
+            start=now - timedelta(days=4),
+            end=cut,
+            as_of=cut,
+        )
+        state.refresh_from_db()
+        assert state.watermark_ns == int(cut.timestamp()) * 10**9
+        return head
+
+    # Distinct quarters; the span's event time is not its revision's arrival.
+    hour = now.replace(minute=0, second=0)
+    old_bucket = hour - timedelta(hours=12)
+    new_bucket = hour - timedelta(hours=anchor_age_hours)
+    recent = old_bucket + timedelta(minutes=7)
+    earlier = new_bucket + timedelta(minutes=11)
+    seed("recent", recent, "included", recent)
+    initial = refresh(now - timedelta(hours=3), {"recent"})
+    assert metric_bucket_rows(writer, initial, definition) == [
+        (old_bucket, "", 1, 4.0, 1.0)
+    ]
+
+    changed_ids = {"earlier-filtered-out"}
     if not still_matches:
-        seed("recent", now - timedelta(hours=12), "excluded", 2)
+        seed("recent", recent, "excluded", now - timedelta(hours=2), created=recent)
+        changed_ids.add("recent")
+    # Settled by the second cut, but newer than every matching row.
+    latest_arrival = now - timedelta(hours=1)
+    seed("earlier-filtered-out", earlier, "excluded", latest_arrival)
     # Independent source truth: filter membership cannot move the unit's anchor
     # or last arrival. An expired conversation must not survive anonymously.
-    anchor, arrival, members, total = writer.store.execute(
-        "SELECT min(start_time), max(updated_at), countIf(model = 'included'), "
+    anchor, arrival_ns, members, total = writer.store.execute(
+        "SELECT min(start_time), toUnixTimestamp64Nano(max(updated_at)), countIf(model = 'included'), "
         "sumIf(attrs_number['resolved'], model = 'included') FROM spans FINAL "
         "WHERE project_id = %(project_id)s AND org_id = %(org_id)s "
         "AND trace_session_id = toUUID(%(session)s)",
         {**scope.parameters(), "session": str(session)},
     )[0]
-    assert anchor == now - timedelta(hours=anchor_age_hours)
-    assert arrival == now - timedelta(hours=12)
+    assert anchor == earlier
+    assert arrival_ns == int(latest_arrival.timestamp()) * 10**9
     assert members == int(still_matches)
     retained = anchor >= now - timedelta(days=1)
-    expected = [(str(session), total / members, anchor)] if retained and members else []
-    head = writer.refresh(change, [definition], scope, **kwargs)
+    head = refresh(now, changed_ids)
     sql, params = committed_rows_select(
-        FIELD_VALUES, head, org_id=scope.organization, project_id=scope.project
+        FIELD_VALUES,
+        head,
+        org_id=scope.organization,
+        project_id=scope.project,
+        key_in={
+            "field_id": (definition.metric_id,),
+            "field_version": (definition.version,),
+        },
     )
-    assert (
-        writer.store.execute(
-            f"SELECT unit_id, value_number, unit_start FROM ({sql}) WHERE is_deleted = 0",
-            params,
-        )
-        == expected
-    )
-    assert anonymous_parts(writer, head) == []
-    sql, params = committed_rows_select(
-        BUCKET_TOTALS, head, org_id=scope.organization, project_id=scope.project
-    )
-    assert writer.store.execute(
-        f"SELECT sum(unit_count), sum(weighted_n), sum(weighted_d) FROM ({sql}) "
-        "WHERE is_deleted = 0",
+    fields = writer.store.execute(
+        f"SELECT unit_id, value_number, unit_start, last_arrival_ns, is_deleted FROM ({sql})",
         params,
-    ) == [(len(expected), total if expected else 0.0, float(len(expected)))]
+    )
+    if retained:
+        value = total / members if members else None
+        assert fields == [(str(session), value, anchor, arrival_ns, int(not members))]
+    else:
+        assert fields == []
+    assert anonymous_parts(writer, head) == []
+    expected_buckets = [(new_bucket, "", 1, total, 1.0)] if retained and members else []
+    assert metric_bucket_rows(writer, head, definition) == expected_buckets
 
 
 @pytest.mark.django_db(transaction=True)

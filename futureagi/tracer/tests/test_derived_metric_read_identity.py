@@ -162,32 +162,48 @@ def test_committed_identity_wire_fixture_matches_actual_producers():
 @pytest.mark.usefixtures("persisted_identity_runs")
 def test_identity_applies_to_all_rollups_and_cursors_without_extra_reads():
     run, row, _ = saved_observation()
+    original_result_id = str(run.result_id)
     for status in ("queued", "running", "failed", "complete"):
         run.status = status
         for rollup in ("overall", "session", "user", "cohort", "day"):
             page, _ = read_fixture(run, row, rollup=rollup, limit=1, extra=True)
             assert decode_result_cursor(
-                page["next_cursor"], page["result_id"], rollup
+                page["next_cursor"], original_result_id, rollup
             ) == (True, "")
             following, _ = read_fixture(
                 run, row, rollup=rollup, after=page["next_cursor"]
             )
-            assert following["result_id"] == page["result_id"]
+            assert following["result_id"] == original_result_id
+            if rollup == "day":
+                day_cursor = page["next_cursor"]
     # A cursor for R1 is never repurposed for R2, and rejection precedes CH.
-    run.result_id = UUID(int=5)
+    replacement_id = UUID(int=5)
+    run.result_id = replacement_id
     persist_read_identity(run)
     client = Mock()
     with (
         patch.object(service, "get_clickhouse_client", return_value=client),
         patch.object(service, "_authorized_metric", return_value=True),
     ):
-        try:
-            service.read_results(run, "day", page["next_cursor"])
-        except MetricInputError:
-            pass
-        else:
-            raise AssertionError("stale cursor accepted")
-    client.execute.assert_not_called()
+        with pytest.raises(
+            MetricInputError,
+            match="Result cursor is invalid or belongs to another result/rollup",
+        ):
+            service.read_results(run, "day", day_cursor)
+        client.execute.assert_not_called()
+
+        # Same persisted namespace and admission, but no R1 cursor: R2 is readable.
+        columns = service.RESULT_COLUMNS
+        replacement = {**row, "group_key": "2026-10-25", "value": 1.0, "numerator": 2.0}
+        client.execute.return_value = (
+            [tuple(replacement[key] for key in columns)],
+            [(key, "test") for key in columns],
+        )
+        fresh = service.read_results(run, "day")
+    client.execute.assert_called_once()
+    assert client.execute.call_args.args[1]["result_id"] == str(replacement_id)
+    assert fresh["result_id"] == str(replacement_id)
+    assert fresh["results"][0]["value"] == 1.0
 
 
 @pytest.mark.django_db
