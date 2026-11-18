@@ -3083,6 +3083,8 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     monkeypatch.setattr(workflows, "_set_status", lambda status: None)
     monkeypatch.setattr(workflows, "_should_continue_as_new", lambda *a: True)
     monkeypatch.setattr(workflows.workflow, "continue_as_new", continue_as_new)
+    # A new execution: every patch marker is recorded (and so returns True).
+    monkeypatch.setattr(workflows.workflow, "patched", lambda patch_id: True)
     if continuous:
         run = workflows.ContinuousEvalTaskWorkflow()._run(
             ContinuousDrainState(
