@@ -75,6 +75,9 @@ function fillExample() {
       name: /confirmed the expected behavior independently/,
     }),
   );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /Share this redacted request/ }),
+  );
 }
 
 describe("reviewed source capture", () => {
@@ -129,6 +132,7 @@ describe("reviewed source capture", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Redacted request" }), { target: { value: "Customer asks for refund." } });
     fireEvent.change(screen.getByRole("textbox", { name: "Expected answer must contain" }), { target: { value: "Eligible" } });
     fireEvent.click(screen.getByRole("checkbox", { name: /confirmed the expected behavior independently/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Share this redacted request/ }));
     click("Back");
     // Step 1, with the selection as it was.
     expect(screen.getByRole("checkbox", { name: "Customer request" })).toBeChecked();

@@ -165,7 +165,7 @@ function TargetSection({ contextId, version, canWrite, targets }) {
 }
 TargetSection.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, canWrite: PropTypes.bool.isRequired, targets: PropTypes.object.isRequired };
 
-function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
+function CellDrawer({ run, cell, caseTitle, onClose, onRecorded, canWrite }) {
   const reference = useEvidenceReference('simulation_native', run.id);
   const members = useRecoveryReviewers();
   const { user } = useAuthContext();
@@ -181,6 +181,9 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
     try {
       await append.mutateAsync({ source: 'simulation_native', sourceId: run.id, annotationRevision: reference.data.annotationRevision, checkId: null, attemptId: cell.attemptId, verdict, citedText: '', comment });
       setVerdict(''); setComment('');
+      // Recording is the drawer's task: it closes and returns focus to the run's row, whose Human check
+      // cell now shows the assessment (reopen the row to read it in full). A failure keeps it open.
+      onRecorded?.();
     } catch { setError('Could not record this assessment. Reload the evidence and retry; the automatic outcome was not changed.'); }
   };
   const seen = cell.observed;
@@ -230,7 +233,7 @@ function CellDrawer({ run, cell, caseTitle, onClose, canWrite }) {
         </Stack>
   </Drawer>;
 }
-CellDrawer.propTypes = { run: PropTypes.object.isRequired, cell: PropTypes.object.isRequired, caseTitle: PropTypes.string, onClose: PropTypes.func.isRequired, canWrite: PropTypes.bool.isRequired };
+CellDrawer.propTypes = { run: PropTypes.object.isRequired, cell: PropTypes.object.isRequired, caseTitle: PropTypes.string, onClose: PropTypes.func.isRequired, onRecorded: PropTypes.func, canWrite: PropTypes.bool.isRequired };
 
 // The CI attachment is optional: the release request can start from this run alone. Attaching a CI
 // run shares this run with the workspace and prepares the packet the reviewer will see; nothing is
@@ -431,7 +434,7 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
       </TableRow>;
       })}</TableBody></Table>
     </TableContainer>}
-    {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => { restoreFocus.current = true; setOpen(null); }} />}
+    {open && <CellDrawer run={run} cell={open} caseTitle={titles[open.caseId]} canWrite={canWrite} onClose={() => { restoreFocus.current = true; setOpen(null); }} onRecorded={() => { restoreFocus.current = true; setOpen(null); }} />}
   </Stack>;
 }
 RunDetail.propTypes = { planCeiling: PropTypes.oneOfType([PropTypes.number, PropTypes.string]), productionVersion: PropTypes.number, versions: PropTypes.array, formPrimary: PropTypes.bool, onEarlier: PropTypes.func, onReady: PropTypes.func, onRunCurrent: PropTypes.func, contextId: PropTypes.string.isRequired, evidenceId: PropTypes.string.isRequired, canWrite: PropTypes.bool.isRequired, target: PropTypes.object, selection: PropTypes.object, cases: PropTypes.array.isRequired };

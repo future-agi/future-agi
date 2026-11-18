@@ -16,6 +16,7 @@ function review() {
 }
 function acknowledge() {
   fireEvent.click(screen.getByRole("checkbox", { name: /confirmed the expected behavior independently/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Share this redacted request/ }));
 }
 describe("captured example with the required application behavior", () => {
   it("saves the skill and business action in the same reviewed case, with nothing typed", async () => {

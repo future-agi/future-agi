@@ -20,7 +20,7 @@ vi.mock('src/api/skills/context-testing', () => ({
   useCreateNativeTarget: () => ({ mutate: () => {}, isPending: false }), useQualifyNativeTarget: () => ({ mutateAsync: (...args) => (h.qualify ? h.qualify(...args) : Promise.resolve()), isPending: false }),
   useRuntimeConfiguration: () => h.configuration ?? { data: undefined }, usePrepareReleasePacket: () => ({ data: h.prepared, mutate: () => {}, isPending: false }),
 }));
-vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => ({}), useAllEvidenceAnnotations: (_, id) => { h.annotationIds.push(id ?? null); if (!id) return { isLoading: false, data: undefined }; return h.annotationError ? { isError: true, error: h.annotationError, refetch: () => {} } : { data: { results: h.annotations } }; }, useAppendEvidenceAnnotation: () => ({ mutateAsync: async () => {} }) }));
+vi.mock('src/api/skills/evidence-annotations', () => ({ useEvidenceReference: () => (h.reference ?? {}), useAllEvidenceAnnotations: (_, id) => { h.annotationIds.push(id ?? null); if (!id) return { isLoading: false, data: undefined }; return h.annotationError ? { isError: true, error: h.annotationError, refetch: () => {} } : { data: { results: h.annotations } }; }, useAppendEvidenceAnnotation: () => ({ mutateAsync: h.append ?? (async () => {}) }) }));
 vi.mock('src/api/skills/context-authoring', () => ({ useContextDetail: () => ({ data: { name: 'Support context' } }) }));
 vi.mock('src/api/skills/j6-recovery', () => ({ useRecoveryReviewers: () => ({ data: [{ id: 'reviewer', name: 'Case reviewer' }] }) }));
 vi.mock('src/auth/hooks', () => ({ useAuthContext: () => ({ user: { id: 'user' } }) }));
@@ -28,7 +28,7 @@ const versions = [7, 6, 4].map((number) => ({ number, id: `v${number}` }));
 const cases = [{ id: 'refund', title: 'Original refund failure', reviewed: true }, { id: 'chargeback', title: 'Working chargeback case', reviewed: true }, { id: 'draft', title: 'Unreviewed', reviewed: false }];
 const renderPanel = (props = {}) => render(<MemoryRouter><ContextNativePanel contextId="context" versions={versions} viewed={{ number: 7 }} cases={cases} canWrite productionVersion={6} {...props} /></MemoryRouter>);
 beforeEach(() => {
-  h.configuration = undefined; h.qualify = undefined; h.annotations = []; h.annotationIds = []; h.annotationError = undefined; h.prepared = undefined; h.spend = {}; h.access = { canAdmin: true }; h.targets = undefined; h.targetsLoading = false;
+  h.configuration = undefined; h.qualify = undefined; h.reference = undefined; h.append = undefined; h.annotations = []; h.annotationIds = []; h.annotationError = undefined; h.prepared = undefined; h.spend = {}; h.access = { canAdmin: true }; h.targets = undefined; h.targetsLoading = false;
   h.preview = { data: undefined, plans: [] }; h.create = vi.fn().mockResolvedValue('evidence');
   h.runs = [{ id: 'previous', arms: [{ variant: 'candidate', version: 6 }, { variant: 'reference', version: 4 }] }];
   h.detail = { id: 'previous', status: 'completed', executionFingerprint: 'sha256:previous', received: 2, planned: 2, arms: h.runs[0].arms, cases: [{ id: 'refund', historical: true }, { id: 'chargeback', historical: false }] };
@@ -796,4 +796,25 @@ it('opens Run a test for a published repair hand-off, and Results otherwise', ()
   view.unmount();
   renderPanel();
   expect(screen.getByRole('tab', { name: 'Results' })).toHaveAttribute('aria-selected', 'true');
+});
+
+// Recording an assessment is the drawer's task: it closes; a failed record keeps it open with the reason.
+it('closes the run drawer after recording an assessment and keeps it open when recording fails', async () => {
+  h.detail.result = { repair_verified: true, reproduction: 'reproduced', regressed_cases: 0 };
+  h.detail.decision = { state: 'release_ready', reasons: [] };
+  h.detail.cases[0].title = 'Refund';
+  h.detail.cells = [{ caseId: 'refund', variant: 'candidate', repeatIndex: 0, attemptId: 'tested', status: 'completed', answer: 'pass', selection: 'pass', delivery: 'pass', tools: 'pass' }];
+  h.reference = { data: { annotationRevision: 1 } };
+  h.append = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({});
+  renderPanel();
+  fireEvent.click(within(cellRow('Inspect Refund Version tested repeat 1')).getAllByRole('cell')[0]);
+  fireEvent.click(screen.getByRole('radio', { name: 'Disagree with the automatic outcome' }));
+  fireEvent.change(screen.getByLabelText('Why'), { target: { value: 'Declined in the ledger.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Record assessment' }));
+  expect(await screen.findByText(/Could not record this assessment/)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Record assessment' })).toBeVisible();
+  fireEvent.click(screen.getByRole('radio', { name: 'Disagree with the automatic outcome' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Record assessment' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Record assessment' })).not.toBeInTheDocument());
+  expect(h.append).toHaveBeenCalledTimes(2);
 });

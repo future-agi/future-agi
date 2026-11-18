@@ -85,7 +85,8 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await expect(dialog.getByRole('textbox', { name: 'Redacted tool result 2', exact: true })).toHaveValue(followupToolText);
   await dialog.getByRole('textbox', { name: 'Case name', exact: true }).fill('Reviewed refund boundary');
   await dialog.getByRole('textbox', { name: 'Expected answer must contain', exact: true }).fill('receipt');
-  await dialog.getByRole('checkbox', { name: /confirmed the expected behavior.*with the workspace/ }).check();
+  await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
+  await dialog.getByRole('checkbox', { name: /workspace/ }).check();
   await page.screenshot({ path: testInfo.outputPath('J2-redaction-review.png'), animations: 'disabled' });
   const accepted = page.waitForResponse(res => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
   await dialog.getByRole('button', { name: 'Save test case', exact: true }).click();

@@ -128,7 +128,7 @@ function ReviewedExample({
     : fixtureBytes > 49152 ? "Shorten the tool results to 48 KB."
     : !expectation.trim() ? "Add the expected answer."
     : applicationBehavior && behaviorPartial(behavior) ? "Choose both a skill and an action, or neither."
-    : !reviewed || !shared ? "Tick the confirmation above."
+    : !reviewed || !shared ? "Confirm both statements above."
     : null;
   useEffect(() => { onSavedChange?.(Boolean(operation.result)); }, [operation.result, onSavedChange]);
   const edit = (setter) => (event) => {
@@ -294,18 +294,25 @@ function ReviewedExample({
           {subjectKind !== "agent_context" && <Typography variant="s3">
             This test case checks the answer, not skill selection.
           </Typography>}
-          {/* One tick for the one decision saving needs (UXF-02/UXF-03 pattern): the independent check of
-              the expected behavior and the consent to share what is saved. Both fields are still sent, and
-              any edit above clears it, so it always covers exactly the case being saved. */}
           <FormControlLabel
             control={
               <Checkbox
-                checked={reviewed && shared}
+                checked={reviewed}
                 disabled={locked}
-                onChange={(_, value) => { setReviewed(value); setShared(value); }}
+                onChange={(_, value) => setReviewed(value)}
               />
             }
-            label="I confirmed the expected behavior independently of the failed answer. Share this redacted request, supplied tool results and success check with the workspace."
+            label="I confirmed the expected behavior independently of the failed answer."
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={shared}
+                disabled={locked}
+                onChange={(_, value) => setShared(value)}
+              />
+            }
+            label="Share this redacted request, supplied tool results and success check with the workspace."
           />
           <OperationFeedback operation={operation} />
         </Stack>

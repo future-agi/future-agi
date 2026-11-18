@@ -153,8 +153,8 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await dialog.getByRole('radiogroup', { name: 'Required business action' }).getByRole('radio', { name: 'Issue a refund', exact: true }).check();
     await dialog.getByText('Required application behavior').scrollIntoViewIfNeeded();
     await shot('J2-required-behavior');
-    // One tick: the independent check of the expected behavior and the workspace sharing consent.
-    await dialog.getByRole('checkbox', { name: /confirmed the expected behavior.*with the workspace/ }).check();
+    await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
+    await dialog.getByRole('checkbox', { name: /workspace/ }).check();
     const accepted = page.waitForResponse(res => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
     await dialog.getByRole('button', { name: 'Save test case', exact: true }).click();
     expect((await accepted).ok()).toBe(true);
@@ -228,6 +228,10 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await page.getByRole('radio', { name: /Disagree/ }).check();
     await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
     await page.getByRole('button', { name: 'Record assessment' }).click();
+    // Recording closes the drawer; the row carries the disagreement and reopening it shows the assessment.
+    const failingRow = page.getByRole('row', { name: 'Inspect Original refund failure Was failing on repeat 1' });
+    await expect(failingRow.getByText(/1 disagreement/)).toBeVisible();
+    await failingRow.getByText('Was failing on v4', {exact:true}).click();
     await expect(page.getByText('Disagrees', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('The answer claims success but the business ledger shows the refund was declined.', { exact: true })).toBeVisible();
     await shot('J2-native-annotation');

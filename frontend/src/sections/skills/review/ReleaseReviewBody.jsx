@@ -128,7 +128,7 @@ export function evidenceProblems(ref, packet, now = Date.now()) {
 
 /** "1/1 attempts graded · 0 incomplete · 0 regressions": the exact grading counts of one attached result. */
 // eslint-disable-next-line react-refresh/only-export-components -- the grading line ships with the evidence it describes.
-export const gradingLine = (summary) => `${summary.graded ?? "Unknown"}/${summary.planned ?? "Unknown"} attempts graded · ${summary.incomplete ?? "Unknown"} incomplete · ${summary.regressions ?? "Unknown"} regressions`;
+export const gradingLine = (summary) => `${summary.graded ?? "Unknown"}/${summary.planned ?? "Unknown"} attempts graded · ${summary.incomplete ?? "Unknown"} incomplete · ${summary.regressions == null ? "Unknown regressions" : counted(summary.regressions, 'regression')}`;
 
 export function IdentityValue({ label, value }) {
   if (typeof value === 'string' && (/^(?:sha256:)?[a-f0-9]{64}$/i.test(value) || /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value))) return <IdentityChip label={label} value={value} kind={value.includes('-') ? 'id' : 'digest'} />;

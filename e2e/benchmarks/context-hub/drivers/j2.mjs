@@ -181,10 +181,8 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.click(page.getByRole('option', { name: /refund-policy$/ }), 'choose-required-skill');
           // Four actions are one visible choice (a radio group); the fifteen skills stay a select.
           await op.click(dialog.getByRole('radiogroup', { name: 'Required business action' }).getByRole('radio', { name: 'Issue a refund', exact: true }), 'choose-required-action');
-          // One tick states both the independent check of the expected behavior and the workspace sharing consent.
-          const confirmation = dialog.getByRole('checkbox', { name: /confirmed the expected behavior.*with the workspace/ });
-          await op.click(confirmation, 'confirm-expected-behavior-and-sharing');
-          await expect(confirmation).toBeChecked();
+          await op.click(dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }), 'confirm-expected-behavior');
+          await op.click(dialog.getByRole('checkbox', { name: /workspace/ }), 'acknowledge-workspace-sharing');
           const decision = { packet_sha256: digest({ source: state.source, expected: 'receipt' }), preconditions_sha256: digest({ suiteRevision: before.revision, contextId: input.contextId }) };
           await dialog.getByText('Required application behavior').scrollIntoViewIfNeeded();
           await op.review('review-captured-case', state.source.segments.map((_, i) => `segment-${i}`), [], async () => { await shot('02-captured-case-review'); }, decision);
@@ -337,6 +335,8 @@ export async function createDriver({ jobId, runId, registration }) {
           const appended = page.waitForResponse((res) => res.url().includes('/annotations/') && res.request().method() === 'POST');
           await op.review('record-human-disagreement', [`cell-${cells[0].attempt_id}`], [], async () => { await page.getByRole('button', { name: 'Record assessment' }).click(); }, decision);
           requireValue((await appended).ok(), 'Annotation was not accepted');
+          // The row the reviewer recorded against now shows the disagreement in its Human check cell.
+          await expect(page.getByRole('row', { name: `Inspect ${TITLE.refund} Was failing on repeat 1` }).getByText(/1 disagreement/)).toBeVisible();
           const list = await api('GET', `evidence/simulation_native/${run.id}/annotations/`);
           requireValue(list.results.length === 1 && list.results[0].verdict === 'disagree' && list.results[0].attempt_id === cells[0].attempt_id, 'Independent annotation observation differs');
           const after = await api('GET', `${root}native/runs/${run.id}/`);
@@ -370,7 +370,9 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'release-ready-packet') {
           // The matched verification is still the one on screen (the CI ran elsewhere); the responder closes the
           // reviewed cell and continues; nothing is reopened or chosen again.
-          await op.click(page.getByRole('button', { name: 'Close', exact: true }), 'close-reviewed-cell');
+          // Recording the assessment closed the cell drawer; it is closed by hand only if still open.
+          const closeCell = page.getByRole('button', { name: 'Close', exact: true });
+          if (await closeCell.isVisible().catch(() => false)) await op.click(closeCell, 'close-reviewed-cell');
           // The optional attachment now lives inside the result's Technical details.
           const currentResult = page.getByRole('region', {name:'Latest result'});
           const details = currentResult.getByRole('button', {name:'Technical details',exact:true}).first();

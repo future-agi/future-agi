@@ -65,6 +65,9 @@ try {
     const savedReview = page.waitForResponse((response) => response.url().includes('/annotations/') && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Record assessment', exact: true }).click();
     if (!(await savedReview).ok()) throw new Error('Synthetic review was not saved');
+    // Recording closes the drawer and returns focus to the row; reopening it shows the assessment.
+    await expect(inspect).toBeFocused();
+    await inspect.click();
     await expect(page.getByText('Disagrees', { exact: true }).first()).toBeVisible();
     await expect(page.getByText(reviewComment, { exact: true })).toBeVisible();
     await shot('tests-disagreement');
