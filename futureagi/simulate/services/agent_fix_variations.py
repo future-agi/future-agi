@@ -98,12 +98,23 @@ def is_fix_command(command: HostedHarnessConversationMessage | None) -> bool:
     return command is not None and (command.payload or {}).get("_origin") == FIX_ORIGIN
 
 
+def _source_run(fix_run: AgentFixRun) -> HostedHarnessJob:
+    """The run the fix started from, which its variations vary; refused once deleted."""
+    if fix_run.source_run is None:
+        raise HostedHarnessError(
+            "fix_source_deleted",
+            "the run this epoch started from was deleted",
+            status_code=409,
+        )
+    return fix_run.source_run
+
+
 def failing_targets(fix_run: AgentFixRun) -> dict[str, list[str]]:
     """The fix's targets that failed in its source run, with the sub-goals that did not
     hold: the cases its variations vary."""
     request = FixRequest.model_validate(fix_run.request)
     ran = {
-        one.key: one.failing_sub_goals for one in scenario_results(fix_run.source_run)
+        one.key: one.failing_sub_goals for one in scenario_results(_source_run(fix_run))
     }
     return {key: ran[key] for key in request.target_scenario_keys if ran.get(key)}
 
@@ -223,7 +234,7 @@ def _write(fix_run: AgentFixRun) -> VariationsStep:
             return _end(fix_run, AgentFixRun.State.FAILED, *_draft_opened(unsaved))
     if command is None:
         # The builder writes from the environment as it is now: it must be as it ran.
-        moved = variations_source_moved(environment, fix_run.source_run)
+        moved = variations_source_moved(environment, _source_run(fix_run))
         if moved is not None:
             return _end(fix_run, AgentFixRun.State.FAILED, moved.code, moved.message)
         _ask_builder(fix_run)
@@ -341,12 +352,15 @@ def land(
     later chat save from that sandbox never carries the variations into a draft. A save
     that arrives once the fix has landed or ended leaves the workspace alone: that
     outdated it already, and the chat may have moved on since."""
+    fix_run_id = (command.payload or {}).get("_fix_run_id")
     fix_run = (
         AgentFixRun.no_workspace_objects.select_related(
             "source_run__suite_version", "source_run__environment_version"
         )
-        .filter(id=(command.payload or {}).get("_fix_run_id"))
+        .filter(id=fix_run_id)
         .first()
+        if fix_run_id is not None
+        else None
     )
     writing = (
         fix_run is not None
@@ -366,7 +380,7 @@ def land(
             " variations when this turn ends",
             status_code=409,
         )
-    if not writing:
+    if fix_run is None or not writing:
         logger.info("agent_fix_variations_save_dropped", command=str(command.id))
         return
     try:
@@ -387,7 +401,7 @@ def land(
         )
         return
     archives.put_archive(prepared.suite_key, prepared.suite_body)
-    source_run = fix_run.source_run
+    source_run = _source_run(fix_run)
     parents = failing_targets(fix_run)
     without = _without_variations(parents, variations)
     with transaction.atomic():
@@ -481,7 +495,7 @@ def _private_suite(
     """The fix's suite from the builder's save: the source run's suite as it ran, plus
     each variation the builder wrote of a failing case, renamed into the fix's keys. Its
     prepared pieces, the variations with the cases they vary, and their documents."""
-    source_run = fix_run.source_run
+    source_run = _source_run(fix_run)
     suite = archives.split_authoring(files).suite
     base = drafts._piece_files(environment, "suite", source_run.suite_version)
     parents = {_scenario_token(key): key for key in failing_targets(fix_run)}

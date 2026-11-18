@@ -13,10 +13,11 @@ export const runPath = (run) =>
       )
     : `${paths.dashboard.simulate.test}/${run.runTestId}/${run.testExecutionId}`;
 
-export const unratedOf = (run) =>
-  [
-    run.errored ? `${run.errored} errored` : null,
-    run.noScore ? `${run.noScore} no score, not in the rate` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
+// The trials the rate leaves out, as the server counts them.
+export const unratedOf = (run) => {
+  const left = [
+    run.trialsInconclusive ? `${run.trialsInconclusive} inconclusive` : null,
+    run.trialsExcluded ? `${run.trialsExcluded} not comparable` : null,
+  ].filter(Boolean);
+  return left.length ? `${left.join(", ")}, not in the rate` : "";
+};

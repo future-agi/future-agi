@@ -78,6 +78,8 @@ from simulate.services.run_reliability_v3 import (
     NOT_COMPARABLE,
     build_reliability,
     comparable_trials,
+    trial_outcomes,
+    trial_pass_from,
 )
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
@@ -88,6 +90,7 @@ from simulate.services.run_results_v3_expressions import (
     project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
@@ -99,6 +102,7 @@ from simulate.services.run_results_v3_scoring import (
     NATIVE_FAILED,
     NATIVE_PASSED,
     QUEUED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
@@ -106,7 +110,11 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
-from simulate.types import CallActorDelivery, CallActorFacetValue
+from simulate.types import (
+    WORKER_SUBJECT_PREFIX,
+    CallActorDelivery,
+    CallActorFacetValue,
+)
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -730,6 +738,9 @@ class _NativeHarnessVerdict(Func):
             f"THEN {source_sql} ELSE '{{}}'::jsonb END) AS check_result(key, value) "
             "WHERE jsonb_typeof(check_result.value) = 'object' "
             "AND check_result.value->>'source' = 'harness' "
+            # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+            f"AND left(COALESCE(check_result.value->>'subject', ''), {len(WORKER_SUBJECT_PREFIX)}) "
+            f"<> '{WORKER_SUBJECT_PREFIX}' "
             f"AND NOT ({ids_sql} ? check_result.key) AND {condition})"
         )
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
@@ -914,6 +925,15 @@ def run_calls_queryset(
         result_outcome=Case(
             When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
             When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
+            # A skipped scenario is stored cancelled but nobody stopped it: an error.
+            When(
+                status__in=list(CANCELLED_CALL_STATUSES),
+                call_metadata__harness_outcome_status__in=list(
+                    SKIPPED_HARNESS_STATUSES
+                ),
+                then=Value("error"),
+            ),
+            When(status__in=list(CANCELLED_CALL_STATUSES), then=Value("cancelled")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
@@ -1028,11 +1048,15 @@ def _json_number(value: object) -> TypeGuard[int | float]:
 
 def call_actor_delivery(took_part: Mapping[str, Any]) -> CallActorDelivery:
     """How far an actor got in one call, by the same rule `_DELIVERY_SQL` applies in the database, malformed values
-    included: only a number above 0 delivers; any `triggered` other than false, null, 0 or "" is a drop. A summary
-    from before `drawn` counts as drawn."""
+    included: only a number above 0 delivers; with no line, a number above 0 of world actions (`acted`) is taking part
+    in the world; any other `triggered` than false, null, 0 or "" is a drop. A summary from before `drawn` counts as
+    drawn."""
     delivered = took_part.get("delivered")
     if _json_number(delivered) and delivered > 0:
         return "delivered"
+    acted = took_part.get("acted")
+    if _json_number(acted) and acted > 0:
+        return "acted"
     triggered = took_part.get("triggered", None)
     if not (
         triggered is None
@@ -1288,6 +1312,7 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
 _DELIVERY_SQL = """
 CASE
   WHEN jsonb_typeof(e -> 'delivered') = 'number' AND (e ->> 'delivered')::numeric > 0 THEN 'delivered'
+  WHEN jsonb_typeof(e -> 'acted') = 'number' AND (e ->> 'acted')::numeric > 0 THEN 'acted'
   WHEN e -> 'triggered' IS NOT NULL
        AND e -> 'triggered' NOT IN ('false'::jsonb, 'null'::jsonb, '0'::jsonb, '""'::jsonb) THEN 'dropped'
   WHEN e -> 'drawn' = 'false'::jsonb THEN 'not_drawn'
@@ -1351,6 +1376,7 @@ def _actor_facet_values(
             "count": count,
             "label": names[value],
             "delivered": deliveries[value]["delivered"],
+            "acted": deliveries[value]["acted"],
             "dropped": deliveries[value]["dropped"],
             "not_triggered": deliveries[value]["not_triggered"],
         }
@@ -1810,6 +1836,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     ]
     comparable, excluded = comparable_trials(queryset)
     reliability = build_reliability(comparable, execution.trials, excluded)
+    run_trials = trial_pass_from(*trial_outcomes(queryset))
     comparison = build_run_comparison(execution, queryset)
     return {
         "execution": {
@@ -1821,6 +1848,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         "summary": {
             **summary,
             "evaluators": len(configs),
+            **run_trials,
             # The run's verdict from its calls, by the rule the runs list reads.
             "outcome_status": run_outcome(
                 status=execution.status, counts=call_outcome_counts(summary["outcomes"])
@@ -1838,7 +1866,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             ),
         ),
         "dashboard": build_run_dashboard(
-            queryset, summary, evaluations, risk, comparison
+            queryset, summary, evaluations, risk, comparison, trials=run_trials
         ),
         "failure_breakdown": [
             {

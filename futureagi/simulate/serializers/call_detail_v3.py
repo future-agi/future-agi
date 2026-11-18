@@ -14,7 +14,7 @@ from simulate.serializers.harness_actors import (
     HarnessActorFallbackSerializer,
     HarnessActorLimitsSerializer,
 )
-from simulate.types import CallActorDelivery
+from simulate.types import CallActorDelivery, SharedRecordTruncation
 
 FUNCTION_CALL_KINDS = ("agent_call", "world_actor_action")
 
@@ -47,6 +47,11 @@ class FunctionCallSerializer(serializers.Serializer):
         required=False,
         help_text="agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
     )
+    tool_label = serializers.CharField(
+        required=False,
+        help_text="How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to "
+        "another agent or a control pass. Absent on a world actor's action.",
+    )
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"
@@ -74,7 +79,13 @@ class CallCallActorSerializer(serializers.Serializer):
     delivery = serializers.ChoiceField(
         choices=list(get_args(CallActorDelivery)),
         required=False,
-        help_text="How far they got in the call; absent on a call stored without a summary.",
+        help_text=(
+            "How far they got in the call: delivered (spoke), acted (took part through the world, no line), dropped "
+            "(due, but neither spoke nor acted), not_triggered, not_drawn; absent on a call stored without a summary."
+        ),
+    )
+    delivery_label = serializers.CharField(
+        required=False, help_text="How far they got, in the words the call shows."
     )
 
 
@@ -107,8 +118,18 @@ class BlockedCallSerializer(serializers.Serializer):
     )
 
 
+class TrialRefusedActionSerializer(serializers.Serializer):
+    action = serializers.CharField()
+    code = serializers.CharField(
+        allow_blank=True,
+        help_text="Why the world refused the call, as a code.",
+    )
+    reason = serializers.CharField(allow_blank=True)
+
+
 class TrialStateChangeSerializer(serializers.Serializer):
-    """What one participant (the agent, or an actor) attempted in the trial and what the world made of it."""
+    """What one participant (the agent, an actor, or a `worker:<id>`) attempted in the trial and what the world
+    made of it."""
 
     who = serializers.CharField()
     name = serializers.CharField()
@@ -136,6 +157,12 @@ class TrialStateChangeSerializer(serializers.Serializer):
         required=False,
         help_text="Calls to hosts outside the test world, refused before they left: counted in refused, never "
         "a change.",
+    )
+    # What the world refused, with its code and why; a worker's attempt outside its permissions is one.
+    refused_actions = TrialRefusedActionSerializer(many=True, required=False)
+    worker_id = serializers.CharField(
+        required=False,
+        help_text="The worker this participant is; absent for the agent and the actors.",
     )
 
 
@@ -282,8 +309,9 @@ class TrialNoticeSerializer(serializers.Serializer):
 
     code = serializers.CharField(
         help_text="fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, "
-        "duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing "
-        "(the agent's change refused before anyone approved it: `action`, `count`)"
+        "duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing "
+        "(the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or "
+        "worker_limits_not_enforced"
     )
     message = serializers.CharField(
         help_text="Plain words for the person reading the run."
@@ -294,6 +322,8 @@ class TrialNoticeSerializer(serializers.Serializer):
     count = serializers.IntegerField(
         required=False, help_text="For evidence_incomplete."
     )
+    # The workers the notice names, e.g. a separate worker that reached the world without its own channel.
+    workers = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class DuplicateCommitSerializer(serializers.Serializer):
@@ -368,6 +398,49 @@ class TrialStartSerializer(serializers.Serializer):
     )
 
 
+class SharedRecordActionSerializer(serializers.Serializer):
+    who = serializers.CharField()
+    name = serializers.CharField(
+        help_text="The participant's name, as the state changes give it."
+    )
+    tool = serializers.CharField(allow_blank=True)
+    outcome = serializers.CharField()
+    # False for a call the world logged as a read; true for a write; null when nothing says.
+    write = serializers.BooleanField(allow_null=True)
+
+
+class SharedRecordSerializer(serializers.Serializer):
+    key = serializers.CharField(
+        help_text="What the calls named, as argument=value; never a database identity."
+    )
+    argument = serializers.CharField()
+    value = serializers.CharField()
+    actions = SharedRecordActionSerializer(many=True)
+    committed_writes = serializers.IntegerField()
+    truncated = serializers.BooleanField()
+    actions_truncated = serializers.BooleanField(
+        allow_null=True,
+        default=None,
+        help_text="This record's own actions were cut; null for a trial recorded before this was reported.",
+    )
+    truncation = serializers.ChoiceField(
+        choices=get_args(SharedRecordTruncation),
+        allow_null=True,
+        default=None,
+        help_text="Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded "
+        "before this was reported; null when nothing was cut.",
+    )
+
+
+class StoppedWorkerSerializer(serializers.Serializer):
+    worker = serializers.CharField()
+    process = serializers.CharField()
+    at = serializers.FloatField(
+        help_text="When the run stopped it, in seconds since the epoch."
+    )
+    reason = serializers.CharField()
+
+
 class TrialStateSerializer(serializers.Serializer):
     """A trial's World state. Every list is present, empty when the trial had none."""
 
@@ -378,10 +451,15 @@ class TrialStateSerializer(serializers.Serializer):
     )
     recorded = serializers.BooleanField(
         required=False,
-        help_text="False when World changes are not recorded for this agent: its tools run inside it.",
+        help_text="False when World changes are not recorded for this trial: its tools ran where the world cannot see.",
     )
     why = serializers.CharField(
         required=False, allow_blank=True, help_text="Why they were not recorded."
+    )
+    why_label = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Why they were not recorded, in the words World state shows.",
     )
     unreadable = serializers.BooleanField(
         help_text="True when what changed in the world could not be read; checks that needed it read Unmeasured.",
@@ -424,3 +502,35 @@ class TrialStateSerializer(serializers.Serializer):
         many=True,
         help_text="How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
     )
+    shared_records = SharedRecordSerializer(
+        many=True,
+        required=False,
+        help_text="Records two or more participants named in this trial, and what the world made of each call.",
+    )
+    shared_records_truncated = serializers.BooleanField(
+        required=False,
+        allow_null=True,
+        help_text="More records were touched by more than one participant than the trial kept; null for a trial "
+        "recorded before this was reported.",
+    )
+    stopped_workers = StoppedWorkerSerializer(
+        many=True,
+        required=False,
+        help_text="Participants running on their own that the run stopped when their deadline passed.",
+    )
+
+
+class EarlierAttemptSerializer(serializers.Serializer):
+    """An earlier attempt of the call that a rerun kept, latest first."""
+
+    attempt = serializers.UUIDField(
+        help_text="Its id: `/workers/?attempt=` reads its worker record."
+    )
+    number = serializers.IntegerField(
+        help_text="Which attempt it was, counted from 1; the call itself is `attempt_number`."
+    )
+    rerun_at = serializers.DateTimeField()
+    kept = serializers.BooleanField(
+        help_text="False when it was snapshotted before attempts kept their worker record and trial state."
+    )
+    trial_state = TrialStateSerializer(allow_null=True)

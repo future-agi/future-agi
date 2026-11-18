@@ -199,6 +199,130 @@ def test_a_receipt_with_unmeasured_and_not_applicable_sub_goals_and_their_eviden
 
 
 @pytest.mark.django_db
+def test_a_duplicate_commit_receipt_is_the_agent_s_failure_with_no_failure_object_and_its_reason_kept(
+    organization,
+):
+    """The harness reports an agent that committed a write twice as `failed`, with `failure` null and the explanation in
+    `reason`: the real endpoint takes it (not 400, so it is never backfilled as skipped) and keeps it as the agent's
+    failure, never recomputed as a pass from its sub-goals that held."""
+    import hashlib
+    from unittest.mock import MagicMock, patch
+
+    from rest_framework.test import APIClient
+
+    from simulate.models import HostedHarnessReceipt
+    from simulate.services.hosted_harness import (
+        canonical_digest,
+        create_hosted_job,
+        register_attempt,
+    )
+    from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="duplicate-commit-receipt"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client, headers = APIClient(), _headers(capability)
+    provisioned = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Duplicate commit",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "refund_once",
+                    "name": "Rowan",
+                    "situation": "Asks for a refund",
+                    "outcome": "One refund",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    ).json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["refund_once"],
+        },
+        format="json",
+        **headers,
+    )
+    content = b'{"messages": []}'
+    transcript = hashlib.sha256(content).hexdigest()
+    storage = MagicMock()
+    storage.get_object.return_value.read.return_value = content
+    reason = (
+        "did not reach the agent: Rowan (not_delivered); The agent repeated issue_refund after its answer was lost, "
+        "and the world committed it twice."
+    )
+    # The exact shape the harness sends, with its whole-object digest over every field but `digest`.
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "refund_once",
+        "scenario_id": provisioned["scenarios"][0]["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": 0,
+        "status": "failed",
+        "sub_goals": [
+            {"name": "refunded", "held": True, "reason": None, "judged": False}
+        ],
+        "evaluations": [],
+        "call": {
+            "started_at": "2026-11-18T10:00:00.000Z",
+            "ended_at": "2026-11-18T10:01:00.000Z",
+            "duration_ms": 60000,
+            "turns": 2,
+            "transcript_artifact": f"sha256:{transcript}",
+            "recording_artifacts": [],
+        },
+        "failure": None,
+        "reason": reason,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        uploaded = client.generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{transcript}/",
+            content,
+            content_type="application/json",
+            HTTP_X_ARTIFACT_KIND="transcript",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="refund_once",
+            **headers,
+        )
+        assert uploaded.status_code == 201, uploaded.content
+        result = client.post(
+            f"{BASE}/{capability.attempt.id}/results/",
+            receipt,
+            format="json",
+            **headers,
+        )
+    assert result.status_code == 200, result.content
+    accepted = result.json()
+    assert accepted.get("result", accepted) == {"accepted": True, "duplicate": False}
+
+    stored = HostedHarnessReceipt.no_workspace_objects.get(job=job)
+    assert (stored.status, stored.body["reason"]) == ("failed", reason)
+    call = (
+        job.scenario_registrations.select_related("call_execution").get().call_execution
+    )
+    kept = call.call_metadata["hosted_harness_receipt"]
+    assert (kept["status"], kept["failure"], kept["reason"]) == ("failed", None, reason)
+    # Its sub-goal held, but the agent's failure stands: the platform does not recompute a pass from the sub-goals.
+    assert call.call_metadata["harness_outcome_status"] == "failed"
+
+
+@pytest.mark.django_db
 def test_a_receipt_with_an_actor_transcript_through_the_real_endpoints_is_served_on_the_call_detail(
     organization, workspace, auth_client
 ):
@@ -385,6 +509,7 @@ def test_a_receipt_with_an_actor_transcript_through_the_real_endpoints_is_served
             "role": "Sales manager",
             "channel": "chat_message",
             "delivery": "delivered",
+            "delivery_label": "Wrote in the chat",
         }
     ]
     assert body["trial_state"]["decisions"][0]["actor"] == "manager"
@@ -535,3 +660,93 @@ def test_a_run_its_own_task_started_is_served_with_the_task_s_turn_and_no_custom
     assert "task" in json.dumps(body) and "Nightly reconciliation" in json.dumps(body)
     # The stored chat row keeps the task's own role on its message, which the web app reads.
     assert '"role": "task"' in json.dumps(body.get("transcript"))
+
+
+def test_a_worker_s_failed_check_never_turns_a_task_with_no_verdict_into_a_scored_call_at_the_real_endpoint(
+    organization,
+):
+    """A worker's own check is reported beside the task's, never in the call's outcome: a task whose only check is not
+    applicable reads no score, whatever its workers' checks say."""
+    from rest_framework.test import APIClient
+
+    from simulate.services.hosted_harness import (
+        canonical_digest,
+        create_hosted_job,
+        register_attempt,
+    )
+    from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="worker-outcome"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client, headers = APIClient(), _headers(capability)
+    provisioned = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Worker outcome",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "returns",
+                    "name": "Rep",
+                    "situation": "Asks",
+                    "outcome": "Policy",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    ).json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["returns"],
+        },
+        format="json",
+        **headers,
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "returns",
+        "scenario_id": provisioned["scenarios"][0]["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": 0,
+        "status": "passed",
+        "sub_goals": [
+            {
+                "name": "refund_issued",
+                "held": None,
+                "reason": "no refund was asked for",
+                "judged": False,
+                "verdict": "not_applicable",
+                "subject": "task",
+            },
+            {
+                "name": "lookup_stays_read_only",
+                "held": False,
+                "reason": "the lookup worker tried to write",
+                "judged": False,
+                "verdict": "fail",
+                "subject": "worker:order_lookup",
+            },
+        ],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    result = client.post(
+        f"{BASE}/{capability.attempt.id}/results/", receipt, format="json", **headers
+    )
+    assert result.status_code == 200, result.content
+    call = (
+        job.scenario_registrations.select_related("call_execution").get().call_execution
+    )
+    assert call.call_metadata["harness_outcome_status"] == "no_score"

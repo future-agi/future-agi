@@ -22,12 +22,44 @@ HANDOFF_CHANNEL = "audio_handoff"
 TAKES_PHONE_FROM_TURN = 2
 # A phone menu on the person's line: it answers the call the agent places, before anyone speaks.
 IVR_CHANNEL = "ivr"
+# Someone who writes in the chat: one the scenario schedules for a turn comes in before the person closes, if sooner.
+CHAT_CHANNEL = "chat_message"
 # The trigger kinds each runtime evaluates: someone who speaks runs on the agent's turns and words, someone acting
 # through the world on its actions, contacts and time.
 SPEAKING_TRIGGERS = ("always", "on_tool", "on_keyword", "mid_journey", "conditional")
 WORLD_TRIGGERS = ("always", "on_tool", "contacted", "after_seconds", "conditional")
 # What an actor that does not answer in time leaves behind, without naming an action or another actor.
 FALLBACK_WORDS = {"silent": "Nothing happens", "decline": "They decline"}
+# The kinds the editor offers when the sealed schema lists none; any other kind a builder writes is kept and shown.
+ACTOR_KINDS = {
+    "person": "A person",
+    "approver": "An approver",
+    "agent": "Another agent",
+    "system": "A system",
+}
+PLAY_LABELS = {
+    "mocked": "Only the actions each scenario gives them",
+    "live": "Decide their own actions when reached",
+    "both": "Both",
+}
+TIMING_LABELS = {"immediate": "Straight away", "delayed": "After a delay"}
+
+
+def choice_labels(values: list[object] | tuple[object, ...]) -> str | None:
+    """The form's labels for a field's choices, as the editor offers them; None when the editor labels no such set."""
+    for labels in (
+        ACTOR_KINDS,
+        PLAY_LABELS,
+        TIMING_LABELS,
+        FALLBACK_WORDS,
+        CHANNEL_LABELS,
+        TRIGGER_KIND_LABELS,
+    ):
+        if {str(one) for one in values} == set(labels):
+            return "; ".join(labels[str(one)] for one in values)
+    return None
+
+
 # An actor's own cap on a trial: the lines one who speaks says, the turns one acting through the world takes.
 CapField = Literal["max_turns", "max_lines"]
 
@@ -214,7 +246,12 @@ def when_label(
     )
     if kind == "mid_journey":
         turn = whole_of(trigger.get("turn")) or 0
-        return f"After the agent's turn {max(turn, TAKES_PHONE_FROM_TURN) if handoff else turn}"
+        after = f"After the agent's turn {max(turn, TAKES_PHONE_FROM_TURN) if handoff else turn}"
+        return (
+            f"{after}, or before the person closes the chat, if sooner"
+            if channel == CHAT_CHANNEL
+            else after
+        )
     if kind == "on_tool":
         on_call = whole_of(trigger.get("on_call")) or 1
         tool = text_of(trigger.get("tool"))
@@ -311,6 +348,38 @@ def editable_trigger(
     return kind in kinds and not (
         kind == "on_tool" and (whole_of(trigger.get("on_call")) or 1) > 1
     )
+
+
+class ArrivalOverride(TypedDict):
+    """A scenario that brings an actor in by its own trigger, and when it comes in there, in words."""
+
+    scenario: str
+    when_label: str
+
+
+def arrival_overrides(
+    documents: list[dict[str, object]], actor: ActorRecord
+) -> list[ArrivalOverride]:
+    """The scenarios that set an actor's arrival themselves, where that reads differently from the actor's own."""
+    actor_id = str(actor.get("id") or "")
+    channel = text_of(actor.get("channel")) or None
+    own = when_label(trigger_of(actor), channel)
+    found: list[ArrivalOverride] = []
+    for scenario in documents:
+        entries = scenario.get("actors")
+        for entry in entries if isinstance(entries, list) else []:
+            trigger = (
+                entry.get("trigger")
+                if isinstance(entry, dict) and entry.get("id") == actor_id
+                else None
+            )
+            if not isinstance(trigger, dict) or not trigger:
+                continue
+            label = when_label(cast(CallActorTrigger, trigger), channel)
+            if label != own:
+                name = scenario.get("name") or scenario.get("scenario_key") or ""
+                found.append({"scenario": str(name), "when_label": label})
+    return sorted(found, key=lambda one: one["scenario"])
 
 
 def resolved_scenario_actors(

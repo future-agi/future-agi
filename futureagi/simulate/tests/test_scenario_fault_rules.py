@@ -187,7 +187,9 @@ def test_a_write_checks_only_the_scenarios_whose_faults_it_changes():
     unchanged = [_scenario("old", AFTER_COMMIT_ON_A_READ), _scenario("other", [])]
 
     # An old scenario saved under older rules does not fail an edit that leaves its faults alone.
-    require_valid_faults(unchanged, targets=TARGETS, cast=[], before=before)
+    require_valid_faults(
+        unchanged, targets=TARGETS, cast=[], before=before, before_targets=TARGETS
+    )
     with pytest.raises(HostedHarnessError):
         require_valid_faults(
             [_scenario("old", []), _scenario("other", AFTER_COMMIT_ON_A_READ)],
@@ -470,3 +472,45 @@ def test_the_mirror_matches_the_harness_s_own_model_where_it_is_installed():
 
     assert set(fault.model_fields) == set(ScenarioFault.model_fields)
     assert set(get_args(fault.model_fields["mode"].annotation)) == HARNESS_FAULT_MODES
+
+
+@pytest.mark.parametrize("change", ["tool removed", "earlier targets unknown"])
+def test_an_unchanged_fault_whose_tool_the_write_removes_is_refused(change):
+    fault = [{"action": "orders.refund", "mode": "unavailable"}]
+    before = [_scenario("refund", fault)]
+    require_valid_faults(
+        before, targets=TARGETS, cast=[], before=before, before_targets=TARGETS
+    )
+    now = (
+        [one for one in TARGETS if one["action"] != "orders.refund"]
+        if change == "tool removed"
+        else TARGETS
+    )
+    earlier = TARGETS if change == "tool removed" else None
+
+    if change == "earlier targets unknown":
+        # Unknown earlier targets check the fault, which still holds against the contract.
+        require_valid_faults(
+            before, targets=now, cast=[], before=before, before_targets=earlier
+        )
+        return
+    with pytest.raises(HostedHarnessError) as raised:
+        require_valid_faults(
+            before, targets=now, cast=[], before=before, before_targets=earlier
+        )
+    assert raised.value.details["problems"][0]["field"] == "action"
+
+
+def test_a_fault_whose_call_number_becomes_true_is_checked_again():
+    # Python reads `true == 1`: unchanged faults are the same JSON, never equal by Python's own rule.
+    # Saved under older rules (an after-commit timeout on a read): kept while unchanged, checked once it changes.
+    before = [_scenario("refund", [{**AFTER_COMMIT_ON_A_READ[0], "on_call": 1}])]
+    now = [_scenario("refund", [{**AFTER_COMMIT_ON_A_READ[0], "on_call": True}])]
+    require_valid_faults(
+        before, targets=TARGETS, cast=[], before=before, before_targets=TARGETS
+    )
+
+    with pytest.raises(HostedHarnessError):
+        require_valid_faults(
+            now, targets=TARGETS, cast=[], before=before, before_targets=TARGETS
+        )

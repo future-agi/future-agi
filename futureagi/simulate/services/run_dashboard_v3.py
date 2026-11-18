@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Any
 
 from django.db.models import (
@@ -43,6 +44,7 @@ GOAL_OUTCOMES = (
     "passed",
     "failed",
     "error",
+    "cancelled",
     "escalated",
     "inconclusive",
     "no_score",
@@ -88,6 +90,8 @@ END_REASONS = [
 def annotate_goal_outcome(queryset: QuerySet) -> QuerySet:
     """Use the same chart outcome for aggregation and call drill-downs."""
     end_reason = Case(
+        # A call the user stopped, by its outcome (a skipped scenario stored cancelled is an error there): not an error.
+        When(result_outcome="cancelled", then=Value("Cancelled")),
         *[
             When(ended_reason__iregex=pattern, then=Value(label))
             for label, pattern in END_REASONS
@@ -177,9 +181,9 @@ def _breakdown(
             if segment["label"] in order:
                 segment["statuses"] = [segment["label"]]
     preferred = {"goal_outcome": "passed"}.get(key)
-    if key == "goal_outcome" and _only_unscored(segments):
+    if key == "goal_outcome":
         # "Passed 0%" misreads calls that ran with no pass or fail and nothing left to run.
-        preferred = "no_score"
+        preferred = _unscored_headline(segments) or preferred
     headline = next(
         (segment for segment in segments if segment["label"] == preferred), None
     )
@@ -193,13 +197,14 @@ def _breakdown(
     }
 
 
-def _only_unscored(segments: list[dict[str, Any]]) -> bool:
-    """Whether some calls have no score and none passed, failed, errored or is still to run: the run, as the
-    runs list reads it, has no score."""
+def _unscored_headline(segments: list[dict[str, Any]]) -> str | None:
+    """No score or Cancelled (calls the user stopped), whichever is larger, when none passed, failed, errored or is
+    still to run; None otherwise."""
     counts = {segment["label"]: segment["count"] for segment in segments}
-    return bool(counts.get("no_score")) and not any(
-        counts.get(label) for label in _OUTRANK_NO_SCORE
-    )
+    if any(counts.get(label) for label in _OUTRANK_NO_SCORE):
+        return None
+    label = max(("no_score", "cancelled"), key=lambda one: counts.get(one, 0))
+    return label if counts.get(label) else None
 
 
 def _tool_verdict(tool: dict) -> bool | None:
@@ -401,6 +406,7 @@ def build_run_dashboard(
     evaluations: list,
     risk: list,
     comparison: dict | None = None,
+    trials: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     total = summary["total"]
     queryset = (
@@ -527,6 +533,26 @@ def build_run_dashboard(
         # Nothing was scored and some calls ran with no pass or fail: no score, which is not missing data.
         no_score=summary["pass_rate"] is None and bool(outcomes["no_score"]),
     )
+    if trials is not None:
+        # The run's one trial pass, as its header and the runs list read it; distinct from the calls rate above.
+        left_out = (
+            trials["trials_inconclusive"] + trials["trials_excluded_not_comparable"]
+        )
+        metric(
+            "trial_pass",
+            "Trials passed",
+            trials["trial_pass_rate"],
+            "percent",
+            trials["trials_evaluated"],
+            "Passed, out of trials that passed or failed."
+            + (
+                f" {trials['trials_inconclusive']} errored or inconclusive and"
+                f" {trials['trials_excluded_not_comparable']} not started from the seeded records are left out."
+                if left_out
+                else ""
+            ),
+            no_score=trials["trial_pass_rate"] is None and bool(outcomes["no_score"]),
+        )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(
         "ran_cleanly",
@@ -751,6 +777,7 @@ def build_run_dashboard(
                 "passed": row["outcomes"]["passed"],
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],
+                "cancelled": row["outcomes"]["cancelled"],
                 "inconclusive": row["outcomes"]["inconclusive"],
                 "no_score": row["outcomes"]["no_score"],
             }

@@ -172,6 +172,63 @@ def test_a_new_actor_without_a_name_is_asked_for_one_on_the_name_field(
     ]
 
 
+def test_the_check_takes_every_field_an_edit_takes_with_the_same_type_and_no_bounds():
+    from rest_framework import serializers
+
+    from simulate.serializers.harness_actors import (
+        HarnessActorChangesSerializer,
+        relaxed_serializer,
+    )
+
+    def shape(field):
+        if isinstance(field, serializers.ListSerializer):
+            return ["list", shape(field.child)]
+        if isinstance(field, serializers.Serializer):
+            return {name: shape(one) for name, one in field.fields.items()}
+        if isinstance(field, serializers.ChoiceField):
+            return "text"
+        if isinstance(field, (serializers.ListField, serializers.DictField)):
+            return [type(field).__name__, shape(field.child)]
+        return (
+            "text" if isinstance(field, serializers.CharField) else type(field).__name__
+        )
+
+    def bounds(field):
+        found = [
+            name
+            for name in ("max_length", "min_length", "max_value", "min_value")
+            if getattr(field, name, None) is not None
+        ]
+        if isinstance(field, serializers.ListSerializer):
+            return found + bounds(field.child)
+        if isinstance(field, serializers.Serializer):
+            return found + [b for one in field.fields.values() for b in bounds(one)]
+        child = getattr(field, "child", None)
+        return found + (bounds(child) if isinstance(child, serializers.Field) else [])
+
+    strict = HarnessActorChangesSerializer()
+    relaxed = relaxed_serializer(HarnessActorChangesSerializer)()
+
+    assert shape(relaxed) == shape(strict)
+    assert bounds(relaxed) == [] and bounds(strict)
+
+
+def test_a_word_a_field_does_not_take_is_a_problem_on_that_field(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-rules-choice")
+
+    check = _check(
+        auth_client,
+        environment,
+        op="create",
+        changes={"name": "Priya Raman", "trigger": {"kind": "whenever"}},
+    )
+
+    assert check.status_code == 200, check.content
+    assert [one["field"] for one in check.json()["problems"]] == ["trigger"]
+
+
 def test_a_new_actor_s_too_long_id_is_a_problem_on_its_id_field(
     user, workspace, storage, auth_client
 ):
@@ -783,3 +840,37 @@ def test_an_activation_edit_keeps_working_beside_a_trigger_written_elsewhere(
     assert edited.status_code == 200, edited.content
     # What the edit writes is still checked.
     assert broken.status_code == 400
+
+
+def test_an_actor_lists_the_scenarios_that_bring_it_in_their_own_way():
+    from simulate.services.harness_actor_labels import arrival_overrides
+
+    sam = {
+        "id": "sam",
+        "channel": "chat_message",
+        "activation": {"trigger": {"kind": "mid_journey", "turn": 1}},
+    }
+    documents = [
+        {
+            "name": "Refund on day two",
+            "actors": [{"id": "sam", "trigger": {"kind": "mid_journey", "turn": 2}}],
+        },
+        # The same arrival as the actor's own, written into the scenario: nothing reads differently.
+        {
+            "name": "Plain refund",
+            "actors": [{"id": "sam", "trigger": {"kind": "mid_journey", "turn": 1}}],
+        },
+        {"name": "No trigger of its own", "actors": [{"id": "sam"}]},
+        {
+            "name": "Someone else",
+            "actors": [{"id": "priya", "trigger": {"kind": "always"}}],
+        },
+    ]
+
+    [override] = arrival_overrides(documents, sam)
+
+    assert override["scenario"] == "Refund on day two"
+    assert override["when_label"].startswith("After the agent's turn 2")
+    assert override["when_label"].endswith(
+        "or before the person closes the chat, if sooner"
+    )

@@ -8,6 +8,7 @@ from typing import Any, TypedDict
 
 import jsonschema
 
+from simulate.services.harness_actor_labels import choice_labels
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
     PLATFORM_FIELDS,
@@ -99,6 +100,9 @@ def _reason(error: jsonschema.ValidationError) -> str:
     if broken.validator == "maxLength":
         return f"use at most {broken.validator_value} characters"
     if broken.validator == "enum":
+        labels = choice_labels(broken.validator_value)
+        if labels:
+            return f"{broken.instance!r} is not a choice. Pick one of: {labels}"
         return f"{broken.instance!r} is not one of: {', '.join(map(str, broken.validator_value))}"
     if broken.validator == "minLength":
         return "it cannot be empty"
@@ -161,11 +165,19 @@ def _record_problems(
             if where
             else f"{actor_id}:"
         )
+        broken = _branch(error)
+        # An unknown choice is answered on its own field in the form's labels, as kind and gender are: no prefix.
+        labelled = broken.validator == "enum" and choice_labels(broken.validator_value)
         problems.append(
             (
                 # Where inside the field it is wrong, so a problem in a part the edit leaves alone stays apart.
-                ".".join(str(part) for part in _branch(error).absolute_path) or where,
-                problem(field_at(where), f"{subject} {_reason(error)}."),
+                ".".join(str(part) for part in broken.absolute_path) or where,
+                problem(
+                    field_at(where),
+                    f"{_reason(error)}."
+                    if labelled
+                    else f"{subject} {_reason(error)}.",
+                ),
             )
         )
     for path, field in (rules.get("equal_when_set") or {}).items():

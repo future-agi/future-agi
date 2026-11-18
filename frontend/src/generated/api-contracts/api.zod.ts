@@ -6285,6 +6285,7 @@ export const AgentccGuardrailPoliciesListResponse = zod.object({
         .optional(),
       applied_keys: zod.object({}).passthrough().optional(),
       applied_projects: zod.object({}).passthrough().optional(),
+      runs_on_gateway: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -6370,6 +6371,7 @@ export const AgentccGuardrailPoliciesReadResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6426,6 +6428,7 @@ export const AgentccGuardrailPoliciesUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6489,6 +6492,7 @@ export const AgentccGuardrailPoliciesPartialUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6504,7 +6508,7 @@ export const AgentccGuardrailPoliciesDeleteParams = zod.object({
 });
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const AgentccGuardrailPoliciesApplyParams = zod.object({
   id: zod
@@ -33864,6 +33868,27 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
   results: zod
     .array(
       zod.object({
+        trials_passed: zod.number().describe("Comparable trials that passed."),
+        trials_evaluated: zod
+          .number()
+          .describe(
+            "Comparable trials that passed or failed: the trial pass rate's base.",
+          ),
+        trials_inconclusive: zod
+          .number()
+          .describe(
+            "Comparable trials that errored or were inconclusive, counted apart from the base.",
+          ),
+        trials_excluded_not_comparable: zod
+          .number()
+          .describe(
+            "Trials left out because they did not start from the seeded records.",
+          ),
+        trial_pass_rate: zod
+          .number()
+          .describe(
+            "Trials passed over trials evaluated, as a percent; null when none was evaluated.",
+          ),
         kind: zod.enum(["environment", "simulate"]),
         test_execution_id: zod.string().uuid(),
         run_test_id: zod.string().uuid(),
@@ -33886,6 +33911,9 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
           .number()
           .describe("Errored receipts, also counted in outcome_failed."),
         outcome_skipped: zod.number(),
+        outcome_cancelled: zod
+          .number()
+          .describe("Calls the user stopped; neither errored nor failed."),
         outcome_no_score: zod
           .number()
           .describe("Calls that ran with no pass or fail."),
@@ -34099,6 +34127,31 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
   api_key: zod.string().min(1).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  participants: zod
+    .array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().optional(),
+        display_name: zod
+          .string()
+          .min(1)
+          .describe("What the cards call it: its name, else its id."),
+        tools: zod.array(zod.string().min(1)),
+        allowed_tools: zod.array(zod.string().min(1)),
+        tools_shown: zod.array(zod.string().min(1)),
+        binding: zod.enum(["separate", "shared", "not_declared"]),
+        enforcement: zod.enum([
+          "held_at_world",
+          "not_enforced",
+          "bypassed",
+          "unknown",
+        ]),
+        enforcement_label: zod.string().min(1),
+        address_env: zod.string().optional(),
+        process: zod.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -38870,6 +38923,27 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
       last_run: zod.object({
+        trials_passed: zod.number().describe("Comparable trials that passed."),
+        trials_evaluated: zod
+          .number()
+          .describe(
+            "Comparable trials that passed or failed: the trial pass rate's base.",
+          ),
+        trials_inconclusive: zod
+          .number()
+          .describe(
+            "Comparable trials that errored or were inconclusive, counted apart from the base.",
+          ),
+        trials_excluded_not_comparable: zod
+          .number()
+          .describe(
+            "Trials left out because they did not start from the seeded records.",
+          ),
+        trial_pass_rate: zod
+          .number()
+          .describe(
+            "Trials passed over trials evaluated, as a percent; null when none was evaluated.",
+          ),
         kind: zod.enum(["environment", "simulate"]),
         test_execution_id: zod.string().uuid(),
         run_test_id: zod.string().uuid(),
@@ -38892,6 +38966,9 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
           .number()
           .describe("Errored receipts, also counted in outcome_failed."),
         outcome_skipped: zod.number(),
+        outcome_cancelled: zod
+          .number()
+          .describe("Calls the user stopped; neither errored nor failed."),
         outcome_no_score: zod
           .number()
           .describe("Calls that ran with no pass or fail."),
@@ -38979,6 +39056,34 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+    workers: zod
+      .array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().optional(),
+          display_name: zod
+            .string()
+            .min(1)
+            .describe("What the cards call it: its name, else its id."),
+          tools: zod.array(zod.string().min(1)),
+          allowed_tools: zod.array(zod.string().min(1)),
+          tools_shown: zod.array(zod.string().min(1)),
+          binding: zod.enum(["separate", "shared", "not_declared"]),
+          enforcement: zod.enum([
+            "held_at_world",
+            "not_enforced",
+            "bypassed",
+            "unknown",
+          ]),
+          enforcement_label: zod.string().min(1),
+          address_env: zod.string().optional(),
+          process: zod.string().optional(),
+        }),
+      )
+      .optional()
+      .describe(
+        "The workers the app's source declares; a run shows which of them took part.",
+      ),
     data_store: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
@@ -39031,6 +39136,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           .string()
           .min(1)
           .describe("What a test does with it, in words."),
+        status_reason: zod
+          .string()
+          .min(1)
+          .describe(
+            "Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+          ),
         reset_between_trials: zod
           .boolean()
           .describe(
@@ -39098,6 +39209,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         }),
       }),
     ),
+    from_draft: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether this is an open draft's contract, which no run uses until the draft is saved.",
+      ),
     fault_targets: zod.array(
       zod.object({
         tool: zod.string().min(1),
@@ -39532,6 +39649,34 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
     implementation: zod.string().optional(),
     tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+    workers: zod
+      .array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().optional(),
+          display_name: zod
+            .string()
+            .min(1)
+            .describe("What the cards call it: its name, else its id."),
+          tools: zod.array(zod.string().min(1)),
+          allowed_tools: zod.array(zod.string().min(1)),
+          tools_shown: zod.array(zod.string().min(1)),
+          binding: zod.enum(["separate", "shared", "not_declared"]),
+          enforcement: zod.enum([
+            "held_at_world",
+            "not_enforced",
+            "bypassed",
+            "unknown",
+          ]),
+          enforcement_label: zod.string().min(1),
+          address_env: zod.string().optional(),
+          process: zod.string().optional(),
+        }),
+      )
+      .optional()
+      .describe(
+        "The workers the app's source declares; a run shows which of them took part.",
+      ),
     data_store: zod.object({}).passthrough().optional(),
     open_questions: zod.array(zod.string().min(1)).optional(),
     amendments: zod.array(
@@ -39584,6 +39729,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           .string()
           .min(1)
           .describe("What a test does with it, in words."),
+        status_reason: zod
+          .string()
+          .min(1)
+          .describe(
+            "Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+          ),
         reset_between_trials: zod
           .boolean()
           .describe(
@@ -39651,6 +39802,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         }),
       }),
     ),
+    from_draft: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether this is an open draft's contract, which no run uses until the draft is saved.",
+      ),
     fault_targets: zod.array(
       zod.object({
         tool: zod.string().min(1),
@@ -40250,6 +40407,20 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -40568,6 +40739,20 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -40802,6 +40987,20 @@ export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
         max_turns: zod.number(),
         max_lines: zod.number(),
         scenarios: zod.number().describe("Scenarios that include the actor."),
+        arrival_overrides: zod
+          .array(
+            zod
+              .object({
+                scenario: zod.string().min(1),
+                when_label: zod.string().min(1),
+              })
+              .describe(
+                "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+              ),
+          )
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
         provenance: zod.object({
           origin: zod.string(),
           by: zod.string().min(1),
@@ -41122,6 +41321,20 @@ export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -41163,65 +41376,6 @@ export const SimulateApiHarnessEnvironmentsValidateActorParams = zod.object({
 
 export const simulateApiHarnessEnvironmentsValidateActorBodyActorIdMax = 64;
 
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesNameMax = 500;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesRoleMax = 1000;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesChannelMax = 100;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesGenderMax = 100;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesAgeGroupMax = 100;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesAccentMax = 100;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesKindMax = 100;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesParentMax = 64;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesMayAgreeMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesPrivateMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesEscalateWhenMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesStopWhenMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesFactsMax = 500;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesFilesItemMax = 500;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesFilesMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesResponseTimingSecondsMin = 0;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesPermittedActionsItemMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesPermittedActionsMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesPlayMax = 100;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerSecondsMin = 0;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerToolMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerPMin = 0;
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerPMax = 1;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerTurnMin = 0;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerWordsItemMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerWordsMax = 50;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerCollectionMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesTimeoutSecondsMin = 0;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesFallbackMax = 200;
-
-export const simulateApiHarnessEnvironmentsValidateActorBodyChangesModelMax = 200;
-
 export const simulateApiHarnessEnvironmentsValidateActorBodyShareActionsItemMax = 200;
 
 export const simulateApiHarnessEnvironmentsValidateActorBodyShareActionsMax = 100;
@@ -41235,75 +41389,23 @@ export const SimulateApiHarnessEnvironmentsValidateActorBody = zod.object({
     .optional(),
   changes: zod
     .object({
-      name: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesNameMax)
-        .optional(),
-      role: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesRoleMax)
-        .optional(),
-      side: zod.enum(["caller", "world"]).optional(),
-      channel: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesChannelMax)
-        .optional(),
-      gender: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesGenderMax)
-        .optional(),
-      age_group: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesAgeGroupMax)
-        .optional(),
-      accent: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesAccentMax)
-        .optional(),
+      name: zod.string().optional(),
+      role: zod.string().optional(),
+      side: zod.string().min(1).optional(),
+      channel: zod.string().optional(),
+      gender: zod.string().optional(),
+      age_group: zod.string().optional(),
+      accent: zod.string().optional(),
       loudness_ratio: zod.number().optional(),
-      kind: zod
-        .string()
-        .min(1)
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesKindMax)
-        .optional(),
-      parent: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesParentMax)
-        .optional(),
+      kind: zod.string().min(1).optional(),
+      parent: zod.string().optional(),
       goal: zod.string().optional(),
-      may_agree: zod
-        .array(zod.string())
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesMayAgreeMax)
-        .optional(),
-      private: zod
-        .array(zod.string())
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesPrivateMax)
-        .optional(),
-      escalate_when: zod
-        .array(zod.string())
-        .max(
-          simulateApiHarnessEnvironmentsValidateActorBodyChangesEscalateWhenMax,
-        )
-        .optional(),
-      stop_when: zod
-        .array(zod.string())
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesStopWhenMax)
-        .optional(),
-      facts: zod
-        .array(zod.string())
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesFactsMax)
-        .optional(),
-      files: zod
-        .array(
-          zod
-            .string()
-            .min(1)
-            .max(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesFilesItemMax,
-            ),
-        )
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesFilesMax)
-        .optional(),
+      may_agree: zod.array(zod.string()).optional(),
+      private: zod.array(zod.string()).optional(),
+      escalate_when: zod.array(zod.string()).optional(),
+      stop_when: zod.array(zod.string()).optional(),
+      facts: zod.array(zod.string()).optional(),
+      files: zod.array(zod.string().min(1)).optional(),
       records: zod
         .array(
           zod.object({
@@ -41315,115 +41417,31 @@ export const SimulateApiHarnessEnvironmentsValidateActorBody = zod.object({
       style: zod.string().optional(),
       response_timing: zod
         .object({
-          kind: zod.enum(["immediate", "delayed"]),
-          seconds: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesResponseTimingSecondsMin,
-            )
-            .optional(),
+          kind: zod.string().min(1),
+          seconds: zod.number().optional(),
         })
         .optional(),
-      permitted_actions: zod
-        .array(
-          zod
-            .string()
-            .min(1)
-            .max(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesPermittedActionsItemMax,
-            ),
-        )
-        .max(
-          simulateApiHarnessEnvironmentsValidateActorBodyChangesPermittedActionsMax,
-        )
-        .optional(),
-      play: zod
-        .string()
-        .min(1)
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesPlayMax)
-        .optional(),
+      permitted_actions: zod.array(zod.string().min(1)).optional(),
+      play: zod.string().min(1).optional(),
       trigger: zod
         .object({
-          kind: zod
-            .enum([
-              "always",
-              "after_seconds",
-              "on_tool",
-              "contacted",
-              "probability",
-              "mid_journey",
-              "on_keyword",
-              "conditional",
-            ])
-            .optional(),
-          seconds: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerSecondsMin,
-            )
-            .optional(),
-          tool: zod
-            .string()
-            .max(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerToolMax,
-            )
-            .optional(),
-          on_call: zod.number().min(1).optional(),
-          p: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerPMin,
-            )
-            .max(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerPMax,
-            )
-            .optional(),
-          turn: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerTurnMin,
-            )
-            .optional(),
-          words: zod
-            .array(
-              zod
-                .string()
-                .min(1)
-                .max(
-                  simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerWordsItemMax,
-                ),
-            )
-            .max(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerWordsMax,
-            )
-            .optional(),
-          collection: zod
-            .string()
-            .max(
-              simulateApiHarnessEnvironmentsValidateActorBodyChangesTriggerCollectionMax,
-            )
-            .optional(),
+          kind: zod.string().min(1).optional(),
+          seconds: zod.number().optional(),
+          tool: zod.string().optional(),
+          on_call: zod.number().optional(),
+          p: zod.number().optional(),
+          turn: zod.number().optional(),
+          words: zod.array(zod.string().min(1)).optional(),
+          collection: zod.string().optional(),
           where: zod.record(zod.string(), zod.string()).optional(),
         })
         .optional(),
-      timeout_seconds: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsValidateActorBodyChangesTimeoutSecondsMin,
-        )
-        .optional(),
-      fallback: zod
-        .string()
-        .min(1)
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesFallbackMax)
-        .optional(),
+      timeout_seconds: zod.number().optional(),
+      fallback: zod.string().min(1).optional(),
       fallback_arguments: zod.record(zod.string(), zod.unknown()).optional(),
-      model: zod
-        .string()
-        .max(simulateApiHarnessEnvironmentsValidateActorBodyChangesModelMax)
-        .optional(),
-      max_turns: zod.number().min(1).optional(),
-      max_lines: zod.number().min(1).optional(),
+      model: zod.string().optional(),
+      max_turns: zod.number().optional(),
+      max_lines: zod.number().optional(),
     })
     .optional(),
   id: zod.string().min(1).optional(),
@@ -41644,6 +41662,20 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -41960,6 +41992,20 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -42461,6 +42507,20 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -42779,6 +42839,20 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -43327,6 +43401,20 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -43645,6 +43733,20 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -43871,6 +43973,20 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -44189,6 +44305,20 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -44219,1212 +44349,6 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
     timeout_label: zod.string().min(1),
   }),
 });
-
-/**
- * The run readiness of an agent, environment and suite pairing, computed now,
-and the selected cases it holds back; an absent id is the environment's default
-and absent keys select the whole suite. No writes.
- */
-export const SimulateApiHarnessEnvironmentsCapabilitiesParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiHarnessEnvironmentsCapabilitiesQueryKeysItemMax = 255;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesQueryKeysMax = 200;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesQueryTrialsDefault = 1;
-export const simulateApiHarnessEnvironmentsCapabilitiesQueryTrialsMax = 20;
-
-export const SimulateApiHarnessEnvironmentsCapabilitiesQueryParams = zod.object(
-  {
-    agent_version_id: zod.string().uuid().optional(),
-    environment_version_id: zod.string().uuid().optional(),
-    suite_version_id: zod.string().uuid().optional(),
-    keys: zod
-      .array(
-        zod
-          .string()
-          .min(1)
-          .max(simulateApiHarnessEnvironmentsCapabilitiesQueryKeysItemMax),
-      )
-      .max(simulateApiHarnessEnvironmentsCapabilitiesQueryKeysMax)
-      .optional()
-      .describe(
-        "Scenario keys; more than 200 go in the POST body as scenario_ids.",
-      ),
-    trials: zod
-      .number()
-      .min(1)
-      .max(simulateApiHarnessEnvironmentsCapabilitiesQueryTrialsMax)
-      .default(simulateApiHarnessEnvironmentsCapabilitiesQueryTrialsDefault),
-  },
-);
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemNeededByMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedOfMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseWorkersItemBypassedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseBlockersMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionSuiteTotalMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionExcludedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionChangedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRequestedMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionEligibleMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionBlockedMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionStaleMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionUntestedMin = 0;
-
-export const simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionGradingGradableMin = 0;
-
-export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
-  pairing: zod.object({
-    agent_version: zod.object({
-      id: zod.string().uuid().optional(),
-      label: zod.string().min(1).optional(),
-    }),
-    environment_version: zod.object({
-      id: zod.string().uuid().optional(),
-      label: zod.string().min(1).optional(),
-    }),
-    suite_version: zod.object({
-      id: zod.string().uuid().optional(),
-      label: zod.string().min(1).optional(),
-    }),
-    evidence: zod
-      .enum(["pair_certificate", "build_certificate", "none"])
-      .describe(
-        "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
-      ),
-    agent_tools: zod
-      .object({
-        read: zod
-          .boolean()
-          .describe("Whether this agent version's tools have been read."),
-        count: zod.number().describe("How many tools it has; 0 when unread."),
-      })
-      .optional(),
-    evidence_unreadable: zod
-      .boolean()
-      .optional()
-      .describe(
-        "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
-      ),
-  }),
-  validation: zod.object({
-    state: zod
-      .enum([
-        "not_run",
-        "validating",
-        "ready",
-        "failed",
-        "check_unavailable",
-        "retry",
-        "unavailable",
-      ])
-      .describe(
-        "ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.",
-      ),
-    job_id: zod.string().uuid(),
-    purpose: zod.enum(["agent_move", "recheck"]),
-    finished_at: zod.string().datetime({ offset: true }),
-    error: zod.record(zod.string(), zod.string()),
-  }),
-  answer: zod.object({
-    kind: zod.enum(["ready", "blocked", "stale", "unchecked", "validating"]),
-    worst: zod
-      .enum([
-        "supported",
-        "partial",
-        "blocked",
-        "unavailable",
-        "untested",
-        "stale",
-      ])
-      .describe("The worst measured row."),
-    reason_code: zod
-      .string()
-      .min(1)
-      .describe("pair_failed: a check failed without naming an action."),
-  }),
-  areas: zod.array(
-    zod.object({
-      id: zod.string().min(1),
-      status: zod.enum([
-        "supported",
-        "partial",
-        "blocked",
-        "unavailable",
-        "untested",
-        "stale",
-      ]),
-      rows: zod.array(zod.string().min(1)),
-    }),
-  ),
-  rows: zod.array(
-    zod.object({
-      id: zod.string().min(1),
-      label: zod.string().min(1),
-      area: zod.string().min(1),
-      status: zod.enum([
-        "supported",
-        "partial",
-        "blocked",
-        "unavailable",
-        "untested",
-        "stale",
-      ]),
-      measured: zod.boolean(),
-      finding: zod.enum([
-        "passed",
-        "failed",
-        "limited",
-        "not_applicable",
-        "not_run",
-      ]),
-      reason_code: zod.string().min(1),
-      reason: zod.string().min(1),
-      targets: zod.array(
-        zod.object({
-          kind: zod
-            .enum(["tool", "agent_tool", "action", "check"])
-            .describe(
-              "agent_tool: a tool of the agent version the environment lacks.",
-            ),
-          name: zod.string().min(1),
-          result: zod.string().min(1),
-        }),
-      ),
-      blocked_by: zod.string().min(1),
-      stale_because: zod.string().min(1),
-      was: zod.enum([
-        "supported",
-        "partial",
-        "blocked",
-        "unavailable",
-        "untested",
-        "stale",
-      ]),
-      evidence: zod.array(
-        zod.object({
-          check: zod.string().min(1),
-          result: zod
-            .string()
-            .min(1)
-            .describe("A check status, or a ratio such as 3/4."),
-        }),
-      ),
-      checked_at: zod.string().min(1),
-      fix: zod.object({
-        type: zod.string().min(1),
-        category: zod
-          .enum(["startup", "message_mapping", "tool_routing", "evidence"])
-          .describe(
-            "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
-          ),
-        target: zod.string().min(1),
-        action: zod.string().min(1),
-        would: zod.string().min(1),
-        recheck: zod
-          .object({
-            scope: zod.enum(["agent", "pair"]),
-            method: zod.enum(["POST"]),
-            path: zod.string().min(1),
-          })
-          .describe(
-            "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
-          ),
-      }),
-      consequence: zod
-        .string()
-        .min(1)
-        .describe(
-          "What the status means for the cases, their spend and their independence.",
-        ),
-      needed_by: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemNeededByMin,
-        )
-        .describe("Selected cases that need this row."),
-      affected: zod
-        .object({
-          count: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedCountMin,
-            ),
-          of: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsCapabilitiesResponseRowsItemAffectedOfMin,
-            ),
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean(),
-        })
-        .describe(
-          "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
-        ),
-    }),
-  ),
-  workers: zod
-    .array(
-      zod
-        .object({
-          worker_id: zod.string().min(1),
-          name: zod.string().min(1),
-          binding: zod.enum(["separate", "shared"]),
-          status: zod.enum([
-            "supported",
-            "partial",
-            "blocked",
-            "unavailable",
-            "untested",
-            "stale",
-          ]),
-          status_label: zod
-            .string()
-            .min(1)
-            .describe("The status word the row shows."),
-          reason_code: zod.enum([
-            "evidence_unreadable",
-            "worker_channel_bypassed",
-            "sealed_before_worker_limits",
-            "tool_service_not_fronted",
-            "in_process_unbound",
-            "no_tool_service",
-            "in_process_door",
-            "shared_binding",
-            "held_at_world_cooperative",
-            "worker_not_sealed",
-          ]),
-          reason: zod.string().min(1),
-          tools: zod.array(
-            zod.object({
-              tool: zod.string().min(1),
-              action: zod
-                .string()
-                .min(1)
-                .describe(
-                  "The sealed world action; null when the tool has no route.",
-                ),
-              boundary: zod.enum(["allowed", "blocked", "not_enforced"]),
-            }),
-          ),
-          bypassed: zod
-            .array(
-              zod
-                .object({
-                  run_id: zod.string().min(1),
-                  call_execution_id: zod.string().min(1),
-                })
-                .describe(
-                  "The newest recent calls, at most five, where the worker reached the world without its own channel.",
-                ),
-            )
-            .describe(
-              "The newest recent calls, at most five, where the worker reached the world without its own channel.",
-            ),
-          bypassed_count: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsCapabilitiesResponseWorkersItemBypassedCountMin,
-            )
-            .describe("All such recent calls."),
-          fix: zod.object({
-            type: zod.string().min(1),
-            category: zod
-              .enum(["startup", "message_mapping", "tool_routing", "evidence"])
-              .describe(
-                "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
-              ),
-            target: zod.string().min(1),
-            action: zod.string().min(1),
-            would: zod.string().min(1),
-            recheck: zod
-              .object({
-                scope: zod.enum(["agent", "pair"]),
-                method: zod.enum(["POST"]),
-                path: zod.string().min(1),
-              })
-              .describe(
-                "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
-              ),
-          }),
-          checked_at: zod.string().min(1),
-        })
-        .describe(
-          "One row per declared worker; empty when the contract declares none.",
-        ),
-    )
-    .describe(
-      "One row per declared worker; empty when the contract declares none.",
-    ),
-  counts: zod.object({
-    supported: zod.number(),
-    partial: zod.number(),
-    blocked: zod.number(),
-    unavailable: zod.number(),
-    untested: zod.number(),
-    stale: zod.number(),
-  }),
-  blockers: zod
-    .number()
-    .min(simulateApiHarnessEnvironmentsCapabilitiesResponseBlockersMin)
-    .describe(
-      "Blocked rows plus blocked workers: what the run plan counts as blockers.",
-    ),
-  catalog_version: zod.string().min(1),
-  rules_version: zod.string().min(1),
-  computed_at: zod.string().min(1),
-  selection: zod.object({
-    suite_total: zod
-      .number()
-      .min(
-        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionSuiteTotalMin,
-      )
-      .describe("Every case of the suite version."),
-    excluded: zod.object({
-      count: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionExcludedCountMin,
-        ),
-      keys: zod.array(zod.string().min(1)),
-      truncated: zod.boolean(),
-      reason: zod
-        .enum(["not_selected"])
-        .describe("Suite cases not selected for this run."),
-    }),
-    changed: zod
-      .object({
-        count: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionChangedCountMin,
-          ),
-        keys: zod.array(zod.string().min(1)),
-        truncated: zod.boolean(),
-        since: zod
-          .object({
-            run_id: zod.string().uuid(),
-            suite_version: zod.object({
-              id: zod.string().uuid().optional(),
-              label: zod.string().min(1).optional(),
-            }),
-          })
-          .describe(
-            "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
-          ),
-      })
-      .describe(
-        "Selected cases whose contents differ from that run's suite version, or that it did not have.",
-      ),
-    requested: zod
-      .number()
-      .min(
-        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionRequestedMin,
-      ),
-    eligible: zod
-      .number()
-      .min(
-        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionEligibleMin,
-      ),
-    blocked: zod
-      .number()
-      .min(
-        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionBlockedMin,
-      ),
-    stale: zod
-      .number()
-      .min(simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionStaleMin),
-    untested: zod
-      .number()
-      .min(
-        simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionUntestedMin,
-      ),
-    lists: zod.object({
-      eligible: zod.object({
-        keys: zod.array(zod.string().min(1)),
-        truncated: zod.boolean().describe("More than 200 cases; page them."),
-      }),
-      blocked: zod.object({
-        keys: zod.array(zod.string().min(1)),
-        truncated: zod.boolean().describe("More than 200 cases; page them."),
-      }),
-      stale: zod.object({
-        keys: zod.array(zod.string().min(1)),
-        truncated: zod.boolean().describe("More than 200 cases; page them."),
-      }),
-      untested: zod.object({
-        keys: zod.array(zod.string().min(1)),
-        truncated: zod.boolean().describe("More than 200 cases; page them."),
-      }),
-    }),
-    held_by: zod
-      .array(
-        zod
-          .object({
-            id: zod
-              .string()
-              .min(1)
-              .describe(
-                "The row id, worker:<id> for a declared worker, or worker_limits when the sealed hold names no worker.",
-              ),
-            name: zod.string().min(1),
-            area: zod.string().min(1),
-            count: zod.number().min(1),
-            reason: zod.string().min(1),
-            text: zod
-              .string()
-              .min(1)
-              .describe("What the run dialog shows for it."),
-          })
-          .describe(
-            "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
-          ),
-      )
-      .describe(
-        "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
-      ),
-    blocking_area: zod
-      .string()
-      .min(1)
-      .describe(
-        "The area of the first row in held_by that holds selected cases back, never a worker: what the run dialog names as holding them; null when only workers hold them.",
-      ),
-    dropped: zod.array(
-      zod.object({
-        key: zod.string().min(1),
-        code: zod
-          .enum(["scenario_dropped", "scenario_ungradable"])
-          .describe(
-            "scenario_dropped: certifying the pair dropped it. scenario_ungradable: it grades no sub-goal, so a run refuses it.",
-          ),
-        reason: zod.string().min(1),
-      }),
-    ),
-    grading: zod.object({
-      gradable: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsCapabilitiesResponseSelectionGradingGradableMin,
-        ),
-      not_gradable: zod.array(
-        zod.object({
-          key: zod.string().min(1),
-          reason: zod.enum([
-            "check_unreadable",
-            "no_checks",
-            "evidence_not_supported",
-            "judge_unavailable",
-          ]),
-        }),
-      ),
-      truncated: zod
-        .boolean()
-        .describe(
-          "More than 200 cases cannot be graded; the first 200 are listed.",
-        ),
-    }),
-    requirements_recorded: zod
-      .boolean()
-      .describe(
-        "Every selected case's needs were read from its stored documents.",
-      ),
-  }),
-});
-
-/**
- * The same report for a selection too large for a query string. No writes.
- */
-export const SimulateApiHarnessEnvironmentsSelectCapabilitiesParams =
-  zod.object({
-    id: zod.string(),
-  });
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesBodyScenarioIdsItemMax = 255;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesBodyScenarioIdsMax = 1000;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesBodyTrialsDefault = 1;
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesBodyTrialsMax = 20;
-
-export const SimulateApiHarnessEnvironmentsSelectCapabilitiesBody = zod.object({
-  agent_version_id: zod.string().uuid().optional(),
-  environment_version_id: zod.string().uuid().optional(),
-  suite_version_id: zod.string().uuid().optional(),
-  scenario_ids: zod
-    .array(
-      zod
-        .string()
-        .min(1)
-        .max(
-          simulateApiHarnessEnvironmentsSelectCapabilitiesBodyScenarioIdsItemMax,
-        ),
-    )
-    .max(simulateApiHarnessEnvironmentsSelectCapabilitiesBodyScenarioIdsMax),
-  trials: zod
-    .number()
-    .min(1)
-    .max(simulateApiHarnessEnvironmentsSelectCapabilitiesBodyTrialsMax)
-    .default(simulateApiHarnessEnvironmentsSelectCapabilitiesBodyTrialsDefault),
-});
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemNeededByMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedOfMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseWorkersItemBypassedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseBlockersMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSuiteTotalMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionExcludedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionChangedCountMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRequestedMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionEligibleMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionBlockedMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionStaleMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionUntestedMin = 0;
-
-export const simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionGradingGradableMin = 0;
-
-export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
-  zod.object({
-    pairing: zod.object({
-      agent_version: zod.object({
-        id: zod.string().uuid().optional(),
-        label: zod.string().min(1).optional(),
-      }),
-      environment_version: zod.object({
-        id: zod.string().uuid().optional(),
-        label: zod.string().min(1).optional(),
-      }),
-      suite_version: zod.object({
-        id: zod.string().uuid().optional(),
-        label: zod.string().min(1).optional(),
-      }),
-      evidence: zod
-        .enum(["pair_certificate", "build_certificate", "none"])
-        .describe(
-          "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
-        ),
-      agent_tools: zod
-        .object({
-          read: zod
-            .boolean()
-            .describe("Whether this agent version's tools have been read."),
-          count: zod.number().describe("How many tools it has; 0 when unread."),
-        })
-        .optional(),
-      evidence_unreadable: zod
-        .boolean()
-        .optional()
-        .describe(
-          "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
-        ),
-    }),
-    validation: zod.object({
-      state: zod
-        .enum([
-          "not_run",
-          "validating",
-          "ready",
-          "failed",
-          "check_unavailable",
-          "retry",
-          "unavailable",
-        ])
-        .describe(
-          "ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.",
-        ),
-      job_id: zod.string().uuid(),
-      purpose: zod.enum(["agent_move", "recheck"]),
-      finished_at: zod.string().datetime({ offset: true }),
-      error: zod.record(zod.string(), zod.string()),
-    }),
-    answer: zod.object({
-      kind: zod.enum(["ready", "blocked", "stale", "unchecked", "validating"]),
-      worst: zod
-        .enum([
-          "supported",
-          "partial",
-          "blocked",
-          "unavailable",
-          "untested",
-          "stale",
-        ])
-        .describe("The worst measured row."),
-      reason_code: zod
-        .string()
-        .min(1)
-        .describe("pair_failed: a check failed without naming an action."),
-    }),
-    areas: zod.array(
-      zod.object({
-        id: zod.string().min(1),
-        status: zod.enum([
-          "supported",
-          "partial",
-          "blocked",
-          "unavailable",
-          "untested",
-          "stale",
-        ]),
-        rows: zod.array(zod.string().min(1)),
-      }),
-    ),
-    rows: zod.array(
-      zod.object({
-        id: zod.string().min(1),
-        label: zod.string().min(1),
-        area: zod.string().min(1),
-        status: zod.enum([
-          "supported",
-          "partial",
-          "blocked",
-          "unavailable",
-          "untested",
-          "stale",
-        ]),
-        measured: zod.boolean(),
-        finding: zod.enum([
-          "passed",
-          "failed",
-          "limited",
-          "not_applicable",
-          "not_run",
-        ]),
-        reason_code: zod.string().min(1),
-        reason: zod.string().min(1),
-        targets: zod.array(
-          zod.object({
-            kind: zod
-              .enum(["tool", "agent_tool", "action", "check"])
-              .describe(
-                "agent_tool: a tool of the agent version the environment lacks.",
-              ),
-            name: zod.string().min(1),
-            result: zod.string().min(1),
-          }),
-        ),
-        blocked_by: zod.string().min(1),
-        stale_because: zod.string().min(1),
-        was: zod.enum([
-          "supported",
-          "partial",
-          "blocked",
-          "unavailable",
-          "untested",
-          "stale",
-        ]),
-        evidence: zod.array(
-          zod.object({
-            check: zod.string().min(1),
-            result: zod
-              .string()
-              .min(1)
-              .describe("A check status, or a ratio such as 3/4."),
-          }),
-        ),
-        checked_at: zod.string().min(1),
-        fix: zod.object({
-          type: zod.string().min(1),
-          category: zod
-            .enum(["startup", "message_mapping", "tool_routing", "evidence"])
-            .describe(
-              "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
-            ),
-          target: zod.string().min(1),
-          action: zod.string().min(1),
-          would: zod.string().min(1),
-          recheck: zod
-            .object({
-              scope: zod.enum(["agent", "pair"]),
-              method: zod.enum(["POST"]),
-              path: zod.string().min(1),
-            })
-            .describe(
-              "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
-            ),
-        }),
-        consequence: zod
-          .string()
-          .min(1)
-          .describe(
-            "What the status means for the cases, their spend and their independence.",
-          ),
-        needed_by: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemNeededByMin,
-          )
-          .describe("Selected cases that need this row."),
-        affected: zod
-          .object({
-            count: zod
-              .number()
-              .min(
-                simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedCountMin,
-              ),
-            of: zod
-              .number()
-              .min(
-                simulateApiHarnessEnvironmentsSelectCapabilitiesResponseRowsItemAffectedOfMin,
-              ),
-            keys: zod.array(zod.string().min(1)),
-            truncated: zod.boolean(),
-          })
-          .describe(
-            "Selected cases that need this row while it is not Supported. A run holds back only the cases under a Blocked row (selection.held_back); cases under a Partial, Unavailable, Stale or Untested row still run.",
-          ),
-      }),
-    ),
-    workers: zod
-      .array(
-        zod
-          .object({
-            worker_id: zod.string().min(1),
-            name: zod.string().min(1),
-            binding: zod.enum(["separate", "shared"]),
-            status: zod.enum([
-              "supported",
-              "partial",
-              "blocked",
-              "unavailable",
-              "untested",
-              "stale",
-            ]),
-            status_label: zod
-              .string()
-              .min(1)
-              .describe("The status word the row shows."),
-            reason_code: zod.enum([
-              "evidence_unreadable",
-              "worker_channel_bypassed",
-              "sealed_before_worker_limits",
-              "tool_service_not_fronted",
-              "in_process_unbound",
-              "no_tool_service",
-              "in_process_door",
-              "shared_binding",
-              "held_at_world_cooperative",
-              "worker_not_sealed",
-            ]),
-            reason: zod.string().min(1),
-            tools: zod.array(
-              zod.object({
-                tool: zod.string().min(1),
-                action: zod
-                  .string()
-                  .min(1)
-                  .describe(
-                    "The sealed world action; null when the tool has no route.",
-                  ),
-                boundary: zod.enum(["allowed", "blocked", "not_enforced"]),
-              }),
-            ),
-            bypassed: zod
-              .array(
-                zod
-                  .object({
-                    run_id: zod.string().min(1),
-                    call_execution_id: zod.string().min(1),
-                  })
-                  .describe(
-                    "The newest recent calls, at most five, where the worker reached the world without its own channel.",
-                  ),
-              )
-              .describe(
-                "The newest recent calls, at most five, where the worker reached the world without its own channel.",
-              ),
-            bypassed_count: zod
-              .number()
-              .min(
-                simulateApiHarnessEnvironmentsSelectCapabilitiesResponseWorkersItemBypassedCountMin,
-              )
-              .describe("All such recent calls."),
-            fix: zod.object({
-              type: zod.string().min(1),
-              category: zod
-                .enum([
-                  "startup",
-                  "message_mapping",
-                  "tool_routing",
-                  "evidence",
-                ])
-                .describe(
-                  "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
-                ),
-              target: zod.string().min(1),
-              action: zod.string().min(1),
-              would: zod.string().min(1),
-              recheck: zod
-                .object({
-                  scope: zod.enum(["agent", "pair"]),
-                  method: zod.enum(["POST"]),
-                  path: zod.string().min(1),
-                })
-                .describe(
-                  "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
-                ),
-            }),
-            checked_at: zod.string().min(1),
-          })
-          .describe(
-            "One row per declared worker; empty when the contract declares none.",
-          ),
-      )
-      .describe(
-        "One row per declared worker; empty when the contract declares none.",
-      ),
-    counts: zod.object({
-      supported: zod.number(),
-      partial: zod.number(),
-      blocked: zod.number(),
-      unavailable: zod.number(),
-      untested: zod.number(),
-      stale: zod.number(),
-    }),
-    blockers: zod
-      .number()
-      .min(simulateApiHarnessEnvironmentsSelectCapabilitiesResponseBlockersMin)
-      .describe(
-        "Blocked rows plus blocked workers: what the run plan counts as blockers.",
-      ),
-    catalog_version: zod.string().min(1),
-    rules_version: zod.string().min(1),
-    computed_at: zod.string().min(1),
-    selection: zod.object({
-      suite_total: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionSuiteTotalMin,
-        )
-        .describe("Every case of the suite version."),
-      excluded: zod.object({
-        count: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionExcludedCountMin,
-          ),
-        keys: zod.array(zod.string().min(1)),
-        truncated: zod.boolean(),
-        reason: zod
-          .enum(["not_selected"])
-          .describe("Suite cases not selected for this run."),
-      }),
-      changed: zod
-        .object({
-          count: zod
-            .number()
-            .min(
-              simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionChangedCountMin,
-            ),
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean(),
-          since: zod
-            .object({
-              run_id: zod.string().uuid(),
-              suite_version: zod.object({
-                id: zod.string().uuid().optional(),
-                label: zod.string().min(1).optional(),
-              }),
-            })
-            .describe(
-              "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
-            ),
-        })
-        .describe(
-          "Selected cases whose contents differ from that run's suite version, or that it did not have.",
-        ),
-      requested: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionRequestedMin,
-        ),
-      eligible: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionEligibleMin,
-        ),
-      blocked: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionBlockedMin,
-        ),
-      stale: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionStaleMin,
-        ),
-      untested: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionUntestedMin,
-        ),
-      lists: zod.object({
-        eligible: zod.object({
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean().describe("More than 200 cases; page them."),
-        }),
-        blocked: zod.object({
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean().describe("More than 200 cases; page them."),
-        }),
-        stale: zod.object({
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean().describe("More than 200 cases; page them."),
-        }),
-        untested: zod.object({
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean().describe("More than 200 cases; page them."),
-        }),
-      }),
-      held_by: zod
-        .array(
-          zod
-            .object({
-              id: zod
-                .string()
-                .min(1)
-                .describe(
-                  "The row id, worker:<id> for a declared worker, or worker_limits when the sealed hold names no worker.",
-                ),
-              name: zod.string().min(1),
-              area: zod.string().min(1),
-              count: zod.number().min(1),
-              reason: zod.string().min(1),
-              text: zod
-                .string()
-                .min(1)
-                .describe("What the run dialog shows for it."),
-            })
-            .describe(
-              "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
-            ),
-        )
-        .describe(
-          "Each blocked row, then each blocked worker, holding selected cases back, with how many.",
-        ),
-      blocking_area: zod
-        .string()
-        .min(1)
-        .describe(
-          "The area of the first row in held_by that holds selected cases back, never a worker: what the run dialog names as holding them; null when only workers hold them.",
-        ),
-      dropped: zod.array(
-        zod.object({
-          key: zod.string().min(1),
-          code: zod
-            .enum(["scenario_dropped", "scenario_ungradable"])
-            .describe(
-              "scenario_dropped: certifying the pair dropped it. scenario_ungradable: it grades no sub-goal, so a run refuses it.",
-            ),
-          reason: zod.string().min(1),
-        }),
-      ),
-      grading: zod.object({
-        gradable: zod
-          .number()
-          .min(
-            simulateApiHarnessEnvironmentsSelectCapabilitiesResponseSelectionGradingGradableMin,
-          ),
-        not_gradable: zod.array(
-          zod.object({
-            key: zod.string().min(1),
-            reason: zod.enum([
-              "check_unreadable",
-              "no_checks",
-              "evidence_not_supported",
-              "judge_unavailable",
-            ]),
-          }),
-        ),
-        truncated: zod
-          .boolean()
-          .describe(
-            "More than 200 cases cannot be graded; the first 200 are listed.",
-          ),
-      }),
-      requirements_recorded: zod
-        .boolean()
-        .describe(
-          "Every selected case's needs were read from its stored documents.",
-        ),
-    }),
-  });
-
-/**
- * One page, by scenario number, of the selected cases in a bucket or held
-back by a row. No writes.
- */
-export const SimulateApiHarnessEnvironmentsCapabilityCasesParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiHarnessEnvironmentsCapabilityCasesQueryKeysItemMax = 255;
-
-export const simulateApiHarnessEnvironmentsCapabilityCasesQueryKeysMax = 200;
-
-export const simulateApiHarnessEnvironmentsCapabilityCasesQueryTrialsDefault = 1;
-export const simulateApiHarnessEnvironmentsCapabilityCasesQueryTrialsMax = 20;
-
-export const simulateApiHarnessEnvironmentsCapabilityCasesQueryCursorMin = 0;
-
-export const SimulateApiHarnessEnvironmentsCapabilityCasesQueryParams =
-  zod.object({
-    agent_version_id: zod.string().uuid().optional(),
-    environment_version_id: zod.string().uuid().optional(),
-    suite_version_id: zod.string().uuid().optional(),
-    keys: zod
-      .array(
-        zod
-          .string()
-          .min(1)
-          .max(simulateApiHarnessEnvironmentsCapabilityCasesQueryKeysItemMax),
-      )
-      .max(simulateApiHarnessEnvironmentsCapabilityCasesQueryKeysMax)
-      .optional()
-      .describe(
-        "Scenario keys; more than 200 go in the POST body as scenario_ids.",
-      ),
-    trials: zod
-      .number()
-      .min(1)
-      .max(simulateApiHarnessEnvironmentsCapabilityCasesQueryTrialsMax)
-      .default(simulateApiHarnessEnvironmentsCapabilityCasesQueryTrialsDefault),
-    bucket: zod.enum(["eligible", "blocked", "stale", "untested"]).optional(),
-    row: zod
-      .enum([
-        "start",
-        "message",
-        "continuity",
-        "streaming",
-        "tool_discovery",
-        "tool_routing",
-        "state",
-        "audio",
-        "files",
-        "browser",
-        "children",
-        "hidden_material",
-        "reset",
-        "resume",
-        "cancel",
-        "cost",
-      ])
-      .optional(),
-    cursor: zod
-      .number()
-      .min(simulateApiHarnessEnvironmentsCapabilityCasesQueryCursorMin)
-      .optional()
-      .describe("The previous page's next: the number it ended on."),
-  });
-
-export const SimulateApiHarnessEnvironmentsCapabilityCasesResponse = zod.object(
-  {
-    items: zod.array(
-      zod.object({
-        key: zod.string().min(1),
-        number: zod.number(),
-        name: zod.string(),
-        persona: zod.string(),
-        by: zod
-          .array(zod.string().min(1))
-          .describe(
-            "The rows that put the case in its bucket, or pair_validating (the pairing is being checked, so runs are refused until it ends), pair_failed (a validation failed the pairing, so runs are refused), not_proved_here or unknown_need.",
-          ),
-      }),
-    ),
-    next: zod
-      .string()
-      .min(1)
-      .describe("The cursor for the next page; null on the last."),
-  },
-);
-
-/**
- * The pairings certified on this environment, newest first, with the exact
-agent, environment and suite versions of each. No writes.
- */
-export const SimulateApiHarnessEnvironmentsCapabilityHistoryParams = zod.object(
-  {
-    id: zod.string(),
-  },
-);
-
-export const simulateApiHarnessEnvironmentsCapabilityHistoryQueryCursorMin = 0;
-
-export const SimulateApiHarnessEnvironmentsCapabilityHistoryQueryParams =
-  zod.object({
-    cursor: zod
-      .number()
-      .min(simulateApiHarnessEnvironmentsCapabilityHistoryQueryCursorMin)
-      .optional()
-      .describe("The previous page's next."),
-  });
-
-export const SimulateApiHarnessEnvironmentsCapabilityHistoryResponse =
-  zod.object({
-    items: zod.array(
-      zod.object({
-        bundle_id: zod.string().uuid(),
-        agent_version: zod.object({
-          id: zod.string().uuid().optional(),
-          label: zod.string().min(1).optional(),
-        }),
-        environment_version: zod.object({
-          id: zod.string().uuid().optional(),
-          label: zod.string().min(1).optional(),
-        }),
-        suite_version: zod.object({
-          id: zod.string().uuid().optional(),
-          label: zod.string().min(1).optional(),
-        }),
-        certified_at: zod.string().datetime({ offset: true }),
-      }),
-    ),
-    next: zod.string().min(1),
-  });
-
-/**
- * Validate a pairing again with a run-less check; moves no default. An absent
-id is the environment's default.
- */
-export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesParams =
-  zod.object({
-    id: zod.string(),
-  });
-
-export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesBody =
-  zod.object({
-    agent_version_id: zod.string().uuid().optional(),
-    environment_version_id: zod.string().uuid().optional(),
-    suite_version_id: zod.string().uuid().optional(),
-  });
 
 /**
  * Two runs of this environment, scenario by scenario; against defaults to
@@ -45657,23 +44581,6 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
-      release_checks: zod
-        .object({
-          status: zod
-            .enum(["ready", "checks_pending", "failed"])
-            .describe("checks_pending until every release check has passed."),
-          checks: zod.object({
-            starts: zod.enum(["passed", "failed", "pending"]),
-            resets: zod.enum(["passed", "failed", "pending"]),
-            reference_passes: zod.enum(["passed", "failed", "pending"]),
-            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-          }),
-        })
-        .optional()
-        .describe(
-          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-        ),
       stale: zod
         .boolean()
         .describe(
@@ -45779,23 +44686,6 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
-      release_checks: zod
-        .object({
-          status: zod
-            .enum(["ready", "checks_pending", "failed"])
-            .describe("checks_pending until every release check has passed."),
-          checks: zod.object({
-            starts: zod.enum(["passed", "failed", "pending"]),
-            resets: zod.enum(["passed", "failed", "pending"]),
-            reference_passes: zod.enum(["passed", "failed", "pending"]),
-            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-          }),
-        })
-        .optional()
-        .describe(
-          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-        ),
       stale: zod
         .boolean()
         .describe(
@@ -45901,23 +44791,6 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
-      release_checks: zod
-        .object({
-          status: zod
-            .enum(["ready", "checks_pending", "failed"])
-            .describe("checks_pending until every release check has passed."),
-          checks: zod.object({
-            starts: zod.enum(["passed", "failed", "pending"]),
-            resets: zod.enum(["passed", "failed", "pending"]),
-            reference_passes: zod.enum(["passed", "failed", "pending"]),
-            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-          }),
-        })
-        .optional()
-        .describe(
-          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-        ),
       stale: zod
         .boolean()
         .describe(
@@ -46074,25 +44947,6 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
-          release_checks: zod
-            .object({
-              status: zod
-                .enum(["ready", "checks_pending", "failed"])
-                .describe(
-                  "checks_pending until every release check has passed.",
-                ),
-              checks: zod.object({
-                starts: zod.enum(["passed", "failed", "pending"]),
-                resets: zod.enum(["passed", "failed", "pending"]),
-                reference_passes: zod.enum(["passed", "failed", "pending"]),
-                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-              }),
-            })
-            .optional()
-            .describe(
-              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-            ),
         }),
       )
       .describe("Each saved piece's new default version, by piece."),
@@ -46174,25 +45028,6 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
-          release_checks: zod
-            .object({
-              status: zod
-                .enum(["ready", "checks_pending", "failed"])
-                .describe(
-                  "checks_pending until every release check has passed.",
-                ),
-              checks: zod.object({
-                starts: zod.enum(["passed", "failed", "pending"]),
-                resets: zod.enum(["passed", "failed", "pending"]),
-                reference_passes: zod.enum(["passed", "failed", "pending"]),
-                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-              }),
-            })
-            .optional()
-            .describe(
-              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-            ),
         }),
       ),
       environment: zod.array(
@@ -46272,25 +45107,6 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
-          release_checks: zod
-            .object({
-              status: zod
-                .enum(["ready", "checks_pending", "failed"])
-                .describe(
-                  "checks_pending until every release check has passed.",
-                ),
-              checks: zod.object({
-                starts: zod.enum(["passed", "failed", "pending"]),
-                resets: zod.enum(["passed", "failed", "pending"]),
-                reference_passes: zod.enum(["passed", "failed", "pending"]),
-                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-              }),
-            })
-            .optional()
-            .describe(
-              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-            ),
         }),
       ),
       suite: zod.array(
@@ -46370,25 +45186,6 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .boolean()
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
-          release_checks: zod
-            .object({
-              status: zod
-                .enum(["ready", "checks_pending", "failed"])
-                .describe(
-                  "checks_pending until every release check has passed.",
-                ),
-              checks: zod.object({
-                starts: zod.enum(["passed", "failed", "pending"]),
-                resets: zod.enum(["passed", "failed", "pending"]),
-                reference_passes: zod.enum(["passed", "failed", "pending"]),
-                wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-                hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-              }),
-            })
-            .optional()
-            .describe(
-              "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-            ),
         }),
       ),
     }),
@@ -46520,6 +45317,34 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       runtime_dependencies: zod.array(zod.object({}).passthrough()).optional(),
       implementation: zod.string().optional(),
       tool_entrypoints: zod.array(zod.object({}).passthrough()).optional(),
+      workers: zod
+        .array(
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string().optional(),
+            display_name: zod
+              .string()
+              .min(1)
+              .describe("What the cards call it: its name, else its id."),
+            tools: zod.array(zod.string().min(1)),
+            allowed_tools: zod.array(zod.string().min(1)),
+            tools_shown: zod.array(zod.string().min(1)),
+            binding: zod.enum(["separate", "shared", "not_declared"]),
+            enforcement: zod.enum([
+              "held_at_world",
+              "not_enforced",
+              "bypassed",
+              "unknown",
+            ]),
+            enforcement_label: zod.string().min(1),
+            address_env: zod.string().optional(),
+            process: zod.string().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          "The workers the app's source declares; a run shows which of them took part.",
+        ),
       data_store: zod.object({}).passthrough().optional(),
       open_questions: zod.array(zod.string().min(1)).optional(),
       amendments: zod.array(
@@ -46572,6 +45397,12 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
             .string()
             .min(1)
             .describe("What a test does with it, in words."),
+          status_reason: zod
+            .string()
+            .min(1)
+            .describe(
+              "Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+            ),
           reset_between_trials: zod
             .boolean()
             .describe(
@@ -46643,6 +45474,12 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           }),
         }),
       ),
+      from_draft: zod
+        .boolean()
+        .optional()
+        .describe(
+          "Whether this is an open draft's contract, which no run uses until the draft is saved.",
+        ),
       fault_targets: zod.array(
         zod.object({
           tool: zod.string().min(1),
@@ -48252,6 +47089,20 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      arrival_overrides: zod
+        .array(
+          zod
+            .object({
+              scenario: zod.string().min(1),
+              when_label: zod.string().min(1),
+            })
+            .describe(
+              "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+            ),
+        )
+        .describe(
+          "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+        ),
       provenance: zod.object({
         origin: zod.string(),
         by: zod.string().min(1),
@@ -48570,6 +47421,20 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    arrival_overrides: zod
+      .array(
+        zod
+          .object({
+            scenario: zod.string().min(1),
+            when_label: zod.string().min(1),
+          })
+          .describe(
+            "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+          ),
+      )
+      .describe(
+        "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+      ),
     provenance: zod.object({
       origin: zod.string(),
       by: zod.string().min(1),
@@ -49255,12 +48120,6 @@ export const simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsDefault = 1;
 export const simulateApiHarnessEnvironmentsRunBodyTrialsMax = 20;
 
-export const simulateApiHarnessEnvironmentsRunBodySeedMax = 19;
-
-export const simulateApiHarnessEnvironmentsRunBodySeedRegExp = new RegExp(
-  "^[0-9]+$",
-);
-
 export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
   scenario_ids: zod
     .array(
@@ -49278,8 +48137,6 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
   seed: zod
     .string()
     .min(1)
-    .max(simulateApiHarnessEnvironmentsRunBodySeedMax)
-    .regex(simulateApiHarnessEnvironmentsRunBodySeedRegExp)
     .optional()
     .describe(
       "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
@@ -49390,6 +48247,12 @@ export const SimulateApiHarnessEnvironmentsStartingRecordsResponse = zod.object(
                   .describe(
                     "The row in one line: its key, then up to 2 of its other values.",
                   ),
+                note: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "Another scenario of the suite that already starts from this row; null when none does.",
+                  ),
               })
               .describe(
                 "Other seeded rows of the table the scenario could start from instead, the first 50.",
@@ -49448,6 +48311,13 @@ export const SimulateApiHarnessEnvironmentsStartingRecordsResponse = zod.object(
       .describe(
         "The latest request to start this scenario from another record, or null if none was made.",
       ),
+    can_rework: zod
+      .boolean()
+      .describe("Whether another record can be asked for now."),
+    rework_blocked_reason: zod
+      .string()
+      .min(1)
+      .describe("Why another record can't be asked for now; null when it can."),
   },
 );
 
@@ -49672,23 +48542,6 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
-      release_checks: zod
-        .object({
-          status: zod
-            .enum(["ready", "checks_pending", "failed"])
-            .describe("checks_pending until every release check has passed."),
-          checks: zod.object({
-            starts: zod.enum(["passed", "failed", "pending"]),
-            resets: zod.enum(["passed", "failed", "pending"]),
-            reference_passes: zod.enum(["passed", "failed", "pending"]),
-            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-          }),
-        })
-        .optional()
-        .describe(
-          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-        ),
     }),
   ),
   environment: zod.array(
@@ -49766,23 +48619,6 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
-      release_checks: zod
-        .object({
-          status: zod
-            .enum(["ready", "checks_pending", "failed"])
-            .describe("checks_pending until every release check has passed."),
-          checks: zod.object({
-            starts: zod.enum(["passed", "failed", "pending"]),
-            resets: zod.enum(["passed", "failed", "pending"]),
-            reference_passes: zod.enum(["passed", "failed", "pending"]),
-            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-          }),
-        })
-        .optional()
-        .describe(
-          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-        ),
     }),
   ),
   suite: zod.array(
@@ -49860,23 +48696,6 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .boolean()
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
-      release_checks: zod
-        .object({
-          status: zod
-            .enum(["ready", "checks_pending", "failed"])
-            .describe("checks_pending until every release check has passed."),
-          checks: zod.object({
-            starts: zod.enum(["passed", "failed", "pending"]),
-            resets: zod.enum(["passed", "failed", "pending"]),
-            reference_passes: zod.enum(["passed", "failed", "pending"]),
-            wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-            hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-          }),
-        })
-        .optional()
-        .describe(
-          "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-        ),
     }),
   ),
 });
@@ -50031,23 +48850,6 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
-        release_checks: zod
-          .object({
-            status: zod
-              .enum(["ready", "checks_pending", "failed"])
-              .describe("checks_pending until every release check has passed."),
-            checks: zod.object({
-              starts: zod.enum(["passed", "failed", "pending"]),
-              resets: zod.enum(["passed", "failed", "pending"]),
-              reference_passes: zod.enum(["passed", "failed", "pending"]),
-              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-            }),
-          })
-          .optional()
-          .describe(
-            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-          ),
       }),
     ),
     environment: zod.array(
@@ -50127,23 +48929,6 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
-        release_checks: zod
-          .object({
-            status: zod
-              .enum(["ready", "checks_pending", "failed"])
-              .describe("checks_pending until every release check has passed."),
-            checks: zod.object({
-              starts: zod.enum(["passed", "failed", "pending"]),
-              resets: zod.enum(["passed", "failed", "pending"]),
-              reference_passes: zod.enum(["passed", "failed", "pending"]),
-              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-            }),
-          })
-          .optional()
-          .describe(
-            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-          ),
       }),
     ),
     suite: zod.array(
@@ -50223,23 +49008,6 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
-        release_checks: zod
-          .object({
-            status: zod
-              .enum(["ready", "checks_pending", "failed"])
-              .describe("checks_pending until every release check has passed."),
-            checks: zod.object({
-              starts: zod.enum(["passed", "failed", "pending"]),
-              resets: zod.enum(["passed", "failed", "pending"]),
-              reference_passes: zod.enum(["passed", "failed", "pending"]),
-              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-            }),
-          })
-          .optional()
-          .describe(
-            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-          ),
       }),
     ),
   });
@@ -50280,7 +49048,7 @@ export const SimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse =
 
 /**
  * Make an agent, environment or suite version the default; returns every
-version. An agent move that waits for its pairing to validate is a 202.
+version.
  */
 export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultParams =
   zod.object({
@@ -50380,23 +49148,6 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
-        release_checks: zod
-          .object({
-            status: zod
-              .enum(["ready", "checks_pending", "failed"])
-              .describe("checks_pending until every release check has passed."),
-            checks: zod.object({
-              starts: zod.enum(["passed", "failed", "pending"]),
-              resets: zod.enum(["passed", "failed", "pending"]),
-              reference_passes: zod.enum(["passed", "failed", "pending"]),
-              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-            }),
-          })
-          .optional()
-          .describe(
-            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-          ),
       }),
     ),
     environment: zod.array(
@@ -50476,23 +49227,6 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
-        release_checks: zod
-          .object({
-            status: zod
-              .enum(["ready", "checks_pending", "failed"])
-              .describe("checks_pending until every release check has passed."),
-            checks: zod.object({
-              starts: zod.enum(["passed", "failed", "pending"]),
-              resets: zod.enum(["passed", "failed", "pending"]),
-              reference_passes: zod.enum(["passed", "failed", "pending"]),
-              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-            }),
-          })
-          .optional()
-          .describe(
-            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-          ),
       }),
     ),
     suite: zod.array(
@@ -50572,23 +49306,6 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .boolean()
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
-        release_checks: zod
-          .object({
-            status: zod
-              .enum(["ready", "checks_pending", "failed"])
-              .describe("checks_pending until every release check has passed."),
-            checks: zod.object({
-              starts: zod.enum(["passed", "failed", "pending"]),
-              resets: zod.enum(["passed", "failed", "pending"]),
-              reference_passes: zod.enum(["passed", "failed", "pending"]),
-              wrong_answer_fails: zod.enum(["passed", "failed", "pending"]),
-              hidden_checks_kept: zod.enum(["passed", "failed", "pending"]),
-            }),
-          })
-          .optional()
-          .describe(
-            "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
-          ),
       }),
     ),
   });
@@ -50734,7 +49451,21 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
       state: zod.string().min(1),
       stage: zod.string().min(1),
       active_invocation_id: zod.string().min(1),
-      blocking_input: zod.object({}).passthrough(),
+      blocking_input: zod.object({
+        message_id: zod.string().min(1),
+        kind: zod
+          .string()
+          .min(1)
+          .describe("question_requested or confirmation_requested."),
+        prompt: zod.string().optional(),
+        options: zod.array(zod.object({}).passthrough()).optional(),
+        options_only: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when only one of its options answers it: free text is not an answer.",
+          ),
+      }),
       messages: zod.array(
         zod.object({
           message_id: zod.string().uuid(),
@@ -51739,7 +50470,21 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
       state: zod.string().min(1),
       stage: zod.string().min(1),
       active_invocation_id: zod.string().min(1),
-      blocking_input: zod.object({}).passthrough(),
+      blocking_input: zod.object({
+        message_id: zod.string().min(1),
+        kind: zod
+          .string()
+          .min(1)
+          .describe("question_requested or confirmation_requested."),
+        prompt: zod.string().optional(),
+        options: zod.array(zod.object({}).passthrough()).optional(),
+        options_only: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when only one of its options answers it: free text is not an answer.",
+          ),
+      }),
       messages: zod.array(
         zod.object({
           message_id: zod.string().uuid(),
@@ -51962,7 +50707,21 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
       state: zod.string().min(1),
       stage: zod.string().min(1),
       active_invocation_id: zod.string().min(1),
-      blocking_input: zod.object({}).passthrough(),
+      blocking_input: zod.object({
+        message_id: zod.string().min(1),
+        kind: zod
+          .string()
+          .min(1)
+          .describe("question_requested or confirmation_requested."),
+        prompt: zod.string().optional(),
+        options: zod.array(zod.object({}).passthrough()).optional(),
+        options_only: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when only one of its options answers it: free text is not an answer.",
+          ),
+      }),
       messages: zod.array(
         zod.object({
           message_id: zod.string().uuid(),
@@ -52139,10 +50898,6 @@ export const simulateApiHarnessJobsRunsBodyScenarioIdsMax = 1000;
 export const simulateApiHarnessJobsRunsBodyTrialsDefault = 1;
 export const simulateApiHarnessJobsRunsBodyTrialsMax = 20;
 
-export const simulateApiHarnessJobsRunsBodySeedMax = 19;
-
-export const simulateApiHarnessJobsRunsBodySeedRegExp = new RegExp("^[0-9]+$");
-
 export const SimulateApiHarnessJobsRunsBody = zod.object({
   scenario_ids: zod
     .array(
@@ -52157,8 +50912,6 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
   seed: zod
     .string()
     .min(1)
-    .max(simulateApiHarnessJobsRunsBodySeedMax)
-    .regex(simulateApiHarnessJobsRunsBodySeedRegExp)
     .optional()
     .describe(
       "The same seed draws the same personas and variations again; absent keeps the environment's. A whole number from 0 to 2^63 - 1, as decimal text.",
@@ -52753,6 +51506,10 @@ export const simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceItemMax = 
 
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceMax = 16;
 
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp =
+  new RegExp("^(task|worker:.*\\S.*)$");
 export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
 
 export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
@@ -52845,6 +51602,12 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
             ),
         )
         .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemEvidenceMax)
+        .optional(),
+      subject: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax)
+        .regex(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp)
         .optional(),
     }),
   ),
@@ -59800,6 +58563,27 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
   results: zod
     .array(
       zod.object({
+        trials_passed: zod.number().describe("Comparable trials that passed."),
+        trials_evaluated: zod
+          .number()
+          .describe(
+            "Comparable trials that passed or failed: the trial pass rate's base.",
+          ),
+        trials_inconclusive: zod
+          .number()
+          .describe(
+            "Comparable trials that errored or were inconclusive, counted apart from the base.",
+          ),
+        trials_excluded_not_comparable: zod
+          .number()
+          .describe(
+            "Trials left out because they did not start from the seeded records.",
+          ),
+        trial_pass_rate: zod
+          .number()
+          .describe(
+            "Trials passed over trials evaluated, as a percent; null when none was evaluated.",
+          ),
         id: zod.string().min(1).optional(),
         status: zod.string().min(1).optional(),
         scenarios: zod.string().min(1).optional(),
@@ -59833,6 +58617,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
           .describe("Failed plus errored receipts."),
         outcome_errored: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
+        outcome_cancelled: zod.number().optional(),
         outcome_no_score: zod.number().optional(),
         outcome_status: zod
           .enum(["running", "cancelled", "passed", "failed", "no_score"])
@@ -61983,9 +60768,15 @@ export const simulateV3CallExecutionDetailResponseCustomerCallIdMax = 255;
 
 export const simulateV3CallExecutionDetailResponsePhoneNumberMax = 20;
 
+export const simulateV3CallExecutionDetailResponseSubGoalResultsItemSubjectKindDefault = `task`;
+
 export const simulateV3CallExecutionDetailResponseTrialStateLimitsActorSecondsPerCallMin = 0;
 
 export const simulateV3CallExecutionDetailResponseTrialStateLimitsModelMax = 200;
+
+export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsActorSecondsPerCallMin = 0;
+
+export const simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsModelMax = 200;
 
 export const SimulateV3CallExecutionDetailResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -62207,6 +60998,23 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .describe(
           "What the check was decided from: world_state, tool_calls, transcript, recording.",
         ),
+      subject: zod.string().min(1).optional(),
+      subject_kind: zod
+        .enum(["task", "worker"])
+        .default(
+          simulateV3CallExecutionDetailResponseSubGoalResultsItemSubjectKindDefault,
+        ),
+      worker_id: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("The worker whose own check this is."),
+      display_name: zod
+        .string()
+        .min(1)
+        .describe(
+          "What the results show: its name, with the worker's name when it is one worker's own check.",
+        ),
     }),
   ),
   outcome: zod.enum([
@@ -62217,6 +61025,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "inconclusive",
     "no_score",
     "error",
+    "cancelled",
   ]),
   cost_breakdown_cents: zod.object({
     stt: zod.number(),
@@ -62270,8 +61079,20 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .describe(
           "agent_call for the agent's own tool call, world_actor_action for an actor's action in the world.",
         ),
+      tool_label: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "How the transcript names the agent's call, by what it recorded: a tool call, a hand-off to another agent or a control pass. Absent on a world actor's action.",
+        ),
     }),
   ),
+  tool_call_count: zod
+    .number()
+    .describe(
+      "The agent's tool calls, from the tool trace when the call has one, else the transcript; a world actor's action is not one, and a hand-off to another agent is a Participants step, not one of them.",
+    ),
   call_actors: zod.array(
     zod.object({
       id: zod
@@ -62285,11 +61106,16 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         .optional()
         .describe("The channel id they joined the call on."),
       delivery: zod
-        .enum(["delivered", "dropped", "not_triggered", "not_drawn"])
+        .enum(["delivered", "acted", "dropped", "not_triggered", "not_drawn"])
         .optional()
         .describe(
-          "How far they got in the call; absent on a call stored without a summary.",
+          "How far they got in the call: delivered (spoke), acted (took part through the world, no line), dropped (due, but neither spoke nor acted), not_triggered, not_drawn; absent on a call stored without a summary.",
         ),
+      delivery_label: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("How far they got, in the words the call shows."),
     }),
   ),
   participants: zod
@@ -62375,6 +61201,24 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .describe(
             "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
           ),
+        refused_actions: zod
+          .array(
+            zod.object({
+              action: zod.string().min(1),
+              code: zod
+                .string()
+                .describe("Why the world refused the call, as a code."),
+              reason: zod.string(),
+            }),
+          )
+          .optional(),
+        worker_id: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "The worker this participant is; absent for the agent and the actors.",
+          ),
       }),
     ),
     duplicates: zod
@@ -62398,9 +61242,13 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .boolean()
       .optional()
       .describe(
-        "False when World changes are not recorded for this agent: its tools run inside it.",
+        "False when World changes are not recorded for this trial: its tools ran where the world cannot see.",
       ),
     why: zod.string().optional().describe("Why they were not recorded."),
+    why_label: zod
+      .string()
+      .optional()
+      .describe("Why they were not recorded, in the words World state shows."),
     unreadable: zod
       .boolean()
       .describe(
@@ -62780,7 +61628,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               .string()
               .min(1)
               .describe(
-                "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, or approval_missing (the agent's change refused before anyone approved it: `action`, `count`)",
+                "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing (the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or worker_limits_not_enforced",
               ),
             message: zod
               .string()
@@ -62790,6 +61638,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             on_call: zod.number().optional(),
             mode: zod.string().optional(),
             count: zod.number().optional().describe("For evidence_incomplete."),
+            workers: zod.array(zod.string().min(1)).optional(),
           })
           .describe(
             "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
@@ -62798,7 +61647,689 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .describe(
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
       ),
+    shared_records: zod
+      .array(
+        zod
+          .object({
+            key: zod
+              .string()
+              .min(1)
+              .describe(
+                "What the calls named, as argument=value; never a database identity.",
+              ),
+            argument: zod.string().min(1),
+            value: zod.string().min(1),
+            actions: zod.array(
+              zod.object({
+                who: zod.string().min(1),
+                name: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The participant's name, as the state changes give it.",
+                  ),
+                tool: zod.string(),
+                outcome: zod.string().min(1),
+                write: zod.boolean(),
+              }),
+            ),
+            committed_writes: zod.number(),
+            truncated: zod.boolean(),
+            actions_truncated: zod
+              .boolean()
+              .optional()
+              .describe(
+                "This record's own actions were cut; null for a trial recorded before this was reported.",
+              ),
+            truncation: zod
+              .enum(["actions", "records", "unknown"])
+              .optional()
+              .describe(
+                "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.",
+              ),
+          })
+          .describe(
+            "Records two or more participants named in this trial, and what the world made of each call.",
+          ),
+      )
+      .optional()
+      .describe(
+        "Records two or more participants named in this trial, and what the world made of each call.",
+      ),
+    shared_records_truncated: zod
+      .boolean()
+      .optional()
+      .describe(
+        "More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported.",
+      ),
+    stopped_workers: zod
+      .array(
+        zod
+          .object({
+            worker: zod.string().min(1),
+            process: zod.string().min(1),
+            at: zod
+              .number()
+              .describe("When the run stopped it, in seconds since the epoch."),
+            reason: zod.string().min(1),
+          })
+          .describe(
+            "Participants running on their own that the run stopped when their deadline passed.",
+          ),
+      )
+      .optional()
+      .describe(
+        "Participants running on their own that the run stopped when their deadline passed.",
+      ),
   }),
+  earlier_attempts: zod.array(
+    zod.object({
+      attempt: zod
+        .string()
+        .uuid()
+        .describe("Its id: `/workers/?attempt=` reads its worker record."),
+      number: zod
+        .number()
+        .describe(
+          "Which attempt it was, counted from 1; the call itself is `attempt_number`.",
+        ),
+      rerun_at: zod.string().datetime({ offset: true }),
+      kept: zod
+        .boolean()
+        .describe(
+          "False when it was snapshotted before attempts kept their worker record and trial state.",
+        ),
+      trial_state: zod.object({
+        state_changes: zod.array(
+          zod.object({
+            who: zod.string().min(1),
+            name: zod.string().min(1),
+            attempted: zod.number(),
+            committed: zod.number(),
+            refused: zod.number(),
+            faulted: zod.number(),
+            duplicate: zod.number(),
+            committed_actions: zod.array(zod.string().min(1)),
+            read: zod
+              .number()
+              .optional()
+              .describe(
+                "Calls that only read the world: counted in attempted, never in committed; absent before reads were told apart.",
+              ),
+            read_actions: zod
+              .array(zod.string())
+              .optional()
+              .describe("The reads, in order."),
+            no_change: zod
+              .boolean()
+              .optional()
+              .describe(
+                "True when this participant committed nothing: a result shown as 'no change', never left out.",
+              ),
+            blocked: zod
+              .array(
+                zod
+                  .object({
+                    host: zod.string().min(1),
+                    method: zod.string().optional(),
+                    tool: zod
+                      .string()
+                      .optional()
+                      .describe("The tool that made it, when known."),
+                    count: zod
+                      .number()
+                      .optional()
+                      .describe(
+                        "How many calls to this host were refused; absent on older trials (one).",
+                      ),
+                  })
+                  .describe(
+                    "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+                  ),
+              )
+              .optional()
+              .describe(
+                "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+              ),
+            refused_actions: zod
+              .array(
+                zod.object({
+                  action: zod.string().min(1),
+                  code: zod
+                    .string()
+                    .describe("Why the world refused the call, as a code."),
+                  reason: zod.string(),
+                }),
+              )
+              .optional(),
+            worker_id: zod
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "The worker this participant is; absent for the agent and the actors.",
+              ),
+          }),
+        ),
+        duplicates: zod
+          .array(
+            zod
+              .object({
+                action: zod.string().min(1),
+                name: zod.string().optional(),
+                arguments: zod.object({}).passthrough().optional(),
+                first_action_id: zod.string().optional(),
+                repeat_action_id: zod.string().optional(),
+              })
+              .describe(
+                "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+              ),
+          )
+          .describe(
+            "Writes the world committed twice after the agent's answer was lost; the trial fails on them.",
+          ),
+        recorded: zod
+          .boolean()
+          .optional()
+          .describe(
+            "False when World changes are not recorded for this trial: its tools ran where the world cannot see.",
+          ),
+        why: zod.string().optional().describe("Why they were not recorded."),
+        why_label: zod
+          .string()
+          .optional()
+          .describe(
+            "Why they were not recorded, in the words World state shows.",
+          ),
+        unreadable: zod
+          .boolean()
+          .describe(
+            "True when what changed in the world could not be read; checks that needed it read Unmeasured.",
+          ),
+        records: zod
+          .object({
+            changes: zod.array(
+              zod.object({
+                table: zod.string().min(1),
+                key: zod
+                  .object({})
+                  .passthrough()
+                  .describe(
+                    "The record's key as the table holds it: one value, or several.",
+                  ),
+                kind: zod.enum(["added", "changed", "removed"]),
+                before: zod
+                  .record(zod.string(), zod.object({}).passthrough())
+                  .describe("Its values before; null when added."),
+                after: zod
+                  .record(zod.string(), zod.object({}).passthrough())
+                  .describe("Its values after; null when removed."),
+                fields: zod
+                  .array(zod.string().min(1))
+                  .describe(
+                    "The fields a change changed; empty when added or removed.",
+                  ),
+              }),
+            ),
+            skipped: zod
+              .array(
+                zod.object({
+                  table: zod.string().min(1),
+                  why: zod.string().min(1),
+                }),
+              )
+              .optional(),
+            truncated: zod
+              .number()
+              .optional()
+              .describe("Changes past the cap, counted, not listed."),
+          })
+          .optional()
+          .describe(
+            "The records the trial changed, before and after; absent when they could not be read.",
+          ),
+        start: zod
+          .object({
+            state: zod.enum(["seeded", "differs", "unknown"]),
+            tables: zod.array(zod.string().min(1)).optional(),
+            against: zod
+              .enum(["sealed_seed", "first_trial"])
+              .optional()
+              .describe(
+                "What the start was compared with; absent on trials from before it was said.",
+              ),
+            line: zod
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "What to say about the start; null when there is nothing to say (a start that differs has its own notice).",
+              ),
+          })
+          .optional()
+          .describe(
+            "Whether the trial started from the seeded records, as every trial should.",
+          ),
+        decisions: zod
+          .array(
+            zod
+              .object({
+                actor: zod.string(),
+                name: zod
+                  .string()
+                  .describe(
+                    "The actor's name, or its id when the trial did not name it.",
+                  ),
+                play: zod.enum([
+                  "mocked",
+                  "live",
+                  "history",
+                  "waiting",
+                  "timeout",
+                  "problem",
+                  "not_triggered",
+                ]),
+                action: zod.string().min(1).optional(),
+                arguments: zod
+                  .record(zod.string(), zod.string())
+                  .optional()
+                  .describe(
+                    "What it sent: for a pre-run message (`history`), the message itself.",
+                  ),
+                channel: zod
+                  .string()
+                  .min(1)
+                  .optional()
+                  .describe(
+                    "`voice` when decided on the call by a speaking actor.",
+                  ),
+                problem: zod
+                  .enum(["no_world_door", "not_listed"])
+                  .optional()
+                  .describe(
+                    "For `problem`: the scenario's problem, never the agent's.",
+                  ),
+                why: zod.string().optional(),
+                status: zod.number().optional(),
+                timeout_seconds: zod.number().optional(),
+                fallback: zod.object({
+                  kind: zod.enum(["silent", "decline", "action", "actor"]),
+                  value: zod.string().min(1),
+                  label: zod.string().min(1),
+                }),
+                outcome: zod
+                  .enum([
+                    "timed_out",
+                    "declined",
+                    "fallback_action",
+                    "fallback_not_committed",
+                    "answered_by",
+                    "unresolved_at_end",
+                    "committed",
+                    "refused",
+                    "faulted",
+                    "duplicate",
+                  ])
+                  .optional()
+                  .describe(
+                    "For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                action_outcome: zod
+                  .enum(["committed", "refused", "faulted", "duplicate"])
+                  .optional()
+                  .describe(
+                    "For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                verdict: zod
+                  .enum(["approved", "refused"])
+                  .describe(
+                    "For an approval: what the actor decided; null when it decided none or the trial predates verdicts.",
+                  ),
+                committed_after_refusal: zod
+                  .boolean()
+                  .describe(
+                    "The agent committed a write after this actor refused it; false on a trial that predates verdicts.",
+                  ),
+                line: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The row as one sentence: who, how they played, what it came to, the verdict and why.",
+                  ),
+              })
+              .describe(
+                "What actors did or chose during the trial; messages written before it are in pre_run.",
+              ),
+          )
+          .describe(
+            "What actors did or chose during the trial; messages written before it are in pre_run.",
+          ),
+        pre_run: zod
+          .array(
+            zod
+              .object({
+                actor: zod.string(),
+                name: zod
+                  .string()
+                  .describe(
+                    "The actor's name, or its id when the trial did not name it.",
+                  ),
+                play: zod.enum([
+                  "mocked",
+                  "live",
+                  "history",
+                  "waiting",
+                  "timeout",
+                  "problem",
+                  "not_triggered",
+                ]),
+                action: zod.string().min(1).optional(),
+                arguments: zod
+                  .record(zod.string(), zod.string())
+                  .optional()
+                  .describe(
+                    "What it sent: for a pre-run message (`history`), the message itself.",
+                  ),
+                channel: zod
+                  .string()
+                  .min(1)
+                  .optional()
+                  .describe(
+                    "`voice` when decided on the call by a speaking actor.",
+                  ),
+                problem: zod
+                  .enum(["no_world_door", "not_listed"])
+                  .optional()
+                  .describe(
+                    "For `problem`: the scenario's problem, never the agent's.",
+                  ),
+                why: zod.string().optional(),
+                status: zod.number().optional(),
+                timeout_seconds: zod.number().optional(),
+                fallback: zod.object({
+                  kind: zod.enum(["silent", "decline", "action", "actor"]),
+                  value: zod.string().min(1),
+                  label: zod.string().min(1),
+                }),
+                outcome: zod
+                  .enum([
+                    "timed_out",
+                    "declined",
+                    "fallback_action",
+                    "fallback_not_committed",
+                    "answered_by",
+                    "unresolved_at_end",
+                    "committed",
+                    "refused",
+                    "faulted",
+                    "duplicate",
+                  ])
+                  .optional()
+                  .describe(
+                    "For a timeout: timed_out, declined, fallback_action, fallback_not_committed (the fallback action was tried and the world did not commit it), answered_by or unresolved_at_end; for an action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                action_outcome: zod
+                  .enum(["committed", "refused", "faulted", "duplicate"])
+                  .optional()
+                  .describe(
+                    "For a fallback action: what the world made of it (committed, refused, faulted, duplicate).",
+                  ),
+                verdict: zod
+                  .enum(["approved", "refused"])
+                  .describe(
+                    "For an approval: what the actor decided; null when it decided none or the trial predates verdicts.",
+                  ),
+                committed_after_refusal: zod
+                  .boolean()
+                  .describe(
+                    "The agent committed a write after this actor refused it; false on a trial that predates verdicts.",
+                  ),
+                line: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The row as one sentence: who, how they played, what it came to, the verdict and why.",
+                  ),
+              })
+              .describe(
+                "What actors did or chose during the trial; messages written before it are in pre_run.",
+              ),
+          )
+          .describe(
+            "Messages actors wrote before the run: the trial's starting point, not a change made during it.",
+          ),
+        approvals: zod.array(
+          zod.object({
+            request: zod.object({
+              action: zod.string().min(1),
+              at: zod.number().describe("Epoch seconds the world logged it."),
+              action_id: zod.string().min(1),
+            }),
+            decision: zod.object({
+              by: zod.string().min(1),
+              verdict: zod
+                .enum(["approved", "refused"])
+                .describe(
+                  "Null when it decided none or the trial predates verdicts.",
+                ),
+              name: zod
+                .string()
+                .min(1)
+                .describe(
+                  "Who decided, by display name; their id when nameless; null when nobody did.",
+                ),
+              action: zod.string().min(1),
+              outcome: zod.string().min(1),
+              at: zod.number(),
+            }),
+            before_decision: zod.array(
+              zod.object({
+                action: zod.string().min(1),
+                outcome: zod.string().min(1),
+              }),
+            ),
+            after_decision: zod.array(
+              zod.object({
+                action: zod.string().min(1),
+                outcome: zod.string().min(1),
+              }),
+            ),
+            acted_before_decision: zod.boolean(),
+            verdict: zod
+              .enum(["approved", "refused"])
+              .describe("Null on a trial that predates verdicts."),
+            committed_after_refusal: zod
+              .boolean()
+              .describe(
+                "The agent committed a write after the refusal; false on a trial that predates verdicts.",
+              ),
+          }),
+        ),
+        end_state_url: zod
+          .string()
+          .url()
+          .min(1)
+          .optional()
+          .describe(
+            "The world's records at the trial's end and its action log, kept for grading it again.",
+          ),
+        usage: zod.array(
+          zod.object({
+            actor: zod.string().min(1),
+            model: zod.string(),
+            tokens_in: zod.number(),
+            tokens_out: zod.number(),
+            cost_usd: zod.number(),
+          }),
+        ),
+        usage_summary: zod
+          .array(
+            zod
+              .object({
+                actor: zod.string().min(1),
+                name: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "The actor's name, or its id when the trial did not name it.",
+                  ),
+                model: zod.string(),
+                calls: zod.number(),
+                tokens: zod.number(),
+                cost_usd: zod.number(),
+              })
+              .describe("Actors' model use summed per actor and model."),
+          )
+          .describe("Actors' model use summed per actor and model."),
+        usage_total: zod
+          .object({
+            calls: zod.number(),
+            tokens: zod.number(),
+            cost_usd: zod.number(),
+          })
+          .optional()
+          .describe(
+            "Actors' model use in all; absent when no actor used a model.",
+          ),
+        limits: zod
+          .object({
+            max_active: zod.number().min(1).optional(),
+            caller_takes_back_after_turns: zod.number().min(1).optional(),
+            actor_seconds_per_call: zod
+              .number()
+              .min(
+                simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsActorSecondsPerCallMin,
+              )
+              .optional(),
+            max_messages: zod.number().min(1).optional(),
+            live_turns_per_actor: zod.number().min(1).optional(),
+            live_turns_per_trial: zod.number().min(1).optional(),
+            model: zod
+              .string()
+              .min(1)
+              .max(
+                simulateV3CallExecutionDetailResponseEarlierAttemptsItemTrialStateLimitsModelMax,
+              )
+              .optional(),
+          })
+          .optional()
+          .describe(
+            "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
+          ),
+        notices: zod
+          .array(
+            zod
+              .object({
+                code: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "fault_not_applied, fault_not_triggered, fault_unknown_action, fault_unreadable, duplicates_unreadable, evidence_incomplete, start_differs, changed_outside_world, approval_missing (the agent's change refused before anyone approved it: `action`, `count`), worker_channel_bypassed or worker_limits_not_enforced",
+                  ),
+                message: zod
+                  .string()
+                  .min(1)
+                  .describe("Plain words for the person reading the run."),
+                action: zod.string().optional(),
+                on_call: zod.number().optional(),
+                mode: zod.string().optional(),
+                count: zod
+                  .number()
+                  .optional()
+                  .describe("For evidence_incomplete."),
+                workers: zod.array(zod.string().min(1)).optional(),
+              })
+              .describe(
+                "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+              ),
+          )
+          .describe(
+            "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
+          ),
+        shared_records: zod
+          .array(
+            zod
+              .object({
+                key: zod
+                  .string()
+                  .min(1)
+                  .describe(
+                    "What the calls named, as argument=value; never a database identity.",
+                  ),
+                argument: zod.string().min(1),
+                value: zod.string().min(1),
+                actions: zod.array(
+                  zod.object({
+                    who: zod.string().min(1),
+                    name: zod
+                      .string()
+                      .min(1)
+                      .describe(
+                        "The participant's name, as the state changes give it.",
+                      ),
+                    tool: zod.string(),
+                    outcome: zod.string().min(1),
+                    write: zod.boolean(),
+                  }),
+                ),
+                committed_writes: zod.number(),
+                truncated: zod.boolean(),
+                actions_truncated: zod
+                  .boolean()
+                  .optional()
+                  .describe(
+                    "This record's own actions were cut; null for a trial recorded before this was reported.",
+                  ),
+                truncation: zod
+                  .enum(["actions", "records", "unknown"])
+                  .optional()
+                  .describe(
+                    "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.",
+                  ),
+              })
+              .describe(
+                "Records two or more participants named in this trial, and what the world made of each call.",
+              ),
+          )
+          .optional()
+          .describe(
+            "Records two or more participants named in this trial, and what the world made of each call.",
+          ),
+        shared_records_truncated: zod
+          .boolean()
+          .optional()
+          .describe(
+            "More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported.",
+          ),
+        stopped_workers: zod
+          .array(
+            zod
+              .object({
+                worker: zod.string().min(1),
+                process: zod.string().min(1),
+                at: zod
+                  .number()
+                  .describe(
+                    "When the run stopped it, in seconds since the epoch.",
+                  ),
+                reason: zod.string().min(1),
+              })
+              .describe(
+                "Participants running on their own that the run stopped when their deadline passed.",
+              ),
+          )
+          .optional()
+          .describe(
+            "Participants running on their own that the run stopped when their deadline passed.",
+          ),
+      }),
+    }),
+  ),
+  attempt_number: zod
+    .number()
+    .describe(
+      "Which attempt this call is, counted from 1: one more than its earlier attempts.",
+    ),
   comparable: zod
     .boolean()
     .describe(
@@ -62821,6 +62352,424 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "skipped",
   ]),
   csat_reason: zod.string().min(1),
+});
+
+/**
+ * Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.
+ */
+export const SimulateV3CallExecutionWorkersParams = zod.object({
+  call_execution_id: zod.string(),
+});
+
+export const SimulateV3CallExecutionWorkersQueryParams = zod.object({
+  attempt: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept.",
+    ),
+});
+
+export const simulateV3CallExecutionWorkersResponseWorkersItemChannelBypassedDefault =
+  false;
+
+export const SimulateV3CallExecutionWorkersResponse = zod.object({
+  workers: zod.array(
+    zod.object({
+      worker_id: zod.string().min(1),
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      observed: zod.boolean(),
+      undeclared: zod.boolean(),
+      instance_ids: zod.array(zod.string().min(1)),
+      model: zod.string().min(1).optional(),
+      tokens: zod.number().optional(),
+      state: zod.enum([
+        "completed",
+        "failed",
+        "no_return",
+        "deadline_passed",
+        "cancel_requested",
+        "cancelled",
+        "infrastructure",
+        "not_observed",
+        "observed_no_end",
+        "unknown",
+      ]),
+      cut_short: zod.boolean(),
+      past_deadline: zod.boolean(),
+      stopped_at: zod.number().optional(),
+      cleanup: zod
+        .object({
+          status: zod.enum([
+            "stopped",
+            "stopped_with_sandbox",
+            "still_running",
+            "unknown",
+          ]),
+          at: zod.string().min(1),
+        })
+        .optional(),
+      checks: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          passed: zod.boolean(),
+          result: zod
+            .enum(["not_applicable", "inconclusive", "unmeasured"])
+            .optional(),
+        }),
+      ),
+      enforcement: zod
+        .enum(["held_at_world", "not_enforced", "bypassed", "unknown"])
+        .optional()
+        .describe(
+          "How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known.",
+        ),
+      enforcement_label: zod.string().min(1).optional(),
+      channel_bypassed: zod
+        .boolean()
+        .default(
+          simulateV3CallExecutionWorkersResponseWorkersItemChannelBypassedDefault,
+        )
+        .describe(
+          "Its calls went through the main app in this trial, so its limits were not enforced and its own checks were not graded.",
+        ),
+    }),
+  ),
+  events: zod.array(
+    zod.object({
+      seq: zod.number(),
+      type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+      worker_id: zod.string().min(1),
+      by: zod.string().min(1).optional(),
+      delegation_id: zod.string().min(1).optional(),
+      task: zod.string().min(1).optional(),
+      result: zod.string().min(1).optional(),
+      task_shown: zod
+        .object({
+          format: zod.enum(["code", "text"]),
+          text: zod.string().min(1),
+        })
+        .optional(),
+      result_shown: zod
+        .object({
+          format: zod.enum(["code", "text"]),
+          text: zod.string().min(1),
+        })
+        .optional(),
+      tool: zod.string().min(1).optional(),
+      status: zod.enum(["ok", "error"]).optional(),
+      span_id: zod.string().min(1).optional(),
+      trace_id: zod.string().min(1).optional(),
+      input: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Any valid JSON value."),
+      output: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Any valid JSON value."),
+      input_omitted: zod.boolean().optional(),
+      output_omitted: zod.boolean().optional(),
+      refusal_code: zod
+        .string()
+        .optional()
+        .describe("Why the world refused the call, as a code."),
+      launch: zod.enum(["async"]).optional(),
+      relationship: zod.enum(["observed", "unknown"]).optional(),
+      at: zod.string().min(1),
+      ended_at: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "When a tool call finished; null when the record does not say.",
+        ),
+      attribution: zod.enum(["reported", "unattributed"]),
+    }),
+  ),
+  events_omitted: zod.number().optional(),
+  coordinator: zod
+    .object({
+      name: zod.string().min(1),
+    })
+    .optional(),
+  started_at: zod.string().min(1).optional(),
+  spans_received: zod.boolean().optional(),
+  collected_at: zod.string().min(1),
+  project_id: zod
+    .string()
+    .min(1)
+    .describe(
+      "The project the call's traces were read from, to open them in Traces; null when none was read.",
+    ),
+  collection: zod
+    .enum([
+      "complete",
+      "partial",
+      "unavailable",
+      "no_evidence",
+      "infrastructure_lost",
+    ])
+    .optional(),
+  steps: zod.array(
+    zod.object({
+      kind: zod.enum(["handoff", "tool_call"]),
+      key: zod.number(),
+      parent: zod.number(),
+      depth: zod.number(),
+      worker_id: zod.string().min(1),
+      transfer: zod.boolean().optional(),
+      handoff: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          task_shown: zod
+            .object({
+              format: zod.enum(["code", "text"]),
+              text: zod.string().min(1),
+            })
+            .optional(),
+          result_shown: zod
+            .object({
+              format: zod.enum(["code", "text"]),
+              text: zod.string().min(1),
+            })
+            .optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          span_id: zod.string().min(1).optional(),
+          trace_id: zod.string().min(1).optional(),
+          input: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          output: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          input_omitted: zod.boolean().optional(),
+          output_omitted: zod.boolean().optional(),
+          refusal_code: zod
+            .string()
+            .optional()
+            .describe("Why the world refused the call, as a code."),
+          launch: zod.enum(["async"]).optional(),
+          relationship: zod.enum(["observed", "unknown"]).optional(),
+          at: zod.string().min(1),
+          ended_at: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "When a tool call finished; null when the record does not say.",
+            ),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      returned: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          task_shown: zod
+            .object({
+              format: zod.enum(["code", "text"]),
+              text: zod.string().min(1),
+            })
+            .optional(),
+          result_shown: zod
+            .object({
+              format: zod.enum(["code", "text"]),
+              text: zod.string().min(1),
+            })
+            .optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          span_id: zod.string().min(1).optional(),
+          trace_id: zod.string().min(1).optional(),
+          input: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          output: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          input_omitted: zod.boolean().optional(),
+          output_omitted: zod.boolean().optional(),
+          refusal_code: zod
+            .string()
+            .optional()
+            .describe("Why the world refused the call, as a code."),
+          launch: zod.enum(["async"]).optional(),
+          relationship: zod.enum(["observed", "unknown"]).optional(),
+          at: zod.string().min(1),
+          ended_at: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "When a tool call finished; null when the record does not say.",
+            ),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      started_at: zod.string().min(1).optional(),
+      ended_at: zod.string().min(1).optional(),
+      parallel: zod.boolean().optional(),
+      end: zod
+        .enum(["finished", "failed", "passed", "no_return", "cut_off"])
+        .optional(),
+      end_state: zod
+        .enum([
+          "completed",
+          "failed",
+          "no_return",
+          "deadline_passed",
+          "cancel_requested",
+          "cancelled",
+          "infrastructure",
+          "not_observed",
+          "observed_no_end",
+          "unknown",
+        ])
+        .optional(),
+      did_not_finish: zod.boolean().optional(),
+      first_of_worker: zod.boolean().optional(),
+      children: zod.array(zod.number()).optional(),
+      call: zod
+        .object({
+          seq: zod.number(),
+          type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
+          worker_id: zod.string().min(1),
+          by: zod.string().min(1).optional(),
+          delegation_id: zod.string().min(1).optional(),
+          task: zod.string().min(1).optional(),
+          result: zod.string().min(1).optional(),
+          task_shown: zod
+            .object({
+              format: zod.enum(["code", "text"]),
+              text: zod.string().min(1),
+            })
+            .optional(),
+          result_shown: zod
+            .object({
+              format: zod.enum(["code", "text"]),
+              text: zod.string().min(1),
+            })
+            .optional(),
+          tool: zod.string().min(1).optional(),
+          status: zod.enum(["ok", "error"]).optional(),
+          span_id: zod.string().min(1).optional(),
+          trace_id: zod.string().min(1).optional(),
+          input: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          output: zod
+            .object({})
+            .passthrough()
+            .optional()
+            .describe("Any valid JSON value."),
+          input_omitted: zod.boolean().optional(),
+          output_omitted: zod.boolean().optional(),
+          refusal_code: zod
+            .string()
+            .optional()
+            .describe("Why the world refused the call, as a code."),
+          launch: zod.enum(["async"]).optional(),
+          relationship: zod.enum(["observed", "unknown"]).optional(),
+          at: zod.string().min(1),
+          ended_at: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "When a tool call finished; null when the record does not say.",
+            ),
+          attribution: zod.enum(["reported", "unattributed"]),
+        })
+        .optional(),
+      turn: zod.number(),
+      order: zod.number(),
+      relationship: zod.enum(["observed", "unknown"]),
+    }),
+  ),
+  turns: zod.array(
+    zod.object({
+      turn: zod.number(),
+      request: zod.object({
+        text: zod.string().min(1),
+        at: zod.string().min(1),
+        shown: zod
+          .object({
+            format: zod.enum(["code", "text"]),
+            text: zod.string().min(1),
+          })
+          .optional(),
+      }),
+      response: zod.object({
+        text: zod.string().min(1),
+        at: zod.string().min(1),
+        shown: zod
+          .object({
+            format: zod.enum(["code", "text"]),
+            text: zod.string().min(1),
+          })
+          .optional(),
+      }),
+      children: zod.array(zod.number()),
+      calls_outside: zod.number(),
+      handoffs: zod.array(zod.number()),
+      expects_messages: zod.boolean(),
+    }),
+  ),
+  depth: zod.number(),
+  parallel: zod.number(),
+  asynchronous: zod.number(),
+  overlap_unknown: zod.boolean(),
+  worker_depths: zod.record(zod.string(), zod.number()),
+  counts: zod.object({
+    hand_offs: zod.number(),
+    workers: zod.number(),
+    finished: zod.number(),
+    did_not_finish: zod.number(),
+    passed: zod.number(),
+    cut_off: zod.number(),
+  }),
+  cut_off: zod.boolean(),
+  beyond_boundary: zod.boolean(),
+  placements: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      status: zod.enum(["failed", "inconclusive"]),
+      step: zod.number(),
+      worker_id: zod.string().min(1),
+      untied: zod.enum(["no_moment", "several_hand_offs", "no_hand_off"]),
+    }),
+  ),
+  stopped_by_user: zod.boolean(),
+  pending: zod.boolean(),
+  next_read_at: zod.string().min(1).optional(),
+  state: zod.enum(["recorded", "not_kept", "unreadable"]),
 });
 
 export const SimulateV3TestExecutionAnalyticsParams = zod.object({
@@ -62848,7 +62797,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         no_score: zod
           .boolean()
           .describe(
-            "True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rate.",
+            "True when the value is null because the calls ran with no pass or fail: no score, not missing data. Set only on the pass rates (calls and trials).",
           ),
       }),
     ),
@@ -63041,6 +62990,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -63077,6 +63027,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
     }),
@@ -63124,6 +63075,27 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       total: zod.number(),
       total_value: zod.number(),
     }),
+    trials_passed: zod.number().describe("Comparable trials that passed."),
+    trials_evaluated: zod
+      .number()
+      .describe(
+        "Comparable trials that passed or failed: the trial pass rate's base.",
+      ),
+    trials_inconclusive: zod
+      .number()
+      .describe(
+        "Comparable trials that errored or were inconclusive, counted apart from the base.",
+      ),
+    trials_excluded_not_comparable: zod
+      .number()
+      .describe(
+        "Trials left out because they did not start from the seeded records.",
+      ),
+    trial_pass_rate: zod
+      .number()
+      .describe(
+        "Trials passed over trials evaluated, as a percent; null when none was evaluated.",
+      ),
     evaluators: zod.number(),
     outcome_status: zod
       .enum(["running", "cancelled", "passed", "failed", "no_score"])
@@ -63140,6 +63112,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -63227,6 +63200,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
         scenario: zod.string().min(1),
@@ -63246,6 +63220,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
       turn_count: zod.number(),
@@ -63351,6 +63326,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -63410,6 +63386,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -63469,6 +63446,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -63582,22 +63560,6 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
 export const simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault =
   false;
 
-export const simulateV3TestExecutionCallsResponseExecutionCapabilitySnapshotWorkersItemBypassedCountMin = 0;
-
-export const simulateV3TestExecutionCallsResponseExecutionCapabilitySnapshotBlockersMin = 0;
-
-export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionSuiteTotalMin = 0;
-
-export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionExcludedCountMin = 0;
-
-export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionChangedCountMin = 0;
-
-export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionRunningMin = 0;
-
-export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackCountMin = 0;
-
-export const simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackByMinOne = 0;
-
 export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDefault =
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
@@ -63611,6 +63573,8 @@ export const simulateV3TestExecutionCallsResponseSummaryScoringSucceededMin = 0;
 export const simulateV3TestExecutionCallsResponseSummaryScoringFailedMin = 0;
 
 export const simulateV3TestExecutionCallsResponseSummaryScoringTimedOutMin = 0;
+
+export const simulateV3TestExecutionCallsResponseResultsItemSubGoalResultsItemSubjectKindDefault = `task`;
 
 export const SimulateV3TestExecutionCallsResponse = zod.object({
   execution: zod.object({
@@ -63645,384 +63609,12 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .default(
         simulateV3TestExecutionCallsResponseExecutionAgentDiffersDefault,
       ),
-    capability_snapshot: zod
-      .object({
-        pairing: zod.object({
-          agent_version: zod.object({
-            id: zod.string().uuid().optional(),
-            label: zod.string().min(1).optional(),
-          }),
-          environment_version: zod.object({
-            id: zod.string().uuid().optional(),
-            label: zod.string().min(1).optional(),
-          }),
-          suite_version: zod.object({
-            id: zod.string().uuid().optional(),
-            label: zod.string().min(1).optional(),
-          }),
-          evidence: zod
-            .enum(["pair_certificate", "build_certificate", "none"])
-            .describe(
-              "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
-            ),
-          agent_tools: zod
-            .object({
-              read: zod
-                .boolean()
-                .describe("Whether this agent version's tools have been read."),
-              count: zod
-                .number()
-                .describe("How many tools it has; 0 when unread."),
-            })
-            .optional(),
-          evidence_unreadable: zod
-            .boolean()
-            .optional()
-            .describe(
-              "The certification archive could not be read just now, so its rows read as unmeasured; a run of this pairing is refused until it can be read.",
-            ),
-        }),
-        validation: zod.object({
-          state: zod
-            .enum([
-              "not_run",
-              "validating",
-              "ready",
-              "failed",
-              "check_unavailable",
-              "retry",
-              "unavailable",
-            ])
-            .describe(
-              "ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.",
-            ),
-          job_id: zod.string().uuid(),
-          purpose: zod.enum(["agent_move", "recheck"]),
-          finished_at: zod.string().datetime({ offset: true }),
-          error: zod.record(zod.string(), zod.string()),
-        }),
-        answer: zod.object({
-          kind: zod.enum([
-            "ready",
-            "blocked",
-            "stale",
-            "unchecked",
-            "validating",
-          ]),
-          worst: zod
-            .enum([
-              "supported",
-              "partial",
-              "blocked",
-              "unavailable",
-              "untested",
-              "stale",
-            ])
-            .describe("The worst measured row."),
-          reason_code: zod
-            .string()
-            .min(1)
-            .describe("pair_failed: a check failed without naming an action."),
-        }),
-        areas: zod.array(
-          zod.object({
-            id: zod.string().min(1),
-            status: zod.enum([
-              "supported",
-              "partial",
-              "blocked",
-              "unavailable",
-              "untested",
-              "stale",
-            ]),
-            rows: zod.array(zod.string().min(1)),
-          }),
-        ),
-        rows: zod.array(
-          zod.object({
-            id: zod.string().min(1),
-            label: zod.string().min(1),
-            area: zod.string().min(1),
-            status: zod.enum([
-              "supported",
-              "partial",
-              "blocked",
-              "unavailable",
-              "untested",
-              "stale",
-            ]),
-            measured: zod.boolean(),
-            finding: zod.enum([
-              "passed",
-              "failed",
-              "limited",
-              "not_applicable",
-              "not_run",
-            ]),
-            reason_code: zod.string().min(1),
-            reason: zod.string().min(1),
-            targets: zod.array(
-              zod.object({
-                kind: zod
-                  .enum(["tool", "agent_tool", "action", "check"])
-                  .describe(
-                    "agent_tool: a tool of the agent version the environment lacks.",
-                  ),
-                name: zod.string().min(1),
-                result: zod.string().min(1),
-              }),
-            ),
-            blocked_by: zod.string().min(1),
-            stale_because: zod.string().min(1),
-            was: zod.enum([
-              "supported",
-              "partial",
-              "blocked",
-              "unavailable",
-              "untested",
-              "stale",
-            ]),
-            evidence: zod.array(
-              zod.object({
-                check: zod.string().min(1),
-                result: zod
-                  .string()
-                  .min(1)
-                  .describe("A check status, or a ratio such as 3/4."),
-              }),
-            ),
-            checked_at: zod.string().min(1),
-            fix: zod.object({
-              type: zod.string().min(1),
-              category: zod
-                .enum([
-                  "startup",
-                  "message_mapping",
-                  "tool_routing",
-                  "evidence",
-                ])
-                .describe(
-                  "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
-                ),
-              target: zod.string().min(1),
-              action: zod.string().min(1),
-              would: zod.string().min(1),
-              recheck: zod
-                .object({
-                  scope: zod.enum(["agent", "pair"]),
-                  method: zod.enum(["POST"]),
-                  path: zod.string().min(1),
-                })
-                .describe(
-                  "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
-                ),
-            }),
-            consequence: zod
-              .string()
-              .min(1)
-              .describe(
-                "What the status means for the cases, their spend and their independence.",
-              ),
-          }),
-        ),
-        workers: zod
-          .array(
-            zod
-              .object({
-                worker_id: zod.string().min(1),
-                name: zod.string().min(1),
-                binding: zod.enum(["separate", "shared"]),
-                status: zod.enum([
-                  "supported",
-                  "partial",
-                  "blocked",
-                  "unavailable",
-                  "untested",
-                  "stale",
-                ]),
-                status_label: zod
-                  .string()
-                  .min(1)
-                  .describe("The status word the row shows."),
-                reason_code: zod.enum([
-                  "evidence_unreadable",
-                  "worker_channel_bypassed",
-                  "sealed_before_worker_limits",
-                  "tool_service_not_fronted",
-                  "in_process_unbound",
-                  "no_tool_service",
-                  "in_process_door",
-                  "shared_binding",
-                  "held_at_world_cooperative",
-                  "worker_not_sealed",
-                ]),
-                reason: zod.string().min(1),
-                tools: zod.array(
-                  zod.object({
-                    tool: zod.string().min(1),
-                    action: zod
-                      .string()
-                      .min(1)
-                      .describe(
-                        "The sealed world action; null when the tool has no route.",
-                      ),
-                    boundary: zod.enum(["allowed", "blocked", "not_enforced"]),
-                  }),
-                ),
-                bypassed: zod
-                  .array(
-                    zod
-                      .object({
-                        run_id: zod.string().min(1),
-                        call_execution_id: zod.string().min(1),
-                      })
-                      .describe(
-                        "The newest recent calls, at most five, where the worker reached the world without its own channel.",
-                      ),
-                  )
-                  .describe(
-                    "The newest recent calls, at most five, where the worker reached the world without its own channel.",
-                  ),
-                bypassed_count: zod
-                  .number()
-                  .min(
-                    simulateV3TestExecutionCallsResponseExecutionCapabilitySnapshotWorkersItemBypassedCountMin,
-                  )
-                  .describe("All such recent calls."),
-                fix: zod.object({
-                  type: zod.string().min(1),
-                  category: zod
-                    .enum([
-                      "startup",
-                      "message_mapping",
-                      "tool_routing",
-                      "evidence",
-                    ])
-                    .describe(
-                      "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
-                    ),
-                  target: zod.string().min(1),
-                  action: zod.string().min(1),
-                  would: zod.string().min(1),
-                  recheck: zod
-                    .object({
-                      scope: zod.enum(["agent", "pair"]),
-                      method: zod.enum(["POST"]),
-                      path: zod.string().min(1),
-                    })
-                    .describe(
-                      "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
-                    ),
-                }),
-                checked_at: zod.string().min(1),
-              })
-              .describe(
-                "One row per declared worker; empty when the contract declares none.",
-              ),
-          )
-          .describe(
-            "One row per declared worker; empty when the contract declares none.",
-          ),
-        counts: zod.object({
-          supported: zod.number(),
-          partial: zod.number(),
-          blocked: zod.number(),
-          unavailable: zod.number(),
-          untested: zod.number(),
-          stale: zod.number(),
-        }),
-        blockers: zod
-          .number()
-          .min(
-            simulateV3TestExecutionCallsResponseExecutionCapabilitySnapshotBlockersMin,
-          )
-          .describe(
-            "Blocked rows plus blocked workers: what the run plan counts as blockers.",
-          ),
-        catalog_version: zod.string().min(1),
-        rules_version: zod.string().min(1),
-        computed_at: zod.string().min(1),
-      })
+    build_notice: zod
+      .string()
+      .min(1)
       .optional()
       .describe(
-        "The run readiness of the run's versions when it was created; null for a coding agent's key.",
-      ),
-    readiness_selection: zod
-      .object({
-        suite_total: zod
-          .number()
-          .min(
-            simulateV3TestExecutionCallsResponseExecutionReadinessSelectionSuiteTotalMin,
-          )
-          .describe("Every case of the suite version."),
-        excluded: zod.object({
-          count: zod
-            .number()
-            .min(
-              simulateV3TestExecutionCallsResponseExecutionReadinessSelectionExcludedCountMin,
-            ),
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean(),
-          reason: zod
-            .enum(["not_selected"])
-            .describe("Suite cases not selected for this run."),
-        }),
-        changed: zod
-          .object({
-            count: zod
-              .number()
-              .min(
-                simulateV3TestExecutionCallsResponseExecutionReadinessSelectionChangedCountMin,
-              ),
-            keys: zod.array(zod.string().min(1)),
-            truncated: zod.boolean(),
-            since: zod
-              .object({
-                run_id: zod.string().uuid(),
-                suite_version: zod.object({
-                  id: zod.string().uuid().optional(),
-                  label: zod.string().min(1).optional(),
-                }),
-              })
-              .describe(
-                "The newest run of this agent and environment version the selected cases are compared with; null when there is none.",
-              ),
-          })
-          .describe(
-            "Selected cases whose contents differ from that run's suite version, or that it did not have.",
-          ),
-        requested: zod.number().min(1),
-        running: zod
-          .number()
-          .min(
-            simulateV3TestExecutionCallsResponseExecutionReadinessSelectionRunningMin,
-          ),
-        held_back: zod.object({
-          count: zod
-            .number()
-            .min(
-              simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackCountMin,
-            ),
-          keys: zod.array(zod.string().min(1)),
-          truncated: zod.boolean(),
-          by: zod
-            .record(
-              zod.string(),
-              zod
-                .number()
-                .min(
-                  simulateV3TestExecutionCallsResponseExecutionReadinessSelectionHeldBackByMinOne,
-                ),
-            )
-            .describe("Held-back cases per readiness row that held them."),
-        }),
-        reasons: zod
-          .record(zod.string(), zod.string().min(1))
-          .describe("Each holding row's reason, in plain words."),
-      })
-      .optional()
-      .describe(
-        "The cases readiness held back from this run and why; null when runs are not pinned to versions, and for a coding agent's key.",
+        "Said when the run replayed a build without its environment's actors.",
       ),
     selected_scenario_keys: zod
       .array(zod.string().min(1))
@@ -64055,6 +63647,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -64118,6 +63711,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
     }),
@@ -64219,6 +63813,23 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             .describe(
               "What the check was decided from: world_state, tool_calls, transcript, recording.",
             ),
+          subject: zod.string().min(1).optional(),
+          subject_kind: zod
+            .enum(["task", "worker"])
+            .default(
+              simulateV3TestExecutionCallsResponseResultsItemSubGoalResultsItemSubjectKindDefault,
+            ),
+          worker_id: zod
+            .string()
+            .min(1)
+            .optional()
+            .describe("The worker whose own check this is."),
+          display_name: zod
+            .string()
+            .min(1)
+            .describe(
+              "What the results show: its name, with the worker's name when it is one worker's own check.",
+            ),
         }),
       ),
       harness_outcome_status: zod.string().min(1),
@@ -64232,6 +63843,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "inconclusive",
         "no_score",
         "error",
+        "cancelled",
       ]),
       outcome_reason: zod.string().min(1).optional(),
       execution_status: zod.string().min(1),
@@ -64316,6 +63928,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
+        cancelled: zod.number(),
         inconclusive: zod.number(),
         no_score: zod.number(),
       }),
@@ -64411,10 +64024,15 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             .describe(
               "Calls where at least one of the actor's lines reached the agent.",
             ),
+          acted: zod
+            .number()
+            .describe(
+              "Calls where the actor said no line but took part through the world, by its actions.",
+            ),
           dropped: zod
             .number()
             .describe(
-              "Calls where the actor was triggered but none of its lines reached the agent.",
+              "Calls where the actor was due but neither spoke a line nor acted in the world.",
             ),
           not_triggered: zod
             .number()
@@ -64437,6 +64055,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     passed: zod.number(),
     failed: zod.number(),
     error: zod.number(),
+    cancelled: zod.number(),
     inconclusive: zod.number(),
     no_score: zod.number(),
   }),
@@ -64530,6 +64149,7 @@ export const SimulateV3TestExecutionReliabilityResponse = zod.object({
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
+      cancelled: zod.number(),
       inconclusive: zod.number(),
       no_score: zod.number(),
       scenario: zod.string().min(1),
@@ -64563,6 +64183,154 @@ export const SimulateV3TestExecutionTracesResponse = zod.object({
       call_execution_id: zod.string().uuid(),
     }),
   ),
+});
+
+/**
+ * One scenario's trials in the run lined up by who asked whom, and the first step where they went different ways.
+ */
+export const SimulateV3TestExecutionTrialRoutesParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const simulateV3TestExecutionTrialRoutesQueryToolCallsDefault = false;
+
+export const SimulateV3TestExecutionTrialRoutesQueryParams = zod.object({
+  scenario_key: zod
+    .string()
+    .min(1)
+    .describe(
+      "The scenario whose trials to line up: the key the run's calls list serves as `source_scenario_key`.",
+    ),
+  tool_calls: zod
+    .boolean()
+    .default(simulateV3TestExecutionTrialRoutesQueryToolCallsDefault)
+    .describe(
+      "Also a column for each tool called, by who called it and the tool.",
+    ),
+});
+
+export const SimulateV3TestExecutionTrialRoutesResponse = zod.object({
+  scenario_key: zod.string().min(1),
+  tool_calls: zod.boolean(),
+  trials: zod.array(
+    zod.object({
+      number: zod.number(),
+      call_execution_id: zod.string().min(1),
+      result: zod.string().min(1),
+      route: zod.enum([
+        "recorded",
+        "no_hand_off",
+        "partial",
+        "pending",
+        "not_finished",
+        "unreadable",
+        "no_evidence",
+      ]),
+      cells: zod
+        .array(
+          zod
+            .object({
+              state: zod.enum([
+                "step",
+                "failed",
+                "no_answer",
+                "cut_off",
+                "repeated",
+                "absent",
+              ]),
+              step: zod
+                .number()
+                .describe(
+                  "The step's key in the trial's worker record (`steps[].key`); the first when it was taken more than once.",
+                ),
+              steps: zod
+                .array(zod.number())
+                .describe("Every step's key in this cell."),
+              count: zod.number(),
+              states: zod
+                .array(
+                  zod.enum([
+                    "step",
+                    "failed",
+                    "no_answer",
+                    "cut_off",
+                    "repeated",
+                    "absent",
+                  ]),
+                )
+                .describe(
+                  "Each occurrence's own state, in the order the trial took them.",
+                ),
+            })
+            .describe(
+              "One per column; null when the trial has no route to compare.",
+            ),
+        )
+        .describe(
+          "One per column; null when the trial has no route to compare.",
+        ),
+    }),
+  ),
+  columns: zod.array(
+    zod.object({
+      key: zod.string().min(1),
+      kind: zod.enum(["handoff", "tool_call"]),
+      from_kind: zod
+        .enum(["worker", "coordinator", "unknown"])
+        .describe(
+          "Who asked, or called the tool: a worker, the coordinator, or unknown when the record does not say.",
+        ),
+      from_id: zod
+        .string()
+        .min(1)
+        .describe("A worker's id within the run; null otherwise."),
+      from_name: zod
+        .string()
+        .min(1)
+        .describe("Null when the record does not name it."),
+      to_kind: zod
+        .enum(["worker", "coordinator", "unknown"])
+        .describe("Null on a tool-call column."),
+      to_id: zod.string().min(1),
+      to_name: zod.string().min(1),
+      tool: zod.string().min(1),
+    }),
+  ),
+  split: zod
+    .object({
+      column: zod.number(),
+      key: zod.string().min(1),
+      groups: zod.array(
+        zod.object({
+          state: zod.enum([
+            "step",
+            "failed",
+            "no_answer",
+            "cut_off",
+            "repeated",
+            "absent",
+          ]),
+          count: zod.number(),
+          states: zod
+            .array(
+              zod.enum([
+                "step",
+                "failed",
+                "no_answer",
+                "cut_off",
+                "repeated",
+                "absent",
+              ]),
+            )
+            .describe(
+              "Each occurrence's own state, in order; trials split when these differ.",
+            ),
+          trials: zod.array(zod.number()),
+        }),
+      ),
+    })
+    .describe("Null when every trial took the same route."),
+  same_route: zod.boolean(),
 });
 
 export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
@@ -69753,8 +69521,6 @@ export const TracerEvalTaskCreateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),
@@ -74609,8 +74375,6 @@ export const TracerEvalTaskUpdateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),
@@ -75723,8 +75487,6 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),

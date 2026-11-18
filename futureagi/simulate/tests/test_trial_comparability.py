@@ -39,14 +39,14 @@ def _call(start):
     return SimpleNamespace(id="call", call_metadata={TRIAL_STATE_KEY: state})
 
 
-def _start_differs(run, index):
+def _start_differs(run, index, start=DIFFERS):
     """Record that the run's ``index``-th call (in id order) did not start from the seeded records."""
     call = list(
         CallExecution.no_workspace_objects.filter(
             test_execution_id=run.test_execution_id
         ).order_by("id")
     )[index]
-    call.call_metadata = {**call.call_metadata, TRIAL_STATE_KEY: {"start": DIFFERS}}
+    call.call_metadata = {**call.call_metadata, TRIAL_STATE_KEY: {"start": start}}
     call.save(update_fields=["call_metadata"])
 
 
@@ -57,10 +57,17 @@ def test_a_trial_whose_start_differs_is_not_comparable_and_names_the_tables():
     assert "orders, refunds" in shown["not_comparable_reason"]
 
 
+def test_a_trial_whose_start_could_not_be_read_is_not_comparable_and_says_so():
+    shown = comparability(_call({"state": "unknown"}))
+
+    assert shown["comparable"] is False
+    assert "could not be read" in shown["not_comparable_reason"]
+
+
 @pytest.mark.parametrize(
     "start",
-    [None, {"state": "seeded", "against": "seed"}, {"state": "unknown"}],
-    ids=["no-start", "seeded", "unknown"],
+    [None, {"state": "seeded", "against": "seed"}],
+    ids=["no-start", "seeded"],
 )
 def test_a_trial_that_started_clean_is_comparable(start):
     assert comparability(_call(start)) == {
@@ -89,6 +96,21 @@ class TestComparisonLeavesOutTrialsThatDidNotStartClean:
 
         current = _by_key(comparison)[KEYS[0]]["current"]
         assert (current["passed"], current["trials"]) == (1, 1)
+        assert comparison["summary"]["excluded_not_comparable"] == 1
+
+    def test_a_trial_whose_start_could_not_be_read_is_left_out_and_counted(
+        self, user, workspace, storage
+    ):
+        environment = _two_scenarios(user, workspace, storage, "cmp-unknown")
+        before = _run(environment, KEYS[:1], trials=2, key="before")
+        _trials(before, [(KEYS[0], True), (KEYS[0], True)])
+        after = _run(environment, KEYS[:1], trials=2, key="after")
+        _trials(after, [(KEYS[0], True), (KEYS[0], False)])
+        _start_differs(after, 1, {"state": "unknown"})
+        _done(before, ago=timedelta(minutes=5))
+
+        comparison = _compare(_done(after))
+
         assert comparison["summary"]["excluded_not_comparable"] == 1
 
     def test_clean_trials_are_all_compared(self, user, workspace, storage):

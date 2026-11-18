@@ -63,8 +63,13 @@ vi.mock("src/components/VoiceDetailDrawerV2/VoiceAudioBridge", () => ({
 }));
 
 vi.mock("src/components/VoiceDetailDrawerV2/TranscriptView", () => ({
-  default: ({ transcript, customerName }) => (
-    <div data-testid="voice-transcript" data-customer={customerName}>
+  default: ({ transcript, customerName, participants = [], hasCustomer }) => (
+    <div
+      data-testid="voice-transcript"
+      data-customer={customerName}
+      data-participants={participants.map((one) => one.name).join(",")}
+      data-has-customer={String(hasCustomer)}
+    >
       {transcript.map((turn) => turn.content).join("|")}
     </div>
   ),
@@ -248,6 +253,37 @@ describe("SharedView simulation call rendering", () => {
       "Maya",
     );
     expect(screen.queryByText(/Viewing shared/)).not.toBeInTheDocument();
+  });
+
+  it("hands a shared voice call's participants to its transcript, so others on the call show", () => {
+    mocks.useResolveSharedLink.mockReturnValue(
+      resolved({
+        id: "call-execution-1234567890",
+        simulation_call_type: "voice",
+        scenario: "Refund request",
+        persona: "Maya",
+        status: "completed",
+        has_customer: false,
+        participants: [
+          { id: "manager", name: "Mia", role: "manager", channel: "audio_mix" },
+        ],
+        transcript: [
+          {
+            speaker_role: "agent",
+            content: "Hello.",
+            start_time: 0,
+            end_time: 1,
+          },
+        ],
+        function_calls: [],
+      }),
+    );
+
+    render(<SharedView />);
+
+    const transcript = screen.getByTestId("voice-transcript");
+    expect(transcript).toHaveAttribute("data-participants", "Mia");
+    expect(transcript).toHaveAttribute("data-has-customer", "false");
   });
 
   it("renders a shared simulation chat as a read-only transcript", () => {

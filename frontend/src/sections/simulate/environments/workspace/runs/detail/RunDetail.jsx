@@ -4,6 +4,7 @@ import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
   Box,
   Stack,
   Typography,
@@ -61,6 +62,7 @@ import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
+import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 
 /**
@@ -102,7 +104,7 @@ export default function RunDetail({
   // The open call, where it was opened from ("table", "analytics" or "link")
   // and, after a prev/next step, the table page it sits on so the table can
   // follow. Mirrored in `?rowId=`.
-  const { openCall, showCall } = useOpenCallParam({
+  const { openCall, showCall, openById } = useOpenCallParam({
     executionId,
     tableQuery,
     tableShown: tab === "tasks",
@@ -124,6 +126,7 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  const openTask = callNav.openRow ?? openCall?.task ?? null;
   // The All Evaluations drawer and the table's eval column menus share one
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
@@ -332,6 +335,15 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
+          {identity?.buildNotice && (
+            <Alert
+              severity="warning"
+              sx={{ mt: 1 }}
+              data-testid="run-build-notice"
+            >
+              {identity.buildNotice}
+            </Alert>
+          )}
         </Box>
 
         <ReliabilityHeadline
@@ -599,7 +611,18 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={openCall?.task ?? null}
+        task={openTask}
+        trials={trialsOf(callNav.rows, openTask)}
+        onPickTrial={(id) => {
+          const row = callNav.rows.find((one) => one.id === id);
+          if (row)
+            showCall({
+              task: row,
+              source: openCall?.source ?? "table",
+              page: openCall?.page ?? null,
+            });
+        }}
+        onOpenTrial={openById}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}

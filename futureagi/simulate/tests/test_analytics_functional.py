@@ -465,6 +465,11 @@ class TestRunResultsV3Views:
         goals = [
             {"name": "Verify identity", "held": True},
             {"name": "Create refund", "held": False},
+            {
+                "name": "Lookup stayed read-only",
+                "held": False,
+                "subject": "worker:order_lookup",
+            },
             {"name": "Send confirmation", "held": None},
             {
                 "name": "Offer upgrade",
@@ -486,16 +491,46 @@ class TestRunResultsV3Views:
             call_metadata=metadata,
         )
         expected = [
-            {"name": "Verify identity", "passed": True},
-            {"name": "Create refund", "passed": False},
-            {"name": "Send confirmation", "passed": None},
+            {
+                "name": "Verify identity",
+                "passed": True,
+                "subject_kind": "task",
+                "display_name": "Verify identity",
+            },
+            {
+                "name": "Create refund",
+                "passed": False,
+                "subject_kind": "task",
+                "display_name": "Create refund",
+            },
+            {
+                "name": "Lookup stayed read-only",
+                "passed": False,
+                "subject": "worker:order_lookup",
+                "subject_kind": "worker",
+                "worker_id": "order_lookup",
+                "display_name": "Lookup stayed read-only (order_lookup)",
+            },
+            {
+                "name": "Send confirmation",
+                "passed": None,
+                "subject_kind": "task",
+                "display_name": "Send confirmation",
+            },
             {
                 "name": "Offer upgrade",
                 "passed": None,
                 "result": "not_applicable",
                 "reason": "Not applicable: x",
+                "subject_kind": "task",
+                "display_name": "Offer upgrade",
             },
-            {"name": "Unmeasured goal", "passed": None},
+            {
+                "name": "Unmeasured goal",
+                "passed": None,
+                "subject_kind": "task",
+                "display_name": "Unmeasured goal",
+            },
         ]
         response = auth_client.get(
             f"/simulate/v3/test-executions/{test_execution.id}/calls/"
@@ -509,6 +544,28 @@ class TestRunResultsV3Views:
         assert detail.json()["sub_goal_results"] == expected
         assert detail.json()["sub_goals"] == [goal["name"] for goal in expected]
 
+    def test_a_call_reads_cancelled_by_its_outcome_never_by_its_end_reason_text(
+        self, test_execution, scenario
+    ):
+        from simulate.services.run_dashboard_v3 import annotate_goal_outcome
+        from simulate.services.run_results_v3_queries import run_calls_queryset
+
+        stopped = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status="cancelled",
+            ended_reason="pipeline-error",
+        )
+        worded = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status="completed",
+            ended_reason="Cancelled by user",
+        )
+        rows = annotate_goal_outcome(run_calls_queryset(test_execution))
+        assert rows.get(pk=stopped.pk).dashboard_disconnection == "Cancelled"
+        assert rows.get(pk=worded.pk).dashboard_disconnection != "Cancelled"
+
     @pytest.mark.parametrize(
         "execution_status,expected,label",
         [
@@ -518,7 +575,7 @@ class TestRunResultsV3Views:
             ("analyzing", "in_progress", "In progress"),
             ("completed", "inconclusive", "Inconclusive"),
             ("failed", "error", "Error"),
-            ("cancelled", "error", "Error"),
+            ("cancelled", "cancelled", "Cancelled"),
         ],
     )
     def test_call_lifecycle_outcomes_match_rows_filters_groups_and_detail(
@@ -1148,7 +1205,12 @@ class TestRunResultsV3Views:
         }
         assert row["sub_goals"] == ["identity_verified"]
         assert row["sub_goal_results"] == [
-            {"name": "identity_verified", "passed": True}
+            {
+                "name": "identity_verified",
+                "passed": True,
+                "subject_kind": "task",
+                "display_name": "identity_verified",
+            }
         ]
         assert row["scenario_details"] == "Caller needs help with a return."
         assert row["ideal_outcome"] == "Return is completed"
@@ -1371,8 +1433,40 @@ class TestRunResultsV3Views:
             if item["id"] == str(crashed.id)
         )
         assert (stopped["outcome"], stopped["outcome_reason"]) == (
-            "error",
+            "cancelled",
             "Stopped before it finished: the run was cancelled",
+        )
+
+    def test_a_trial_held_for_worker_limits_says_why(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "errored",
+            "hosted_harness_receipt": {
+                "status": "errored",
+                "sub_goals": [],
+                "failure": {
+                    "code": "worker_limits_not_enforced",
+                    "message": "inconclusive: scenario problem, not the agent's: This environment was sealed "
+                    "before worker limits, so its checks were not graded. Rebuild the environment to enforce them.",
+                },
+            },
+        }
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        row = next(
+            item
+            for item in auth_client.get(
+                f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+            ).json()["results"]
+            if item["id"] == str(call.id)
+        )
+        assert row["outcome_reason"] == (
+            "Inconclusive, a problem of the scenario, not the agent: This environment was sealed "
+            "before worker limits, so its checks were not graded. Rebuild the environment to enforce them."
         )
 
     def test_a_call_where_nothing_it_tests_happened_reads_no_score(
@@ -1417,6 +1511,8 @@ class TestRunResultsV3Views:
                 "passed": None,
                 "result": "not_applicable",
                 "reason": "Not applicable: the caller never asked to cancel in this call.",
+                "subject_kind": "task",
+                "display_name": "noticed",
             }
         ]
 
@@ -2603,7 +2699,12 @@ class TestRunResultsV3Views:
                         "arguments": {"order_id": "AB-1"},
                         "result": {"status": "shipped"},
                         "duration_ms": 309,
-                    }
+                    },
+                    {
+                        "name": "Refund worker",
+                        "delegated_to": "Refund worker",
+                        "result": "refunded",
+                    },
                 ]
             }
         }
@@ -2621,7 +2722,16 @@ class TestRunResultsV3Views:
                 "result": {"status": "shipped"},
                 "duration_ms": 309,
                 "kind": "agent_call",
-            }
+                "tool_label": "Tool call",
+            },
+            # A hand-off keeps who it went to, so a reader can tell it from a tool call.
+            {
+                "name": "Refund worker",
+                "delegated_to": "Refund worker",
+                "result": "refunded",
+                "kind": "agent_call",
+                "tool_label": "Hand-off",
+            },
         ]
 
     def test_analytics_exposes_truthful_coverage(
@@ -2644,6 +2754,7 @@ class TestRunResultsV3Views:
             "passed": 1,
             "failed": 0,
             "error": 1,
+            "cancelled": 0,
             "inconclusive": 2,
             "no_score": 0,
         }
@@ -3165,6 +3276,7 @@ class TestRunResultsV3Views:
         assert not {"wpm", "stop", "talk", "turn_count"} & metrics.keys()
         assert {key: metrics[key]["label"] for key in metrics} == {
             "pass_rate": "Chats passed",
+            "trial_pass": "Trials passed",
             "total": "Total chats",
             "ran_cleanly": "Chats ran cleanly",
             "connected_rate": "Chats connected (%)",
@@ -3880,8 +3992,18 @@ class TestRunResultsV3Views:
 
         assert row["sub_goals"] == ["pin_verified", "exact_greeting"]
         assert row["sub_goal_results"] == [
-            {"name": "pin_verified", "passed": None},
-            {"name": "exact_greeting", "passed": None},
+            {
+                "name": "pin_verified",
+                "passed": None,
+                "subject_kind": "task",
+                "display_name": "pin_verified",
+            },
+            {
+                "name": "exact_greeting",
+                "passed": None,
+                "subject_kind": "task",
+                "display_name": "exact_greeting",
+            },
         ]
 
     def test_receipt_sub_goals_take_priority_over_the_authored_scenarios(
@@ -3910,7 +4032,12 @@ class TestRunResultsV3Views:
 
         assert row["sub_goals"] == ["identity_verified"]
         assert row["sub_goal_results"] == [
-            {"name": "identity_verified", "passed": True}
+            {
+                "name": "identity_verified",
+                "passed": True,
+                "subject_kind": "task",
+                "display_name": "identity_verified",
+            }
         ]
 
     @pytest.mark.parametrize("layout", ["trial", "registration"])
@@ -3977,7 +4104,14 @@ class TestRunResultsV3Views:
         body = response.json()
         row = next(row for row in body["results"] if row["id"] == str(call.id))
         assert row["sub_goals"] == ["pin_verified"]
-        assert row["sub_goal_results"] == [{"name": "pin_verified", "passed": None}]
+        assert row["sub_goal_results"] == [
+            {
+                "name": "pin_verified",
+                "passed": None,
+                "subject_kind": "task",
+                "display_name": "pin_verified",
+            }
+        ]
         assert body["facets"]["sub_goal"] == [{"value": "pin_verified", "count": 1}]
 
     def test_receipt_sub_goals_keep_the_authored_ones_out_of_filters_and_facets(

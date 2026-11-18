@@ -63,7 +63,14 @@ export default function StartingRecordRework({
       >
         {record.choices.map((row) => (
           <MenuItem key={row.key} value={row.key}>
-            <Typography sx={{ typography: "s1" }}>{row.summary}</Typography>
+            <Stack>
+              <Typography sx={{ typography: "s1" }}>{row.summary}</Typography>
+              {row.note && (
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {row.note}
+                </Typography>
+              )}
+            </Stack>
           </MenuItem>
         ))}
       </TextField>

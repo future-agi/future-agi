@@ -1489,14 +1489,21 @@ class TestProductionOnly:
                     }
                 ],
             },
-            "scenarios": [
-                {"name": NAMES[0], "solution": [{"tool": "issue_refund"}]},
-                {"name": NAMES[1], "solution": [{"tool": "lookup_ride"}]},
-            ],
         }
         HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
             documents=version.documents
         )
+        # Scenarios are the suite version's.
+        HarnessSuiteVersion._base_manager.filter(id=s1.id).update(
+            documents={
+                **(s1.documents or {}),
+                "scenarios": [
+                    {"name": NAMES[0], "solution": [{"tool": "issue_refund"}]},
+                    {"name": NAMES[1], "solution": [{"tool": "lookup_ride"}]},
+                ],
+            }
+        )
+        s1.refresh_from_db()
         return environment, s1
 
     def test_a_run_every_scenario_of_which_needs_it_is_refused_naming_the_tool(

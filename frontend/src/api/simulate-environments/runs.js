@@ -47,7 +47,11 @@ export function listRunTestExecutions(
 // reused product execution detail.
 export function executionToRun(raw) {
   const total =
-    raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
+    raw?.total_calls ??
+    raw?.total_chats ??
+    raw?.calls_attempted ??
+    raw?.calls ??
+    0;
   const hasOutcomes = raw?.outcome_passed != null;
   const rate = raw?.success_rate ?? 0;
   const passed = hasOutcomes
@@ -63,8 +67,11 @@ export function executionToRun(raw) {
     id: raw?.id,
     executionId: raw?.id,
     status: raw.outcome_status,
-    // 0-100; null when nothing was scored.
-    passRate: raw.pass_rate,
+    // The run's trial pass, 0-100, as its own page reads it; null when no trial passed or failed.
+    passRate: raw.trial_pass_rate,
+    trialsPassed: raw.trials_passed,
+    trialsEvaluated: raw.trials_evaluated,
+    trialsInconclusive: raw.trials_inconclusive,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
     runState: runStateFor(raw.status),

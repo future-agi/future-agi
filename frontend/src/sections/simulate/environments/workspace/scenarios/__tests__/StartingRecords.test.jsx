@@ -25,7 +25,16 @@ const RIDER = {
   fields: { rider_id: "rdr_arjun", first_name: "Arjun", tags: ["vip"] },
   note: null,
   choices: [
-    { key: "rdr_priya", summary: "Priya's row, as the server words it" },
+    {
+      key: "rdr_priya",
+      summary: "Priya's row, as the server words it",
+      note: null,
+    },
+    {
+      key: "rdr_meera",
+      summary: "Meera's row, as the server words it",
+      note: "The server's note on Meera's row.",
+    },
   ],
 };
 const MISSING = {
@@ -47,6 +56,8 @@ const RECORDS = {
   setup_note: null,
   rows_unavailable: null,
   rework: null,
+  can_rework: true,
+  rework_blocked_reason: null,
 };
 
 const reads = (data) =>
@@ -164,6 +175,9 @@ describe("StartingRecords", () => {
         reason: null,
         requested_at: "2026-11-16T10:00:00Z",
       },
+      can_rework: false,
+      rework_blocked_reason:
+        "The builder is still working on the last request.",
     });
     open();
 
@@ -190,6 +204,9 @@ describe("StartingRecords", () => {
         requested_at: "2026-11-16T10:00:00Z",
         confirm_message_id: "ask-1",
       },
+      can_rework: false,
+      rework_blocked_reason:
+        "The builder is waiting for you to confirm its change.",
     });
     open();
 
@@ -238,7 +255,7 @@ describe("StartingRecords", () => {
         key_field: "order_id",
         key: "1044",
         reason:
-          "The builder says this scenario can't start from orders 1044 as seeded.",
+          "The builder didn't rework this scenario to start from orders 1044. See its reply.",
         requested_at: "2026-11-16T10:00:00Z",
         confirm_message_id: null,
         builder_reply: "### Ruling value\n- **`days_since_delivery: 41`**",
@@ -249,7 +266,7 @@ describe("StartingRecords", () => {
 
     const line = screen.getByTestId("starting-records-rework");
     expect(line).toHaveTextContent(
-      "The builder says this scenario can't start from orders 1044 as seeded.",
+      "The builder didn't rework this scenario to start from orders 1044. See its reply.",
     );
     expect(line).not.toHaveTextContent("**");
     fireEvent.click(
@@ -261,6 +278,21 @@ describe("StartingRecords", () => {
     );
     stop();
     expect(focused).toEqual(["reply-1"]);
+  });
+
+  it("offers a row another scenario starts from with the server's note beside it", () => {
+    reads(RECORDS);
+    sends();
+    open();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start from another record" }),
+    );
+    fireEvent.mouseDown(screen.getByLabelText("Record to start from"));
+
+    const meera = screen.getByRole("option", { name: /Meera's row/ });
+    expect(meera).toHaveTextContent("The server's note on Meera's row.");
+    expect(meera).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows the server's problem with a choice under the picker", () => {

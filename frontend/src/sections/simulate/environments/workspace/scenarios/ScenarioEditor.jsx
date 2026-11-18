@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Autocomplete,
   Box,
@@ -12,7 +12,12 @@ import {
   ToggleButtonGroup,
 } from "@mui/material";
 
+import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../../components/SideDrawer";
+import {
+  focusBuilderChat,
+  subscribeBuilderChatFocus,
+} from "../../buildEnvironment/console/builderChatFocusBus";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import {
   EDITOR_COPY,
@@ -195,6 +200,26 @@ export default function ScenarioEditor({
     };
   }, [draft, base, canEdit, canEditPersona, reworkFields]);
 
+  // Asked to show a builder chat message, the editor steps aside so the chat can be used; unsaved edits ask first.
+  // The message the chat was asked to show, while the person decides whether to discard their edits.
+  const [leaving, setLeaving] = useState(null);
+  const discarded = useRef(false);
+  const unsaved = changes.length > 0;
+  useEffect(
+    () =>
+      open && onClose
+        ? subscribeBuilderChatFocus((messageId) => {
+            if (discarded.current) return;
+            if (unsaved) setLeaving(messageId);
+            else onClose();
+          })
+        : undefined,
+    [open, onClose, unsaved],
+  );
+  useEffect(() => {
+    if (open) discarded.current = false;
+  }, [open]);
+
   if (!row) return null;
 
   const set = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
@@ -207,16 +232,26 @@ export default function ScenarioEditor({
     setFaultProblems([]);
     setSaving(true);
     // A refusal or failed save keeps the editor open with the edits in it.
+    const sent = draft.faults || [];
     const answer = await onSave({ changes, rework });
     setSaving(false);
-    const refused = answer.refused.find((one) => one.field === "faults");
-    if (refused) {
-      // Placed under the fault and field each names; the receipt's one sentence only when it names none.
-      if (refused.problems.length) setFaultProblems(refused.problems);
-      else setSaveError(refused.why);
+    if (answer.failed) return;
+    if (answer.refused.length) {
+      // Any refused receipt keeps the editor open with the edits. A fault's problems sit under the fault and
+      // field each names; anything else is said in the receipt's own words.
+      const faults = answer.refused.find((one) => one.field === "faults");
+      // Each problem tied to the condition it was about, so removing another one never moves it.
+      if (faults?.problems?.length)
+        setFaultProblems(
+          faults.problems.map((one) => ({ ...one, fault: sent[one.index] })),
+        );
+      const said = answer.refused
+        .filter((one) => !(one === faults && one.problems?.length))
+        .map((one) => one.why)
+        .filter(Boolean);
+      if (said.length) setSaveError(said.join(" "));
       return;
     }
-    if (answer.failed) return;
     onClose();
   };
 
@@ -489,6 +524,29 @@ export default function ScenarioEditor({
           </Button>
         </Stack>
       </Stack>
+      <ConfirmDialog
+        open={Boolean(leaving)}
+        onClose={() => setLeaving(null)}
+        title={EDITOR_COPY.discardTitle}
+        content={EDITOR_COPY.discardBody}
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={() => {
+              const messageId = leaving;
+              setLeaving(null);
+              discarded.current = true;
+              onClose();
+              // Shown again now the editor is out of the way, as when there was nothing to discard.
+              focusBuilderChat(messageId);
+            }}
+          >
+            {EDITOR_COPY.discard}
+          </Button>
+        }
+      />
     </SideDrawer>
   );
 }

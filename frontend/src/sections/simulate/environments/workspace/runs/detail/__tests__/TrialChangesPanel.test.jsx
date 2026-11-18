@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { cleanup, render, screen } from "src/utils/test-utils";
 import PropTypes from "prop-types";
 import TrialChangesPanelView from "../TrialChangesPanel";
+import { TRIAL_CHANGES_COPY } from "../trialChanges.constants";
 
 const EVERY_LIST = {
   state_changes: [],
@@ -30,6 +31,23 @@ const CHANGE = {
 };
 
 describe("TrialChangesPanel", () => {
+  it("says the server's reason when the trial's world actions were not seen, never 0 attempted", () => {
+    const why =
+      "This environment was built before world actions were recorded, so this trial's are not known. Rebuild it to see them.";
+    render(
+      <TrialChangesPanel
+        trialState={{
+          recorded: false,
+          why: "sealed_without_door",
+          why_label: why,
+        }}
+      />,
+    );
+    expect(screen.getByText(why)).toBeInTheDocument();
+    expect(screen.queryByText(/attempted/)).toBeNull();
+    cleanup();
+  });
+
   it("says a participant's reads apart from what it committed, and one that only read changed nothing", () => {
     render(
       <TrialChangesPanel
@@ -398,6 +416,42 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a worker the world told apart, with each attempt it refused and why", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "worker:order_lookup",
+              worker_id: "order_lookup",
+              name: "order_lookup",
+              attempted: 2,
+              committed: 1,
+              refused: 1,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: ["get_order"],
+              refused_actions: [
+                {
+                  action: "update_order_status",
+                  code: "not_permitted",
+                  reason:
+                    "orders.update_status is not permitted for order_lookup",
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.worker("order_lookup")),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("refused-attempts")).toHaveTextContent(
+      "update_order_status",
+    );
+  });
+
   it("says first when a scenario fault did not take effect, even when nothing else changed", () => {
     const message =
       "The timeout fault on call 1 of crm.apply_discount could not be applied: the agent made that call outside the world's door (in its own process), so nothing held it.";
@@ -527,7 +581,9 @@ describe("TrialChangesPanel", () => {
     cleanup();
     render(
       <TrialChangesPanel
-        trialState={{ start: { state: "differs", tables: ["orders"], line: null } }}
+        trialState={{
+          start: { state: "differs", tables: ["orders"], line: null },
+        }}
       />,
     );
     expect(screen.queryByText(/Started from/)).toBeNull();
@@ -621,7 +677,9 @@ describe("TrialChangesPanel", () => {
                 action: "approvals.put",
               },
               before_decision: [],
-              after_decision: [{ action: "apply_discount", outcome: "committed" }],
+              after_decision: [
+                { action: "apply_discount", outcome: "committed" },
+              ],
               acted_before_decision: false,
               verdict: "refused",
               committed_after_refusal: true,
@@ -697,7 +755,9 @@ describe("TrialChangesPanel", () => {
         }}
       />,
     );
-    expect(screen.getByText("No record changed in this trial.")).toBeInTheDocument();
+    expect(
+      screen.getByText("No record changed in this trial."),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/could not be read/)).toBeNull();
     cleanup();
     // The unreadable flag wins over kept records.
@@ -709,7 +769,9 @@ describe("TrialChangesPanel", () => {
         }}
       />,
     );
-    expect(screen.getByText(/could not be read for this trial/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/could not be read for this trial/),
+    ).toBeInTheDocument();
     expect(screen.queryByText("No record changed in this trial.")).toBeNull();
   });
 
@@ -724,7 +786,8 @@ describe("TrialChangesPanel", () => {
       },
       {
         code: "fault_unknown_action",
-        message: "A test condition names refunds.void, which this world has no action for.",
+        message:
+          "A test condition names refunds.void, which this world has no action for.",
         action: "refunds.void",
         on_call: 1,
         mode: "unavailable",
@@ -750,8 +813,102 @@ describe("TrialChangesPanel", () => {
       },
     ];
     render(<TrialChangesPanel trialState={{ notices }} />);
-    expect(screen.getByText("Worth knowing about this trial")).toBeInTheDocument();
+    expect(
+      screen.getByText("Worth knowing about this trial"),
+    ).toBeInTheDocument();
     for (const one of notices)
       expect(screen.getByText(one.message)).toBeInTheDocument();
+  });
+});
+
+describe("TrialChangesPanel shared records", () => {
+  const trial = (shared, listTruncated = false) => ({
+    state_changes: [],
+    duplicates: [],
+    decisions: [],
+    pre_run: [],
+    approvals: [],
+    usage_summary: [],
+    notices: [],
+    unreadable: false,
+    shared_records: shared,
+    shared_records_truncated: listTruncated,
+  });
+  const record = {
+    key: "order_id=1042",
+    argument: "order_id",
+    value: "1042",
+    actions: [
+      {
+        who: "worker:refund",
+        name: "Refund worker",
+        tool: "issue_refund",
+        outcome: "committed",
+        write: true,
+      },
+    ],
+    committed_writes: 1,
+    truncated: false,
+    actions_truncated: false,
+    truncation: null,
+  };
+
+  it("names each participant's call on a record two of them touched, and shows nothing when none did", () => {
+    const { unmount } = render(
+      <TrialChangesPanel trialState={trial([record])} />,
+    );
+    const section = screen.getByTestId("shared-records");
+    expect(section).toHaveTextContent("Refund worker");
+    expect(section).toHaveTextContent("issue_refund");
+    unmount();
+    render(<TrialChangesPanel trialState={trial([])} />);
+    expect(screen.queryByTestId("shared-records")).toBeNull();
+  });
+
+  it("says only a record's calls were cut when only its actions were, and more records only when the list was", () => {
+    const cut = {
+      ...record,
+      truncated: true,
+      actions_truncated: true,
+      truncation: "actions",
+    };
+    const { unmount } = render(<TrialChangesPanel trialState={trial([cut])} />);
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.sharedRecordCut.actions),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(TRIAL_CHANGES_COPY.sharedTruncated)).toBeNull();
+    unmount();
+    render(
+      <TrialChangesPanel
+        trialState={trial(
+          [{ ...record, truncated: true, truncation: "records" }],
+          true,
+        )}
+      />,
+    );
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.sharedTruncated),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(TRIAL_CHANGES_COPY.sharedRecordCut.actions),
+    ).toBeNull();
+  });
+
+  it("says more records or calls may be missing when the API does not know which bound cut a record", () => {
+    render(
+      <TrialChangesPanel
+        trialState={trial([
+          {
+            ...record,
+            truncated: true,
+            actions_truncated: null,
+            truncation: "unknown",
+          },
+        ])}
+      />,
+    );
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.sharedRecordCut.unknown),
+    ).toBeInTheDocument();
   });
 });

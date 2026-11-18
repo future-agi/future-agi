@@ -105,6 +105,7 @@ from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
 )
+from simulate.types import is_worker_subject
 from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
 from tracer.services.clickhouse.client import CHError
 
@@ -340,6 +341,12 @@ def check_run_status(
     it, when that is not the run's own: a retry reads the runs its failed fix finished,
     and its request and budget are what its engine works to."""
     reader = reader or run.fix_run
+    if reader is None:
+        raise HostedHarnessError(
+            "fix_check_run_unknown",
+            "this run is not an epoch's check run",
+            status_code=404,
+        )
     executions = list(
         HostedHarnessExecution.no_workspace_objects.filter(job=run)
         .select_related("source_scenario", "call_execution")
@@ -445,7 +452,12 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
     Not applicable and inconclusive sub-goals are left out."""
-    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
+    checks = [
+        one
+        for one in receipt.get("sub_goals") or []
+        if isinstance(one, Mapping) and not is_worker_subject(one.get("subject"))
+    ]
     results = {
         str(one["name"]): sub_goal_result(dict(one))
         for one in checks
@@ -512,9 +524,10 @@ def _record(
 
 
 def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
-    if run.test_execution_id is None:
+    execution = run.test_execution
+    if execution is None:
         return {}
-    return run_usage(run.test_execution) or {}
+    return run_usage(execution) or {}
 
 
 def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
@@ -870,7 +883,7 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         output_field=money,
     )
 
-    def adopted_executions(runs: QuerySet[HostedHarnessJob]) -> Coalesce:
+    def adopted_executions(runs: QuerySet[HostedHarnessJob, Any]) -> Coalesce:
         return Coalesce(
             Subquery(runs.annotate(total=Sum("scenario_count")).values("total")), 0
         )
@@ -898,11 +911,13 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
 def committed_usd(fix_run: AgentFixRun) -> Decimal:
     """What the fix's limit is held against: its spend, and a worst case for each check run
     whose usage is not sealed yet."""
-    return (
-        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))
+    # committed_usd is with_spend's annotation, which the Django plugin cannot see.
+    committed: Decimal = (
+        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))  # type: ignore[misc]
         .values_list("committed_usd", flat=True)
         .get()
     )
+    return committed
 
 
 def run_number(path: str = "") -> Subquery:
@@ -1231,13 +1246,13 @@ def graded_check_runs(
     """The base version's baseline repeats and the winner's final check: the runs a fix's
     evals grade once it has a winner, and all they compare. A retry's baselines include the
     ones it read again from the failed fix, and only those: what its limit holds."""
-    if not hasattr(fix_run, "check_run_list"):
-        fix_run.check_run_list = list(
-            HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run)
-        )
+    check_runs: list[HostedHarnessJob] | None = getattr(fix_run, "check_run_list", None)
+    if check_runs is None:
+        check_runs = list(HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run))
+        fix_run.check_run_list = check_runs
     own = [
         run
-        for run in fix_run.check_run_list
+        for run in check_runs
         if run.agent_version_id == fix_run.base_agent_version_id
     ]
     adopted = HostedHarnessJob.no_workspace_objects.filter(
@@ -1245,11 +1260,7 @@ def graded_check_runs(
     ).order_by("created_at")
     base = _each_repeat([*own, *adopted], _BASELINE_LABEL)
     final = _each_repeat(
-        (
-            run
-            for run in fix_run.check_run_list
-            if run.agent_version_id == winner.agent_version_id
-        ),
+        (run for run in check_runs if run.agent_version_id == winner.agent_version_id),
         _FINALIST_LABEL,
     )
     return base, final
@@ -1425,6 +1436,10 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     from simulate.services.harness_versioning import drafts
 
     environment = source_run.environment
+    if environment is None:
+        return HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
     if source_run.suite_version_id is None or source_run.environment_version_id is None:
         return HostedHarnessError(
             "fix_variations_unpinned",

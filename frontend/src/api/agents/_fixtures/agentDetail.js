@@ -104,9 +104,16 @@ export const ENVIRONMENT_RUN = {
   outcome_errored: 0,
   outcome_no_score: 0,
   outcome_skipped: 0,
+  outcome_cancelled: 1,
   outcome_status: "failed",
   pass_rate: 30,
   scored: 10,
+  // The run's trial pass as its header and the environment's runs list read it: one trial errored.
+  trials_passed: 3,
+  trials_evaluated: 9,
+  trials_inconclusive: 1,
+  trials_excluded_not_comparable: 0,
+  trial_pass_rate: 33.33,
   started_at: "2026-10-14T11:58:53.368130+00:00",
   completed_at: "2026-10-14T12:27:36.569945+00:00",
 };
@@ -126,6 +133,11 @@ export const SIMULATE_RUN = {
   outcome_status: "running",
   pass_rate: null,
   scored: 0,
+  trials_passed: 0,
+  trials_evaluated: 0,
+  trials_inconclusive: 0,
+  trials_excluded_not_comparable: 0,
+  trial_pass_rate: null,
   started_at: "2026-10-16T10:24:09.452801+00:00",
   completed_at: null,
 };

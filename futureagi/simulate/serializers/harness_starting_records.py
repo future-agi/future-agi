@@ -14,6 +14,10 @@ class HarnessSeededRowChoiceSerializer(serializers.Serializer):
     summary = serializers.CharField(
         help_text=f"The row in one line: its key, then up to {SUMMARY_VALUES} of its other values."
     )
+    note = serializers.CharField(
+        allow_null=True,
+        help_text="Another scenario of the suite that already starts from this row; null when none does.",
+    )
 
 
 class HarnessStartingRecordSerializer(serializers.Serializer):
@@ -102,6 +106,13 @@ class HarnessStartingRecordsSerializer(serializers.Serializer):
     rework = HarnessStartingRecordReworkSerializer(
         allow_null=True,
         help_text="The latest request to start this scenario from another record, or null if none was made.",
+    )
+    can_rework = serializers.BooleanField(
+        help_text="Whether another record can be asked for now."
+    )
+    rework_blocked_reason = serializers.CharField(
+        allow_null=True,
+        help_text="Why another record can't be asked for now; null when it can.",
     )
 
 

@@ -516,6 +516,7 @@ def test_run_results_filter_and_count_calls_by_each_call_actor_planned_for_them(
             "count": 3,
             "label": "Rowan",
             "delivered": 1,
+            "acted": 0,
             "dropped": 1,
             "not_triggered": 1,
         },
@@ -524,6 +525,7 @@ def test_run_results_filter_and_count_calls_by_each_call_actor_planned_for_them(
             "count": 2,
             "label": "Simulated user only",
             "delivered": 0,
+            "acted": 0,
             "dropped": 0,
             "not_triggered": 0,
         },
@@ -800,8 +802,14 @@ def test_the_call_detail_serves_who_each_call_actor_is_and_an_older_call_what_it
             "role": "roommate",
             "channel": "audio_mix",
             "delivery": "dropped",
+            "delivery_label": "Due, but neither spoke nor acted",
         },
-        {"id": "kid", "name": "Sam", "delivery": "not_drawn"},
+        {
+            "id": "kid",
+            "name": "Sam",
+            "delivery": "not_drawn",
+            "delivery_label": "Not drawn for this call",
+        },
     ]
     assert _call_call_actors({"harness_call_actors": {"summary": []}}) == []
     assert _call_call_actors(None) == []

@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
+import { TRIAL_CHANGES_COPY } from "../trialChanges.constants";
 
 const mocks = vi.hoisted(() => ({
   runTraces: vi.fn(() => ({ projectId: null, traces: [], isError: false })),
@@ -15,7 +16,10 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     useCallDetail: () => ({
       callDetail: mocks.callDetail,
       isLoading: mocks.loading,
+      error: mocks.detailError ?? null,
     }),
+    useHasWorkers: () => mocks.hasWorkers ?? false,
+    useCallWorkers: () => ({ data: undefined, isError: false }),
     useCallTraces: (...args) => mocks.runTraces(...args),
   };
 });
@@ -33,6 +37,20 @@ vi.mock("src/components/share-dialog", () => ({
       </button>
     </div>
   ),
+}));
+
+// The Participants panel asks for the transcript at a step, as the real panel's Show in transcript does.
+vi.mock("../CallWorkersPanel", () => ({
+  default: function WorkersStub({ onShowInTranscript }) {
+    return (
+      <button
+        type="button"
+        onClick={() => onShowInTranscript({ turn: 2, at: 12 })}
+      >
+        show step in transcript
+      </button>
+    );
+  },
 }));
 
 const { default: ChatCallDrawer } = await import("../ChatCallDrawer");
@@ -58,6 +76,28 @@ describe("ChatCallDrawer share", () => {
 
     await user.click(screen.getByRole("button", { name: "close share" }));
     expect(screen.queryByTestId("share-dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatCallDrawer outcome reason", () => {
+  it("says why a held trial was not graded, and nothing when there is no reason", () => {
+    const reason =
+      "Inconclusive, a problem of the scenario, not the agent: Rebuild the environment to enforce them.";
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "error", outcomeReason: reason }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "error" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
   });
 });
 
@@ -160,7 +200,12 @@ describe("ChatCallDrawer World state", () => {
 
   it("says why World state were not recorded for an in-process agent", async () => {
     mocks.callDetail = {
-      trial_state: { recorded: false, why: "in_process_tools" },
+      trial_state: {
+        recorded: false,
+        why: "in_process_tools",
+        why_label:
+          "World state is not recorded for this agent: its tools run inside it, where the test world cannot see them.",
+      },
     };
     render(
       <ChatCallDrawer
@@ -192,6 +237,44 @@ describe("ChatCallDrawer World state", () => {
     mocks.callDetail = null;
   });
 
+  it.each(["queued", "in_progress"])(
+    "says a %s call's World state shows once it ends, never that it was not recorded",
+    async (status) => {
+      mocks.callDetail = { trial_state: null };
+      render(
+        <ChatCallDrawer
+          task={{ id: `call-execution-${status}`, status }}
+          onClose={vi.fn()}
+        />,
+      );
+      await userEvent.click(screen.getByRole("tab", { name: "World state" }));
+      expect(
+        screen.getByText(TRIAL_CHANGES_COPY.collecting),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(TRIAL_CHANGES_COPY.notRecorded)).toBeNull();
+      mocks.callDetail = null;
+    },
+  );
+
+  it("says the call's World state could not be loaded when its detail fails, never that it was not recorded", async () => {
+    mocks.callDetail = null;
+    mocks.detailError = new Error("Request failed with status code 500");
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-13", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "World state" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      TRIAL_CHANGES_COPY.loadFailed,
+    );
+    expect(screen.queryByText(TRIAL_CHANGES_COPY.notRecorded)).toBeNull();
+    // Never the raw error.
+    expect(screen.queryByText(/status code 500/)).toBeNull();
+    mocks.detailError = null;
+  });
+
   it("says nothing about World state while the call is still loading", async () => {
     mocks.loading = true;
     render(
@@ -206,5 +289,164 @@ describe("ChatCallDrawer World state", () => {
     ).toBeNull();
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     mocks.loading = false;
+  });
+});
+
+describe("ChatCallDrawer, an earlier attempt", () => {
+  it("never reads an attempt picked on one call against the next call's detail", async () => {
+    const user = userEvent.setup();
+    mocks.callDetail = {
+      turns: [],
+      stats: {},
+      attemptNumber: 2,
+      earlierAttempts: [
+        {
+          attempt: "a1",
+          number: 1,
+          rerun_at: "2026-11-17T09:00:00+00:00",
+          kept: true,
+          trial_state: null,
+        },
+      ],
+    };
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Attempt" }));
+    await user.click(
+      screen.getByRole("option", { name: /Attempt 1, re-run at/ }),
+    );
+    await user.click(screen.getByRole("tab", { name: "World state" }));
+
+    // Next: call 2, which was never re-run.
+    mocks.callDetail = { turns: [], stats: {} };
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "call-2", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("combobox", { name: "Attempt" })).toBeNull();
+    mocks.callDetail = null;
+  });
+
+  it("opens Participants for an earlier attempt even when the latest attempt kept no record", async () => {
+    const user = userEvent.setup();
+    mocks.callDetail = {
+      turns: [],
+      stats: {},
+      attemptNumber: 2,
+      earlierAttempts: [
+        {
+          attempt: "a1",
+          number: 1,
+          rerun_at: "2026-11-17T09:00:00+00:00",
+          kept: true,
+          trial_state: null,
+        },
+      ],
+    };
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    // The latest attempt has no record: no Participants tab yet.
+    expect(screen.queryByRole("tab", { name: "Participants" })).toBeNull();
+    await user.click(screen.getByRole("combobox", { name: "Attempt" }));
+    await user.click(
+      screen.getByRole("option", { name: /Attempt 1, re-run at/ }),
+    );
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    expect(screen.getByRole("tab", { name: "Participants" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    mocks.callDetail = null;
+  });
+});
+
+describe("ChatCallDrawer Participants", () => {
+  it("Show in transcript from Participants opens the transcript on that turn", async () => {
+    const user = userEvent.setup();
+    Element.prototype.scrollIntoView = vi.fn();
+    mocks.hasWorkers = true;
+    mocks.callDetail = {
+      turns: [
+        { role: "customer", text: "First ask" },
+        { role: "agent", text: "First reply" },
+        { role: "customer", text: "Second ask" },
+      ],
+    };
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "c1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    await user.click(
+      screen.getByRole("button", { name: "show step in transcript" }),
+    );
+    expect(screen.getByRole("tab", { name: "Transcript" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText("Second ask").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "true");
+    // The next call's transcript opens unmarked.
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "c2", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(document.querySelector('[data-focused="true"]')).toBeNull();
+    mocks.hasWorkers = false;
+    mocks.callDetail = null;
+  });
+});
+
+describe("ChatCallDrawer step link", () => {
+  it("a link to a Participants step opens on Participants", () => {
+    mocks.hasWorkers = true;
+    window.history.pushState({}, "", "/?participantsStep=2");
+    render(
+      <ChatCallDrawer
+        task={{ id: "c1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Participants" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    window.history.pushState({}, "", "/");
+    mocks.hasWorkers = false;
+  });
+});
+
+describe("ChatCallDrawer trial picker", () => {
+  it("shows the scenario's trials in the header and opens the one picked", async () => {
+    const user = userEvent.setup();
+    const onPickTrial = vi.fn();
+    render(
+      <ChatCallDrawer
+        task={{ id: "c2", status: "failed" }}
+        trials={[
+          { id: "c1", trialIndex: 1, status: "passed" },
+          { id: "c2", trialIndex: 2, status: "failed" },
+        ]}
+        onPickTrial={onPickTrial}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Trial 1, Passed" }));
+    expect(onPickTrial).toHaveBeenCalledWith("c1");
   });
 });

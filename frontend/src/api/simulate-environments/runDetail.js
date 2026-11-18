@@ -1,6 +1,14 @@
 import { useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  simulateV3CallExecutionWorkers,
+  simulateV3TestExecutionTrialRoutes,
+} from "src/generated/api-contracts/api";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
@@ -10,6 +18,7 @@ import {
   runColor,
   runStateFor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import { TRIAL_UNDER_WAY } from "src/sections/simulate/environments/workspace/runs/detail/trialChanges.constants";
 import { fetchRunCalls, runSummaryKey } from "./runCalls";
 
 /**
@@ -228,6 +237,8 @@ export function useRunDetail(
       // The run readiness the run started under, and the cases it held back.
       capabilitySnapshot: execution.capability_snapshot ?? null,
       readinessSelection: execution.readiness_selection ?? null,
+      // Said by the server when the run replayed a build without its environment's actors.
+      buildNotice: execution.build_notice ?? null,
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
       // How far an interrupted run got and whether it can resume; null when the
@@ -287,7 +298,7 @@ export function useRunDetail(
  * @property {string} scenario     Scenario / task name.
  * @property {Array<{ name: string, passed: ?boolean }>} subGoalResults
  * @property {?string} persona     Simulated-user persona label.
- * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"|"no_score"} status
+ * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"cancelled"|"inconclusive"|"no_score"} status
  * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
  * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.
@@ -444,6 +455,7 @@ export function functionCallTranscriptRows(calls = []) {
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
       tool_calls: actor ? null : [call],
+      tool_label: actor ? null : call.tool_label,
     };
   });
 }
@@ -602,16 +614,12 @@ export function mapCallDetail(raw) {
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
+    toolLabel: t.tool_label ?? null,
   }));
 
   const words = turns.reduce(
     (a, s) =>
       a + (s.text ? s.text.trim().split(/\s+/).filter(Boolean).length : 0),
-    0,
-  );
-  const toolCalls = turns.reduce(
-    (count, turn) =>
-      count + (Array.isArray(turn.toolCalls) ? turn.toolCalls.length : 0),
     0,
   );
 
@@ -638,6 +646,9 @@ export function mapCallDetail(raw) {
     persona: raw.persona ?? null,
     // Absent without actors or faults.
     trial_state: raw.trial_state ?? null,
+    // The attempts a rerun kept, latest first, and which attempt this call is: both counted by the server.
+    earlierAttempts: raw.earlier_attempts,
+    attemptNumber: raw.attempt_number,
     // Who took part in the call, as the server says, and whether a customer did.
     participants: raw.participants,
     hasCustomer: raw.has_customer,
@@ -651,7 +662,8 @@ export function mapCallDetail(raw) {
       // No backend field for either — GAP, MockBadged in the drawer.
       silenceS: null,
       ttfwMs: null,
-      toolCalls,
+      // Counted by the API, which leaves out hand-offs to other agents.
+      toolCalls: raw.tool_call_count,
     },
     tokens: raw.total_tokens ?? null,
     cost: raw.cost_cents != null ? raw.cost_cents / 100 : null,
@@ -705,6 +717,118 @@ const traceRow = (raw) => ({
   status: raw.status ?? null,
   latencyMs: raw.latency_ms ?? null,
 });
+
+/** A scenario's trials in one run, lined up step by step by who asked whom (or who called which tool). */
+export function useTrialRoutes(
+  testExecutionId,
+  scenarioKey,
+  toolCalls = false,
+) {
+  return useQuery({
+    queryKey: [
+      "simulation-trial-routes-v3",
+      testExecutionId,
+      scenarioKey,
+      toolCalls,
+    ],
+    queryFn: async () => {
+      const response = await simulateV3TestExecutionTrialRoutes(
+        testExecutionId,
+        { scenario_key: scenarioKey, tool_calls: toolCalls },
+      );
+      return response.data;
+    },
+    enabled: !!testExecutionId && !!scenarioKey,
+    // Switching tool-call columns keeps the table on screen until the new one arrives.
+    placeholderData: keepPreviousData,
+    // The strip says nothing when it can't read them; a call drawer must not toast about it.
+    meta: { errorHandled: true },
+  });
+}
+
+// The shortest wait before reading a pending worker record again.
+export const READ_AGAIN_MIN_MS = 1000;
+
+/**
+ * How long until a pending worker record is read again; false when none is due. Never 0, which turns polling off:
+ * a `next_read_at` already past (a late answer, a clock ahead of the server's) or unreadable still reads again.
+ */
+export const readAgainDelay = (at, now = Date.now()) => {
+  if (!at) return false;
+  const wait = Date.parse(at) - now;
+  return Number.isFinite(wait)
+    ? Math.max(wait, READ_AGAIN_MIN_MS)
+    : READ_AGAIN_MIN_MS;
+};
+
+// A multi-agent call whose record is still being collected (202): the tab stays and says so until it lands.
+export const COLLECTING_WORKERS = Object.freeze({ state: "collecting" });
+
+/**
+ * Which of a multi-agent app's workers did what in one call: COLLECTING_WORKERS while its record is still being
+ * collected (202) for a version that declares participants, null when it has none (204) or is single-agent.
+ */
+export function useCallWorkers(
+  callExecutionId,
+  callStatus = null,
+  attempt = null,
+) {
+  return useQuery({
+    queryKey: [
+      "simulation-call-workers-v3",
+      callExecutionId,
+      callStatus,
+      attempt,
+    ],
+    queryFn: async () => {
+      // An earlier attempt's record, as the rerun kept it, when one is picked.
+      const response = await simulateV3CallExecutionWorkers(
+        callExecutionId,
+        attempt ? { attempt } : undefined,
+      );
+      const record = response.status === 200 ? response.data : null;
+      return {
+        record,
+        // The API says when a read still due may change this answer; the tab reads again once, then.
+        readAgainAt: response.data?.pending ? response.data.next_read_at : null,
+        // A single-agent app's call is read too: only a declared participant makes the wait worth showing.
+        participantsDeclared: response.data?.participants_declared === true,
+      };
+    },
+    select: (read) =>
+      read.record ??
+      (read.readAgainAt && read.participantsDeclared
+        ? COLLECTING_WORKERS
+        : null),
+    // A status change re-reads the same call: its record stays shown meanwhile, never another call's or attempt's.
+    // A call that is under way again after it ended was rerun in place (same id, no attempt id): a new attempt.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === callExecutionId &&
+      previousQuery?.queryKey[3] === attempt &&
+      !(
+        TRIAL_UNDER_WAY.has(callStatus) &&
+        !TRIAL_UNDER_WAY.has(previousQuery?.queryKey[2])
+      )
+        ? previous
+        : undefined,
+    enabled: !!callExecutionId,
+    retry: false,
+    // The panel says so inline; this tab must not toast about a call the user isn't looking at.
+    meta: { errorHandled: true },
+    refetchInterval: (query) =>
+      query.state.error ? false : readAgainDelay(query.state.data?.readAgainAt),
+  });
+}
+
+/**
+ * Whether a call has workers to show: false when it has no record (no Participants tab), undefined while unread.
+ * A record still being collected and a failed read both show the tab, so the panel can say which.
+ */
+export function useHasWorkers(callExecutionId, callStatus = null) {
+  const { data, isError } = useCallWorkers(callExecutionId, callStatus);
+  if (isError) return true;
+  return data === undefined ? undefined : data !== null;
+}
 
 export function useCallTraces(executionId, callExecutionId) {
   const query = useQuery({

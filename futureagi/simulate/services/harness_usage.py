@@ -547,7 +547,7 @@ def bill_builder_turn(conversation_id: str, payload: dict) -> None:
             HostedHarnessConversationMessage.no_workspace_objects.select_related(
                 "conversation__job"
             )
-            .filter(id=command_id, conversation_id=conversation_id)
+            .filter(id=command_id, conversation_id=UUID(conversation_id))
             .first()
         )
         if command is None or nudge_for_command(command) is not None:
@@ -573,8 +573,9 @@ def bill_builder_turn(conversation_id: str, payload: dict) -> None:
                 turn.report = _builder_turn_report(turn)
                 if turn.report is not None:
                     turn.save(update_fields=["report", "updated_at"])
-            if turn.report is not None:
-                transaction.on_commit(lambda: emit_builder_turn_usage(turn))
+            report = turn.report
+            if report is not None:
+                transaction.on_commit(lambda: emit_builder_turn_usage(turn, report))
     except Exception:  # noqa: BLE001 - billing must never fail the guest's event delivery
         logger.exception(
             "builder turn usage could not be billed conversation=%s", conversation_id
@@ -624,10 +625,10 @@ def _builder_turn_report(turn: HostedHarnessBuilderTurnUsage) -> dict | None:
     }
 
 
-def emit_builder_turn_usage(turn: HostedHarnessBuilderTurnUsage) -> None:
+def emit_builder_turn_usage(turn: HostedHarnessBuilderTurnUsage, report: dict) -> None:
     _emit_authoring_records(
         turn.job,
-        turn.report,
+        report,
         key=UUID(str(turn.command_message_id)),
         timestamp=turn.created_at,
         identity={

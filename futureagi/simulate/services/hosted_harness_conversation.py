@@ -1125,6 +1125,12 @@ def _ingest_event(
     _project_event(conversation, event)
 
 
+# Why an answer was not taken: the builder asked its question again, to be answered with one of its options.
+ASKED_AGAIN = (
+    "Not taken as the answer: the builder asked again. Answer with one of the options."
+)
+
+
 def _project_event(
     conversation: HostedHarnessConversation, event: dict[str, Any]
 ) -> None:
@@ -1137,6 +1143,10 @@ def _project_event(
         conversation.active_invocation_id = event["invocation_id"]
     if kind == "turn_started":
         conversation.state = HostedHarnessConversation.State.RESPONDING
+        if not payload.get("resumed"):
+            # A fresh turn means the turn that asked has ended, so its question can no longer be answered; a resumed
+            # turn asks it again itself.
+            conversation.blocking_input = None
         command_id = payload.get("command_message_id")
         if command_id:
             conversation.messages.filter(
@@ -1211,6 +1221,16 @@ def _project_event(
         ).exists():
             # Asked again after a restart, but already answered.
             return
+        # An answer still queued for another question can't be taken any more: that question is closed and the builder
+        # asks this one in its place, so the person answers this one. The answer says why it stopped.
+        for stale in conversation.messages.filter(
+            role=HostedHarnessConversationMessage.Role.USER,
+            state=HostedHarnessConversationMessage.State.QUEUED,
+            reply_to__isnull=False,
+        ).exclude(reply_to=message_id):
+            stale.state = HostedHarnessConversationMessage.State.FAILED
+            stale.payload = {**(stale.payload or {}), "failure_reason": ASKED_AGAIN}
+            stale.save(update_fields=["state", "payload", "updated_at"])
         conversation.state = HostedHarnessConversation.State.WAITING_FOR_USER
         conversation.blocking_input = {
             "message_id": str(message_id),
@@ -2019,12 +2039,12 @@ def promote_conversation_checkpoint(
     archive = _authoring_archive(checkpoint)
     from simulate.services import agent_fix_variations, evidence_drafts
 
-    if evidence_drafts.is_evidence_command(command):
+    if command is not None and evidence_drafts.is_evidence_command(command):
         # An evidence turn read untrusted production text: its saves never reach
         # the environment; its scenarios become proposals on the import.
         evidence_drafts.land(environment, conversation, archive, command)
         return environment
-    if agent_fix_variations.is_fix_command(command):
+    if command is not None and agent_fix_variations.is_fix_command(command):
         # A fix's variations land in the fix's own suite version, never in the
         # environment's drafts or defaults.
         agent_fix_variations.land(environment, conversation, archive, command)
@@ -2040,7 +2060,7 @@ def promote_conversation_checkpoint(
     require_checkpoint_scenarios(suite)
     from simulate.services.harness_starting_record_rework import refuse_invented
 
-    refuse_invented(environment, archive)
+    refuse_invented(environment, archive, command)
 
     observed_revision = environment_authoring_revision(environment)
     stale_revision = None

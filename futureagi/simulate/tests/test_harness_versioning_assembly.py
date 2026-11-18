@@ -750,8 +750,9 @@ class TestCast:
         environment = self._uncast(user, workspace, storage, settings, "asm-cast-race")
         seen_by_one, seen_by_other = _row(environment), _row(environment)
 
-        assert assembly._recertify(seen_by_one, "sha256:cast") is True
-        assert assembly._recertify(seen_by_other, "sha256:cast") is False
+        one, other = _run(environment, key="r1"), _run(environment, key="r2")
+        assert assembly._recertify(seen_by_one, "sha256:cast", one) is True
+        assert assembly._recertify(seen_by_other, "sha256:cast", other) is False
 
     def test_with_certifying_off_a_bundle_sealed_before_the_cast_is_replayed_and_kept(
         self, user, workspace, storage
@@ -764,8 +765,11 @@ class TestCast:
             body=_sealed_authoring(**{"actors.json": CAST}),
         )
 
-        assert assembly.prepare_launch(_run(environment)).hit
+        run = _run(environment)
+        assert assembly.prepare_launch(run).hit
         assert _row(environment).state == "ready"
+        # Replayed without the environment's actors: said on the run.
+        assert run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
 
     def test_a_bundle_sealed_with_the_cast_is_opened_once(
         self, user, workspace, storage, settings
@@ -916,6 +920,155 @@ class TestLaunchMiss:
             gateway.client.sandbox.fs.uploads["/work/authoring.tar.gz"]
             == (storage.objects[default_pair])
         )
+
+    @pytest.mark.parametrize(
+        "sealed, outcome",
+        [({}, "miss"), ({"environment-bundle/actors.json": CAST}, "miss_fallback")],
+        ids=["sealed before the cast", "sealed with the cast"],
+    )
+    def test_a_default_pair_miss_whose_seal_predates_the_cast_certifies_with_it(
+        self, sealed, outcome, user, workspace, storage, gateway, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-fallback-cast-{outcome}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST, **sealed}),
+        )
+        _uncache(environment)
+        run = _run(environment)
+
+        with capture_logs() as logs:
+            _launch(gateway, run)
+
+        outcomes = [one["outcome"] for one in logs if "outcome" in one]
+        assert outcome in outcomes
+        # Certified in the run's own sandbox, with the cast, instead of replaying a seal without it.
+        assert ("--certify-only" in _command(gateway)) == (outcome == "miss")
+
+    def _castless(self, user, workspace, storage, settings, key):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            key,
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        _uncache(environment)
+        return environment
+
+    def test_a_certify_for_the_cast_that_failed_is_claimed_again_by_the_next_launch(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._castless(
+            user, workspace, storage, settings, "asm-cast-retry"
+        )
+        first = _run(environment, key="r1")
+        assert assembly.prepare_launch(first).outcome == "miss"
+
+        assembly.mark_failed(first, "the certify did not pass")
+        assert _row(environment).certificate is None
+
+        assert assembly.prepare_launch(_run(environment, key="r2")).outcome == "miss"
+
+    def test_a_launch_that_replays_a_build_without_the_cast_says_so_on_the_run(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._castless(
+            user, workspace, storage, settings, "asm-cast-lost"
+        )
+        certifying = _run(environment, key="r0")
+        cast = assembly._cast(certifying.environment_version)
+        # Another launch is certifying this row for the cast: this one replays the build it has.
+        assert assembly._claim_cast(_row(environment), cast, certifying)
+        run = _run(environment, key="r1")
+
+        assert assembly.prepare_launch(run) is None
+        run.refresh_from_db()
+        assert run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
+
+    @pytest.mark.parametrize(
+        "cached", [True, False], ids=["cached bundle", "default-pair miss"]
+    )
+    def test_with_certifying_off_a_build_without_the_cast_is_read_once_per_cast(
+        self, cached, user, workspace, storage, settings, monkeypatch
+    ):
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-cast-read-once-{cached}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        if not cached:
+            _uncache(environment)
+        reads = []
+        real_get = archives.get_archive
+        monkeypatch.setattr(
+            archives, "get_archive", lambda key: (reads.append(key), real_get(key))[1]
+        )
+
+        first, second = _run(environment, key="r1"), _run(environment, key="r2")
+        checked = (
+            _row(environment).object_key
+            if cached
+            else first.payload["metadata"]["authoring_object_key"]
+        )
+        read_by = []
+        for run in (first, second):
+            before = reads.count(checked)
+            assembly.prepare_launch(run)
+            read_by.append(reads.count(checked) - before)
+            run.refresh_from_db()
+            assert (
+                run.payload["metadata"]["assembly"]["notice"] == assembly.WITHOUT_ACTORS
+            )
+
+        # The first launch reads it (a cached one also once more, to compose the run's archive); the next never does.
+        assert read_by[0] >= 1 and read_by[1] == 0
+
+    def test_of_two_misses_on_one_row_only_one_certifies_it_for_the_cast(
+        self, user, workspace, storage, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            "asm-fallback-cast-race",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+        _uncache(environment)
+        seen_by_one, seen_by_other = _row(environment), _row(environment)
+        one, other = _run(environment, key="r1"), _run(environment, key="r2")
+
+        assert assembly._claim_cast(seen_by_one, "sha256:cast", one) is True
+        assert assembly._claim_cast(seen_by_other, "sha256:cast", other) is False
+
+    @pytest.mark.parametrize("ended", ["failed", "canceled"])
+    def test_a_certify_for_the_cast_whose_run_ended_without_marking_the_row_is_claimed_again(
+        self, ended, user, workspace, storage, settings
+    ):
+        """The certifying run failed on the platform's side (or was canceled), so nothing marked the row failed: its
+        claim lapses with it, and the next default launch certifies again instead of replaying the build without the
+        environment's actors."""
+        environment = self._castless(
+            user, workspace, storage, settings, f"asm-cast-ended-{ended}"
+        )
+        first = _run(environment, key="r1")
+        assert assembly.prepare_launch(first).outcome == "miss"
+        assert _row(environment).certificate["claimed_by"] == str(first.id)
+        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(state=ended)
+
+        later = _run(environment, key="r2")
+
+        assert assembly.prepare_launch(later).outcome == "miss"
+        assert _row(environment).certificate["claimed_by"] == str(later.id)
+        later.refresh_from_db()
+        assert "notice" not in later.payload["metadata"]["assembly"]
 
     def test_certifying_is_off_so_other_pins_cannot_run(self, user, workspace, storage):
         environment = _environment(user, workspace, "asm-fallback-pinned", storage)

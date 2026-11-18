@@ -4,9 +4,9 @@ actor written elsewhere can still be edited."""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
+from simulate.services.harness_actor_labels import choice_labels
 from simulate.services.harness_actor_rules import (
     ACTORS_FILE,
     ActorRecord,
@@ -20,6 +20,15 @@ from simulate.services.harness_actor_rules import (
 )
 from simulate.services.harness_actor_validation import Problem, problem
 from simulate.services.harness_versioning.versions import suite_documents
+
+
+def _lists_choices(schema: object) -> bool:
+    """Whether a JSON schema names its allowed values (`enum`) anywhere in it: as a key, never a word in its text."""
+    if isinstance(schema, dict):
+        return "enum" in schema or any(_lists_choices(one) for one in schema.values())
+    if isinstance(schema, list):
+        return any(_lists_choices(one) for one in schema)
+    return False
 
 
 def _sharing_the_caller(
@@ -69,13 +78,10 @@ def new_choice_problems(
         reaches = (rules.get("channel_modalities") or {}).get(str(channel))
         if channel != before.get("channel"):
             # A schema that lists the channels already names an unknown one.
-            if (
-                channels
-                and channel not in channels
-                and "enum" not in json.dumps(listed)
-            ):
+            if channels and channel not in channels and not _lists_choices(listed):
                 problems.append(
-                    f"{actor_id}'s channel {channel!r} is not one of: {', '.join(channels)}."
+                    f"{actor_id}'s channel {channel!r} is not one of: "
+                    f"{choice_labels(list(channels)) or ', '.join(channels)}."
                 )
             if modality and reaches is not None and modality not in reaches:
                 problems.append(

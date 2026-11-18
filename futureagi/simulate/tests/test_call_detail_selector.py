@@ -280,6 +280,24 @@ def test_commits_with_no_record_change_say_the_agent_keeps_its_records_outside_t
 
     assert [one["code"] for one in outside["notices"]] == ["changed_outside_world"]
     assert changed["notices"] == [] and nothing["notices"] == []
+    # A worker's committed write with no record changed says so too, never a bare "No record changed".
+    by_worker = trial_state(
+        _call(
+            {
+                "state_changes": [
+                    {**committed, "committed": 0},
+                    {
+                        "who": "worker:refunds",
+                        "name": "Refunds worker",
+                        "committed": 1,
+                        "committed_actions": ["issue_refund"],
+                    },
+                ],
+                "records": {"changes": []},
+            }
+        )
+    )
+    assert [one["code"] for one in by_worker["notices"]] == ["changed_outside_world"]
 
 
 def test_the_agent_s_participant_heading_reads_as_a_heading_and_an_actor_keeps_its_own_name():
@@ -303,3 +321,107 @@ def test_the_agent_s_participant_heading_reads_as_a_heading_and_an_actor_keeps_i
 def test_a_world_state_that_is_not_an_object_reads_as_not_recorded():
     assert trial_state(_call(["not", "an", "object"])) is None
     assert trial_state(SimpleNamespace(id="c1", call_metadata=None)) is None
+
+
+def test_an_actor_that_acted_in_the_world_without_a_line_is_served_as_acted_not_dropped():
+    from simulate.selectors.call_detail import call_actors
+
+    metadata = {
+        "harness_call_actors": {
+            "resolved": [
+                {"id": "coworker", "name": "Jordan"},
+                {"id": "manager", "name": "Alex"},
+            ],
+            "summary": [
+                {"actor": "coworker", "triggered": True, "delivered": 0, "acted": 1},
+                {"actor": "manager", "triggered": True, "delivered": 0, "acted": 0},
+            ],
+        }
+    }
+
+    jordan, alex = call_actors(metadata)
+
+    assert (jordan["delivery"], jordan["delivery_label"]) == (
+        "acted",
+        "Acted in the world, said no line",
+    )
+    assert alex["delivery"] == "dropped"
+
+
+def test_a_trial_on_a_seal_built_before_the_world_door_says_its_world_actions_are_not_known():
+    pre_door = trial_state(_call({"recorded": False, "why": "sealed_without_door"}))
+    in_process = trial_state(_call({"recorded": False, "why": "in_process_tools"}))
+
+    assert pre_door["recorded"] is False
+    assert pre_door["why_label"].startswith(
+        "This environment was built before world actions were recorded"
+    )
+    assert "Rebuild" in pre_door["why_label"]
+    assert "attempted" not in pre_door["why_label"]
+    assert in_process["why_label"].startswith(
+        "World state is not recorded for this agent"
+    )
+
+
+# A trial stored before the platform read pre-door seals: the agent's counts are zeros while its 8 calls were recorded.
+OLD_PRE_DOOR_RECORD = {
+    "start": {"state": "seeded", "tables": [], "against": "sealed_seed"},
+    "state_changes": [
+        {
+            "who": "agent",
+            "name": "the agent",
+            "read": 0,
+            "faulted": 0,
+            "refused": 0,
+            "attempted": 0,
+            "committed": 0,
+            "duplicate": 0,
+            "no_change": True,
+            "read_actions": [],
+            "committed_actions": [],
+        }
+    ],
+    "records": {"changes": [], "skipped": [], "truncated": 0},
+}
+
+
+def test_a_stored_trial_whose_agent_calls_never_reached_the_world_reads_not_known_not_zero():
+    calls = [{"name": "find_items", "arguments": {"query": "kayak"}}] * 8
+
+    shown = trial_state(_call(OLD_PRE_DOOR_RECORD), calls=calls)
+
+    assert (shown["recorded"], shown["why"]) == (False, "calls_not_seen")
+    assert "not known" in shown["why_label"] and "attempted" not in shown["why_label"]
+
+
+def test_a_stored_trial_with_no_tool_calls_keeps_its_counts():
+    shown = trial_state(_call(OLD_PRE_DOOR_RECORD), calls=[])
+
+    assert "recorded" not in shown
+    assert shown["state_changes"][0]["attempted"] == 0
+
+
+def test_a_new_door_trial_whose_agent_called_only_its_own_tools_keeps_no_change():
+    # On an environment with a door, a tool that runs inside the agent (prepare_cancellation) never reaches the world.
+    from simulate.services.hosted_harness_ingestion import _world_change_fields
+
+    stamped = {**OLD_PRE_DOOR_RECORD, **_world_change_fields({"door": True})}
+    calls = [{"name": "prepare_cancellation", "arguments": {}}]
+
+    shown = trial_state(_call(stamped), calls=calls)
+
+    assert "recorded" not in shown
+    assert shown["state_changes"][0]["no_change"] is True
+
+
+def test_a_new_trial_on_a_seal_without_a_door_reads_built_before_world_actions_were_recorded():
+    calls = [{"name": "find_items", "arguments": {"query": "kayak"}}] * 8
+
+    shown = trial_state(
+        _call({"recorded": False, "why": "sealed_without_door"}), calls=calls
+    )
+
+    assert (shown["recorded"], shown["why"]) == (False, "sealed_without_door")
+    assert shown["why_label"].startswith(
+        "This environment was built before world actions were recorded"
+    )

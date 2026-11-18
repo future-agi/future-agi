@@ -149,6 +149,31 @@ export default function ActorRow({
           >
             {summary(actor, loudChannels)}
           </Typography>
+          {actor.arrival_overrides?.length ? (
+            <CustomTooltip
+              show
+              size="small"
+              arrow
+              title={
+                <Box component="span" sx={{ whiteSpace: "pre-line" }}>
+                  {actor.arrival_overrides
+                    .map((one) => `${one.scenario}: ${one.when_label}`)
+                    .join("\n")}
+                </Box>
+              }
+            >
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  textDecoration: "underline dotted",
+                  ...ONE_LINE,
+                }}
+              >
+                {C.comesInDifferently(actor.arrival_overrides.length)}
+              </Typography>
+            </CustomTooltip>
+          ) : null}
         </Box>
         <Stack
           direction="row"

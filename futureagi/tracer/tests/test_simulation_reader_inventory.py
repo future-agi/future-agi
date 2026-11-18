@@ -2118,7 +2118,12 @@ _RUN_SCOPE_CALLERS = frozenset(
     }
 )
 _RUN_TRACES_CALLERS = frozenset(
-    {"simulate/services/run_traces_v3.py", "simulate/views/run_results_v3.py"}
+    {
+        "simulate/services/run_traces_v3.py",
+        "simulate/views/run_results_v3.py",
+        # The worker record reads the traces of the one call it records, at most MAX_TRACES of them.
+        "simulate/services/harness_workers.py",
+    }
 )
 # A fix reads its own check runs' and its source run's model calls.
 _RUN_USAGE_CALLERS = frozenset(

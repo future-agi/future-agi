@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "src/utils/test-utils";
+import { format } from "../../detail/analytics/DashboardCharts";
 
 vi.mock("../../StopRunControl", () => ({ default: () => null }));
 
@@ -27,5 +28,16 @@ describe("SummaryTable Pass column", () => {
     expect(passCell("Run 3")).toHaveTextContent("60%");
     expect(passCell("Run 2")).toHaveTextContent(STATUS_META.no_score.label);
     expect(passCell("Run 1")).toHaveTextContent("-");
+  });
+
+  it("rounds a rate as the run's analytics does, so both pages read the same", () => {
+    render(
+      <SummaryTable
+        evals={[]}
+        rows={[{ id: "a", label: "Run 3", status: "failed", passRate: 66.67 }]}
+      />,
+    );
+    expect(passCell("Run 3")).toHaveTextContent(format(66.67, "percent"));
+    expect(passCell("Run 3")).not.toHaveTextContent("66.67");
   });
 });

@@ -1,8 +1,18 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { render } from "src/utils/test-utils";
 import { scenarioFromApi } from "src/api/simulate-environments/scenarios";
 import ScenarioEditor from "../ScenarioEditor";
+import {
+  focusBuilderChat,
+  subscribeBuilderChatFocus,
+} from "../../../buildEnvironment/console/builderChatFocusBus";
 
 const ROW_API = {
   id: "s1",
@@ -53,7 +63,11 @@ const target = (tool, action, reachable, modes) => ({
 
 const ENV = {
   faultTargets: [
-    target("apply_discount", "crm.apply_discount", true, [BEFORE, AFTER, ERROR]),
+    target("apply_discount", "crm.apply_discount", true, [
+      BEFORE,
+      AFTER,
+      ERROR,
+    ]),
     target("lookup_order", "orders.lookup", true, [BEFORE, ERROR]),
     target("local_tool", "local_tool", false, []),
   ],
@@ -90,6 +104,46 @@ const pickTool = (name) => {
   );
   fireEvent.click(screen.getByRole("option", { name }));
 };
+
+describe("ScenarioEditor and the builder chat", () => {
+  it("steps aside when the builder chat is asked to show a message, so the chat can be used", () => {
+    const { onClose } = openEditor();
+
+    focusBuilderChat("ask-1");
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks before dropping unsaved edits for the chat, and stays when the person keeps them", async () => {
+    const { onClose } = openEditor();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    pickTool("apply_discount");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Add a test condition" }).at(-1),
+    );
+
+    act(() => focusBuilderChat("ask-1"));
+
+    expect(await screen.findByText("Discard changes?")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Discard changes?")).toBeNull(),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+
+    const shown = [];
+    const stop = subscribeBuilderChatFocus((id) => shown.push(id));
+    act(() => focusBuilderChat("ask-1"));
+    fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // The chat is shown the question again once the editor is out of the way, as when nothing was unsaved.
+    expect(shown).toEqual(["ask-1", "ask-1"]);
+    stop();
+  });
+});
 
 describe("ScenarioEditor test conditions", () => {
   it("adds a fault and saves it with the scenario", async () => {
@@ -136,9 +190,7 @@ describe("ScenarioEditor test conditions", () => {
     );
     const list = within(screen.getByTestId("test-conditions"));
     expect(
-      list.getByText(
-        "apply_discount: Times out before it runs",
-      ),
+      list.getByText("apply_discount: Times out before it runs"),
     ).toBeInTheDocument();
     expect(list.getByText("crm.apply_discount")).toBeInTheDocument();
   });
@@ -240,6 +292,27 @@ describe("ScenarioEditor test conditions", () => {
     ).not.toHaveAttribute("aria-disabled", "true");
   });
 
+  it("says on hover why a tool inside the agent cannot be picked, and a click on it picks nothing", async () => {
+    openEditor();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    const list = within(screen.getByTestId("test-conditions")).getAllByRole(
+      "combobox",
+    )[0];
+    fireEvent.mouseDown(list);
+    const label = within(
+      screen.getByRole("option", { name: "local_tool" }),
+    ).getByText("local_tool");
+
+    fireEvent.mouseOver(label);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "This tool runs inside the agent, so it cannot be held",
+    );
+    fireEvent.click(label);
+    expect(list).not.toHaveTextContent("local_tool");
+  });
+
   it("shows the server's reason when a fault is refused", async () => {
     const onSave = vi.fn(async () => ({
       refused: [
@@ -264,6 +337,27 @@ describe("ScenarioEditor test conditions", () => {
       "on_call must be a whole number from 1",
     );
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("stays open with its edits on any refused receipt, saying why, not only a refused fault", async () => {
+    const why = "the scenario's instruction must name the caller";
+    const onSave = vi.fn(async () => ({
+      refused: [{ field: "instruction", why, problems: [] }],
+      failed: false,
+    }));
+    const { onClose } = openEditor(onSave);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a test condition" }),
+    );
+    pickTool("apply_discount");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Add a test condition" }).at(-1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(why);
+    expect(onClose).not.toHaveBeenCalled();
+    // The edit is still there to correct.
+    expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
   });
 
   it("fills a picked tool's numbers from its own defaults and bounds the inputs by them", () => {
@@ -347,7 +441,9 @@ describe("ScenarioEditor test conditions", () => {
       hint: "The answer comes late but comes.",
     };
     const { onSave } = openEditor(undefined, ROW, {
-      faultTargets: [target("apply_discount", "crm.apply_discount", true, [ERROR, SLOW])],
+      faultTargets: [
+        target("apply_discount", "crm.apply_discount", true, [ERROR, SLOW]),
+      ],
     });
     fireEvent.click(
       screen.getByRole("button", { name: "Add a test condition" }),
@@ -355,17 +451,24 @@ describe("ScenarioEditor test conditions", () => {
     pickTool("apply_discount");
     // An error takes a status and a message, never a delay.
     expect(
-      screen.getByText("The service answers with the status and message you set."),
+      screen.getByText(
+        "The service answers with the status and message you set.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Delay in seconds")).toBeNull();
-    expect(screen.getByLabelText("Message")).toHaveAttribute("maxlength", "500");
+    expect(screen.getByLabelText("Message")).toHaveAttribute(
+      "maxlength",
+      "500",
+    );
     expect(screen.getByLabelText("On which call")).toHaveAttribute("min", "1");
     // A mode the FE has never heard of shows the fields the server lists for it.
     fireEvent.mouseDown(
       within(screen.getByTestId("test-conditions")).getAllByRole("combobox")[1],
     );
     fireEvent.click(screen.getByRole("option", { name: "Answers slowly" }));
-    expect(screen.getByText("The answer comes late but comes.")).toBeInTheDocument();
+    expect(
+      screen.getByText("The answer comes late but comes."),
+    ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Delay in seconds"), {
       target: { value: "" },
     });
@@ -375,7 +478,12 @@ describe("ScenarioEditor test conditions", () => {
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     expect(onSave.mock.calls[0][0].changes[0].value).toEqual([
-      { action: "crm.apply_discount", mode: "slow", on_call: 1, delay_seconds: null },
+      {
+        action: "crm.apply_discount",
+        mode: "slow",
+        on_call: 1,
+        delay_seconds: null,
+      },
     ]);
   });
 
@@ -491,6 +599,15 @@ describe("ScenarioEditor test conditions", () => {
     expect(
       screen.getByText("This tool cannot be held").parentElement,
     ).toHaveTextContent("first: Times out");
-    expect(screen.queryByText("Two test conditions cannot be applied")).toBeNull();
+    expect(
+      screen.queryByText("Two test conditions cannot be applied"),
+    ).toBeNull();
+
+    // Removing the first condition never moves the second's problem onto another condition.
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    expect(screen.queryByText("first: Times out")).toBeNull();
+    const still = screen.getByText("Delay in seconds: At most 30");
+    expect(still.parentElement).toHaveTextContent("second: Times out");
+    expect(screen.queryByText("This tool cannot be held")).toBeNull();
   });
 });

@@ -86,16 +86,24 @@ RecordsSection.propTypes = {
 
 // A start that differs is reported among the notices instead.
 // Attempted, refused and committed are never summed into one number.
-export default function TrialChangesPanel({ trialState }) {
+export default function TrialChangesPanel({ trialState, underWay = false }) {
   if (!trialState)
-    return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
+    return (
+      <Typography sx={{ ...quiet, p: 2 }}>
+        {underWay ? C.collecting : C.notRecorded}
+      </Typography>
+    );
   if (trialState.recorded === false)
-    return <Typography sx={{ ...quiet, p: 2 }}>{C.inProcess}</Typography>;
+    return (
+      <Typography sx={{ ...quiet, p: 2 }}>{trialState.why_label}</Typography>
+    );
   return <WorldState trialState={trialState} />;
 }
 
 TrialChangesPanel.propTypes = {
   trialState: PropTypes.object,
+  // The call has not ended: no World state yet is not "not recorded".
+  underWay: PropTypes.bool,
 };
 
 function WorldState({ trialState }) {
@@ -115,6 +123,7 @@ function WorldState({ trialState }) {
   const notices = allNotices.filter((one) => one !== outside);
   const { unreadable } = trialState;
   const records = !unreadable && trialState.records ? trialState.records : null;
+  const shared = trialState.shared_records || [];
   const noticeList = notices.length > 0 && (
     <Box>
       <Typography
@@ -152,6 +161,37 @@ function WorldState({ trialState }) {
       )}
     </>
   );
+  // Records more than one participant called, shown whether or not the trial changed anything.
+  const sharedList = shared.length > 0 && (
+    <Box data-testid="shared-records">
+      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        {C.sharedHeading}
+      </Typography>
+      {shared.map((record) => (
+        <Box key={record.key}>
+          <Typography sx={{ ...quiet, fontWeight: 600 }}>
+            {C.sharedRecord(record)}
+          </Typography>
+          {record.actions.map((action, index) => (
+            <Typography key={`${record.key}-${index}`} sx={quiet}>
+              {C.sharedAction(action, action.name)}
+            </Typography>
+          ))}
+          {C.sharedRecordCut[record.truncation] && (
+            <Typography sx={quiet}>
+              {C.sharedRecordCut[record.truncation]}
+            </Typography>
+          )}
+          <Typography sx={quiet}>
+            {C.committedWrites(record.committed_writes)}
+          </Typography>
+        </Box>
+      ))}
+      {trialState.shared_records_truncated && (
+        <Typography sx={quiet}>{C.sharedTruncated}</Typography>
+      )}
+    </Box>
+  );
   if (!changes.length && !decisions.length && !preRun.length)
     return (
       <Stack spacing={1.5} sx={{ p: 2 }}>
@@ -159,6 +199,7 @@ function WorldState({ trialState }) {
         {noticeList}
         {!unreadable && <Typography sx={quiet}>{C.empty}</Typography>}
         {records && <RecordsSection records={records} outside={outside} />}
+        {sharedList}
       </Stack>
     );
   return (
@@ -182,7 +223,7 @@ function WorldState({ trialState }) {
       {changes.map((one) => (
         <Box key={one.who}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {one.name}
+            {one.worker_id ? C.worker(one.name) : one.name}
           </Typography>
           <Typography sx={quiet}>{C.counts(one)}</Typography>
           {one.committed_actions?.length > 0 && (
@@ -210,9 +251,23 @@ function WorldState({ trialState }) {
           {one.no_change && !one.committed_actions?.length && (
             <Typography sx={quiet}>{C.noChange}</Typography>
           )}
+          {/* An attempted violation stays on the record: what was tried and why the world said no. */}
+          {one.refused_actions?.length > 0 && (
+            <Box data-testid="refused-attempts">
+              <Typography sx={{ ...quiet, fontWeight: 600 }}>
+                {C.refusedHeading}
+              </Typography>
+              {one.refused_actions.map((refused, index) => (
+                <Typography key={`${refused.action}-${index}`} sx={quiet}>
+                  {C.refused(refused)}
+                </Typography>
+              ))}
+            </Box>
+          )}
         </Box>
       ))}
       {records && <RecordsSection records={records} outside={outside} />}
+      {sharedList}
       {preRun.length > 0 && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
@@ -292,8 +347,14 @@ WorldState.propTypes = {
     duplicates: PropTypes.arrayOf(
       PropTypes.shape({ action: PropTypes.string, name: PropTypes.string }),
     ),
+    shared_records: PropTypes.arrayOf(PropTypes.object),
+    shared_records_truncated: PropTypes.bool,
     notices: PropTypes.arrayOf(
-      PropTypes.shape({ code: PropTypes.string, message: PropTypes.string }),
+      PropTypes.shape({
+        code: PropTypes.string,
+        message: PropTypes.string,
+        workers: PropTypes.arrayOf(PropTypes.string),
+      }),
     ),
   }),
 };

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from rest_framework import serializers
 from rest_framework.exceptions import ErrorDetail
 
 from model_hub.serializers.contracts import JsonObjectRequestField
+from simulate.services.harness_actor_labels import choice_labels
 from simulate.services.harness_actor_rules import LIMIT_FIELDS, UPLOAD_KINDS
 from simulate.services.harness_actor_validation import (
     ACTOR_RECORD_MAX_CHARS,
@@ -167,6 +169,11 @@ class HarnessActorKnowledgeEntrySerializer(serializers.Serializer):
     where = serializers.DictField(child=HarnessTriggerWhereValueField(), required=False)
 
 
+class HarnessActorArrivalOverrideSerializer(serializers.Serializer):
+    scenario = serializers.CharField()
+    when_label = serializers.CharField()
+
+
 class HarnessActorSerializer(serializers.Serializer):
     """One actor of the cast, typed, with what the server decides about it. A field a later release adds is kept in
     storage and not shown here until it is typed."""
@@ -204,6 +211,10 @@ class HarnessActorSerializer(serializers.Serializer):
     max_turns = serializers.IntegerField(allow_null=True)
     max_lines = serializers.IntegerField(allow_null=True)
     scenarios = serializers.IntegerField(help_text="Scenarios that include the actor.")
+    arrival_overrides = HarnessActorArrivalOverrideSerializer(
+        many=True,
+        help_text="Scenarios that bring the actor in by their own trigger, with when it comes in there.",
+    )
     provenance = HarnessActorProvenanceSerializer(allow_null=True)
     removable = serializers.BooleanField()
     removal_blocked_by = serializers.ListField(child=serializers.CharField())
@@ -446,14 +457,74 @@ class HarnessActorDeleteQuerySerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(required=False, min_value=0)
 
 
+# The bounds a field holds a value to; a check takes any value of the field's type and says what is wrong with it.
+_BOUNDS = ("max_length", "min_length", "max_value", "min_value")
+# What a choice field keeps when it takes any word.
+_TEXT_KWARGS = (
+    "required",
+    "allow_null",
+    "allow_blank",
+    "default",
+    "help_text",
+    "label",
+    "source",
+)
+_relaxed: dict[type[serializers.Serializer], type[serializers.Serializer]] = {}
+
+
+def _built_with(field: serializers.Field) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """The arguments a field was made with, as DRF keeps them to copy fields: whatever each field takes."""
+    state = vars(field)
+    return tuple(state["_args"]), dict(state["_kwargs"])
+
+
+def _relaxed_field(field: serializers.Field) -> serializers.Field:
+    args, built = _built_with(field)
+    kwargs = {key: value for key, value in built.items() if key not in _BOUNDS}
+    if isinstance(field, serializers.ListSerializer) and isinstance(
+        field.child, serializers.Serializer
+    ):
+        kwargs.pop("child", None)
+        return relaxed_serializer(type(field.child))(*args, **{**kwargs, "many": True})
+    if isinstance(field, serializers.Serializer):
+        return relaxed_serializer(type(field))(*args, **kwargs)
+    if isinstance(field, serializers.ChoiceField):
+        # Any word reaches the check, which says which ones the field takes.
+        return serializers.CharField(
+            **{key: value for key, value in kwargs.items() if key in _TEXT_KWARGS}
+        )
+    child = kwargs.get("child")
+    if isinstance(child, serializers.Field):
+        kwargs["child"] = _relaxed_field(child)
+    return type(field)(*args, **kwargs)
+
+
+def relaxed_serializer(
+    serializer_class: type[serializers.Serializer],
+) -> type[serializers.Serializer]:
+    """``serializer_class`` with its fields' types and none of their bounds: what a check of an edit takes, so a value
+    too long or out of range reaches the check, which says what is wrong with it on its field."""
+    if serializer_class not in _relaxed:
+        fields = {
+            name: _relaxed_field(field)
+            for name, field in serializer_class().fields.items()
+        }
+        _relaxed[serializer_class] = type(
+            serializer_class.__name__.replace("Serializer", "CheckSerializer"),
+            (serializers.Serializer,),
+            {**fields, "__doc__": serializer_class.__doc__, "__module__": __name__},
+        )
+    return _relaxed[serializer_class]
+
+
 class HarnessActorValidateSerializer(serializers.Serializer):
     """One edit to check without writing it: a create, a replace or a removal, as its write would send it."""
 
     op = serializers.ChoiceField(choices=("create", "replace", "delete"))
     # The actor a replace or removal is about; a create has none.
     actor_id = serializers.CharField(required=False, max_length=64)
-    # The patch a create or replace would send; a removal sends none.
-    changes = HarnessActorChangesSerializer(required=False)
+    # The patch a create or replace would send; a removal sends none. Taken whatever its values: the check judges them.
+    changes = relaxed_serializer(HarnessActorChangesSerializer)(required=False)
     # On a create only; left out, the id the server would make from the name is checked. Its length is judged by the
     # check itself, never refused before it is sent: judging it is what the check is for.
     id = serializers.CharField(required=False)
@@ -733,6 +804,9 @@ def _predicate(field: serializers.Field | None, error: ErrorDetail) -> str:
     if code == "max_length":
         return f"must be at most {getattr(field, 'max_length', 0)} characters"
     if code == "invalid_choice" and isinstance(field, serializers.ChoiceField):
+        labels = choice_labels(list(field.choices))
+        if labels:
+            return f"must be one of: {labels}"
         return f"must be one of: {', '.join(str(one) for one in field.choices)}"
     return ""
 

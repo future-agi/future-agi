@@ -2263,7 +2263,8 @@ class TestUserApi:
             source={**runtime.source, "ref": ref}
         )
 
-    @pytest.mark.parametrize("pin", ["refs/tags/v1", "commit"])
+    # A tag ref that names no tag has no commit to compare, as a commit has none.
+    @pytest.mark.parametrize("pin", ["refs/tags/v1", "commit", "refs/tags/"])
     def test_a_github_agent_pinned_to_a_tag_or_commit_ships_while_main_moves(
         self, auth_client, source_run, github, pin
     ):

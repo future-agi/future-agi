@@ -19,6 +19,16 @@ const analytics = {
   dashboard: {
     metrics: [
       {
+        key: "trial_pass",
+        label: "Trials passed",
+        value: 66.67,
+        unit: "percent",
+        measured: 3,
+        total: 4,
+        note: "Passed, out of trials that passed or failed.",
+        no_score: false,
+      },
+      {
         key: "pass_rate",
         label: "Calls passed",
         value: 66.67,
@@ -155,6 +165,11 @@ const analytics = {
     },
   },
   summary: {
+    trials_passed: 2,
+    trials_evaluated: 3,
+    trials_inconclusive: 0,
+    trials_excluded_not_comparable: 0,
+    trial_pass_rate: 66.67,
     total: 4,
     measured: 3,
     pass_rate: 66.67,
@@ -284,7 +299,7 @@ describe("RunAnalytics", () => {
     render(<RunAnalytics executionId="execution-1" />);
 
     for (const label of [
-      "Calls passed",
+      "Trials passed",
       "Drop-off",
       "Response time p95",
       "Cost / pass",
@@ -419,8 +434,8 @@ describe("RunAnalytics", () => {
     ).toBeInTheDocument();
   });
 
-  it("reads No score on Calls passed only when the server marks the rate no_score", () => {
-    const passedCard = () => screen.getByText("Calls passed").parentElement;
+  it("reads No score on Trials passed only when the server marks the rate no_score", () => {
+    const passedCard = () => screen.getByText("Trials passed").parentElement;
     const nothingYet = structuredClone(analytics);
     nothingYet.dashboard.metrics[0] = {
       ...nothingYet.dashboard.metrics[0],
@@ -428,14 +443,24 @@ describe("RunAnalytics", () => {
       measured: 0,
       no_score: false,
     };
-    useRunAnalytics.mockReturnValue({ data: nothingYet, isPending: false, isError: false });
+    useRunAnalytics.mockReturnValue({
+      data: nothingYet,
+      isPending: false,
+      isError: false,
+    });
     const { unmount } = render(<RunAnalytics executionId="execution-1" />);
-    expect(within(passedCard()).queryByText("No score")).not.toBeInTheDocument();
+    expect(
+      within(passedCard()).queryByText("No score"),
+    ).not.toBeInTheDocument();
     unmount();
 
     const unscored = structuredClone(nothingYet);
     unscored.dashboard.metrics[0].no_score = true;
-    useRunAnalytics.mockReturnValue({ data: unscored, isPending: false, isError: false });
+    useRunAnalytics.mockReturnValue({
+      data: unscored,
+      isPending: false,
+      isError: false,
+    });
     render(<RunAnalytics executionId="execution-1" />);
     expect(within(passedCard()).getByText("No score")).toBeInTheDocument();
   });
