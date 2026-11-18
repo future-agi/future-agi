@@ -74,12 +74,21 @@ export default function ConnectPreflight({
                 ? "Preflight checks the source and credentials before building."
                 : "Optional — check the source and credentials now. You can connect without it and finish setting up later.")}
         </Typography>
+        {/* The next step while the build waits for it: the purple button.
+            Once it has passed, Connect takes over as the main action. */}
         <Button
           size="small"
-          variant="outlined"
+          variant={required && !ready ? "contained" : "outlined"}
+          color={required && !ready ? "primary" : "inherit"}
           disabled={!canRun || running}
           onClick={run}
-          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+          sx={{
+            flexShrink: 0,
+            ...(!(required && !ready) && {
+              color: "text.primary",
+              borderColor: "divider",
+            }),
+          }}
         >
           Run preflight
         </Button>
