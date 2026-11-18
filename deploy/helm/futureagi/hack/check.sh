@@ -77,6 +77,8 @@ value_sets=(
   "openshift|examples/bundled.yaml ci/openshift.yaml"
   "tls|examples/bundled.yaml ci/tls.yaml"
   "tls-https-only|examples/bundled.yaml ci/tls.yaml ci/tls-https-only.yaml"
+  # No rendered fsGroup: the TLS keys keep the Secret default mode.
+  "tls-openshift|examples/bundled.yaml ci/tls.yaml ci/openshift.yaml"
 )
 
 echo "== chart defaults: refuse to render, with guidance"
