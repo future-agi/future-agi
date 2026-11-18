@@ -96,6 +96,7 @@ export const CALL_WORKERS_COPY = {
   checkStatus: { failed: "Failed", inconclusive: "Unsure" },
   // A worker's check sits on its worker's one hand-off; any other says why it is on no step.
   onHandOff: "On its hand-off",
+  onStep: (n) => `On step ${n}`,
   untied: {
     no_moment:
       "Not tied to a step: nothing recorded ties this check to a moment in the call",
