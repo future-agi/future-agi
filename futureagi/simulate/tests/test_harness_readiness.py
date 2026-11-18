@@ -2970,7 +2970,7 @@ class TestObservedRows:
         [
             ("files", "Nothing records the files the agent writes yet"),
             ("browser", "Nothing records the agent's browser yet"),
-            ("hidden_material", "Treat this run as not blind"),
+            ("hidden_material", "Treat its runs as not blind"),
         ],
     )
     def test_each_unmeasured_row_names_what_it_lacks(
@@ -2987,6 +2987,61 @@ class TestObservedRows:
         assert row["reason"] != "No check measures this yet"
         # Naming what is missing changes no status and holds no case.
         assert report["answer"]["kind"] == "ready"
+
+    @pytest.mark.parametrize(
+        ("runtime", "status", "code"),
+        [
+            (
+                {"process_isolation": "per_user", "door_user": "svc-door"},
+                "supported",
+                None,
+            ),
+            (
+                {"process_isolation": "fixed_user", "door_user": "svc-door"},
+                "partial",
+                "not_isolated",
+            ),
+            ({"process_isolation": "fixed_user"}, "partial", "not_isolated"),
+            (
+                {"process_isolation": "per_user", "door_user": "svc-tools"},
+                "partial",
+                "door_not_isolated",
+            ),
+            ({"process_isolation": "per_user"}, "partial", "door_not_isolated"),
+            ({"harness_version": "0.3.7"}, "untested", "isolation_not_recorded"),
+        ],
+        ids=[
+            "isolated",
+            "fixed_user",
+            "fixed_no_door",
+            "door_with_tools",
+            "no_door_user",
+            "old_certificate",
+        ],
+    )
+    def test_hidden_material_reads_the_isolation_the_check_recorded(
+        self, user, workspace, storage, runtime, status, code
+    ):
+        """Supported only when every process ran as its own user and the door apart from the agent's tools; a
+        certificate from before the check recorded it reads Untested. It never holds a case back."""
+        environment = _environment(user, workspace, storage, f"ob-hidden-{code}")
+        _certify(environment, storage)
+        bundle = HarnessAssembledBundle._base_manager.get(
+            job_id=environment.id, state="ready"
+        )
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certificate={**bundle.certificate, "runtime": runtime}
+        )
+        cache.clear()
+
+        report = _report(environment)
+        row = _rows(report)["hidden_material"]
+
+        assert (row["status"], row["reason_code"]) == (status, code)
+        assert row["status"] != "supported" or runtime.get("door_user") == "svc-door"
+        assert report["answer"]["kind"] == "ready"
+        if status != "supported":
+            assert "not from a blind test" in row["consequence"]
 
     def test_a_run_nothing_measured_reads_no_cost(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "ob-cost-none")

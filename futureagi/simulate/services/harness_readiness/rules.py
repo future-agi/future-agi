@@ -25,6 +25,7 @@ from simulate.services.harness_readiness.catalogue import (
 from simulate.services.harness_readiness.evidence import (
     Evidence,
     connection,
+    hidden_material,
     observed,
     readings,
 )
@@ -128,7 +129,11 @@ def rows(
     rows: list[RowView] = []
     statuses: dict[str, Status] = {}
     fresh: dict[str, Status] = {}
-    seen = observed(pairing, runs)
+    seen = {
+        **observed(pairing, runs),
+        # Recorded by the check that made the evidence; until production runs per user it never holds a case.
+        "hidden_material": hidden_material(evidence.certificate),
+    }
     for capability in CATALOGUE:
         reading = measured.get(capability.id)
         if not capability.measured and capability.id in seen:
@@ -275,8 +280,6 @@ def rows(
 _NOT_MEASURED_WHY: dict[str, str] = {
     "browser": "Nothing records the agent's browser yet, so checks on pages are not"
     " verified",
-    "hidden_material": "Not checked yet whether the agent can read the grading"
-    " material. Treat this run as not blind",
 }
 
 
@@ -632,6 +635,12 @@ _OBSERVED: dict[str, dict[str, str]] = {
         "supported": "An interrupted run finished on a new attempt, keeping the cases"
         " it had finished",
         "untested": "No interrupted run of this agent has been resumed yet",
+    },
+    "hidden_material": {
+        "supported": "Checks and reference answers were kept out of the agent's reach, so a blind run stays blind",
+        "partial": "The agent could reach the grading material here, so its results are not from a blind test",
+        "untested": "Whether the agent could reach the grading material is not known, so its results are not"
+        " from a blind test",
     },
     "cost": {
         "partial": "Shown where measured: our side of a run, never the agent's own model"
