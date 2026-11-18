@@ -13,7 +13,7 @@ def _recover_object(text: str, start: int) -> tuple[str, int]:
     depth = 0
     quote = None
     escaped = False
-    parts = []
+    parts: list[str] = []
     mark = start
     end = len(text)
     for i in range(start, end):
