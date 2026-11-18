@@ -946,15 +946,18 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
         )
     assert response.status_code == 202, response.content
     assert len(callbacks) == 1, "one on_commit callback for the whole batch"
-    # Four statements for the whole batch, not one quartet per call:
-    # `_clear_queued_stamps`'s own `transaction.atomic()` is a SAVEPOINT and
-    # a RELEASE SAVEPOINT, plus one `SELECT ... FOR UPDATE` and one bulk
-    # `UPDATE`.
-    with django_assert_num_queries(4) as captured:
+    # A fixed number of statements for the whole batch, not a set per call:
+    # the run test's id read, then `_clear_queued_stamps`'s own
+    # `transaction.atomic()` (a SAVEPOINT and a RELEASE SAVEPOINT) around the
+    # run test's lock (taken first, as every re-grade and add-eval path does),
+    # one `SELECT ... FOR UPDATE` of the calls and one bulk `UPDATE`.
+    with django_assert_num_queries(6) as captured:
         callbacks[0]()
     # The unstamp path must not fetch the wide row for every locked call.
     select_sql = next(
-        q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"]
+        q["sql"]
+        for q in captured.captured_queries
+        if "FOR UPDATE" in q["sql"] and "simulate_call_execution" in q["sql"]
     )
     assert "analysis_data" not in select_sql, (
         "the unstamp path must not fetch the wide row for every call in a failed batch"

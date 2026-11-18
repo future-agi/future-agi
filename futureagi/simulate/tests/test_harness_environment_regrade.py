@@ -662,8 +662,9 @@ def test_regrade_answers_503_and_puts_every_score_back_when_grading_cannot_be_qu
     )
     assert graded.call_metadata["eval_completed"] is True
     assert "eval_completed" not in bare.call_metadata
-    assert graded.call_metadata["eval_started"] is False
-    assert bare.call_metadata["eval_started"] is False
+    # A failed dispatch puts back what the call held before: both had started grading earlier.
+    assert graded.call_metadata["eval_started"] is True
+    assert bare.call_metadata["eval_started"] is True
     assert str(suite.id) in _eval_column_ids(finished_run)
     # A failed start is not content movement: the list's clock stays put.
     environment.refresh_from_db()

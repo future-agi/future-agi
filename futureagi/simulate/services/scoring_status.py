@@ -27,6 +27,7 @@ from simulate.services.harness_run_evals import (
     EVAL_QUEUED_KEY,
     parse_stamp,
 )
+from simulate.services.kept_harness_entry import end_without_verdict
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 
 logger = structlog.get_logger(__name__)
@@ -459,6 +460,9 @@ def close_due_scoring(
     written, or ``None`` when the locked copy turned out to have nothing due.
     """
     names = {**runnable_names, **(live_names or {})}
+    # The evals whose harness verdict went back, not a verdict lost to the
+    # clock: they are not time-outs, for the count or the log.
+    put_back: set[str] = set()
     due = scoring_due(
         scoring_input_from_call(call),
         runnable_ids=runnable_names.keys(),
@@ -485,7 +489,12 @@ def close_due_scoring(
                 "name": name,
                 "status": "timed_out",
             }
-        outputs[eval_id] = {**entry, "timestamp": now.isoformat()}
+        # A harness verdict kept under a re-grade's placeholder goes back as
+        # it was: the clock ended the grading, not the verdict.
+        replacement = {**entry, "timestamp": now.isoformat()}
+        outputs[eval_id] = end_without_verdict(stored, replacement)
+        if outputs[eval_id] is not replacement:
+            put_back.add(eval_id)
     closed = meta.get(EVAL_COMPLETED_KEY) is not True and due.eval_side
     if closed:
         meta[EVAL_COMPLETED_KEY] = True
@@ -506,20 +515,27 @@ def close_due_scoring(
     codes = {code for *_rest, code in due.evals.values()}
     if due.csat:
         codes.add(due.csat[2])
-    _log_closed(call, due)
+    _log_closed(call, due, put_back)
     if "run_cancelled" in codes:
         return "skipped_cancelled"
-    if codes & {"job_timeout", "start_timeout"}:
+    timed_out = {
+        code for eval_id, (*_rest, code) in due.evals.items() if eval_id not in put_back
+    }
+    if due.csat:
+        timed_out.add(due.csat[2])
+    if timed_out & {"job_timeout", "start_timeout"}:
         return "timed_out"
     return "closed"
 
 
-def _log_closed(call: CallExecution, due: Due) -> None:
+def _log_closed(call: CallExecution, due: Due, put_back: set[str]) -> None:
     ids = {
         "call_execution_id": str(call.id),
         "test_execution_id": str(call.test_execution_id),
     }
-    eval_codes = {code for *_rest, code in due.evals.values()}
+    eval_codes = {
+        code for eval_id, (*_rest, code) in due.evals.items() if eval_id not in put_back
+    }
     if "run_cancelled" in eval_codes:
         logger.info(
             "simulate_scoring_skipped_cancelled",

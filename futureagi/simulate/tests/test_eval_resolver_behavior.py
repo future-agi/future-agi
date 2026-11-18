@@ -2862,6 +2862,48 @@ def test_a_suite_eval_on_a_harness_run_is_graded_with_the_harness_inputs(
 @patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
 @patch.object(TestExecutor, "_get_call_transcript_data")
 @patch("simulate.services.test_executor.run_eval_func")
+def test_an_sdk_suite_eval_is_graded_with_its_regrade_inputs(
+    mock_run,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    organization,
+):
+    """A run sent through the harness SDK has no hosted job; its calls carry
+    the harness's checks instead, and that alone makes them harness calls."""
+    _no_tool_eval(run_test)
+    call_execution.call_metadata = {
+        "harness_evaluations": [{"name": "ride_booked", "passed": True}]
+    }
+    call_execution.save(update_fields=["call_metadata"])
+    mock_transcript.return_value = transcript_data
+    mock_run.return_value = _SUCCESS_STUB
+    suite = _make_eval(
+        {}, run_test, _template_asking_for(organization, ["conversation"])
+    )
+    column = _make_eval(
+        {}, run_test, _template_asking_for(organization, ["conversation"], "user")
+    )
+
+    _grade(call_execution, [suite, column])
+
+    assert mock_run.call_count == 1
+    assert mock_run.call_args.kwargs["mappings"] == {
+        "conversation": "Hello. Yes, order 123 shipped."
+    }
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(suite.id)]["output"] == "8"
+    assert call_execution.eval_outputs[str(column.id)] == _skipped_payload(
+        column, _HARNESS_REFRESH_REASON
+    )
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch("simulate.services.test_executor.run_eval_func")
 def test_each_config_on_a_harness_run_is_graded_with_its_own_mapping(
     mock_run,
     mock_transcript,
@@ -2942,7 +2984,7 @@ def test_a_native_run_grades_every_config_exactly_as_before(
     )
 
     with patch(
-        "simulate.services.test_executor.is_harness_run_test", return_value=False
+        "simulate.services.test_executor.is_harness_call", return_value=False
     ) as harness_lookup:
         _grade(call_execution, [config])
 

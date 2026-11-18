@@ -208,6 +208,35 @@ class TestCallExecutionActionScope:
         assert text_call_execution.deleted is True
         assert text_call_execution.deleted_at is not None
 
+    def test_call_execution_delete_keeps_a_result_written_after_it_read_the_call(
+        self, auth_client, text_call_execution
+    ):
+        from simulate.views import run_test as run_test_views
+
+        real_get = run_test_views.get_object_or_404
+        graded = {"verdict": {"output": "Passed", "status": "completed"}}
+
+        def read_then_a_grader_writes(*args, **kwargs):
+            found = real_get(*args, **kwargs)
+            CallExecution.objects.filter(id=found.id).update(eval_outputs=graded)
+            return found
+
+        with patch.object(
+            run_test_views, "get_object_or_404", side_effect=read_then_a_grader_writes
+        ):
+            response = auth_client.delete(
+                f"/simulate/call-executions/{text_call_execution.id}/delete/"
+            )
+
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_204_NO_CONTENT,
+        ), response.content
+        text_call_execution.refresh_from_db()
+        assert text_call_execution.deleted is True
+        # A whole-row save of the earlier read would put the old results back.
+        assert text_call_execution.eval_outputs == graded
+
     def test_call_execution_delete_not_found_returns_404(self, auth_client):
         response = auth_client.delete(
             f"/simulate/call-executions/{uuid.uuid4()}/delete/"

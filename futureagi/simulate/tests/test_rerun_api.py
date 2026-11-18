@@ -6,8 +6,14 @@ Tests cover:
 - TestExecutionRerunView: POST /simulate/run-tests/<uuid>/rerun-test-executions/
 """
 
+import copy
+import json
+import re
 import uuid
+from contextlib import contextmanager
 from datetime import timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +21,7 @@ from django.db import OperationalError
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
+from structlog.testing import capture_logs
 
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
@@ -34,7 +41,18 @@ from simulate.models.test_execution import (
     EvalExplanationSummaryStatus,
     TestExecution,
 )
+from simulate.services import run_regrade
 from simulate.services.harness_run_evals import queue_eval_for_finished_calls
+from simulate.services.run_regrade import (
+    RegradeAlreadyRunning,
+    RegradeDispatchFailed,
+    RegradeEvalNotFound,
+    RegradeNoCalls,
+    RegradeNoCompletedCall,
+    RegradeNothingToGrade,
+    RegradeRefused,
+    RegradeStillFinishing,
+)
 
 # ============================================================================
 # Fixtures
@@ -258,6 +276,97 @@ class TestCallExecutionRerunView:
         # Verify test execution status updated
         test_execution.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.EVALUATING
+
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_rerun_eval_only_keeps_a_column_written_after_it_read_the_call(
+        self, mock_rerun, auth_client, test_execution, call_execution
+    ):
+        from simulate.views.run_test import CallExecutionRerunView
+
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        real_snapshot = CallExecutionRerunView._save_eval_snapshot
+
+        def snapshot_then_a_grader_scores(view, call):
+            real_snapshot(view, call)
+            CallExecution.objects.filter(id=call.id).update(overall_score=7.5)
+
+        with patch.object(
+            CallExecutionRerunView,
+            "_save_eval_snapshot",
+            autospec=True,
+            side_effect=snapshot_then_a_grader_scores,
+        ):
+            response = auth_client.post(
+                self.URL_TEMPLATE.format(test_execution.id),
+                {
+                    "rerun_type": "eval_only",
+                    "call_execution_ids": [str(call_execution.id)],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        call_execution.refresh_from_db()
+        # The re-run clears the results; a whole-row save would also put the
+        # score read earlier over the one written since.
+        assert call_execution.overall_score == 7.5
+
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_rerun_eval_only_keeps_a_metadata_key_written_before_its_lock(
+        self, mock_rerun, auth_client, test_execution, call_execution
+    ):
+        from simulate.views.run_test import CallExecutionRerunView
+
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        written = {**(call_execution.call_metadata or {}), "csat_status": "completed"}
+        changed = []
+
+        def another_request_writes():
+            # Once, after the request read the call: just before it takes the
+            # run test's lock, or, with no lock, before it clears the call.
+            if not changed:
+                changed.append(True)
+                CallExecution.objects.filter(id=call_execution.id).update(
+                    call_metadata=written
+                )
+
+        real_lock = RunTest.objects.select_for_update
+        real_snapshot = CallExecutionRerunView._save_eval_snapshot
+
+        def lock_after_a_write(*args, **kwargs):
+            another_request_writes()
+            return real_lock(*args, **kwargs)
+
+        def snapshot_after_a_write(view, call):
+            another_request_writes()
+            real_snapshot(view, call)
+
+        with (
+            patch.object(
+                RunTest.objects, "select_for_update", side_effect=lock_after_a_write
+            ),
+            patch.object(
+                CallExecutionRerunView,
+                "_save_eval_snapshot",
+                autospec=True,
+                side_effect=snapshot_after_a_write,
+            ),
+        ):
+            response = auth_client.post(
+                self.URL_TEMPLATE.format(test_execution.id),
+                {
+                    "rerun_type": "eval_only",
+                    "call_execution_ids": [str(call_execution.id)],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        call_execution.refresh_from_db()
+        # The write landed after the request read the call: read again under
+        # the call's lock, it is kept, not replaced by the earlier read.
+        assert call_execution.call_metadata["csat_status"] == "completed"
+        assert call_execution.call_metadata["eval_started"] is False
 
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_eval_only_specific_ids(
@@ -1471,6 +1580,11 @@ class TestTestExecutionRuntimeContracts:
         assert response.data["details"]["legacy_extra"] == ["Unknown field."]
 
     @pytest.mark.parametrize(
+        "eval_started_before",
+        [None, False, True],
+        ids=["start-never-set", "not-started", "started"],
+    )
+    @pytest.mark.parametrize(
         "eval_completed_before",
         [True, False, None],
         ids=["finished", "not-finished", "never-set"],
@@ -1483,6 +1597,7 @@ class TestTestExecutionRuntimeContracts:
         self,
         mock_apply_async,
         eval_completed_before,
+        eval_started_before,
         auth_client,
         run_test,
         test_execution,
@@ -1523,7 +1638,9 @@ class TestTestExecutionRuntimeContracts:
             "status": "completed",
             "source": "harness",
         }
-        call_execution.call_metadata = {"eval_started": True}
+        call_execution.call_metadata = {}
+        if eval_started_before is not None:
+            call_execution.call_metadata["eval_started"] = eval_started_before
         if eval_completed_before is not None:
             call_execution.call_metadata["eval_completed"] = eval_completed_before
         call_execution.save(update_fields=["eval_outputs", "call_metadata"])
@@ -1556,7 +1673,13 @@ class TestTestExecutionRuntimeContracts:
             test_execution.execution_metadata["eval_dispatch_failed"]
             == "temporal dispatch timed out"
         )
-        assert call_execution.call_metadata["eval_started"] is False
+        # The request wrote eval_started=True; with no other config pending
+        # on the call, both flags go back to what the call held before it,
+        # absent, False or True.
+        assert call_execution.call_metadata.get("eval_started") == (eval_started_before)
+        assert ("eval_started" in call_execution.call_metadata) is (
+            eval_started_before is not None
+        )
         assert (
             call_execution.call_metadata["eval_dispatch_failed"]
             == "temporal dispatch timed out"
@@ -2806,3 +2929,1638 @@ class TestOptimiserAnalysisRefreshView:
 
 
 # ============================================================================
+
+
+# ============================================================================
+# Eval-only re-runs on runs a harness scored
+# ============================================================================
+
+_TRANSCRIPT = {
+    "transcript": "Hello. Yes, order 123 shipped.",
+    "voice_recording": "s3://bucket/rec.mp3",
+    "assistant_recording": "s3://bucket/asst.mp3",
+    "customer_recording": "s3://bucket/cust.mp3",
+    "stereo_recording": "s3://bucket/stereo.mp3",
+    "user_chat_transcript": "",
+    "assistant_chat_transcript": "",
+}
+_JUDGE_VERDICT = {"output": "8", "reason": "ok", "output_type": "score"}
+_NOT_COMPLETED = "The call did not complete."
+_NO_COMPLETED_CALL = "Nothing to grade again: no selected call completed."
+_NOTHING_TO_GRADE = (
+    "This test's evals are scored by the harness during the call. "
+    "Only rerunning the call refreshes them."
+)
+_CHANGED = "This test's evals changed while the request was being made. Try again."
+_ALREADY_RUNNING = "Grading is already running on this run."
+_DISPATCH_FAILED = (
+    "Evals may not have started: dispatch failed. The earlier results are "
+    "back, and it is safe to retry."
+)
+_CODE_CHECK = "harness:refund_policy_followed"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestEvalOnlyRerunOnHarnessRuns:
+    """An eval-only re-run of a run a harness scored grades again only the
+    evals the platform can grade, and leaves every harness check in place."""
+
+    CALLS_URL = "/simulate/test-executions/{}/rerun-calls/"
+    RUNS_URL = "/simulate/run-tests/{}/rerun-test-executions/"
+
+    @staticmethod
+    def _make_harness_run(kind, run_test, calls):
+        """``hosted``: a harness job owns the run test. ``sdk``: no job, but
+        the calls carry the checks the harness sent through the SDK."""
+        if kind == "hosted":
+            TestTestExecutionRuntimeContracts._owned_by_a_harness_environment(run_test)
+            return
+        for call in calls:
+            call.call_metadata = {
+                **(call.call_metadata or {}),
+                "harness_evaluations": [
+                    {"name": "Refund policy followed", "passed": True}
+                ],
+            }
+            call.save(update_fields=["call_metadata"])
+
+    @staticmethod
+    def _eval_config(run_test, organization, name, *, owner, required_keys, mapping):
+        template = EvalTemplate.objects.create(
+            # Template names take lowercase letters, digits, - and _ only.
+            name=f"{re.sub(r'[^a-z0-9_-]+', '_', name.lower())}_template_{uuid.uuid4().hex[:6]}",
+            config={"required_keys": list(required_keys), "output": "Pass/Fail"},
+            owner=owner,
+            organization=organization if owner == "user" else None,
+        )
+        return SimulateEvalConfig.objects.create(
+            name=name,
+            eval_template=template,
+            run_test=run_test,
+            config={},
+            mapping=mapping,
+        )
+
+    @classmethod
+    def _mapped(cls, run_test, organization):
+        return cls._eval_config(
+            run_test,
+            organization,
+            "Politeness",
+            owner="user",
+            required_keys=["output"],
+            mapping={"output": "transcript"},
+        )
+
+    @classmethod
+    def _result_column(cls, run_test, organization):
+        """A harness result column: only the harness can judge it."""
+        return cls._eval_config(
+            run_test,
+            organization,
+            "Refund claim",
+            owner="user",
+            required_keys=["conversation"],
+            mapping={},
+        )
+
+    @classmethod
+    def _suite(cls, run_test, organization):
+        """A built-in suite eval the harness filled during the call."""
+        return cls._eval_config(
+            run_test,
+            organization,
+            "Task completion",
+            owner="system",
+            required_keys=["conversation"],
+            mapping={},
+        )
+
+    @staticmethod
+    def _harness_verdict(name):
+        return {
+            "name": name,
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "reason": "Scored by the harness during the call.",
+            "status": "completed",
+            "source": "harness",
+        }
+
+    @classmethod
+    def _seed_outputs(cls, call, *, mapped=None, column=None, suite=None):
+        outputs = {_CODE_CHECK: cls._harness_verdict("Refund policy followed")}
+        if column is not None:
+            outputs[str(column.id)] = cls._harness_verdict(column.name)
+        if suite is not None:
+            outputs[str(suite.id)] = cls._harness_verdict(suite.name)
+        if mapped is not None:
+            outputs[str(mapped.id)] = {
+                "name": mapped.name,
+                "output": "Failed",
+                "status": "completed",
+            }
+        call.eval_outputs = outputs
+        call.save(update_fields=["eval_outputs"])
+        return copy.deepcopy(outputs)
+
+    @staticmethod
+    def _state(test_execution, calls):
+        """Everything a refused request must leave as it was."""
+        test_execution.refresh_from_db()
+        for call in calls:
+            call.refresh_from_db()
+        return {
+            "status": test_execution.status,
+            "execution_metadata": test_execution.execution_metadata,
+            "eval_outputs": [call.eval_outputs for call in calls],
+            "call_metadata": [call.call_metadata for call in calls],
+            "snapshots": CallExecutionSnapshot.objects.count(),
+        }
+
+    @staticmethod
+    @contextmanager
+    def _graded_inline():
+        """Stand in for the queue: note each call's cells as the request left
+        them, then grade them here, with the judge stubbed."""
+        from simulate.services.test_executor import (
+            _run_simulate_evaluations_task,
+            run_new_evals_on_call_executions_task,
+        )
+
+        at_dispatch = {}
+
+        def grade_one(*, args, kwargs):
+            _run_simulate_evaluations_task._original_func(*args, **kwargs)
+            return SimpleNamespace(id=f"inline-{args[0]}")
+
+        def dispatch(*, args, **_):
+            call_ids, eval_config_ids = args
+            for call in CallExecution.objects.filter(id__in=call_ids):
+                at_dispatch[str(call.id)] = copy.deepcopy(call.eval_outputs)
+            with patch(
+                "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
+                side_effect=grade_one,
+            ):
+                run_new_evals_on_call_executions_task._original_func(
+                    call_ids, eval_config_ids
+                )
+            return SimpleNamespace(id="inline")
+
+        no_skip = SimpleNamespace(processing_skipped=False, processing_skip_reason="")
+        with (
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async",
+                side_effect=dispatch,
+            ),
+            patch(
+                "simulate.services.test_executor.close_old_connections", lambda: None
+            ),
+            patch(
+                "simulate.services.test_executor.decide_processing_skip",
+                lambda **_: no_skip,
+            ),
+            patch(
+                "simulate.services.test_executor.TestExecutor._get_call_transcript_data",
+                return_value=_TRANSCRIPT,
+            ),
+            patch(
+                "simulate.services.test_executor.run_eval_func",
+                side_effect=lambda *args, **kwargs: dict(_JUDGE_VERDICT),
+            ),
+        ):
+            yield at_dispatch
+
+    @staticmethod
+    def _spy_on_the_service():
+        return patch(
+            "simulate.views.run_test.regrade_run_evals",
+            wraps=run_regrade.regrade_run_evals,
+        )
+
+    def _post_calls(self, client, test_execution, calls, **extra):
+        return client.post(
+            self.CALLS_URL.format(test_execution.id),
+            {
+                "rerun_type": "eval_only",
+                "call_execution_ids": [str(call.id) for call in calls],
+                **extra,
+            },
+            format="json",
+        )
+
+    def _post_runs(self, client, run_test, body):
+        return client.post(
+            self.RUNS_URL.format(run_test.id),
+            {"rerun_type": "eval_only", **body},
+            format="json",
+        )
+
+    @pytest.mark.parametrize("kind", ["hosted", "sdk"])
+    def test_harness_checks_survive_an_eval_only_rerun(
+        self, kind, auth_client, run_test, test_execution, call_execution, organization
+    ):
+        run_test.enable_tool_evaluation = False
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        self._make_harness_run(kind, run_test, [call_execution])
+        mapped = self._mapped(run_test, organization)
+        column = self._result_column(run_test, organization)
+        suite = self._suite(run_test, organization)
+        before = self._seed_outputs(
+            call_execution, mapped=mapped, column=column, suite=suite
+        )
+        metadata_before = copy.deepcopy(call_execution.call_metadata)
+
+        with self._graded_inline() as at_dispatch:
+            response = self._post_calls(auth_client, test_execution, [call_execution])
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        pending = at_dispatch[str(call_execution.id)]
+        for config in (suite, mapped):
+            assert pending[str(config.id)]["status"] == "pending"
+        assert pending[_CODE_CHECK] == before[_CODE_CHECK]
+        assert pending[str(column.id)] == before[str(column.id)]
+
+        call_execution.refresh_from_db()
+        outputs = call_execution.eval_outputs
+        assert outputs[_CODE_CHECK] == before[_CODE_CHECK]
+        assert outputs[str(column.id)] == before[str(column.id)]
+        for config in (suite, mapped):
+            assert outputs[str(config.id)]["output"] == "8"
+        assert set(outputs) == set(before)
+        assert call_execution.status == CallExecution.CallStatus.COMPLETED
+        if kind == "sdk":
+            assert (
+                call_execution.call_metadata["harness_evaluations"]
+                == metadata_before["harness_evaluations"]
+            )
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "still-finishing",
+            "running",
+            "failed",
+            "cancelled",
+            "evaluating",
+            "no-completed-call",
+            "nothing-to-grade",
+            "already-running",
+            "dispatch-failed",
+            "changed",
+        ],
+    )
+    def test_refusal(
+        self, case, auth_client, run_test, test_execution, call_execution, organization
+    ):
+        self._make_harness_run("hosted", run_test, [call_execution])
+        column = self._result_column(run_test, organization)
+        # Nothing to grade: only a column the harness alone can judge.
+        nothing = case == "nothing-to-grade"
+        suite = None if nothing else self._suite(run_test, organization)
+        mapped = None if nothing else self._mapped(run_test, organization)
+        before = self._seed_outputs(
+            call_execution, mapped=mapped, column=column, suite=suite
+        )
+        expected = {
+            "still-finishing": (
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_still_finishing",
+                "This run is still finishing. Try again in a moment.",
+            ),
+            "running": (
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_run_not_completed",
+                "Evals can be re-run only on a run that completed. This run is running.",
+            ),
+            "failed": (
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_run_not_completed",
+                "Evals can be re-run only on a run that completed. This run is failed.",
+            ),
+            "cancelled": (
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_run_not_completed",
+                "Evals can be re-run only on a run that completed. "
+                "This run is cancelled.",
+            ),
+            "evaluating": (
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_run_not_completed",
+                "Evals can be re-run only on a run that completed. "
+                "This run is evaluating.",
+            ),
+            "no-completed-call": (
+                status.HTTP_400_BAD_REQUEST,
+                "rerun_evals_no_completed_call",
+                _NO_COMPLETED_CALL,
+            ),
+            "nothing-to-grade": (
+                status.HTTP_400_BAD_REQUEST,
+                "rerun_evals_nothing_to_grade",
+                _NOTHING_TO_GRADE,
+            ),
+            "already-running": (
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_already_running",
+                _ALREADY_RUNNING,
+            ),
+            "dispatch-failed": (
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "rerun_evals_dispatch_failed",
+                _DISPATCH_FAILED,
+            ),
+            "changed": (status.HTTP_409_CONFLICT, "rerun_evals_changed", _CHANGED),
+        }[case]
+        if case == "still-finishing":
+            TestTestExecutionRuntimeContracts._hosted_job_for(
+                test_execution, HostedHarnessJob.State.RUNNING
+            )
+        if case in ("running", "failed", "cancelled", "evaluating"):
+            test_execution.status = case
+            test_execution.save(update_fields=["status"])
+        if case == "no-completed-call":
+            call_execution.status = CallExecution.CallStatus.FAILED
+            call_execution.save(update_fields=["status"])
+        state_before = self._state(test_execution, [call_execution])
+        raised = {
+            "already-running": RegradeAlreadyRunning(),
+            "changed": RegradeEvalNotFound(),
+        }.get(case)
+        dispatch_error = (
+            TimeoutError("temporal dispatch timed out")
+            if case == "dispatch-failed"
+            else None
+        )
+
+        with (
+            self._spy_on_the_service() as service,
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async",
+                side_effect=dispatch_error,
+            ) as apply_async,
+        ):
+            if raised is not None:
+                service.side_effect = raised
+            response = self._post_calls(auth_client, test_execution, [call_execution])
+
+        status_code, code, message = expected
+        assert response.status_code == status_code, response.content
+        assert response.data == {
+            "status": False,
+            "type": {
+                status.HTTP_400_BAD_REQUEST: "validation_error",
+                status.HTTP_409_CONFLICT: "conflict",
+                status.HTTP_503_SERVICE_UNAVAILABLE: "service_unavailable",
+            }[status_code],
+            "code": code,
+            "message": message,
+            "detail": message,
+            "error": message,
+            "result": message,
+        }
+        if case not in ("already-running", "changed", "dispatch-failed"):
+            service.assert_not_called()
+        if case != "dispatch-failed":
+            apply_async.assert_not_called()
+            assert self._state(test_execution, [call_execution]) == state_before
+            return
+
+        apply_async.assert_called_once()
+        test_execution.refresh_from_db()
+        call_execution.refresh_from_db()
+        # The re-grade never happened, so it leaves no snapshot.
+        assert not CallExecutionSnapshot.objects.exists()
+        assert call_execution.eval_outputs == before
+        assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+        assert (
+            test_execution.execution_metadata["eval_dispatch_failed"]
+            == "temporal dispatch timed out"
+        )
+        assert (
+            call_execution.call_metadata["eval_dispatch_failed"]
+            == "temporal dispatch timed out"
+        )
+
+    @pytest.mark.parametrize(
+        ("raised", "status_code", "code", "message"),
+        [
+            (
+                RegradeStillFinishing(),
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_still_finishing",
+                "This run is still finishing. Try again in a moment.",
+            ),
+            (
+                RegradeEvalNotFound(),
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_changed",
+                _CHANGED,
+            ),
+            (
+                RegradeRefused(
+                    "Task completion is scored by the harness during the call. "
+                    "Only rerunning the call refreshes it."
+                ),
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_changed",
+                _CHANGED,
+            ),
+            (
+                RegradeNoCalls(),
+                status.HTTP_400_BAD_REQUEST,
+                "rerun_evals_no_completed_call",
+                _NO_COMPLETED_CALL,
+            ),
+            (
+                RegradeNoCompletedCall(
+                    "Nothing to grade again: no call in this run completed."
+                ),
+                status.HTTP_400_BAD_REQUEST,
+                "rerun_evals_no_completed_call",
+                "Nothing to grade again: no call in this run completed.",
+            ),
+            (
+                RegradeNothingToGrade(),
+                status.HTTP_400_BAD_REQUEST,
+                "rerun_evals_nothing_to_grade",
+                _NOTHING_TO_GRADE,
+            ),
+            (
+                RegradeAlreadyRunning(),
+                status.HTTP_409_CONFLICT,
+                "rerun_evals_already_running",
+                _ALREADY_RUNNING,
+            ),
+            (
+                RegradeDispatchFailed(1),
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "rerun_evals_dispatch_failed",
+                _DISPATCH_FAILED,
+            ),
+        ],
+        ids=[
+            "still-finishing",
+            "eval-not-found",
+            "refused",
+            "no-calls",
+            "no-completed-call",
+            "nothing-to-grade",
+            "already-running",
+            "dispatch-failed",
+        ],
+    )
+    def test_no_service_exception_becomes_a_500(
+        self,
+        raised,
+        status_code,
+        code,
+        message,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [call_execution])
+        self._mapped(run_test, organization)
+
+        with patch(
+            "simulate.views.run_test.regrade_run_evals", side_effect=raised
+        ) as service:
+            response = self._post_calls(auth_client, test_execution, [call_execution])
+
+        service.assert_called_once()
+        assert response.status_code == status_code, response.content
+        assert response.data["code"] == code
+        assert response.data["message"] == message
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_no_completed_call_is_refused_before_nothing_to_grade(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [call_execution])
+        column = self._result_column(run_test, organization)
+        self._seed_outputs(call_execution, column=column)
+        call_execution.status = CallExecution.CallStatus.FAILED
+        call_execution.save(update_fields=["status"])
+        state_before = self._state(test_execution, [call_execution])
+
+        with self._spy_on_the_service() as service:
+            response = self._post_calls(auth_client, test_execution, [call_execution])
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["code"] == "rerun_evals_no_completed_call"
+        assert response.data["message"] == _NO_COMPLETED_CALL
+        service.assert_not_called()
+        apply_async.assert_not_called()
+        assert self._state(test_execution, [call_execution]) == state_before
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_the_bulk_route_refuses_if_any_run_has_no_completed_call(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        call_execution_te2.status = CallExecution.CallStatus.FAILED
+        call_execution_te2.save(update_fields=["status"])
+        states_before = [
+            self._state(test_execution, [call_execution]),
+            self._state(test_execution_2, [call_execution_te2]),
+        ]
+
+        with self._spy_on_the_service() as service:
+            response = self._post_runs(
+                auth_client,
+                run_test,
+                {
+                    "test_execution_ids": [
+                        str(test_execution.id),
+                        str(test_execution_2.id),
+                    ]
+                },
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["code"] == "rerun_evals_no_completed_call"
+        assert response.data["message"] == (
+            "Nothing to grade again: 1 of the selected runs has no completed "
+            f"call: {test_execution_2.id}."
+        )
+        service.assert_not_called()
+        apply_async.assert_not_called()
+        assert [
+            self._state(test_execution, [call_execution]),
+            self._state(test_execution_2, [call_execution_te2]),
+        ] == states_before
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_the_bulk_route_refuses_if_any_run_did_not_complete(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        test_execution_2.status = TestExecution.ExecutionStatus.FAILED
+        test_execution_2.save(update_fields=["status"])
+        states_before = [
+            self._state(test_execution, [call_execution]),
+            self._state(test_execution_2, [call_execution_te2]),
+        ]
+
+        with self._spy_on_the_service() as service:
+            response = self._post_runs(
+                auth_client,
+                run_test,
+                {
+                    "test_execution_ids": [
+                        str(test_execution.id),
+                        str(test_execution_2.id),
+                    ]
+                },
+            )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.data["code"] == "rerun_evals_run_not_completed"
+        assert response.data["message"] == (
+            "Evals can be re-run only on runs that completed. 1 of the selected "
+            f"runs did not: {test_execution_2.id}."
+        )
+        service.assert_not_called()
+        apply_async.assert_not_called()
+        assert [
+            self._state(test_execution, [call_execution]),
+            self._state(test_execution_2, [call_execution_te2]),
+        ] == states_before
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_only_completed_calls_are_regraded_and_the_rest_listed(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        call_execution_2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        mapped = self._mapped(run_test, organization)
+        call_execution_2.status = CallExecution.CallStatus.FAILED
+        call_execution_2.save(update_fields=["status"])
+        failed_outputs_before = copy.deepcopy(call_execution_2.eval_outputs)
+
+        with self._spy_on_the_service() as service:
+            response = self._post_calls(
+                auth_client, test_execution, [call_execution, call_execution_2]
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert response.json() == {
+            "message": (
+                "Bulk call execution rerun prepared and initiated successfully "
+                "(eval_only)"
+            ),
+            "test_execution_id": str(test_execution.id),
+            "rerun_type": "eval_only",
+            "total_processed": 2,
+            "successful_reruns": [str(call_execution.id)],
+            "failed_reruns": [
+                {"call_execution_id": str(call_execution_2.id), "error": _NOT_COMPLETED}
+            ],
+            "success_count": 1,
+            "failure_count": 1,
+            "dispatch_error": None,
+        }
+        service.assert_called_once()
+        args, kwargs = service.call_args
+        assert args[1:] == (
+            [str(test_execution.id)],
+            {str(test_execution.id): TestExecution.ExecutionStatus.COMPLETED},
+            [str(mapped.id)],
+        )
+        assert kwargs == {
+            "harness_run": True,
+            "call_execution_ids": [str(call_execution.id)],
+            "snapshot_eval_outputs": True,
+            "skip_runs_without_a_completed_call": False,
+            "claimed_elsewhere": [],
+        }
+        call_execution_2.refresh_from_db()
+        assert call_execution_2.eval_outputs == failed_outputs_before
+        assert not CallExecutionSnapshot.objects.filter(
+            call_execution=call_execution_2
+        ).exists()
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_select_all_with_exclusions_regrades_the_rest(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        call_execution_2,
+        scenario,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        third_call = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1234567890",
+            status=CallExecution.CallStatus.COMPLETED,
+            eval_outputs={"eval1": {"score": 0.5}},
+            call_metadata={"eval_started": True, "eval_completed": True},
+        )
+        excluded_before = copy.deepcopy(call_execution_2.eval_outputs)
+
+        with self._spy_on_the_service() as service:
+            response = auth_client.post(
+                self.CALLS_URL.format(test_execution.id),
+                {
+                    "rerun_type": "eval_only",
+                    "select_all": True,
+                    "call_execution_ids": [str(call_execution_2.id)],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = response.json()
+        regraded = {str(call_execution.id), str(third_call.id)}
+        assert set(data["successful_reruns"]) == regraded
+        assert data["failed_reruns"] == []
+        assert (data["success_count"], data["failure_count"]) == (2, 0)
+        assert set(service.call_args.kwargs["call_execution_ids"]) == regraded
+        call_execution_2.refresh_from_db()
+        assert call_execution_2.eval_outputs == excluded_before
+
+    def test_the_bulk_route_regrades_whole_runs_the_same_way(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        run_test.enable_tool_evaluation = False
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        self._make_harness_run("hosted", run_test, [])
+        mapped = self._mapped(run_test, organization)
+        befores = {
+            str(call.id): self._seed_outputs(call, mapped=mapped)
+            for call in (call_execution, call_execution_te2)
+        }
+
+        with (
+            self._spy_on_the_service() as service,
+            self._graded_inline() as at_dispatch,
+        ):
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = response.json()
+        assert sorted(
+            data["results"], key=lambda result: result["test_execution_id"]
+        ) == sorted(
+            [
+                {
+                    "test_execution_id": str(execution.id),
+                    "success_count": 1,
+                    "failure_count": 0,
+                    "successful_reruns": [str(call.id)],
+                    "failed_reruns": [],
+                    "dispatch_error": None,
+                }
+                for execution, call in (
+                    (test_execution, call_execution),
+                    (test_execution_2, call_execution_te2),
+                )
+            ],
+            key=lambda result: result["test_execution_id"],
+        )
+        assert {key: value for key, value in data.items() if key != "results"} == {
+            "message": (
+                "Bulk test execution rerun prepared and initiated successfully "
+                "(eval_only)"
+            ),
+            "run_test_id": str(run_test.id),
+            "rerun_type": "eval_only",
+            "total_test_executions": 2,
+            "overall_success_count": 2,
+            "overall_failure_count": 0,
+        }
+        service.assert_called_once()
+        assert set(service.call_args.kwargs["call_execution_ids"]) == set(befores)
+        for call in (call_execution, call_execution_te2):
+            assert at_dispatch[str(call.id)][str(mapped.id)]["status"] == "pending"
+            call.refresh_from_db()
+            assert call.eval_outputs[str(mapped.id)]["output"] == "8"
+            assert call.eval_outputs[_CODE_CHECK] == befores[str(call.id)][_CODE_CHECK]
+
+    def test_the_bulk_route_declares_409_and_503(self):
+        path = (
+            Path(__file__).resolve().parents[3] / "api_contracts/openapi/swagger.json"
+        )
+        paths = json.loads(path.read_text())["paths"]
+
+        responses = paths["/simulate/run-tests/{run_test_id}/rerun-test-executions/"][
+            "post"
+        ]["responses"]
+
+        assert {"409", "503"} <= set(responses)
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_no_temporal_rerun_is_started_on_a_harness_run(
+        self,
+        temporal_rerun,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        with patch(
+            "simulate.views.run_test.CallExecutionRerunView._save_eval_snapshot"
+        ) as view_snapshot:
+            response = self._post_calls(auth_client, test_execution, [call_execution])
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        temporal_rerun.assert_not_called()
+        view_snapshot.assert_not_called()
+        apply_async.assert_called_once()
+        test_execution.refresh_from_db()
+        assert "active_rerun_workflow_id" not in (
+            test_execution.execution_metadata or {}
+        )
+
+    @pytest.mark.parametrize("route", ["per-call", "bulk"])
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_a_run_no_harness_touched_takes_todays_path(
+        self,
+        temporal_rerun,
+        route,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        organization,
+    ):
+        temporal_rerun.return_value = {"workflow_id": "wf-today", "merged": False}
+        self._mapped(run_test, organization)
+
+        with self._spy_on_the_service() as service:
+            if route == "per-call":
+                response = self._post_calls(
+                    auth_client, test_execution, [call_execution]
+                )
+            else:
+                response = self._post_runs(
+                    auth_client,
+                    run_test,
+                    {"test_execution_ids": [str(test_execution.id)]},
+                )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        expected_keys = (
+            {
+                "message",
+                "test_execution_id",
+                "rerun_type",
+                "total_processed",
+                "successful_reruns",
+                "failed_reruns",
+                "success_count",
+                "failure_count",
+                "dispatch_error",
+            }
+            if route == "per-call"
+            else {
+                "message",
+                "run_test_id",
+                "rerun_type",
+                "total_test_executions",
+                "results",
+                "overall_success_count",
+                "overall_failure_count",
+            }
+        )
+        assert set(response.json()) == expected_keys
+        service.assert_not_called()
+        temporal_rerun.assert_called_once_with(
+            test_execution_id=str(test_execution.id),
+            call_execution_ids=[str(call_execution.id)],
+            org_id=str(organization.id),
+            workspace_id=str(run_test.workspace_id),
+            eval_only=True,
+            active_workflow_id=None,
+        )
+        call_execution.refresh_from_db()
+        test_execution.refresh_from_db()
+        assert call_execution.eval_outputs == {}
+        assert test_execution.status == TestExecution.ExecutionStatus.EVALUATING
+
+    @patch("simulate.views.run_test.TestExecutor")
+    def test_cancel_is_refused_while_an_sdk_run_grades(
+        self, mock_test_executor, auth_client, test_execution, call_execution
+    ):
+        self._make_harness_run("sdk", test_execution.run_test, [call_execution])
+        test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+        test_execution.save(update_fields=["status"])
+
+        response = auth_client.post(
+            f"/simulate/test-executions/{test_execution.id}/cancel/",
+            {},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.data["message"] == (
+            "Grading can't be stopped. It finishes on its own."
+        )
+        mock_test_executor.assert_not_called()
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.EVALUATING
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_a_refusal_is_logged_with_its_code(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        test_execution.status = TestExecution.ExecutionStatus.FAILED
+        test_execution.save(update_fields=["status"])
+
+        with capture_logs() as logs:
+            response = self._post_calls(auth_client, test_execution, [call_execution])
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        [refused] = [log for log in logs if log["event"] == "rerun_evals_refused"]
+        assert refused == {
+            "event": "rerun_evals_refused",
+            "log_level": "info",
+            "code": "rerun_evals_run_not_completed",
+            "run_test_id": str(run_test.id),
+            "test_execution_ids": [str(test_execution.id)],
+        }
+
+    def test_a_failed_call_in_a_whole_run_is_listed_not_graded(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        scenario,
+        organization,
+    ):
+        run_test.enable_tool_evaluation = False
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        self._make_harness_run("hosted", run_test, [])
+        mapped = self._mapped(run_test, organization)
+        failed = CallExecution.objects.create(
+            test_execution=test_execution_2,
+            scenario=scenario,
+            phone_number="+1234567890",
+            status=CallExecution.CallStatus.FAILED,
+            eval_outputs={},
+            call_metadata={},
+        )
+        before = copy.deepcopy(failed.eval_outputs)
+
+        with self._spy_on_the_service(), self._graded_inline():
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = response.json()
+        [second] = [
+            result
+            for result in data["results"]
+            if result["test_execution_id"] == str(test_execution_2.id)
+        ]
+        assert second["successful_reruns"] == [str(call_execution_te2.id)]
+        assert second["failed_reruns"] == [
+            {"call_execution_id": str(failed.id), "error": "The call did not complete."}
+        ]
+        assert second["failure_count"] == 1
+        assert data["overall_failure_count"] == 1
+        failed.refresh_from_db()
+        assert failed.eval_outputs == before
+        assert str(mapped.id) not in failed.eval_outputs
+
+    def _more_runs(self, run_test, test_execution, count, *, status_value):
+        return [
+            TestExecution.objects.create(
+                run_test=run_test,
+                status=status_value,
+                total_scenarios=1,
+                total_calls=1,
+                simulator_agent=test_execution.simulator_agent,
+                agent_definition=test_execution.agent_definition,
+            )
+            for _ in range(count)
+        ]
+
+    def test_a_bulk_refusal_lists_three_runs_and_counts_the_rest(
+        self, auth_client, run_test, test_execution, call_execution, organization
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        failed = self._more_runs(
+            run_test,
+            test_execution,
+            4,
+            status_value=TestExecution.ExecutionStatus.FAILED,
+        )
+        ids = [str(test_execution.id), *(str(run.id) for run in failed)]
+
+        with self._spy_on_the_service() as service:
+            response = self._post_runs(
+                auth_client, run_test, {"test_execution_ids": ids}
+            )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.data["code"] == "rerun_evals_run_not_completed"
+        listed = [run_id for run_id in ids if run_id != str(test_execution.id)]
+        message = response.data["message"]
+        assert message.startswith(
+            "Evals can be re-run only on runs that completed. 4 of the selected "
+            "runs did not: "
+        )
+        assert message.endswith(" and 1 more.")
+        named = message.split("did not: ")[1].removesuffix(" and 1 more.").split(", ")
+        assert len(named) == 3 and set(named) <= set(listed)
+        service.assert_not_called()
+
+    def test_two_runs_with_no_completed_call_read_have(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        for call in (call_execution, call_execution_te2):
+            call.status = CallExecution.CallStatus.FAILED
+            call.save(update_fields=["status"])
+
+        with self._spy_on_the_service() as service:
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["code"] == "rerun_evals_no_completed_call"
+        assert response.data["message"].startswith(
+            "Nothing to grade again: 2 of the selected runs have no completed call: "
+        )
+        service.assert_not_called()
+
+    def test_a_regrade_is_logged_with_its_counts(
+        self, auth_client, run_test, test_execution, call_execution, organization
+    ):
+        run_test.enable_tool_evaluation = False
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        self._make_harness_run("hosted", run_test, [])
+        mapped = self._mapped(run_test, organization)
+        self._seed_outputs(call_execution, mapped=mapped)
+
+        with capture_logs() as logs, self._graded_inline():
+            response = self._post_calls(auth_client, test_execution, [call_execution])
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        from simulate.services.harness_evals import regrade_mapping
+
+        gradeable = [
+            config
+            for config in SimulateEvalConfig.objects.filter(run_test=run_test)
+            if regrade_mapping(config) is not None
+        ]
+        [logged] = [log for log in logs if log["event"] == "rerun_evals_on_harness_run"]
+        assert logged == {
+            "event": "rerun_evals_on_harness_run",
+            "log_level": "info",
+            "test_execution_ids": [str(test_execution.id)],
+            "run_test_id": str(run_test.id),
+            "selected_call_count": 1,
+            "graded_call_count": 1,
+            "eval_config_count": len(gradeable),
+        }
+
+    # --- select_all skips what it can't grade; picked runs are still refused
+
+    @staticmethod
+    def _skipped(data, run):
+        [entry] = [
+            result
+            for result in data["results"]
+            if result["test_execution_id"] == str(run.id)
+        ]
+        return entry
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_select_all_skips_a_failed_run_and_grades_the_rest(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        test_execution_2.status = TestExecution.ExecutionStatus.FAILED
+        test_execution_2.save(update_fields=["status"])
+        CallExecution.objects.filter(id=call_execution_te2.id).update(
+            status=CallExecution.CallStatus.FAILED
+        )
+        failed_state = self._state(test_execution_2, [call_execution_te2])
+
+        with self._spy_on_the_service() as service:
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = response.json()
+        assert self._skipped(data, test_execution_2) == {
+            "test_execution_id": str(test_execution_2.id),
+            "success_count": 0,
+            "failure_count": 0,
+            "successful_reruns": [],
+            "failed_reruns": [],
+            "dispatch_error": None,
+            "skipped": True,
+            "reason": "The run is failed, not completed.",
+        }
+        graded = self._skipped(data, test_execution)
+        assert graded["successful_reruns"] == [str(call_execution.id)]
+        assert "skipped" not in graded
+        assert data["total_test_executions"] == 2
+        assert data["overall_success_count"] == 1
+        assert {
+            key: value
+            for key, value in self._state(
+                test_execution_2, [call_execution_te2]
+            ).items()
+            if key != "snapshots"
+        } == {key: value for key, value in failed_state.items() if key != "snapshots"}
+        # The service gets only the run it can grade, with that run's status.
+        service.assert_called_once()
+        args = service.call_args.args
+        assert args[1] == [str(test_execution.id)]
+        assert args[2] == {str(test_execution.id): "completed"}
+        apply_async.assert_called_once()
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_select_all_skips_an_evaluating_run_a_finishing_run_and_a_run_with_no_completed_call(
+        self,
+        apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        evaluating = self._more_runs(
+            run_test,
+            test_execution,
+            1,
+            status_value=TestExecution.ExecutionStatus.EVALUATING,
+        )[0]
+        [empty] = self._more_runs(
+            run_test,
+            test_execution,
+            1,
+            status_value=TestExecution.ExecutionStatus.COMPLETED,
+        )
+        CallExecution.objects.create(
+            test_execution=empty,
+            scenario=call_execution.scenario,
+            phone_number="+1234567890",
+            status=CallExecution.CallStatus.FAILED,
+        )
+        # test_execution_2's job is still finishing.
+        TestTestExecutionRuntimeContracts._hosted_job_for(
+            test_execution_2, HostedHarnessJob.State.FINALIZING
+        )
+
+        response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = response.json()
+        reasons = {
+            result["test_execution_id"]: result.get("reason")
+            for result in data["results"]
+        }
+        assert reasons == {
+            str(test_execution.id): None,
+            str(test_execution_2.id): "The run's job is still finishing.",
+            str(evaluating.id): "The run is evaluating, not completed.",
+            str(empty.id): "No call in this run completed.",
+        }
+
+    def test_the_same_runs_picked_by_id_are_still_refused(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        ids = [str(test_execution.id), str(test_execution_2.id)]
+
+        TestExecution.objects.filter(id=test_execution_2.id).update(
+            status=TestExecution.ExecutionStatus.EVALUATING
+        )
+        response = self._post_runs(auth_client, run_test, {"test_execution_ids": ids})
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.data["code"] == "rerun_evals_run_not_completed"
+
+        TestExecution.objects.filter(id=test_execution_2.id).update(
+            status=TestExecution.ExecutionStatus.COMPLETED
+        )
+        TestTestExecutionRuntimeContracts._hosted_job_for(
+            test_execution_2, HostedHarnessJob.State.FINALIZING
+        )
+        response = self._post_runs(auth_client, run_test, {"test_execution_ids": ids})
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.data["code"] == "rerun_evals_still_finishing"
+
+    def test_select_all_with_no_completed_run_is_a_409(
+        self, auth_client, run_test, test_execution, call_execution, organization
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        TestExecution.objects.filter(id=test_execution.id).update(
+            status=TestExecution.ExecutionStatus.FAILED
+        )
+
+        with self._spy_on_the_service() as service:
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.data["code"] == "rerun_evals_run_not_completed"
+        service.assert_not_called()
+
+    def test_select_all_where_every_completed_run_has_no_completed_call_is_a_400(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        TestExecution.objects.filter(id=test_execution_2.id).update(
+            status=TestExecution.ExecutionStatus.FAILED
+        )
+        CallExecution.objects.filter(id=call_execution.id).update(
+            status=CallExecution.CallStatus.FAILED
+        )
+
+        response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["code"] == "rerun_evals_no_completed_call"
+
+    def test_the_view_hands_the_plan_to_the_service(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        call_execution_2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        mapped = self._mapped(run_test, organization)
+        self._result_column(run_test, organization)
+        CallExecution.objects.filter(id=call_execution_2.id).update(
+            status=CallExecution.CallStatus.FAILED
+        )
+
+        with (
+            self._spy_on_the_service() as service,
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async"
+            ),
+        ):
+            response = self._post_calls(
+                auth_client, test_execution, [call_execution, call_execution_2]
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        service.assert_called_once()
+        args, kwargs = service.call_args
+        assert args[1] == [str(test_execution.id)]
+        assert args[2] == {str(test_execution.id): "completed"}
+        assert args[3] == [str(mapped.id)]
+        assert kwargs["call_execution_ids"] == [str(call_execution.id)]
+
+    def test_a_call_that_moved_on_before_the_lock_is_listed_as_left_out(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        call_execution_2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        def reset_one_then_regrade(*args, **kwargs):
+            CallExecution.objects.filter(id=call_execution_2.id).update(
+                status=CallExecution.CallStatus.PENDING
+            )
+            return run_regrade.regrade_run_evals(*args, **kwargs)
+
+        with (
+            patch(
+                "simulate.views.run_test.regrade_run_evals",
+                side_effect=reset_one_then_regrade,
+            ),
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async"
+            ),
+        ):
+            response = self._post_calls(
+                auth_client, test_execution, [call_execution, call_execution_2]
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert response.data["successful_reruns"] == [str(call_execution.id)]
+        assert response.data["failed_reruns"] == [
+            {
+                "call_execution_id": str(call_execution_2.id),
+                "error": "The call did not complete.",
+            }
+        ]
+
+    def test_a_call_deleted_between_the_plan_and_the_lock_is_listed_as_left_out(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        call_execution_2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        def delete_one_then_regrade(*args, **kwargs):
+            CallExecution.objects.filter(id=call_execution_2.id).update(deleted=True)
+            return run_regrade.regrade_run_evals(*args, **kwargs)
+
+        with (
+            patch(
+                "simulate.views.run_test.regrade_run_evals",
+                side_effect=delete_one_then_regrade,
+            ),
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async"
+            ),
+        ):
+            response = self._post_calls(
+                auth_client, test_execution, [call_execution, call_execution_2]
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert response.data["successful_reruns"] == [str(call_execution.id)]
+        assert response.data["failed_reruns"] == [
+            {
+                "call_execution_id": str(call_execution_2.id),
+                "error": "The call no longer exists.",
+            }
+        ]
+
+    def test_select_all_skips_a_run_that_lost_its_completed_calls_before_the_lock(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        def reset_one_run_then_regrade(*args, **kwargs):
+            CallExecution.objects.filter(id=call_execution_te2.id).update(
+                status=CallExecution.CallStatus.PENDING
+            )
+            return run_regrade.regrade_run_evals(*args, **kwargs)
+
+        with (
+            patch(
+                "simulate.views.run_test.regrade_run_evals",
+                side_effect=reset_one_run_then_regrade,
+            ),
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async"
+            ),
+        ):
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = response.json()
+        lost = self._skipped(data, test_execution_2)
+        assert lost["skipped"] is True
+        assert lost["reason"] == "No call in this run completed."
+        assert lost["successful_reruns"] == []
+        assert lost["failed_reruns"] == []
+        graded = self._skipped(data, test_execution)
+        assert graded["successful_reruns"] == [str(call_execution.id)]
+        assert "skipped" not in graded
+        test_execution_2.refresh_from_db()
+        assert test_execution_2.status == TestExecution.ExecutionStatus.COMPLETED
+
+    def test_select_all_skips_a_run_another_regrade_claimed_before_the_claim(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        def another_request_claims_one_run_then_regrade(*args, **kwargs):
+            TestExecution.objects.filter(id=test_execution_2.id).update(
+                status=TestExecution.ExecutionStatus.EVALUATING
+            )
+            return run_regrade.regrade_run_evals(*args, **kwargs)
+
+        with (
+            patch(
+                "simulate.views.run_test.regrade_run_evals",
+                side_effect=another_request_claims_one_run_then_regrade,
+            ),
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async"
+            ),
+        ):
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = response.json()
+        taken = self._skipped(data, test_execution_2)
+        assert taken["skipped"] is True
+        assert taken["reason"] == "Another re-grade claimed this run."
+        assert taken["successful_reruns"] == []
+        assert taken["failed_reruns"] == []
+        graded = self._skipped(data, test_execution)
+        assert graded["successful_reruns"] == [str(call_execution.id)]
+        assert "skipped" not in graded
+        test_execution_2.refresh_from_db()
+        assert test_execution_2.status == TestExecution.ExecutionStatus.EVALUATING
+
+    def test_a_dispatch_failure_that_could_not_be_put_back_does_not_say_it_was(
+        self, auth_client, run_test, test_execution, call_execution, organization
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        with patch(
+            "simulate.views.run_test.regrade_run_evals",
+            side_effect=RegradeDispatchFailed(1, put_back=False),
+        ):
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        message = str(response.json())
+        assert "earlier results are back" not in message
+        assert "safe to retry" not in message
+
+    def test_picked_by_id_a_run_that_lost_its_completed_calls_is_still_refused(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        def reset_one_run_then_regrade(*args, **kwargs):
+            CallExecution.objects.filter(id=call_execution_te2.id).update(
+                status=CallExecution.CallStatus.PENDING
+            )
+            return run_regrade.regrade_run_evals(*args, **kwargs)
+
+        with (
+            patch(
+                "simulate.views.run_test.regrade_run_evals",
+                side_effect=reset_one_run_then_regrade,
+            ),
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async"
+            ) as apply_async,
+        ):
+            response = self._post_runs(
+                auth_client,
+                run_test,
+                {
+                    "test_execution_ids": [
+                        str(test_execution.id),
+                        str(test_execution_2.id),
+                    ]
+                },
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["code"] == "rerun_evals_no_completed_call"
+        apply_async.assert_not_called()
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
+
+    def test_no_runs_at_all_answers_as_the_route_does_for_an_empty_selection(
+        self, run_test, organization
+    ):
+        from simulate.views.run_test import (
+            NO_RERUNNABLE_RUNS,
+            _regrade_evals_on_harness_run,
+        )
+        from tfc.utils.general_methods import GeneralMethods
+
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        refusal, results = _regrade_evals_on_harness_run(
+            GeneralMethods(),
+            run_test,
+            [],
+            CallExecution.objects.none(),
+            bulk=True,
+        )
+
+        assert results is None
+        # The whole body, so a changed error code or shape fails it too.
+        assert refusal.status_code == status.HTTP_400_BAD_REQUEST
+        assert refusal.data == GeneralMethods().bad_request(NO_RERUNNABLE_RUNS).data
+
+    def test_the_single_route_with_no_calls_selected_gives_its_own_answer(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        """The single route never reaches the shared helper with no run: it
+        refuses a selection that matches no call of this run itself, in its
+        own words. (An empty list is refused earlier, by the serializer.)"""
+        from tfc.utils.general_methods import GeneralMethods
+
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+
+        # A call, but of another run.
+        response = self._post_calls(auth_client, test_execution, [call_execution_te2])
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            response.data
+            == GeneralMethods()
+            .bad_request("No call executions found that can be rerun.")
+            .data
+        )
+
+    def test_the_bulk_answer_is_built_by_its_response_serializer(
+        self,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+        organization,
+    ):
+        from simulate.serializers.test_execution import (
+            TestExecutionRerunResponseSerializer,
+        )
+
+        self._make_harness_run("hosted", run_test, [])
+        self._mapped(run_test, organization)
+        TestExecution.objects.filter(id=test_execution_2.id).update(
+            status=TestExecution.ExecutionStatus.FAILED
+        )
+
+        with (
+            patch(
+                "simulate.views.run_test.TestExecutionRerunResponseSerializer",
+                wraps=TestExecutionRerunResponseSerializer,
+            ) as serializer,
+            patch(
+                "simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async"
+            ),
+        ):
+            response = self._post_runs(auth_client, run_test, {"select_all": True})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        serializer.assert_called_once()
+        body = response.json()
+        assert TestExecutionRerunResponseSerializer(body).data == body
+        assert any(result.get("skipped") for result in body["results"])

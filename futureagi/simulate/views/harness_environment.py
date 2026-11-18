@@ -1291,15 +1291,17 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         eval_config_ids = request.validated_data["eval_config_ids"]
         try:
-            call_execution_count = regrade_run_evals(
-                job.run_test,
-                execution_ids,
-                {str(identifier): run_status},
-                eval_config_ids,
-                harness_run=harness_run,
-                enable_tool_evaluation=request.validated_data.get(
-                    "enable_tool_evaluation"
-                ),
+            call_execution_count = len(
+                regrade_run_evals(
+                    job.run_test,
+                    execution_ids,
+                    {str(identifier): run_status},
+                    eval_config_ids,
+                    harness_run=harness_run,
+                    enable_tool_evaluation=request.validated_data.get(
+                        "enable_tool_evaluation"
+                    ),
+                )
             )
         except RegradeEvalNotFound:
             # An eval removed between the check above and the service's own.
