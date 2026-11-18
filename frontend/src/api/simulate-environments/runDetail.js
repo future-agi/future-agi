@@ -712,10 +712,15 @@ export const READ_AGAIN_MIN_MS = 1000;
 
 /**
  * How long until a pending worker record is read again; false when none is due. Never 0, which turns polling off:
- * a `next_read_at` already past (a late answer, a clock ahead of the server's) still reads again.
+ * a `next_read_at` already past (a late answer, a clock ahead of the server's) or unreadable still reads again.
  */
-export const readAgainDelay = (at, now = Date.now()) =>
-  at ? Math.max(Date.parse(at) - now, READ_AGAIN_MIN_MS) : false;
+export const readAgainDelay = (at, now = Date.now()) => {
+  if (!at) return false;
+  const wait = Date.parse(at) - now;
+  return Number.isFinite(wait)
+    ? Math.max(wait, READ_AGAIN_MIN_MS)
+    : READ_AGAIN_MIN_MS;
+};
 
 // A multi-agent call whose record is still being collected (202): the tab stays and says so until it lands.
 export const COLLECTING_WORKERS = Object.freeze({ state: "collecting" });

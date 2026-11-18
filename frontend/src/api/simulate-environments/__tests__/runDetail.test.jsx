@@ -1824,7 +1824,47 @@ describe("useCallWorkers", () => {
     expect(readAgainDelay("2026-11-17T09:59:30Z", now)).toBe(READ_AGAIN_MIN_MS);
     expect(readAgainDelay("2026-11-17T10:00:35Z", now)).toBe(35000);
     expect(readAgainDelay(null, now)).toBe(false);
+    // An unreadable time still reads again, never NaN (which would leave the poll in an unknown state).
+    expect(readAgainDelay("not a date", now)).toBe(READ_AGAIN_MIN_MS);
   });
+
+  it.each([
+    ["already past", () => new Date(Date.now() - 30_000).toISOString()],
+    ["unreadable", () => "not a date"],
+  ])(
+    "reads a pending record again shortly when its next read is %s",
+    async (_label, nextReadAt) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const { useCallWorkers, READ_AGAIN_MIN_MS } = await import(
+          "../runDetail"
+        );
+        axios.get.mockReset();
+        axios.get.mockResolvedValue({
+          status: 202,
+          data: {
+            pending: true,
+            next_read_at: nextReadAt(),
+            participants_declared: true,
+          },
+        });
+        const client = new QueryClient();
+        const Wrapper = ({ children }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        );
+        Wrapper.propTypes = { children: PropTypes.node };
+        const { result } = renderHook(() => useCallWorkers("call-late"), {
+          wrapper: Wrapper,
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(READ_AGAIN_MIN_MS + 100);
+        await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("keeps the record shown while a status change re-reads the same call, but never another call's", async () => {
     const { useCallWorkers } = await import("../runDetail");
