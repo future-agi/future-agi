@@ -12,6 +12,7 @@ import jsonpatch
 from simulate.services.harness_versioning import hashing
 from simulate.services.harness_versioning.review_items import (
     LISTED,
+    ReviewChange,
     canonical,
     index_key,
     item_index,
@@ -33,7 +34,7 @@ class ReviewRefused(Exception):
 
 
 def review_digest(
-    default_hash: str, changes: list[dict[str, Any]], decisions: Mapping[str, str]
+    default_hash: str, changes: list[ReviewChange], decisions: Mapping[str, str]
 ) -> str:
     """What the person saw and decided: every change's id, draft content and decision, on this default."""
     triples = sorted(
@@ -47,7 +48,7 @@ def _put(files: dict[str, bytes], document: str, body: Any) -> None:
     files[document] = (json.dumps(body, indent=2, ensure_ascii=False) + "\n").encode()
 
 
-def _apply_listed(files: dict[str, bytes], change: dict[str, Any]) -> None:
+def _apply_listed(files: dict[str, bytes], change: ReviewChange) -> None:
     """Apply one accepted change to its entry of a JSON document, found again by its key, never by position."""
     document, kind, key = change["document"], change["kind"], change["key"]
     body = read_json(files.get(document, b"null"))
@@ -97,7 +98,7 @@ def _is_item(kind: str, key: str, entry: Any) -> bool:
 def compose_accepted(
     default: Mapping[str, bytes],
     draft: Mapping[str, bytes],
-    changes: list[dict[str, Any]],
+    changes: list[ReviewChange],
     decisions: Mapping[str, str],
 ) -> dict[str, bytes]:
     """The default with exactly the accepted changes applied, or a refusal naming the items.
@@ -171,7 +172,7 @@ def _compose_suite_index(
     default: Mapping[str, bytes],
     draft: Mapping[str, bytes],
     files: dict[str, bytes],
-    changes: list[dict[str, Any]],
+    changes: list[ReviewChange],
     decisions: Mapping[str, str],
 ) -> None:
     """The suite index lists the scenarios a version runs: each accepted scenario change takes the draft's entry (or
@@ -219,7 +220,7 @@ def _compose_suite_index(
 _AMENDMENT_DASH = "\u2014"
 
 
-def _amendment_owner(entry: str, changes: list[dict[str, Any]]) -> str | None:
+def _amendment_owner(entry: str, changes: list[ReviewChange]) -> str | None:
     """The change an amendment line records, read from the line's subject. The harness writes `rule added`, `rule
     removed`, `tool removed` and `tool corrected` lines as the action, a dash, the rule or tool, then `: <why>`, and a
     contract field change as `<field> <was> -> <now>: <why>`."""
@@ -243,7 +244,7 @@ def _carry_amendments(
     default: Mapping[str, bytes],
     draft: Mapping[str, bytes],
     files: dict[str, bytes],
-    changes: list[dict[str, Any]],
+    changes: list[ReviewChange],
     decisions: Mapping[str, str],
 ) -> None:
     """The contract's amendment log keeps the lines the draft added for accepted changes, and drops the lines of

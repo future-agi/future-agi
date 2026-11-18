@@ -66,7 +66,7 @@ from simulate.services.harness_versioning.draft_pieces import (
     version_error,
 )
 from simulate.services.harness_versioning.review import any_decision, apply_review
-from simulate.services.harness_versioning.review_items import index_in_step
+from simulate.services.harness_versioning.review_items import UsedFile, index_in_step
 from simulate.services.harness_versioning.review_saved import name_saved, record_sources
 from simulate.services.harness_versioning.versions import (
     SEALED_MANIFEST,
@@ -528,7 +528,7 @@ def record_draft(
     nudge: Any = None,
     message_id: str = "",
     checked: set[str] | None = None,
-    used_files: list[Mapping[str, Any]] | None = None,
+    used_files: list[UsedFile] | None = None,
 ) -> DraftWrite | None:
     """Write an edited authoring tree into the environment's drafts.
 

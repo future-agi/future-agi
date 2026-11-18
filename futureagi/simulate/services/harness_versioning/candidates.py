@@ -8,7 +8,7 @@ the candidates (`candidate_promotion`).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 import structlog
 from django.db import transaction
@@ -18,7 +18,9 @@ from simulate.models import AgentVersion, HostedHarnessJob
 from simulate.models.harness_versioning import HashKind, VersionStatus
 from simulate.services.harness_versioning import archives, review, validation
 from simulate.services.harness_versioning.candidate_sets import (
+    CandidateDraft,
     CandidateSet,
+    CandidateValidation,
     current_defaults,
     live_set,
     store_set,
@@ -43,6 +45,7 @@ from simulate.services.harness_versioning.drafts import (
     require_chat_idle,
     require_no_rebuild,
 )
+from simulate.services.harness_versioning.review import DraftReview
 from simulate.services.harness_versioning.versions import (
     lock_environment,
     require_not_busy,
@@ -51,7 +54,24 @@ from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
 
-UNAVAILABLE = {"validation": {"state": "unavailable"}, "candidates": None}
+
+class CandidateIds(TypedDict):
+    environment_version_id: str
+    suite_version_id: str
+
+
+class Unavailable(TypedDict):
+    state: Literal["unavailable"]
+
+
+class ValidateBody(TypedDict):
+    """Validate's answer: where the validation stands, and the candidate versions it is proving."""
+
+    validation: CandidateValidation | Unavailable
+    candidates: CandidateIds | None
+
+
+UNAVAILABLE = ValidateBody(validation=Unavailable(state="unavailable"), candidates=None)
 
 
 def live_archived_tokens(locked: HostedHarnessJob) -> set[str]:
@@ -178,7 +198,7 @@ def _candidate(
 def create_candidates(
     locked: HostedHarnessJob,
     opened: Mapping[str, Any],
-    reviewed: Mapping[str, Any],
+    reviewed: DraftReview,
     *,
     user: Any,
 ) -> dict[str, Any]:
@@ -226,7 +246,7 @@ def validate_drafts(
     expected_revisions: Mapping[str, int],
     expected_review_digest: str | None,
     user: Any,
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[ValidateBody, bool]:
     """Build candidates from the open drafts and the decisions on them, and start validating them.
 
     Returns the body and whether a validation job is running (202) rather than already settled (200). Refuses as
@@ -281,7 +301,7 @@ def validate_drafts(
             "assembly_key": started.bundle.assembly_key,
             "base_defaults": current_defaults(locked),
             "drafts": {
-                piece: {"id": str(draft.id), "revision": draft.revision}
+                piece: CandidateDraft(id=str(draft.id), revision=draft.revision)
                 for piece, draft in opened.items()
             },
             "review_digest": reviewed["review_digest"],
@@ -299,11 +319,11 @@ def validate_drafts(
         state=state["state"],
         job_id=entry["job_id"],
     )
-    body = {
-        "validation": state,
-        "candidates": {
-            "environment_version_id": entry["environment_version_id"],
-            "suite_version_id": entry["suite_version_id"],
-        },
-    }
+    body = ValidateBody(
+        validation=state,
+        candidates=CandidateIds(
+            environment_version_id=entry["environment_version_id"],
+            suite_version_id=entry["suite_version_id"],
+        ),
+    )
     return body, state["state"] == "validating"

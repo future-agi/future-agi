@@ -8,6 +8,11 @@ from typing import Any
 
 from simulate.services.harness_versioning.references import ALL
 from simulate.services.harness_versioning.review_items import (
+    ChangeSource,
+    SavedChange,
+    SourceAgent,
+    SourceUsed,
+    UsedFile,
     item_index,
     whole_documents,
 )
@@ -15,31 +20,27 @@ from simulate.services.harness_versioning.review_items import (
 SUMMARY_ITEMS = 5
 
 
-def review_summary(review: dict[str, Any]) -> str:
+def review_summary(changes: list[SavedChange]) -> str:
     """A saved version's summary, from what the person accepted: the first few changes and how many more."""
-    accepted = [
-        one["summary"]
-        for one in (review or {}).get("changes") or []
-        if one.get("decision") == "accepted"
-    ]
+    accepted = [one["summary"] for one in changes if one["decision"] == "accepted"]
     head = "; ".join(accepted[:SUMMARY_ITEMS])
     more = len(accepted) - SUMMARY_ITEMS
     return head + (f"; and {more} more" if more > 0 else "")
 
 
 def carry_untouched_proofs(
-    parent: Any, version: Any, suite_version: Any, reviewed: list[dict[str, Any]]
+    parent: Any, version: Any, suite_version: Any, reviewed: list[SavedChange]
 ) -> None:
     """Scenarios no accepted change touched keep the proofs they had against the environment version this one came
     from. A change that may touch every scenario (a rule, a contract field, a world file) carries nothing.
     """
     from simulate.models import HarnessSuiteValidation
 
-    accepted = [one for one in reviewed if one.get("decision") == "accepted"]
+    accepted = [one for one in reviewed if one["decision"] == "accepted"]
     if (
         parent is None
         or suite_version is None
-        or any(one.get("affects") == ALL for one in accepted)
+        or any(one["affects"] == ALL for one in accepted)
     ):
         return
     earlier = HarnessSuiteValidation.no_workspace_objects.filter(
@@ -50,9 +51,7 @@ def carry_untouched_proofs(
     from simulate.services.harness_starting_records import scenario_token
 
     # A change names a scenario by its folder; a proof by the suite's key (`duplicate_refund` vs `duplicate-refund`).
-    touched = {
-        scenario_token(key) for one in accepted for key in one.get("affects") or []
-    }
+    touched = {scenario_token(key) for one in accepted for key in one["affects"] or []}
     kept = {
         key: proof
         for key, proof in earlier.proofs.items()
@@ -82,7 +81,7 @@ def carry_untouched_proofs(
     )
 
 
-def name_saved(activated: dict[str, Any], *, name: str) -> None:
+def name_saved(activated: Mapping[str, tuple[Any, bool]], *, name: str) -> None:
     """Give each version a save created the person's name and, when it was reviewed, a summary of what they
     accepted. A version the save reused keeps what it had."""
     for version, created in activated.values():
@@ -91,10 +90,12 @@ def name_saved(activated: dict[str, Any], *, name: str) -> None:
         fields: list[str] = []
         if name:
             version.name, fields = name[:80], [*fields, "name"]
-        reviewed = (version.documents or {}).get("review_changes")
+        reviewed: list[SavedChange] = (version.documents or {}).get(
+            "review_changes"
+        ) or []
         if reviewed:
             version.summary, fields = (
-                review_summary({"changes": reviewed})[:1024],
+                review_summary(reviewed)[:1024],
                 [
                     *fields,
                     "summary",
@@ -112,7 +113,7 @@ SOURCES_PER_CHANGE = 20
 
 
 def record_sources(
-    provenance: dict[str, list[dict[str, Any]]] | None,
+    provenance: dict[str, list[ChangeSource]] | None,
     before: Mapping[str, bytes],
     after: Mapping[str, bytes],
     *,
@@ -121,8 +122,8 @@ def record_sources(
     revision: int,
     at: str,
     message_id: str = "",
-    used_files: list[Mapping[str, Any]] | None = None,
-) -> dict[str, list[dict[str, Any]]]:
+    used_files: list[UsedFile] | None = None,
+) -> dict[str, list[ChangeSource]]:
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
     revision), appended to the sources it already had. A retried write at the same revision adds nothing. A chat
     write names the person's message it answered (`message_id`); a file import names each file and row it read
@@ -139,30 +140,26 @@ def record_sources(
     person = str(getattr(user, "id", "") or "") if user is not None else ""
     if message_id:
         # A chat change belongs to the person whose message it answered, made through the harness.
-        agent = {"kind": "harness", "on_behalf_of": person}
-        used = [{"kind": "message", "id": message_id}]
+        agent = SourceAgent(kind="harness", on_behalf_of=person)
+        used = [SourceUsed(kind="message", id=message_id)]
     else:
         used = []
         agent = (
-            {"kind": "user", "user_id": person}
+            SourceAgent(kind="user", user_id=person)
             if user is not None
-            else {"kind": "harness"}
+            else SourceAgent(kind="harness")
         )
     used = [
         *used,
         *(
-            {"kind": "file", "id": str(one["file_id"]), "row": one.get("row")}
+            SourceUsed(kind="file", id=str(one["file_id"]), row=one.get("row"))
             for one in used_files or []
             if one.get("file_id")
         ),
     ]
-    source = {
-        "origin": origin,
-        "agent": agent,
-        "at": at,
-        "draft_revision": revision,
-        **({"used": list(used)} if used else {}),
-    }
+    source = ChangeSource(origin=origin, agent=agent, at=at, draft_revision=revision)
+    if used:
+        source["used"] = list(used)
     for item_id in moved:
         listed = out.setdefault(item_id, [])
         if any(one.get("draft_revision") == revision for one in listed):

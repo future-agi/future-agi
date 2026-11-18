@@ -29,6 +29,28 @@ class Defaults(TypedDict):
     suite: str
 
 
+class CandidateDraft(TypedDict):
+    id: str
+    revision: int
+
+
+class FailedValidation(TypedDict):
+    code: str
+    message: str
+    # Each action whose check failed, with the reason, as the bundle recorded it.
+    failed_actions: list[dict[str, Any]]
+
+
+class CandidateValidation(TypedDict):
+    """Where the live candidate set's validation stands, as the drafts and Validate answers show it."""
+
+    state: str
+    job_id: str | None
+    error: FailedValidation | None
+    affected_scenarios: list[str]
+    dropped_scenarios: list[str]
+
+
 class CandidateSet(TypedDict):
     """What the last Validate built, as the environment's metadata keeps it."""
 
@@ -38,7 +60,7 @@ class CandidateSet(TypedDict):
     assembly_key: str
     base_defaults: Defaults
     # Per piece with a draft: the draft and the revision the candidates were built from.
-    drafts: dict[str, dict[str, Any]]
+    drafts: dict[str, CandidateDraft]
     review_digest: str
     job_id: str | None
     at: str
@@ -132,7 +154,7 @@ def unavailable_on_our_side(entry: CandidateSet, bundle: Any) -> bool:
 
 def validation_state(
     environment: HostedHarnessJob, entry: CandidateSet | None = None
-) -> dict[str, Any] | None:
+) -> CandidateValidation | None:
     """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran), `ready`,
     `failed`, `check_unavailable` (the check ended on our side for a cause that repeats; the set may save
     uncertified), or `superseded` once the defaults moved under it. A failed validation names the actions that failed and
@@ -154,13 +176,13 @@ def validation_state(
         state = "failed"
     elif unavailable_on_our_side(entry, bundle):
         state = "check_unavailable"
-    body: dict[str, Any] = {
-        "state": state,
-        "job_id": entry.get("job_id"),
-        "error": None,
-        "affected_scenarios": [],
-        "dropped_scenarios": [],
-    }
+    body = CandidateValidation(
+        state=state,
+        job_id=entry.get("job_id"),
+        error=None,
+        affected_scenarios=[],
+        dropped_scenarios=[],
+    )
     if state == "ready" and bundle is not None:
         body["dropped_scenarios"] = sorted(
             {
@@ -174,11 +196,11 @@ def validation_state(
     if state == "failed" and bundle is not None:
         error = bundle.error if isinstance(bundle.error, dict) else {}
         failed = [dict(one) for one in failed_actions(bundle)]
-        body["error"] = {
-            "code": str(error.get("code") or ""),
-            "message": str(error.get("message") or ""),
-            "failed_actions": failed,
-        }
+        body["error"] = FailedValidation(
+            code=str(error.get("code") or ""),
+            message=str(error.get("message") or ""),
+            failed_actions=failed,
+        )
         body["affected_scenarios"] = _affected_scenarios(
             environment, entry, {str(one["action"]) for one in failed}
         )
@@ -204,5 +226,6 @@ def candidate_states(environment: HostedHarnessJob) -> Mapping[str, str]:
     entry = live_set(environment)
     if entry is None:
         return {}
-    state = (validation_state(environment, entry) or {}).get("state", "validating")
+    current = validation_state(environment, entry)
+    state = current["state"] if current is not None else "validating"
     return {entry["environment_version_id"]: state, entry["suite_version_id"]: state}

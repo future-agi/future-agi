@@ -8,7 +8,10 @@ simulator prompt has no scenario that cites it yet, so it touches every scenario
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.review_items import ReviewChange
 
 ALL = "all"
 
@@ -68,7 +71,7 @@ def scenario_uses(scenario: Mapping[str, Any]) -> dict[str, set[str]]:
 
 
 def affects(
-    change: Mapping[str, Any],
+    change: ReviewChange,
     scenarios: Mapping[str, Mapping[str, Any]],
     base: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[str] | str:
@@ -94,8 +97,8 @@ WHOLE_INDEX = "file:scenarios.json"
 
 
 def depends_on(
-    change: Mapping[str, Any],
-    changes: Sequence[Mapping[str, Any]],
+    change: ReviewChange,
+    changes: Sequence[ReviewChange],
     scenarios: Mapping[str, Mapping[str, Any]],
     base: Mapping[str, Mapping[str, Any]] | None = None,
     base_actors: Mapping[str, Mapping[str, Any]] | None = None,
