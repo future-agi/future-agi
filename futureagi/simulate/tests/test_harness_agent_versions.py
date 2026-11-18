@@ -2711,7 +2711,7 @@ class TestErrorTrackerScrubbing:
             run_preflight_checks,
         )
         from simulate.views.harness_job import HarnessJobViewSet
-        from tfc.logging.sentry import _is_sensitive_key
+        from tfc.logging.sentry_scrub import _is_sensitive_key
 
         stored_values_view = inspect.unwrap(HarnessJobViewSet.secret_values)
         staged_files_view = inspect.unwrap(HarnessJobViewSet.secret_file_upload)
@@ -2777,7 +2777,7 @@ class TestErrorTrackerScrubbing:
         # The frame that raises credential_unavailable holds no value.
         assert service.credential_set.__code__.co_varnames == ("runtime",)
         scrubbed = {"secret_set": "x", "pinned_secrets": {"LIVEKIT_URL": "u"}}
-        from tfc.logging.sentry import _scrub
+        from tfc.logging.sentry_scrub import _scrub
 
         assert _scrub(scrubbed) == {
             "secret_set": "[Filtered]",

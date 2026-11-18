@@ -17,9 +17,20 @@ Usage:
     init_sentry(component="temporal", tags={"queue": "tasks_l"})
 """
 
+import contextlib
 import os
+import sys
 from collections.abc import Callable
 from typing import Any
+
+from tfc.logging.sentry_scrub import (
+    _SDK_MAX_VALUE_LENGTH,
+    SENSITIVE_KEY_SUBSTRINGS,
+    _budgeted,
+    _cap_strings,
+    _scrub_event,
+    _scrub_span,
+)
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
@@ -90,38 +101,6 @@ IGNORED_MESSAGE_SUBSTRINGS = (
     "Failed to load vertex credentials",
 )
 
-# Keys whose values must be redacted before leaving the process. Matched
-# case-insensitively as substrings against header/cookie/body/extra keys.
-SENSITIVE_KEY_SUBSTRINGS = (
-    "authorization",
-    "cookie",
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "x-api-key",
-    "access_key",
-    "private_key",
-    "csrf",
-    # Form fields (SAMLResponse, RelayState) and the ACS view's locals for them.
-    "samlresponse",
-    "saml_response",
-    "relaystate",
-    "relay_state",
-    "fai_saml_b",
-    "candidate",
-    # The AgentCC gateway header that carries an org's own provider key, such
-    # as its TypeSafe key on a Jev eval (ee/jev/client.py). The scrubber below
-    # matches whole names only, so it is listed in full.
-    "x-agentcc-provider-key",
-    # A rerun's changed credential values, and an agent version check's.
-    "environment_values",
-    "credential_values",
-)
-_REDACTED = "[Filtered]"
-
 # Sample rates - configurable via env, lower in production to reduce costs
 # Production: 10% sampling, Staging: 100% sampling
 TRACES_SAMPLE_RATE = float(
@@ -132,79 +111,6 @@ PROFILES_SAMPLE_RATE = float(
 )
 
 _initialized_components: set = set()
-
-
-def _is_sensitive_key(key: Any) -> bool:
-    """True if a dict/header key looks like it carries a secret or PII token."""
-    if not isinstance(key, str):
-        return False
-    lowered = key.lower()
-    return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
-
-
-_SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
-
-
-def _scrub(value: Any, depth: int = 0) -> Any:
-    """Recursively redact values under sensitive keys (defensive, bounded)."""
-    if depth > 6:
-        return value
-    if isinstance(value, str) and any(
-        marker in value for marker in _SAML_VALUE_MARKERS
-    ):
-        return _REDACTED
-    if isinstance(value, dict):
-        return {
-            k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
-            for k, v in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_scrub(v, depth + 1) for v in value]
-    return value
-
-
-def _scrub_event(event: dict) -> None:
-    """
-    Redact obvious secrets/PII in-place before the event leaves the process.
-
-    Complements Sentry's server-side scrubbing and the EventScrubber denylist
-    so secrets never transit the wire even when send_default_pii is on.
-    """
-    request = event.get("request")
-    if isinstance(request, dict):
-        # Cookies are session/CSRF tokens almost by definition - redact wholesale.
-        if request.get("cookies"):
-            request["cookies"] = _REDACTED
-        for section in ("headers", "data", "env"):
-            if isinstance(request.get(section), dict):
-                request[section] = _scrub(request[section])
-        # Strip query-string credentials wholesale rather than parse them.
-        if isinstance(request.get("query_string"), str) and any(
-            s in request["query_string"].lower() for s in SENSITIVE_KEY_SUBSTRINGS
-        ):
-            request["query_string"] = _REDACTED
-
-    if isinstance(event.get("extra"), dict):
-        event["extra"] = _scrub(event["extra"])
-    contexts = event.get("contexts")
-    if isinstance(contexts, dict):
-        event["contexts"] = _scrub(contexts)
-
-    # Sentry captures local variables (include_local_variables=True). An
-    # uncaught error in the ACS candidate-store path leaves the raw assertion
-    # in the view's stack frame; redact those vars the same way as request data
-    # so the assertion body never leaves the process (review finding 1, B7).
-    exception = event.get("exception")
-    if isinstance(exception, dict):
-        for value in exception.get("values") or []:
-            if not isinstance(value, dict):
-                continue
-            stacktrace = value.get("stacktrace")
-            if not isinstance(stacktrace, dict):
-                continue
-            for frame in stacktrace.get("frames") or []:
-                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
-                    frame["vars"] = _scrub(frame["vars"])
 
 
 def _event_scrubber() -> Any:
@@ -290,6 +196,22 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     return event
 
 
+def _report_scrub_failure(exc: Exception) -> None:
+    """Say that a scrub failed, by exception class only. It does not go through
+    the logging module: Python 3.13.4+ drops a record logged while another record
+    on the same thread is being handled, and a hook runs inside the handler of
+    the record that made the event. It goes to the process's own stderr: in a
+    Celery worker `sys.stderr` is a proxy that logs what it is given.
+
+    Only the ways the write can fail are quiet: a closed pipe (OSError), a closed
+    file (ValueError), or no stream at all (AttributeError on None). Anything else
+    is a bug here and surfaces."""
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        stream = sys.__stderr__ if sys.__stderr__ is not None else sys.stderr
+        stream.write(f"sentry_scrub_failed: {type(exc).__name__}\n")
+        stream.flush()
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
@@ -302,6 +224,14 @@ def _get_before_send() -> Callable:
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
+        # Fail closed: if anything raises, the event is dropped, never sent raw.
+        try:
+            return _before_send(event, hint)
+        except Exception as exc:  # noqa: BLE001 - fail closed: drop the event, never send it raw
+            _report_scrub_failure(exc)
+            return None
+
+    def _before_send(event: dict, hint: dict) -> dict | None:
         event = _scrub_deployment_telemetry_event(event)
 
         # 1. Infrastructure logger noise - never actionable as an issue.
@@ -336,15 +266,31 @@ def _get_before_send() -> Callable:
             return None
 
         # 4. Scrub secrets/PII from the surviving event.
-        try:
+        with _budgeted():
             _scrub_event(event)
-        except Exception:
-            # Never let scrubbing failures drop a real error.
-            pass
-
-        return event
+        return _cap_strings(event)
 
     return before_send
+
+
+def _get_before_send_transaction() -> Callable:
+    """The before_send_transaction hook: the same scrub as error events, plus
+    every span's data (an outbound call's `http.query` lands there)."""
+
+    def before_send_transaction(event: dict, hint: dict) -> dict | None:
+        try:
+            event = _scrub_deployment_telemetry_event(event)
+            with _budgeted():
+                _scrub_event(event)
+                for span in event.get("spans") or []:
+                    if isinstance(span, dict):
+                        _scrub_span(span)
+            return _cap_strings(event)
+        except Exception as exc:  # noqa: BLE001 - fail closed: drop the event, never send it raw
+            _report_scrub_failure(exc)
+            return None
+
+    return before_send_transaction
 
 
 def _get_traces_sampler() -> Callable:
@@ -495,12 +441,14 @@ def init_sentry(
             # passed through the scrubber + before_send redaction below.
             send_default_pii=True,
             event_scrubber=event_scrubber,
-            # Keep stack frames and request values readable without bloating events.
-            max_value_length=8192,
             # "medium" caps bodies at ~10KB: enough to debug, small enough that
             # large uploads/payloads don't dominate the event volume or leak.
             max_request_body_size="medium",
             max_breadcrumbs=100,
+            # Bounds each captured string, and so the cost of scrubbing it. Kept
+            # far above MAX_EVENT_STRING_LENGTH (8192): the hooks scrub strings
+            # whole, then cut each to that limit.
+            max_value_length=_SDK_MAX_VALUE_LENGTH,
             attach_stacktrace=True,  # Attach stack traces to all messages
             include_source_context=True,  # Include source code context
             include_local_variables=True,  # Capture local variables for debugging
@@ -516,9 +464,7 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
-            before_send_transaction=lambda event, hint: (
-                _scrub_deployment_telemetry_event(event)
-            ),
+            before_send_transaction=_get_before_send_transaction(),
             # Debug mode in staging for troubleshooting
             debug=IS_STAGING,
             # Session tracking
