@@ -90,11 +90,13 @@ def _instant_sizing(task) -> dict:
     return sizing
 
 
-def _dispatch_sync(task, task_queue, conflict_policy, *, workflow_confirmed_stopped):
+def _dispatch_sync(
+    task, task_queue, conflict_policy, *, workflow_confirmed_stopped
+) -> str:
     workflow_class, workflow_input = _select(
         task, task_queue, workflow_confirmed_stopped=workflow_confirmed_stopped
     )
-    return start_workflow_sync(
+    handle = start_workflow_sync(
         workflow_class=workflow_class,
         workflow_input=workflow_input,
         workflow_id=_workflow_id(str(task.id)),
@@ -102,7 +104,8 @@ def _dispatch_sync(task, task_queue, conflict_policy, *, workflow_confirmed_stop
         cancel_existing=False,
         id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
         id_conflict_policy=conflict_policy,
-    ).id
+    )
+    return str(handle.id)
 
 
 def start_recovery_workflow_sync(task) -> str:
@@ -148,7 +151,7 @@ def start_eval_task_workflow_sync(
             "workflow_confirmed_stopped is for coalescing starts only"
         )
 
-    def dispatch():
+    def dispatch() -> str:
         return _dispatch_sync(
             task,
             task_queue,
