@@ -2,8 +2,6 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
-import CapabilityGraph from "../overview/CapabilityGraph";
-import WorldInternalsSection from "./WorldInternalsSection";
 import { Label } from "./ContractPart";
 import { CONTRACT_COPY } from "./contract.constants";
 
@@ -42,51 +40,18 @@ function realEpisode(env) {
 }
 
 /**
- * The environment contract — what this environment IS.
- *
- * Concrete over formal: the world (capability graph), the internals a run reads
- * from (DB schema, tool code, check code), how a run ends, and who else acts in
- * it. The five-part RL-textbook framing that used to live here — modality
- * adapter, obs/action spaces, transition dynamics, reward spec — mostly
- * duplicated other tabs in RL notation, so it was removed. The RL vocabulary
- * still lives in `_fixtures/rlContract.js` if it needs to come back.
- *
- * Twin-backed envs are out of scope in this integration, so the world is always
- * the capability graph (the designer's TwinSandboxSection branch is omitted).
+ * The environment contract: how a run ends. The world itself (capability
+ * graph, tables, tools) lives on the World & tools tab.
  */
-export default function RlContractPanel({
-  env,
-  envState,
-  patch,
-  locked = false,
-  graphData,
-  backed = false,
-}) {
+export default function RlContractPanel({ env, backed = false }) {
   // The real §6 `end_conditions`, mapped into the terminate/truncate/clock shape
   // the card renders: `ended_reasons` are the ways a run terminates,
   // `max_turns`/`max_duration_seconds` are the truncation ceilings, `clock` is
   // real-time (voice) or stepped (chat). Null until the build authors them.
   const episode = realEpisode(env);
-  const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
 
   return (
     <Box sx={{ p: 2 }}>
-      {/* ── the world ─────────────────────────────────────────────────── */}
-      {hasWorld && (
-        <Box sx={{ mb: 2 }}>
-          <CapabilityGraph env={env} envState={envState} data={graphData} />
-        </Box>
-      )}
-
-      {/* ── internals: DB schema + tool code + check code ─────────────── */}
-      <WorldInternalsSection
-        env={env}
-        envState={envState}
-        patch={patch}
-        locked={locked}
-      />
-
-      {/* ── run end conditions ────────────────────────────────────────── */}
       <SectionCard
         title={CONTRACT_COPY.endConditions.title}
         subtitle={CONTRACT_COPY.endConditions.subtitle}
@@ -191,35 +156,8 @@ export default function RlContractPanel({
   );
 }
 
-const ENV_SHAPE = PropTypes.shape({
-  tools: PropTypes.arrayOf(
-    PropTypes.shape({ name: PropTypes.string, desc: PropTypes.string }),
-  ),
-  rules: PropTypes.arrayOf(PropTypes.string),
-  seed: PropTypes.shape({
-    tables: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string })),
-  }),
-});
-
-const ENV_STATE_SHAPE = PropTypes.shape({
-  agent: PropTypes.shape({ name: PropTypes.string }),
-  evals: PropTypes.arrayOf(
-    PropTypes.oneOfType([
-      PropTypes.string,
-      PropTypes.shape({ id: PropTypes.string }),
-    ]),
-  ),
-  toolResolutions: PropTypes.objectOf(PropTypes.string),
-});
-
 RlContractPanel.propTypes = {
-  env: ENV_SHAPE.isRequired,
-  envState: ENV_STATE_SHAPE.isRequired,
-  patch: PropTypes.func,
-  locked: PropTypes.bool,
-  // Real §6 capability-graph data for a backed env (tools/flows/personas/
-  // guardrails); undefined for a non-backed env (fixture derivation).
-  graphData: PropTypes.object,
+  env: PropTypes.shape({ endConditions: PropTypes.object }).isRequired,
   // A built (harness) environment; a template or fork is never built.
   backed: PropTypes.bool,
 };

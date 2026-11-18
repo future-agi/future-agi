@@ -2,16 +2,16 @@ const GROUPS = [
   {
     id: "rules",
     label: "Rules",
-    tab: "contract",
+    tab: "world",
     kinds: ["rule", "contract_field", "sub_goal"],
   },
   {
     id: "state",
     label: "Starting state and records",
-    tab: "contract",
+    tab: "world",
     kinds: ["world_state"],
   },
-  { id: "tools", label: "Tools", tab: "contract", kinds: ["tool"] },
+  { id: "tools", label: "Tools", tab: "world", kinds: ["tool"] },
   { id: "actors", label: "Actors", tab: "contract", kinds: ["actor"] },
   {
     id: "scenarios",
@@ -19,7 +19,7 @@ const GROUPS = [
     tab: "scenarios",
     kinds: ["scenario"],
   },
-  { id: "other", label: "Other", tab: "contract", kinds: ["source", "file"] },
+  { id: "other", label: "Other", tab: "world", kinds: ["source", "file"] },
 ];
 
 const FIELD_LABEL = {

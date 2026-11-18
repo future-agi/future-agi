@@ -11,7 +11,13 @@ import MetricStrip from "src/components/metric-strip";
  * comes from the same state the Runs/Scenarios/Evaluations tabs read from, so
  * the summary and the detail can't drift.
  */
-export default function StateSummary({ env, envState, counts, latestRun, onGo }) {
+export default function StateSummary({
+  env,
+  envState,
+  counts,
+  latestRun,
+  onGo,
+}) {
   // A backed env passes real §6 counts; otherwise derive from the client store.
   // `??` (not `||`) so a real 0 is respected rather than falling back.
   const scenarioCount = counts?.scenarios ?? (envState?.scenarios?.length || 0);
@@ -24,10 +30,21 @@ export default function StateSummary({ env, envState, counts, latestRun, onGo })
   const latest = latestRun || runs[0] || null;
 
   const tiles = [
-    { id: "scenarios", label: "Scenarios", value: scenarioCount, to: "scenarios" },
+    {
+      id: "scenarios",
+      label: "Scenarios",
+      value: scenarioCount,
+      to: "scenarios",
+    },
     { id: "evals", label: "Evaluations", value: evalCount, to: "evals" },
-    { id: "runs", label: "Runs", value: runCount, to: "runs", disabled: !runCount },
-    { id: "rules", label: "Hard rules", value: ruleCount, to: "contract" },
+    {
+      id: "runs",
+      label: "Runs",
+      value: runCount,
+      to: "runs",
+      disabled: !runCount,
+    },
+    { id: "rules", label: "Hard rules", value: ruleCount, to: "world" },
   ];
 
   return (
@@ -46,15 +63,22 @@ export default function StateSummary({ env, envState, counts, latestRun, onGo })
         <Box
           onClick={() => onGo?.("runs")}
           sx={{
-            p: 1.5, borderRadius: "8px", cursor: "pointer",
-            border: "1px solid", borderColor: "divider",
+            p: 1.5,
+            borderRadius: "8px",
+            cursor: "pointer",
+            border: "1px solid",
+            borderColor: "divider",
             "&:hover": { bgcolor: "action.hover" },
           }}
         >
           <Stack direction="row" alignItems="center" spacing={1.5}>
             <Box
               sx={{
-                width: 28, height: 28, borderRadius: 1, display: "grid", placeItems: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 1,
+                display: "grid",
+                placeItems: "center",
                 flexShrink: 0,
                 bgcolor: "action.selected",
                 color: "text.secondary",
@@ -63,15 +87,28 @@ export default function StateSummary({ env, envState, counts, latestRun, onGo })
               <Iconify icon="solar:play-circle-linear" width={16} />
             </Box>
             <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: "fontWeightMedium" }}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.subtitle",
+                  fontWeight: "fontWeightMedium",
+                }}
+              >
                 Latest run
               </Typography>
-              <Typography noWrap sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
+              <Typography
+                noWrap
+                sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
+              >
                 {latest.label || latest.name || "Run"}
                 {latest.agentVersion ? ` · ${latest.agentVersion}` : ""}
               </Typography>
             </Box>
-            <Iconify icon="solar:alt-arrow-right-linear" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
+            <Iconify
+              icon="solar:alt-arrow-right-linear"
+              width={14}
+              sx={{ color: "text.disabled", flexShrink: 0 }}
+            />
           </Stack>
         </Box>
       )}
