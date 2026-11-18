@@ -65,6 +65,9 @@ const SourceSchema = z.object({
       privacy: z.record(z.string(), z.string()),
       personal_choice: z.string().nullable(),
       changed_upstream: z.boolean(),
+      owner: z.string().optional(),
+      // Titles of the accepted scenarios that cite the file.
+      scenarios: z.array(z.string()).optional(),
       readMs: z.number().optional(),
       readUntil: z.number().optional(),
       settlesTo: z
@@ -82,6 +85,12 @@ export const SourceSummarySchema = z.object({
   snapshot_digest: z.string().nullable(),
   sources: z.array(SourceSchema),
   validation_status: z.string().nullable(),
+  ui: z
+    .object({
+      data_mode: z.enum(["real_records", "synthetic"]),
+      saved_at: z.string().nullable(),
+    })
+    .optional(),
 });
 
 const ProposalItemSchema = z

@@ -61,9 +61,10 @@ KV.propTypes = {
 function UsedBy({ source, readOnly, onRemove }) {
   const [confirming, setConfirming] = useState(false);
   const saved = isSaved(source);
-  const { rules, seeds } = usageOf(source);
+  const { rules, scenarios, seeds } = usageOf(source);
   const users = [
     rules.length && plural(rules.length, "rule"),
+    scenarios.length && plural(scenarios.length, "scenario"),
     seeds.length && plural(seeds.length, "seed table"),
   ].filter(Boolean);
 
@@ -74,7 +75,11 @@ function UsedBy({ source, readOnly, onRemove }) {
           ? rules.map((passage) => <Box key={passage.id}>{passage.rule}</Box>)
           : "None"}
       </KV>
-      <KV label="Scenarios">None yet</KV>
+      <KV label="Scenarios">
+        {scenarios.length
+          ? scenarios.map((title) => <Box key={title}>{title}</Box>)
+          : "None yet"}
+      </KV>
       <KV label="Seeds">
         {seeds.length
           ? seeds
@@ -319,6 +324,7 @@ export default function SourceDrawer({
               fromKb(source)
                 ? SOURCES_COPY.yourCopy
                 : SOURCES_COPY.version(source.version),
+              source.ui?.owner,
               saved && snapshot
                 ? `in snapshot ${snapshot}`
                 : "not in the environment yet",
