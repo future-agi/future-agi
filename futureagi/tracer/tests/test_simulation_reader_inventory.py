@@ -1626,6 +1626,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             PROJECT_SET,
             why="Check tracing reads loads only within the workspace-authorized non-simulation projects selected by projects_in_scope",
         ),
+        "SkillRuntimeQueryBuilder.build_usage_evals": _EVAL_ROWS_OF_A_CONFIG,
         "SkillRuntimeQueryBuilder.build_usage_spans": filed(
             PROJECT_SET,
             why="usage replays finite cohort trace identities within the authorized non-simulation project set selected by projects_in_scope",
