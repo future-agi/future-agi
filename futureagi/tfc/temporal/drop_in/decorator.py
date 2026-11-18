@@ -256,24 +256,7 @@ def _create_real_activity(activity_name: str, sync_wrapper: Callable) -> Callabl
             return {"result": result, "status": "completed"}
 
         except Exception as e:
-            from tfc.logging.sentry import is_expected_feature_denial
-
-            extra = {}
-            if (
-                activity_name == "get_explanation_summary"
-                and is_expected_feature_denial(e)
-            ):
-                # This record has no exc_info. Classify at the boundary that
-                # still has the live exception, without changing propagation.
-                extra = {
-                    "event": "explanation_summary_denied",
-                    "reason": "feature_unavailable",
-                    "outcome": "handled",
-                    "activity_name": activity_name,
-                }
-            activity.logger.error(
-                f"Activity '{activity_name}' FAILED: {str(e)}", extra=extra
-            )
+            activity.logger.error(f"Activity '{activity_name}' FAILED: {str(e)}")
             raise
 
     return activity_wrapper
