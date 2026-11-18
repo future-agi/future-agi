@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -102,7 +102,9 @@ def declared_workers(job: HostedHarnessJob) -> list[DeclaredWorker]:
     ]
 
 
-def _clock_start(call: CallExecution, sealed: list[SealedToolCall]) -> float | None:
+def _clock_start(
+    call: CallExecution | CallExecutionSnapshot, sealed: list[SealedToolCall]
+) -> float | None:
     """Epoch seconds the call's `start_time_ms` offsets count from: a sealed tool call's, else the call's start."""
     for one in sealed:
         at, offset = one.get("at"), one.get("start_time_ms")
@@ -113,9 +115,15 @@ def _clock_start(call: CallExecution, sealed: list[SealedToolCall]) -> float | N
     return call.started_at.timestamp() if call.started_at else None
 
 
-def _call_start(call: CallExecution, sealed: list[SealedToolCall]) -> str | None:
+def _call_start(
+    call: CallExecution | CallExecutionSnapshot, sealed: list[SealedToolCall]
+) -> str | None:
     start = _clock_start(call, sealed)
     return utc_iso(start) if start is not None else None
+
+
+# Only the caller and the agent under test; any other speaker is neither the request nor the reply.
+_ROLES: dict[str, Literal["user", "agent"]] = {"user": "user", "assistant": "agent"}
 
 
 def _call_turns(call: CallExecution, sealed: list[SealedToolCall]) -> list[CallTurn]:
@@ -123,8 +131,6 @@ def _call_turns(call: CallExecution, sealed: list[SealedToolCall]) -> list[CallT
     start = _clock_start(call, sealed)
     if start is None:
         return []
-    # Only the caller and the agent under test; any other speaker is neither the request nor the reply.
-    roles: dict[str, Literal["user", "agent"]] = {"user": "user", "assistant": "agent"}
     said = []
     for message in ChatMessageModel.objects.filter(call_execution=call).order_by(
         "created_at"
@@ -133,24 +139,51 @@ def _call_turns(call: CallExecution, sealed: list[SealedToolCall]) -> list[CallT
             if (
                 isinstance(item, dict)
                 and isinstance(item.get("start_time_ms"), (int, float))
-                and message.role in roles
+                and message.role in _ROLES
             ):
                 said.append(
-                    (item["start_time_ms"], roles[message.role], item.get("content"))
+                    (item["start_time_ms"], _ROLES[message.role], item.get("content"))
                 )
     if not said:
-        said = [
-            (row.start_time_ms, roles[row.speaker_role], row.content)
-            for row in CallTranscript.objects.filter(
+        said = _transcript_said(
+            CallTranscript.objects.filter(
                 call_execution=call, start_time_ms__isnull=False
-            )
-            if row.speaker_role in roles
-        ]
+            ).values("speaker_role", "content", "start_time_ms")
+        )
+    return _timed(start, said)
+
+
+def _transcript_said(
+    rows: Iterable[Mapping[str, Any]],
+) -> list[tuple[float, Literal["user", "agent"], Any]]:
+    """Transcript rows (the call's, or the ones a rerun snapshot kept) as (offset, role, text), caller and agent only."""
+    return [
+        (row["start_time_ms"], _ROLES[row["speaker_role"]], row.get("content"))
+        for row in rows
+        if isinstance(row, Mapping)
+        and isinstance(row.get("start_time_ms"), (int, float))
+        and row.get("speaker_role") in _ROLES
+    ]
+
+
+def _timed(
+    start: float, said: list[tuple[float, Literal["user", "agent"], Any]]
+) -> list[CallTurn]:
     return [
         {"role": role, "text": text, "at": at}
         for offset, role, text in sorted(said, key=lambda one: one[0])
         if (at := utc_iso(start + offset / 1000)) is not None
     ]
+
+
+def _attempt_turns(
+    attempt: CallExecutionSnapshot, sealed: list[SealedToolCall]
+) -> list[CallTurn]:
+    """An earlier attempt's messages with when each was said, from the transcript its rerun snapshot kept."""
+    start = _clock_start(attempt, sealed)
+    if start is None:
+        return []
+    return _timed(start, _transcript_said(attempt.transcripts or []))
 
 
 # How far a read got, best first. A record without the field says nothing about its read, so it ranks with a failed one.
@@ -459,7 +492,8 @@ def attempt_timeline(
 ) -> WorkerTimeline | None:
     """An earlier attempt's record built from the tool calls its snapshot sealed, for an attempt rerun before its own
     read ran; None when it sealed no worker and the app declares none. Nothing is stored and no span is read."""
-    traced = _with_workers(_sealed_calls(attempt.provider_call_data))
+    sealed = _sealed_calls(attempt.provider_call_data)
+    traced = _with_workers(sealed)
     job = job_for_call(call)
     declared = declared_workers(job) if job is not None else []
     if not traced and not declared:
@@ -472,6 +506,8 @@ def attempt_timeline(
             declared,
             run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
             traced_calls=traced,
+            turns=_attempt_turns(attempt, sealed),
+            started_at=_call_start(attempt, sealed),
         ),
         trial=(end.get("ending") if isinstance(end, Mapping) else None) or "ended",
         past_deadline=refused_past_deadline(metadata),
@@ -532,8 +568,10 @@ def record_call_workers(
     since = reset.timestamp() if reset is not None else None
     if traces.project_id is not None:
         with application_read_context(execution_cap_ms=SPAN_READ_CAP_MS):
-            reader = get_reader()
+            # Making the client, reading and closing it are one read: any of them failing reads as spans unavailable.
+            reader = None
             try:
+                reader = get_reader()
                 spans = reader.list_by_trace_ids(
                     [
                         one.trace_id
@@ -555,7 +593,16 @@ def record_call_workers(
                 )
                 unavailable = True
             finally:
-                reader.close()
+                if reader is not None:
+                    try:
+                        reader.close()
+                    except Exception:
+                        # The spans already read are kept.
+                        logger.warning(
+                            "call_workers_span_reader_close_failed",
+                            call_execution_id=str(call.id),
+                            exc_info=True,
+                        )
         if since is not None:
             spans = _begun_after(spans, since)
         if len(spans) > MAX_SPANS:

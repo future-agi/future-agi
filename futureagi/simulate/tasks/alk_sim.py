@@ -100,7 +100,7 @@ def dispatch_worker_read(call_id: UUID | str) -> None:
         logger.exception(
             "call_workers_read_dispatch_failed", call_execution_id=str(call_id)
         )
-        mark_read(call_id, failed=True)
+        mark_read(call_id, failed=True, attempt=reset)
 
 
 @temporal_activity(
