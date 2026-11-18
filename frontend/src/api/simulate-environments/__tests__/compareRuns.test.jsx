@@ -135,6 +135,13 @@ describe("mapCompareResponse", () => {
     expect(data.changedCount).toBe(2);
     expect(data.count).toBe(2);
   });
+
+  it("maps the runs that played a row's scenario edited, none when absent", () => {
+    expect(data.rows.map((row) => row.editedRunIds)).toEqual([[], [RUN.b]]);
+    const response = compareRunsResponse();
+    delete response.rows[1].edited_run_ids;
+    expect(mapCompareResponse(response).rows[1].editedRunIds).toEqual([]);
+  });
 });
 
 describe("useCompareRuns", () => {
@@ -178,5 +185,56 @@ describe("useCompareRuns", () => {
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps polling while a run still has calls being scored", async () => {
+    const scoring = (pending) => {
+      const response = compareRunsResponse();
+      response.runs[1].summary.scoring = {
+        ...response.runs[1].summary.scoring,
+        pending,
+      };
+      return response;
+    };
+    axios.get.mockResolvedValue({ data: scoring(1) });
+    const { result, unmount } = renderHook(
+      () => useCompareRuns("env-1", RUN_IDS),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [query] = client
+      .getQueryCache()
+      .findAll({ queryKey: compareRunsKeyPrefix });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    client.setQueryData(query.queryKey, scoring(0));
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
+
+  it("stops polling once a refetch fails, though the last data is pending", async () => {
+    const response = compareRunsResponse();
+    response.runs[1].summary.scoring = {
+      ...response.runs[1].summary.scoring,
+      pending: 1,
+    };
+    axios.get.mockResolvedValue({ data: response });
+    const { result, unmount } = renderHook(
+      () => useCompareRuns("env-1", RUN_IDS),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [query] = client
+      .getQueryCache()
+      .findAll({ queryKey: compareRunsKeyPrefix });
+    expect(query.options.refetchInterval(query)).toBe(3000);
+
+    axios.get.mockRejectedValue({ statusCode: 400 });
+    await client.refetchQueries({ queryKey: compareRunsKeyPrefix });
+    await waitFor(() => expect(query.state.status).toBe("error"));
+
+    expect(query.state.data.runs[1].summary.scoring.pending).toBe(1);
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
   });
 });

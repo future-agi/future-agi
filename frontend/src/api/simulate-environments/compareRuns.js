@@ -122,6 +122,8 @@ export function mapCompareResponse(data) {
     situation: row.situation ?? null,
     idealOutcome: row.ideal_outcome ?? null,
     movement: row.movement ?? "same",
+    // Runs whose scenario content differs from the baseline's for this row.
+    editedRunIds: row.edited_run_ids ?? [],
     calls: Object.fromEntries(
       runs.map((run) => [
         run.id,
@@ -183,6 +185,16 @@ export function compareRunsQueryOptions(envId, runIds, opts) {
     placeholderData: keepPreviousData,
     retry: retryServerFailures,
     staleTime: 1000 * 60 * 5,
+    // A completed run can still have calls scoring (an eval added later, a
+    // re-grade), so poll until none has any pending. A failed refetch stops
+    // it: the last data would keep it pending.
+    refetchInterval: (query) =>
+      query.state.status !== "error" &&
+      (query.state.data?.runs ?? []).some(
+        (run) => run?.summary?.scoring?.pending > 0,
+      )
+        ? 3000
+        : false,
     meta: { errorHandled: true },
   };
 }

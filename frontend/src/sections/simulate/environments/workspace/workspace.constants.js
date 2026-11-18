@@ -558,6 +558,8 @@ export const COMPARE_COPY = {
   openCall: "Open call",
   trial: (n) => `Trial ${n}`,
   trialPicker: "Trial",
+  edited: "Edited",
+  editedHint: "Scenario content differs from the baseline",
 };
 
 // The run's agent is not the one its environment version was built with.

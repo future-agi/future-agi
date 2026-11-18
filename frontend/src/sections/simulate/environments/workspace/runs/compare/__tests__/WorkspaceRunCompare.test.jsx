@@ -535,6 +535,95 @@ describe("RunCompare", () => {
     expect(screen.queryByText(`Hello from ${CALL.aRefund1}`)).toBeNull();
   });
 
+  it("folds and unfolds a group from the keyboard", async () => {
+    const user = userEvent.setup();
+    renderCompare();
+    await loaded();
+    const head = document.querySelector('tr[aria-expanded="true"]');
+    head.focus();
+
+    await user.keyboard("{Enter}");
+    expect(head).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard(" ");
+    expect(head).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("opens a row's calls from the keyboard on its first line only", async () => {
+    const user = userEvent.setup();
+    renderCompare();
+    await loaded();
+    const lines = [...document.querySelectorAll("tbody tr[data-run]")];
+    // The refund row's first line, then its other lines.
+    expect(lines[0]).toHaveAttribute("tabindex", "0");
+    expect(lines[1]).not.toHaveAttribute("tabindex");
+    lines[0].focus();
+
+    await user.keyboard("{Enter}");
+
+    expect(
+      await screen.findByText(`Hello from ${CALL.aRefund1}`),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves a key on a control inside the row to that control", async () => {
+    const user = userEvent.setup();
+    renderCompare();
+    await loaded();
+    // The escalate row's first line: the baseline's call met 1 of 2 sub-goals.
+    const count = screen
+      .getAllByText("1/2 sub-goals")
+      .find((el) => el.closest("tr").getAttribute("tabindex") === "0");
+    count.focus();
+
+    await user.keyboard("{Enter}");
+
+    expect(screen.queryByText(`Hello from ${CALL.aEsc1}`)).toBeNull();
+    expect(screen.queryByText(/Calls across runs/)).toBeNull();
+  });
+
+  it("marks the run that played a scenario edited, never the baseline", async () => {
+    const response = compareRunsResponse();
+    // Even when sent, the baseline is what the others are compared against.
+    response.rows[1].edited_run_ids = [RUN.a, RUN.b];
+    renderCompare({ response });
+    await loaded();
+    const [chip] = screen.getAllByText("Edited");
+    expect(screen.getAllByText("Edited")).toHaveLength(1);
+    const line = chip.closest("tr");
+    expect(line).toHaveAttribute("data-run", RUN.b);
+    expect(
+      within(line).getByText("escalate-angry · Trial 1"),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseOver(chip);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Scenario content differs from the baseline",
+    );
+  });
+
+  it("keeps the open row's drawer when a refetch drops the row", async () => {
+    renderCompare();
+    await loaded();
+    fireEvent.click(screen.getAllByText("refund-double-charge · Trial 1")[0]);
+    expect(
+      await screen.findByText(`Hello from ${CALL.aRefund1}`),
+    ).toBeInTheDocument();
+
+    // A poll moved the refund row off this page.
+    const moved = compareRunsResponse();
+    moved.rows = moved.rows.slice(1);
+    moved.groups = moved.groups.slice(1);
+    axios.get.mockResolvedValue({ data: moved });
+    await lastClient.refetchQueries();
+    await waitFor(() =>
+      expect(
+        document.querySelectorAll('tr[aria-expanded="true"]'),
+      ).toHaveLength(1),
+    );
+
+    expect(screen.getByText(`Hello from ${CALL.aRefund1}`)).toBeInTheDocument();
+  });
+
   it("counts a group's scenarios on every page, not only this one", async () => {
     renderCompare();
     await loaded();

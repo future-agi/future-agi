@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import React, { memo, useState } from "react";
 import {
+  Chip,
   Stack,
   Table,
   TableBody,
@@ -12,6 +13,7 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   GROUP_METRIC_COLUMNS,
   TRACE_COLUMNS,
@@ -55,6 +57,21 @@ const groupCellSx = {
   py: 1.25,
   bgcolor: "background.neutral",
   cursor: "pointer",
+};
+const focusRingSx = {
+  "&:focus-visible": {
+    outline: "2px solid",
+    outlineColor: "primary.main",
+    outlineOffset: -2,
+  },
+};
+// Enter or Space on the row itself; a key on a control inside it is its own.
+const onRowKey = (fn) => (e) => {
+  if (e.target !== e.currentTarget) return;
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    fn();
+  }
 };
 
 // The measure a column's change arrow reads.
@@ -178,7 +195,13 @@ function CompareGroupHeaderRow({
     );
   };
   return (
-    <TableRow onClick={onToggle} aria-expanded={!collapsed}>
+    <TableRow
+      onClick={onToggle}
+      tabIndex={0}
+      onKeyDown={onRowKey(onToggle)}
+      aria-expanded={!collapsed}
+      sx={focusRingSx}
+    >
       <TableCell className={LEAD_CLASS} sx={groupCellSx}>
         <Stack direction="row" alignItems="center" spacing={1}>
           <Iconify
@@ -273,6 +296,9 @@ function CompareTable({
 
   const renderLine = (row, rep, lines, line, index, prefix) => {
     const { run, task } = line;
+    // Every line opens the same drawer, so only a scenario's first is a stop.
+    const keyable = onOpenRow && index === 0;
+    const edited = run.id !== baseline?.id && row.editedRunIds.includes(run.id);
     const baseCalls = row.calls[baseline?.id] ?? [];
     const diff =
       showDiff && task && run.id !== baseline?.id
@@ -283,7 +309,9 @@ function CompareTable({
         key={`${prefix}:${index}`}
         hover
         onClick={() => onOpenRow?.(row)}
-        sx={{ cursor: "pointer" }}
+        tabIndex={keyable ? 0 : undefined}
+        onKeyDown={keyable ? onRowKey(() => onOpenRow(row)) : undefined}
+        sx={{ cursor: "pointer", ...(keyable && focusRingSx) }}
         data-run={run.id}
       >
         {index === 0 && (
@@ -317,7 +345,18 @@ function CompareTable({
           ))}
         {line.first && (
           <TableCell rowSpan={line.span} sx={chipCellSx}>
-            <RunDot ordinal={run.ordinal} colorIndex={run.colorIndex} />
+            <Stack alignItems="flex-start" spacing={0.75}>
+              <RunDot ordinal={run.ordinal} colorIndex={run.colorIndex} />
+              {edited && (
+                <CustomTooltip
+                  show
+                  describeChild
+                  title={COMPARE_COPY.editedHint}
+                >
+                  <Chip size="small" label={COMPARE_COPY.edited} tabIndex={0} />
+                </CustomTooltip>
+              )}
+            </Stack>
           </TableCell>
         )}
         {lineKeys.map((key) => {

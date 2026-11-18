@@ -85,7 +85,7 @@ export function RunCompare({ env, envState }) {
   const [hiddenEvals, setHiddenEvals] = useState(() => new Set());
   const [showDiff, setShowDiff] = useState(false);
   const [chartEvalId, setChartEvalId] = useState(null);
-  const [openRowId, setOpenRowId] = useState(null);
+  const [openRowSnapshot, setOpenRowSnapshot] = useState(null);
   const [openCall, setOpenCall] = useState(null);
   // The card is capped at the page's visible height, so the table scrolls in
   // its own box: its head stays pinned and its scrollbar and pager in reach.
@@ -102,12 +102,15 @@ export function RunCompare({ env, envState }) {
   }, [scroller]);
 
   const serverFilters = useMemo(() => toServerFilters(filters), [filters]);
-  const { data, error, isPending, isError, isFetching, isPlaceholderData } =
-    useCompareRuns(env.id, runIds, {
+  const { data, error, isPending, isError, isPlaceholderData } = useCompareRuns(
+    env.id,
+    runIds,
+    {
       page,
       filters: serverFilters,
       groupBy,
-    });
+    },
+  );
   // A failed refetch keeps the comparison it already has on screen.
   const failed = isError && !data;
 
@@ -260,9 +263,17 @@ export function RunCompare({ env, envState }) {
     }
   }, [data, isPlaceholderData, page, setPage]);
 
-  const openRowFor = useCallback((row) => setOpenRowId(row.rowId), []);
+  const openRowFor = useCallback((row) => setOpenRowSnapshot(row), []);
   const rows = data?.rows ?? [];
-  const openRow = rows.find((r) => r.rowId === openRowId) ?? null;
+  // A poll can move the open row off this page, filter or group; the drawer
+  // keeps its last copy until the user closes it.
+  const freshOpenRow = openRowSnapshot
+    ? rows.find((r) => r.rowId === openRowSnapshot.rowId)
+    : null;
+  useEffect(() => {
+    if (freshOpenRow) setOpenRowSnapshot(freshOpenRow);
+  }, [freshOpenRow]);
+  const openRow = freshOpenRow ?? openRowSnapshot;
   const totalPages = data?.totalPages ?? 1;
 
   if (runIds.length < MIN_COMPARE_RUNS) {
@@ -375,7 +386,11 @@ export function RunCompare({ env, envState }) {
   } else {
     body = (
       <Box
-        sx={{ minHeight: 0, overflow: "auto", opacity: isFetching ? 0.6 : 1 }}
+        sx={{
+          minHeight: 0,
+          overflow: "auto",
+          opacity: isPlaceholderData ? 0.6 : 1,
+        }}
       >
         <CompareTable
           runs={runs}
@@ -558,9 +573,9 @@ export function RunCompare({ env, envState }) {
       <CompareRowDrawer
         row={openRow}
         runs={runs}
-        onClose={() => setOpenRowId(null)}
+        onClose={() => setOpenRowSnapshot(null)}
         onOpenCall={(task, run) => {
-          setOpenRowId(null);
+          setOpenRowSnapshot(null);
           setOpenCall({ task, run });
         }}
       />

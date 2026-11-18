@@ -361,6 +361,7 @@ export const compareRunsResponse = () => ({
         [RUN.c]: [],
       },
       movement: "improved",
+      edited_run_ids: [],
     },
     {
       row_id: "escalate-angry:bbb",
@@ -377,6 +378,8 @@ export const compareRunsResponse = () => ({
         [RUN.c]: [compareCall(CALL.cEsc1, ESCALATE)],
       },
       movement: "improved",
+      // Run 2 played this scenario as edited after the baseline ran.
+      edited_run_ids: [RUN.b],
     },
   ],
 });
