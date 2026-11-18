@@ -21,6 +21,19 @@ logger = structlog.get_logger(__name__)
 
 MIN_ROWS_FOR_CRITICAL_ISSUES = 15
 
+REASON_COLUMN_SUFFIX = "-reason"
+
+
+def eval_name_from_reason_column_name(column_name: str) -> str:
+    """Recover the eval name from a reason column's name.
+
+    Reason columns are created as ``f"{eval_name}{REASON_COLUMN_SUFFIX}"``, so
+    only the trailing suffix must be stripped. ``split("-reason")[0]`` breaks
+    for evals whose own name contains ``-reason`` (e.g. ``"no-reason-check"``);
+    ``removesuffix`` strips just the trailing occurrence.
+    """
+    return column_name.removesuffix(REASON_COLUMN_SUFFIX)
+
 
 def get_eval_reasons(
     *,
@@ -59,7 +72,7 @@ def get_eval_reasons(
 
     # Process reason columns
     for column in reason_columns:
-        eval_name = column.name.split("-reason")[0]
+        eval_name = eval_name_from_reason_column_name(column.name)
         # Extract user_eval_metric_id from source_id (format: "prefix-sourceid-id")
         user_eval_metric_id = None
         if column.source_id and "-sourceid-" in str(column.source_id):
