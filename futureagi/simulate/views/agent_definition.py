@@ -1,7 +1,6 @@
 import json
 import re
 from datetime import datetime
-from typing import Any
 
 import requests
 import structlog
@@ -66,7 +65,10 @@ from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.pagination import (
+    ExtendedPageNumberPagination,
+    paginate_required_first,
+)
 from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.replay_session import ReplaySession
@@ -94,30 +96,6 @@ def soft_delete_agent_definition_and_versions(agent):
     agent.deleted = True
     agent.deleted_at = deleted_at
     agent.save(update_fields=["deleted", "deleted_at", "updated_at"])
-
-
-class _RequiredFirst:
-    """The required agent followed by the ordered rest, as one sliceable list.
-
-    Paginating this, not the rest alone, keeps every agent on exactly one page, the
-    required one on page 1, and the count the same on every page.
-    """
-
-    def __init__(self, required, rest):
-        self._required = required
-        self._rest = rest
-        self._rest_count = None
-
-    def __len__(self):
-        if self._rest_count is None:
-            self._rest_count = self._rest.count()
-        return self._rest_count + 1
-
-    def __getitem__(self, key):
-        start, stop, _ = key.indices(len(self))
-        if start == 0:
-            return [self._required, *self._rest[: max(stop - 1, 0)]]
-        return list(self._rest[start - 1 : stop - 1])
 
 
 class AgentDefinitionView(APIView):
@@ -204,13 +182,13 @@ class AgentDefinitionView(APIView):
 
             # "-id" last: equal timestamps need a unique tie-breaker for stable pages.
             agents = agents.order_by("-updated_at", "-created_at", "-id")
-            to_page: Any = agents
-            if required_agent:
-                to_page = _RequiredFirst(
-                    required_agent, agents.exclude(id=required_agent.id)
-                )
             paginator = ExtendedPageNumberPagination()
-            result_page = paginator.paginate_queryset(to_page, request) or []
+            result_page = paginate_required_first(
+                paginator,
+                agents.exclude(id=required_agent.id) if required_agent else agents,
+                required_agent,
+                request,
+            )
 
             serializer = AgentDefinitionListResponseSerializer(
                 result_page,

@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { E2E } from './env';
 
 /**
@@ -169,25 +170,20 @@ export function resolveBackendContainer(
   return runtimes[0][0];
 }
 
-/** Runs a seed script inside the stack's backend container; its last stdout line is JSON. */
-function runSeedScript<T>(script: string, dirPrefix: string, env: Record<string, string>): T {
-  const container = resolveBackendContainer();
-  const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
-  const dir = mkdtempSync(join(tmpdir(), dirPrefix));
-  const scriptPath = join(dir, `seed-${suffix}.py`);
-  writeFileSync(scriptPath, script);
-  try {
-    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
-    const stdout = execFileSync('docker', ['exec',
-      ...Object.entries({ ...env, SEED_SUFFIX: suffix }).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
-      container, 'sh', '-c',
-      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
-    ], { encoding: 'utf-8' });
-    const lastLine = stdout.trim().split('\n').pop() ?? '';
-    return JSON.parse(lastLine) as T;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+/** Copies a seed script into the backend container, runs it there with `env`, and
+ *  parses the JSON line it prints last. */
+function runSeedScript(container: string, scriptPath: string, name: string, env: Record<string, string>): unknown {
+  execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/${name}`]);
+  const stdout = execFileSync('docker', ['exec',
+    ...Object.entries(env).flatMap(([key, value]) => ['-e', `${key}=${value}`]),
+    container, 'sh', '-c',
+    `cd /app/backend && PYTHONPATH=/app/backend python /tmp/${name}`,
+  ], { encoding: 'utf-8' });
+  return JSON.parse(stdout.trim().split('\n').pop() ?? '');
+}
+
+function seedSuffix(): string {
+  return `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
 }
 
 export function seedCallExecutions(opts: {
@@ -195,11 +191,21 @@ export function seedCallExecutions(opts: {
   workspaceId: string;
   count?: number;
 }): CallExecutionSeed {
-  return runSeedScript<CallExecutionSeed>(SEED_SCRIPT, 'e2e-pag5-', {
-    SEED_ORG_ID: opts.organizationId,
-    SEED_WORKSPACE_ID: opts.workspaceId,
-    SEED_CALL_COUNT: String(opts.count ?? 12),
-  });
+  const container = resolveBackendContainer();
+  const suffix = seedSuffix();
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-pag5-'));
+  const scriptPath = join(dir, `seed-${suffix}.py`);
+  writeFileSync(scriptPath, SEED_SCRIPT);
+  try {
+    return runSeedScript(container, scriptPath, `seed-${suffix}.py`, {
+      SEED_ORG_ID: opts.organizationId,
+      SEED_WORKSPACE_ID: opts.workspaceId,
+      SEED_SUFFIX: suffix,
+      SEED_CALL_COUNT: String(opts.count ?? 12),
+    }) as CallExecutionSeed;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 export interface AgentListSeed {
@@ -273,8 +279,76 @@ export function seedAgentListOrder(opts: {
   organizationId: string;
   workspaceId: string;
 }): AgentListSeed {
-  return runSeedScript<AgentListSeed>(AGENT_LIST_SEED_SCRIPT, 'e2e-agent-order-', {
-    SEED_ORG_ID: opts.organizationId,
-    SEED_WORKSPACE_ID: opts.workspaceId,
-  });
+  const container = resolveBackendContainer();
+  const suffix = seedSuffix();
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-agent-order-'));
+  const scriptPath = join(dir, `seed-${suffix}.py`);
+  writeFileSync(scriptPath, AGENT_LIST_SEED_SCRIPT);
+  try {
+    return runSeedScript(container, scriptPath, `seed-${suffix}.py`, {
+      SEED_ORG_ID: opts.organizationId,
+      SEED_WORKSPACE_ID: opts.workspaceId,
+      SEED_SUFFIX: suffix,
+    }) as AgentListSeed;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** A built, versioned Environment and the ids of its default pairing. */
+export interface HarnessEnvironmentSeed {
+  environmentId: string;
+  agentVersionId: string;
+  environmentVersionId: string;
+  suiteVersionId: string;
+  /** Every scenario key, in number order: the refunds, then the lookups. */
+  scenarioKeys: string[];
+  refundKeys: string[];
+  lookupKeys: string[];
+  /** With `trial`: the finished run and its one trial. */
+  runTestId?: string;
+  testExecutionId?: string;
+  callExecutionId?: string;
+}
+
+/**
+ * Seeds a finished-build Environment and versions it with the real backfill; `certified` adds the pairing's bundle.
+ * See e2e/lib/harness_environment_seed.py.
+ */
+export function seedHarnessEnvironment(opts: {
+  organizationId: string;
+  workspaceId: string;
+  refunds?: number;
+  lookups?: number;
+  certified?: boolean;
+  productionOnly?: 'lookup_order' | 'issue_refund';
+  failedCheck?: 'lookup_order' | 'issue_refund';
+  /** The refunds include a world actor with no channel (Dana Brooks). */
+  actors?: boolean;
+  /** One finished trial; the string variants pick its World changes (see harness_environment_seed.py). */
+  trial?: boolean | 'fault' | 'actor' | 'duplicate' | 'refused';
+  /** The contract's tools with their fields: inputs, units and what each returns. */
+  toolDetail?: boolean;
+}): HarnessEnvironmentSeed {
+  const suffix = seedSuffix();
+  return runSeedScript(
+    resolveBackendContainer(),
+    fileURLToPath(new URL('./harness_environment_seed.py', import.meta.url)),
+    `harness-seed-${suffix}.py`,
+    {
+      SEED_ORG_ID: opts.organizationId,
+      SEED_WORKSPACE_ID: opts.workspaceId,
+      SEED_SUFFIX: suffix,
+      SEED_OPTIONS: JSON.stringify({
+        refunds: opts.refunds ?? 1,
+        lookups: opts.lookups ?? 1,
+        certified: opts.certified ?? true,
+        production_only: opts.productionOnly ?? null,
+        failed_check: opts.failedCheck ?? null,
+        actors: opts.actors ?? false,
+        trial: opts.trial ?? false,
+        tool_detail: opts.toolDetail ?? false,
+      }),
+    },
+  ) as HarnessEnvironmentSeed;
 }
