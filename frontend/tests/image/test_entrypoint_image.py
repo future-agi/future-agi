@@ -529,7 +529,7 @@ class ConfigOnly(ImageTestCase):
         self.assertIn(b'VITE_HOST_API: "http://localhost:8000"', config)
         self.assertFalse((out / "tmp" / "futureagi-nginx").exists())
         self.assertNotIn("TLS", logs)
-        self.assertIn("[entrypoint] FRONTEND_CONFIG_ONLY is set: config only", logs)
+        self.assertIn("[entrypoint] FRONTEND_CONFIG_ONLY is set: exiting after config.js", logs)
 
     def test_the_config_is_the_same_as_a_normal_start(self):
         _, _, only, _ = self.generate(

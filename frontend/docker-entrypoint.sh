@@ -92,7 +92,7 @@ fi
 # set, the listener settings below, this image's own, are neither checked nor
 # written, and no command runs. Not for the frontend image on its own.
 if [ "${FRONTEND_CONFIG_ONLY:-false}" = true ]; then
-  echo '[entrypoint] FRONTEND_CONFIG_ONLY is set: config only, not starting nginx'
+  echo '[entrypoint] FRONTEND_CONFIG_ONLY is set: exiting after config.js'
   exit 0
 fi
 
