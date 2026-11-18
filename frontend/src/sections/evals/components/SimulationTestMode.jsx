@@ -199,6 +199,7 @@ const SimulationTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       initialMapping = null,
       initialRunTestId = "",
+      sourceColumns,
       isComposite = false,
       compositeAdhocConfig = null,
       initialExecutionId = null,
@@ -1032,10 +1033,36 @@ const SimulationTestMode = React.forwardRef(
       };
     }, [currentCall, runTestContext, callDetailReloadToken]);
 
+    const isConfirmedEmpty =
+      !!selectedExecutionId &&
+      totalCalls === 0 &&
+      !loadingCalls &&
+      !isPendingCallsFetch &&
+      !callsError;
+    const hasNoExecutions =
+      !!selectedRunTestId &&
+      executionsFetched &&
+      executionsTotal === 0 &&
+      !executionsError;
+
+    // A simulation can be configured before its first call. Use its declared
+    // columns only for an empty preview, never in place of a pending/failed read.
+    // Key scenario columns by UUID for the saved mapping, not by display name.
+    const declaredFields = useMemo(() => {
+      const fields = new Map();
+      if (!callDetail && (hasNoExecutions || isConfirmedEmpty)) {
+        for (const col of sourceColumns || []) {
+          const key = col.field || col.id;
+          if (key) fields.set(key, col.headerName || col.name || key);
+        }
+      }
+      return fields;
+    }, [sourceColumns, callDetail, hasNoExecutions, isConfirmedEmpty]);
+
     // Field names for variable mapping. Expand nested object keys into
     // dot-notation paths; drop non-leaf intermediates so groups aren't picked.
     const fieldNames = useMemo(() => {
-      if (!callDetail) return [];
+      if (!callDetail) return [...declaredFields.keys()];
       const keys = [];
       // Don't recurse into known-heavy Vapi dumps — the key stays
       // selectable but the walker finishes in tens of ms instead of
@@ -1088,7 +1115,7 @@ const SimulationTestMode = React.forwardRef(
       });
 
       return leaves;
-    }, [callDetail]);
+    }, [callDetail, declaredFields]);
 
     // Notify parent of available fields for autocomplete
     useEffect(() => {
@@ -1329,17 +1356,6 @@ const SimulationTestMode = React.forwardRef(
     // when switching calls via the navigator, where `callDetail` still
     // holds stale data until the new fetch resolves). We only hide it once
     // we either have fresh callDetail or confirm an empty execution.
-    const isConfirmedEmpty =
-      !!selectedExecutionId &&
-      totalCalls === 0 &&
-      !loadingCalls &&
-      !isPendingCallsFetch &&
-      !callsError;
-    const hasNoExecutions =
-      !!selectedRunTestId &&
-      executionsFetched &&
-      executionsTotal === 0 &&
-      !executionsError;
     const isMappingPending =
       !isConfirmedEmpty &&
       !hasNoExecutions &&
@@ -2124,6 +2140,8 @@ const SimulationTestMode = React.forwardRef(
                     options={
                       showCurrent ? [currentValue, ...fieldNames] : fieldNames
                     }
+                    getOptionLabel={(key) => declaredFields.get(key) || key}
+                    getOptionKey={(key) => key}
                     value={mapping[variable] || null}
                     onChange={(_, val) =>
                       setMapping((prev) => ({
@@ -2188,7 +2206,7 @@ const SimulationTestMode = React.forwardRef(
                             textOverflow: "ellipsis",
                           }}
                         >
-                          {col}
+                          {declaredFields.get(col) || col}
                         </Box>
                       );
                     }}
@@ -2312,6 +2330,7 @@ SimulationTestMode.propTypes = {
   onClearResult: PropTypes.func,
   initialMapping: PropTypes.object,
   initialRunTestId: PropTypes.string,
+  sourceColumns: PropTypes.arrayOf(PropTypes.object),
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
   initialExecutionId: PropTypes.string,

@@ -206,6 +206,53 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     installInitialResponses();
   });
 
+  it.each([
+    [
+      endpoints.runTests.previewExecutions("run-1"),
+      "This simulation has no data",
+      "call.assistant_chat_transcript",
+      "call.assistant_chat_transcript",
+    ],
+    [
+      endpoints.testExecutions.previewCalls("execution-1"),
+      "No calls in this simulation",
+      "Expected reply",
+      "4202acbe-7de9-4a00-a338-cc1003cf5a21",
+    ],
+  ])(
+    "can map output when %s has no preview rows",
+    async (url, emptyState, label, savedKey) => {
+      const original = mocks.get.getMockImplementation();
+      mocks.get.mockImplementation((path, config) =>
+        path === url
+          ? Promise.resolve({
+              data: exactPage({ results: [], total: 0, loaded: 0 }),
+            })
+          : original(path, config),
+      );
+      const ready = vi.fn();
+      render(
+        <SimulationTestMode
+          initialRunTestId="run-1"
+          variables={["output"]}
+          sourceColumns={[
+            { field: "call.assistant_chat_transcript" },
+            {
+              id: "4202acbe-7de9-4a00-a338-cc1003cf5a21",
+              name: "Expected reply",
+            },
+          ]}
+          onReadyChange={ready}
+        />,
+      );
+      await screen.findByText(emptyState);
+      expect(ready).toHaveBeenLastCalledWith(false, {});
+      fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+      fireEvent.click(await screen.findByRole("option", { name: label }));
+      expect(ready).toHaveBeenLastCalledWith(true, { output: savedKey });
+    },
+  );
+
   it("shows a retryable bounded error instead of publishing an empty simulation list", async () => {
     const originalImplementation = mocks.get.getMockImplementation();
     let listAttempts = 0;
@@ -243,12 +290,27 @@ describe("SimulationTestMode exact snapshot pagination", () => {
   });
 
   it("omits the model override when the Code playground supplies no model", async () => {
-    mocks.post.mockResolvedValueOnce({ data: { status: true, result: { output: 1 } } });
+    mocks.post.mockResolvedValueOnce({
+      data: { status: true, result: { output: 1 } },
+    });
     const ref = React.createRef();
     const ready = vi.fn();
-    render(<SimulationTestMode ref={ref} templateId="code-eval" model="" initialRunTestId="run-1" variables={[]} onReadyChange={ready} />);
-    await waitFor(() => expect(ready).toHaveBeenLastCalledWith(true, expect.anything()));
-    await act(async () => { ref.current.runTest(); });
+    render(
+      <SimulationTestMode
+        ref={ref}
+        templateId="code-eval"
+        model=""
+        initialRunTestId="run-1"
+        variables={[]}
+        onReadyChange={ready}
+      />,
+    );
+    await waitFor(() =>
+      expect(ready).toHaveBeenLastCalledWith(true, expect.anything()),
+    );
+    await act(async () => {
+      ref.current.runTest();
+    });
     await waitFor(() => expect(mocks.post).toHaveBeenCalled());
     expect(mocks.post.mock.calls[0][1]).not.toHaveProperty("model");
   });
