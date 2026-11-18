@@ -6,6 +6,7 @@ import re
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from functools import wraps
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -15,9 +16,6 @@ import boto3
 import litellm
 import requests
 import structlog
-from agentic_eval.core.utils.functions import download_image_to_base64
-from agentic_eval.core.utils.model_config import ModelConfigs
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from anthropic import AnthropicBedrock, AsyncAnthropic, AsyncAnthropicBedrock
 from botocore.exceptions import ClientError
 from clickhouse_driver import Client
@@ -27,6 +25,12 @@ from litellm import completion
 from openai import AsyncOpenAI, OpenAI
 
 from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
+from agentic_eval.core.utils.functions import download_image_to_base64
+from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    cached_input_tokens_from,
+    calculate_total_cost,
+)
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (
@@ -602,12 +606,24 @@ class LLM:
         response = await asyncio.to_thread(chat_completion, managed_payload)
         return self._to_openai_like_response(response)
 
-    def _update_token_usage(self, response: Any) -> None:
+    @staticmethod
+    def _call_started_at() -> datetime:
+        """The instant a request starts: take it just before the call is made."""
+        from agentic_eval.core_evals.run_prompt import model_pricing
+
+        return model_pricing._utc_now()
+
+    def _update_token_usage(
+        self, response: Any, started_at: datetime | None = None
+    ) -> None:
         """
         Update token usage statistics from the response.
 
         Args:
             response: The completion response containing usage information.
+            started_at: When the request started (UTC). The call is priced at that
+                instant, as the gateway prices a request at its start. None means
+                now, for a caller that did not take it.
         """
         if hasattr(response, "usage") and response.usage:
             added = {
@@ -622,7 +638,10 @@ class LLM:
             cache_create = (
                 getattr(response.usage, "cache_creation_input_tokens", 0) or 0
             )
-            cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+            # One count of the cache read, whichever shape the provider reports it
+            # in (Anthropic's cache_read_input_tokens, OpenAI's
+            # prompt_tokens_details.cached_tokens): the largest, never their sum.
+            cache_read = cached_input_tokens_from(response.usage)
             if cache_create or cache_read:
                 self.token_usage["cache_creation_input_tokens"] = (
                     self.token_usage.get("cache_creation_input_tokens", 0)
@@ -631,15 +650,23 @@ class LLM:
                 self.token_usage["cache_read_input_tokens"] = (
                     self.token_usage.get("cache_read_input_tokens", 0) + cache_read
                 )
+                # The key the cost function prices the cache read from; it equals
+                # cache_read_input_tokens, which it also reads, so nothing is counted twice.
+                self.token_usage["cached_input_tokens"] = (
+                    self.token_usage.get("cached_input_tokens", 0) + cache_read
+                )
                 added["cache_creation_input_tokens"] = cache_create
                 added["cache_read_input_tokens"] = cache_read
-            self._add_to_usage_bucket(added)
+                added["cached_input_tokens"] = cache_read
+            self._add_to_usage_bucket(added, started_at)
 
-    def _add_to_usage_bucket(self, added: dict[str, int]) -> None:
-        """Add one call's tokens to the bucket of the price in force right now."""
+    def _add_to_usage_bucket(
+        self, added: dict[str, int], started_at: datetime | None = None
+    ) -> None:
+        """Add one call's tokens to the bucket of the price in force when it started."""
+        now = started_at if started_at is not None else self._call_started_at()
         from agentic_eval.core_evals.run_prompt import model_pricing
 
-        now = model_pricing._utc_now()
         pricing = model_pricing.get_model_pricing(self.model_name, at=now)
         key = None if pricing is None else tuple(sorted(pricing.items()))
         buckets = self.__dict__.setdefault("_usage_buckets", {})
@@ -780,6 +807,7 @@ class LLM:
                     return protect_flash_result
                 elif self.provider == "xai":
                     # For XAI, use OpenAI client directly instead of litellm
+                    started_at = self._call_started_at()
                     response = self.llm_client.chat.completions.create(
                         model=self.model_name,
                         messages=messages,  # type: ignore[arg-type]
@@ -787,17 +815,18 @@ class LLM:
                         temperature=self.temperature,
                     )
                     self._set_last_finish_reason_from_response(response)
-                    self._update_token_usage(response)
+                    self._update_token_usage(response, started_at=started_at)
                     self._update_cost(response)
                     content = response.choices[0].message.content
                     return content if content is not None else ""
 
                 # Default litellm handling for all other providers
                 else:
+                    started_at = self._call_started_at()
                     gw_response = self._try_gateway_completion(payload)
                     if gw_response is not None:
                         self._set_last_finish_reason_from_response(gw_response)
-                        self._update_token_usage(gw_response)
+                        self._update_token_usage(gw_response, started_at=started_at)
                         self._update_cost(gw_response)
                         content = gw_response.choices[0].message.content
                         return content if content is not None else ""
@@ -820,6 +849,7 @@ class LLM:
                             payload["messages"], self.provider
                         )
 
+                    started_at = self._call_started_at()
                     response = litellm.completion(
                         **payload,
                         timeout=LITELLM_REQUEST_TIMEOUT,
@@ -868,7 +898,7 @@ class LLM:
                         response = chunk
 
                     self._set_last_finish_reason_from_response(response)
-                    self._update_token_usage(response)
+                    self._update_token_usage(response, started_at=started_at)
                     self._update_cost(response)
                     if streaming:
                         return response_content or ""
@@ -974,6 +1004,7 @@ class LLM:
                         payload["messages"], self.provider
                     )
 
+                started_at = self._call_started_at()
                 gw_response = self._try_gateway_completion(
                     payload,
                     tools=tools,
@@ -981,13 +1012,14 @@ class LLM:
                 )
                 if gw_response is not None:
                     self._set_last_finish_reason_from_response(gw_response)
-                    self._update_token_usage(gw_response)
+                    self._update_token_usage(gw_response, started_at=started_at)
                     self._update_cost(gw_response)
                     if not gw_response.choices:
                         raise ValueError("Empty response from gateway")
                     return gw_response
 
                 remaining = remaining_timeout()
+                started_at = self._call_started_at()
                 response = litellm.completion(
                     **payload,
                     **({"timeout": remaining} if remaining is not None else {}),
@@ -996,7 +1028,7 @@ class LLM:
                 )
 
                 self._set_last_finish_reason_from_response(response)
-                self._update_token_usage(response)
+                self._update_token_usage(response, started_at=started_at)
                 self._update_cost(response)
 
                 if not response.choices:
@@ -1093,13 +1125,14 @@ class LLM:
                     return protect_flash_result
                 elif self.provider == "xai":
                     # For XAI, use OpenAI client directly instead of litellm
+                    started_at = self._call_started_at()
                     response = await self.llm_client_async.chat.completions.create(
                         model=self.model_name,
                         messages=messages,  # type: ignore[arg-type]
                         max_tokens=self.max_tokens,
                         temperature=self.temperature,
                     )
-                    self._update_token_usage(response)
+                    self._update_token_usage(response, started_at=started_at)
                     self._update_cost(response)
                     content = response.choices[0].message.content
                     return content if content is not None else ""
@@ -1109,9 +1142,10 @@ class LLM:
                     # Managed models must use the gateway even when the caller
                     # requested incremental WebSocket streaming.
                     if managed_transport or not (streaming and ws_manager):
+                        started_at = self._call_started_at()
                         gw_response = await self._try_gateway_completion_async(payload)
                         if gw_response is not None:
-                            self._update_token_usage(gw_response)
+                            self._update_token_usage(gw_response, started_at=started_at)
                             self._update_cost(gw_response)
                             content = gw_response.choices[0].message.content
                             return content if content is not None else ""
@@ -1133,6 +1167,7 @@ class LLM:
                             payload["messages"], self.provider
                         )
 
+                    started_at = self._call_started_at()
                     response = await litellm.acompletion(
                         **payload,
                         drop_params=True,
@@ -1278,11 +1313,11 @@ class LLM:
                             }
                             await ws_manager._send_to_channel(message)
 
-                        self._update_token_usage(chunk)
+                        self._update_token_usage(chunk, started_at=started_at)
                         self._update_cost()
                         return response_content or ""
 
-                    self._update_token_usage(response)
+                    self._update_token_usage(response, started_at=started_at)
                     self._update_cost(response)
                     if not response.choices:
                         raise ValueError("Empty response from model")
@@ -1344,12 +1379,13 @@ class LLM:
             )
             if vertex_cfg.vertex_location:
                 vertex_payload["vertex_location"] = vertex_cfg.vertex_location
+            started_at = self._call_started_at()
             response = await litellm.acompletion(
                 **vertex_payload,
                 num_retries=LITELLM_NUM_RETRIES,
                 retry_strategy=LITELLM_RETRY_STRATEGY,
             )
-            self._update_token_usage(response)
+            self._update_token_usage(response, started_at=started_at)
             self._update_cost(response)
             if not response.choices:
                 raise ValueError("Empty response from model")
@@ -1376,12 +1412,13 @@ class LLM:
             openai_payload["messages"] = preprocess_messages_for_provider(
                 openai_messages, openai_cfg.provider
             )
+            started_at = self._call_started_at()
             response = await litellm.acompletion(
                 **openai_payload,
                 num_retries=LITELLM_NUM_RETRIES,
                 retry_strategy=LITELLM_RETRY_STRATEGY,
             )
-            self._update_token_usage(response)
+            self._update_token_usage(response, started_at=started_at)
             self._update_cost(response)
             if not response.choices:
                 raise ValueError("Empty response from model")
@@ -1794,12 +1831,13 @@ class LLM:
             )
             if vertex_cfg.vertex_location:
                 vertex_payload["vertex_location"] = vertex_cfg.vertex_location
+            started_at = self._call_started_at()
             response = litellm.completion(
                 **vertex_payload,
                 num_retries=LITELLM_NUM_RETRIES,
                 retry_strategy=LITELLM_RETRY_STRATEGY,
             )
-            self._update_token_usage(response)
+            self._update_token_usage(response, started_at=started_at)
             self._update_cost(response)
             if not response.choices:
                 raise ValueError("Empty response from model")
@@ -1826,12 +1864,13 @@ class LLM:
             openai_payload["messages"] = preprocess_messages_for_provider(
                 openai_messages, openai_cfg.provider
             )
+            started_at = self._call_started_at()
             response = litellm.completion(
                 **openai_payload,
                 num_retries=LITELLM_NUM_RETRIES,
                 retry_strategy=LITELLM_RETRY_STRATEGY,
             )
-            self._update_token_usage(response)
+            self._update_token_usage(response, started_at=started_at)
             self._update_cost(response)
             if not response.choices:
                 raise ValueError("Empty response from model")
@@ -2259,8 +2298,9 @@ class LLM:
                     }
                     if response_format:
                         gateway_kwargs["response_format"] = response_format
+                    started_at = self._call_started_at()
                     response = gateway.chat.completions.create(**gateway_kwargs)
-                    self._update_token_usage(response)
+                    self._update_token_usage(response, started_at=started_at)
                     self._update_cost(response)
                     content = response.choices[0].message.content
                     logger.info(
@@ -2324,6 +2364,7 @@ class LLM:
                             if isinstance(key_value, str):
                                 payload["api_key"] = key_value
 
+                started_at = self._call_started_at()
                 response = litellm.completion(
                     **payload,
                     num_retries=LITELLM_NUM_RETRIES,
@@ -2331,6 +2372,7 @@ class LLM:
                     drop_params=True,
                 )
             else:
+                started_at = self._call_started_at()
                 response = litellm.completion(
                     **payload,
                     api_key=self.api_key,
@@ -2339,7 +2381,7 @@ class LLM:
                     drop_params=True,
                 )
 
-            self._update_token_usage(response)
+            self._update_token_usage(response, started_at=started_at)
             self._update_cost(response)
             content = response.choices[0].message.content
             logger.info(

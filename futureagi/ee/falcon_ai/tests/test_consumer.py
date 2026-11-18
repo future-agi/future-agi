@@ -288,6 +288,24 @@ class TestFalconAIConsumer:
         assert event.properties["raw_cost_usd"] == "0.02"
         assert event.properties["pricing_source"] == "gateway"
 
+    @patch("ee.falcon_ai.consumers.emit")
+    @patch("ee.falcon_ai.consumers.BillingConfig")
+    @patch("agentic_eval.core_evals.fi_utils.token_count_helper.calculate_total_cost")
+    async def test_emit_chat_usage_prices_at_the_start_of_the_turn(
+        self, mock_cost, mock_billing_config, mock_emit
+    ):
+        from datetime import UTC, datetime
+
+        mock_cost.return_value = {"total_cost": 0.01, "pricing_source": "x"}
+        mock_billing_config.get.return_value.calculate_ai_credits.return_value = 1
+        started = datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC)
+        consumer = _make_consumer()
+        consumer.organization_id = "org-123"
+
+        consumer._emit_chat_usage(100, 40, "turing_small", "conv", 0, started)
+
+        assert mock_cost.call_args.kwargs["at"] == started
+
     @patch("ee.falcon_ai.consumers.check_usage")
     @patch("ee.falcon_ai.url_fetcher.fetch_urls_from_message")
     @patch("ee.falcon_ai.consumers.StreamBuffer")

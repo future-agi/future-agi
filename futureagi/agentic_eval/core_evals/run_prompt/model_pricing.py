@@ -1,9 +1,14 @@
+import re
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Optional
+from typing import Literal, NamedTuple, Optional, TypedDict
 
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
-from agentic_eval.core_evals.run_prompt.price_schedule import dated_rates
+from agentic_eval.core_evals.run_prompt.gateway_prices import gateway_token_rates
+from agentic_eval.core_evals.run_prompt.price_schedule import (
+    PRICE_SCHEDULE,
+    dated_rates,
+)
 
 # (available_models always available)
 
@@ -18,6 +23,15 @@ _PROVIDER_PRIORITY = (
     "gemini",
     "vertex_ai",
     "openrouter",
+)
+
+
+_BEDROCK_ARN_MARKERS = (":inference-profile/", ":foundation-model/")
+_GOOGLE_PREFIXES = (
+    "publishers/google/models/",
+    "vertex_ai_global/",
+    "google/",
+    "models/",
 )
 
 
@@ -56,23 +70,15 @@ def _is_boundary_match(prefix: str, full: str) -> bool:
     return full[len(prefix)] in _MATCH_BOUNDARY_CHARS
 
 
-def _looks_like_version_suffix(suffix: str) -> bool:
-    if not suffix:
-        return False
-    if suffix[0] not in _MATCH_BOUNDARY_CHARS:
-        return False
-    tail = suffix[1:]
-    if not tail:
-        return False
-    if tail.startswith("latest"):
-        return True
-    if tail.startswith("preview"):
-        return True
-    if tail[0].isdigit():
-        return True
-    if tail.startswith("v") and len(tail) > 1 and tail[1].isdigit():
-        return True
-    return False
+# A suffix that names the same model: a date, a version, "@default" or (for a
+# request that is more specific than the catalogue name) "-latest". "-cyber",
+# "-lite" or "-tts" name another model and must not take this one's price.
+_SAME_MODEL_DATE = r"(?:[-@](?:\d{4}-\d{2}-\d{2}|\d{8}))"
+_SAME_MODEL_VERSION = r"(?:[-:]v\d+(?::\d+)?|@default)"
+_REQUESTED_SUFFIX = re.compile(
+    _SAME_MODEL_DATE + "?" + r"(?:[-:]v\d+(?::\d+)?|@default|-latest)?"
+)
+_AVAILABLE_SUFFIX = re.compile(_SAME_MODEL_DATE + "?" + _SAME_MODEL_VERSION + "?")
 
 
 def _version_sort_key(suffix: str) -> tuple[int, int, str]:
@@ -203,8 +209,12 @@ def _find_best_match(
         available_norm = _normalize_model_name(available_name)
         for available_variant in _aliases(available_norm):
             for requested_variant in requested_aliases:
-                if requested_variant != available_variant and _is_boundary_match(
-                    available_variant, requested_variant
+                if (
+                    requested_variant != available_variant
+                    and _is_boundary_match(available_variant, requested_variant)
+                    and _REQUESTED_SUFFIX.fullmatch(
+                        requested_variant[len(available_variant) :]
+                    )
                 ):
                     match_len = len(available_variant)
                     if match_len > best_prefix_len:
@@ -235,7 +245,7 @@ def _find_best_match(
                 if not _is_boundary_match(requested_variant, available_variant):
                     continue
                 suffix = available_variant[len(requested_variant) :]
-                if _looks_like_version_suffix(suffix):
+                if suffix and _AVAILABLE_SUFFIX.fullmatch(suffix):
                     version_candidates.append((_version_sort_key(suffix), model))
 
     if version_candidates:
@@ -272,6 +282,27 @@ def get_model_info(model_name: str) -> Optional[dict]:
     requested_norm = _normalize_model_name(model_name)
     if not requested_norm:
         return None
+
+    # A Bedrock ARN names the row the platform builds for it (_bedrock_arn() in
+    # ee/prompts/additional_models.py), whatever the account or region.
+    if any(marker in requested_norm for marker in _BEDROCK_ARN_MARKERS):
+        arn_model = requested_norm.rsplit("/", 1)[-1]
+        for model in AVAILABLE_MODELS:
+            available_name = model.get("model_name")
+            if not isinstance(available_name, str):
+                continue
+            available_norm = _normalize_model_name(available_name)
+            if (
+                available_norm.startswith("bedrock/")
+                and available_norm.rsplit("/", 1)[-1] == arn_model
+            ):
+                return model
+
+    # Google's own name forms: the catalogue lists the bare model name.
+    for prefix in _GOOGLE_PREFIXES:
+        if requested_norm.startswith(prefix):
+            requested_norm = requested_norm[len(prefix) :]
+            break
 
     provider_hint = _extract_provider_hint(requested_norm)
     if provider_hint:
@@ -329,16 +360,6 @@ def _catalogue_pricing(model_name: str) -> tuple[str | None, dict] | None:
     Cached per process, so it never holds a dated price: one cached before
     midnight would still be billed after it.
     """
-    from evaluations.decision_models import is_decision_model
-
-    if is_decision_model(model_name):
-        from evaluations.decision_pricing import calculate_decision_cost
-
-        cost = calculate_decision_cost(model_name, {"input_tokens": 1000000})
-        return None, {
-            "input_per_1M_tokens": cost["total_cost"],
-            "output_per_1M_tokens": 0.0,
-        }
     model_info = get_model_info(model_name)
     if model_info and "pricing" in model_info:
         return model_info.get("model_name"), model_info["pricing"].copy()
@@ -349,7 +370,202 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def get_model_pricing(model_name: str, *, at: datetime | None = None) -> dict | None:
+class TokenPricing(TypedDict, total=False):
+    """A price per million tokens: the unit a token call is billed by."""
+
+    input_per_1M_tokens: float
+    output_per_1M_tokens: float
+    cached_input_per_1M_tokens: float
+    # A few catalogue rows also price image inputs.
+    input_per_image: float
+    image_input_per_image: float
+
+
+class CharacterPricing(TypedDict):
+    """A price per million characters (speech synthesis)."""
+
+    input_per_1M_characters: float
+
+
+class ThousandCharacterPricing(TypedDict, total=False):
+    """A price per thousand characters; a token call is not billed by it."""
+
+    input_per_1k_characters: float
+    output_per_1k_characters: float
+
+
+class MinutePricing(TypedDict):
+    """A price per minute of audio (transcription)."""
+
+    input_per_minute: float
+
+
+class AudioMinutePricing(TypedDict):
+    """The catalogue's other spelling of a price per minute of audio."""
+
+    per_minute_audio: float
+
+
+class ImagePricing(TypedDict, total=False):
+    """A price per image, flat or by quality."""
+
+    per_image: float
+    low_quality_per_image: float
+    medium_quality_per_image: float
+    high_quality_per_image: float
+
+
+class OtherPricing(TypedDict, total=False):
+    """Catalogue prices in a unit nothing here bills by (shown, never billed)."""
+
+    per_1M_tokens: float
+    per_1000_pairs: float
+    details: dict
+
+
+Pricing = (
+    TokenPricing
+    | CharacterPricing
+    | ThousandCharacterPricing
+    | MinutePricing
+    | AudioMinutePricing
+    | ImagePricing
+    | OtherPricing
+)
+
+PricingSource = Literal["decision", "gateway_table", "available_models"]
+PricingUnit = Literal[
+    "per_1M_tokens",
+    "per_1M_characters",
+    "per_1k_characters",
+    "per_minute",
+    "per_image",
+    "other",
+]
+
+_UNIT_KEYS: tuple[tuple[PricingUnit, tuple[str, ...]], ...] = (
+    ("per_1M_tokens", ("input_per_1M_tokens", "output_per_1M_tokens")),
+    ("per_1M_characters", ("input_per_1M_characters",)),
+    ("per_1k_characters", ("input_per_1k_characters", "output_per_1k_characters")),
+    ("per_minute", ("input_per_minute", "per_minute_audio")),
+    (
+        "per_image",
+        (
+            "per_image",
+            "low_quality_per_image",
+            "medium_quality_per_image",
+            "high_quality_per_image",
+        ),
+    ),
+)
+
+
+def pricing_unit(pricing: Pricing) -> PricingUnit:
+    """The unit a price is quoted in, read from its keys."""
+    for unit, keys in _UNIT_KEYS:
+        if any(key in pricing for key in keys):
+            return unit
+    return "other"
+
+
+class PricingLookup(NamedTuple):
+    """A price and where it came from.
+
+    ``model`` is the name that was asked for, kept so the price is never read
+    against another model. ``source`` is "decision", "gateway_table" or
+    "available_models". ``key`` is the gateway key or catalogue name that set the
+    price (None for a decision model). ``unit`` says what ``pricing`` is quoted per.
+    """
+
+    pricing: Pricing
+    source: PricingSource
+    key: str | None
+    model: str
+
+    @property
+    def unit(self) -> PricingUnit:
+        return pricing_unit(self.pricing)
+
+
+def _check_at(at: datetime | None) -> datetime:
+    if at is None:
+        return _utc_now()
+    if at.utcoffset() is None:
+        raise ValueError(
+            "The usage time has no time zone; pass an aware datetime (UTC)."
+        )
+    return at
+
+
+def lookup_pricing(
+    model_name: str, *, at: datetime | None = None, non_token_call: bool = False
+) -> PricingLookup | None:
+    """
+    Price a model as in force at a moment, and say which table priced it.
+
+    Order: the decision models; then the gateway's table (the price the gateway
+    bills), unless the call is speech; then the platform catalogue. A table price
+    whose input rate is 0 is no price. The dated rows of the key that set the
+    price are laid over its static rates.
+
+    Args:
+        model_name: The model identifier
+        at: When the usage happened, timezone-aware. None means now.
+        non_token_call: The call is billed by characters, audio time or images,
+            not tokens. The gateway's table holds only per-token prices, so it is
+            skipped.
+
+    Returns:
+        A PricingLookup, or None if no table prices the name.
+    """
+    at = _check_at(at)
+
+    from evaluations.decision_models import is_decision_model
+
+    if is_decision_model(model_name):
+        from evaluations.decision_pricing import calculate_decision_cost
+
+        cost = calculate_decision_cost(model_name, {"input_tokens": 1000000})
+        return PricingLookup(
+            {
+                "input_per_1M_tokens": cost["total_cost"],
+                "output_per_1M_tokens": 0.0,
+            },
+            "decision",
+            None,
+            model_name,
+        )
+
+    if not non_token_call:
+        gateway = gateway_token_rates(model_name)
+        if gateway is not None:
+            key, rates = gateway
+            dated = dated_rates(key, at)
+            if dated:
+                rates.update(dated)
+            if rates["input_per_1M_tokens"] > 0:
+                return PricingLookup(rates, "gateway_table", key, model_name)
+
+    found = _catalogue_pricing(model_name)
+    if found is None:
+        return None
+    resolved_name, pricing = found
+    priced = dict(pricing)
+    if resolved_name:
+        dated = dated_rates(resolved_name, at)
+        if dated:
+            priced.update(dated)
+    if priced.get("input_per_1M_tokens") == 0:
+        return None
+    return PricingLookup(priced, "available_models", resolved_name, model_name)
+
+
+def get_model_pricing(
+    model_name: str,
+    *,
+    at: datetime | None = None,
+    non_token_call: bool = False,
+) -> Pricing | None:
     """
     Get pricing information for a model, as in force at a moment.
 
@@ -357,6 +573,8 @@ def get_model_pricing(model_name: str, *, at: datetime | None = None) -> dict | 
         model_name: The model identifier
         at: When the usage happened, timezone-aware. None means now. A model
             with dated prices is priced at the row in force then.
+        non_token_call: The call is billed by characters, audio time or images,
+            so the gateway's per-token table is not used.
 
     Returns:
         Pricing dict with various structures depending on model type:
@@ -372,22 +590,58 @@ def get_model_pricing(model_name: str, *, at: datetime | None = None) -> dict | 
 
         Returns None if model not found or pricing not available
     """
-    if at is None:
-        at = _utc_now()
-    elif at.utcoffset() is None:
-        raise ValueError(
-            "The usage time has no time zone; pass an aware datetime (UTC)."
-        )
-    found = _catalogue_pricing(model_name)
-    if found is None:
+    found = lookup_pricing(model_name, at=at, non_token_call=non_token_call)
+    return found.pricing if found else None
+
+
+def price_change_dates(
+    model_name: str, *, non_token_call: bool = False
+) -> tuple[datetime, ...]:
+    """The instants at which the price of a model changes, oldest first.
+
+    Taken from the dated rows of the key that sets the price, so a view can price
+    each part of a period at its own rate. Empty when the price never changes.
+    """
+    found = lookup_pricing(model_name, non_token_call=non_token_call)
+    if found is None or found.key is None:
+        return ()
+    return tuple(start for start, _ in PRICE_SCHEDULE.get(found.key, ()))
+
+
+_TOKEN_CALL_MODES = frozenset({"chat", "completion"})
+
+
+def listed_pricing(row: dict, *, at: datetime | None = None) -> Pricing | None:
+    """The price the model list shows for one of its rows: the one billed now.
+
+    Returns:
+        The price in force at ``at`` (None means now), in the unit the row is
+        billed by. For a chat or completion row that is always a ``TokenPricing``
+        with an ``input_per_1M_tokens``. For any other mode (image, speech,
+        transcription, embedding, ...) it is whatever the table or catalogue holds
+        for the name, which need not be per-token: ``per_image``,
+        ``input_per_1M_characters``, ``input_per_minute`` and so on. Read the unit
+        with ``pricing_unit``, never assume tokens.
+
+        None when nothing prices the row in a way the list can show: a custom
+        model (the organisation sets its own price, so no table's is shown), a name
+        no table prices, and a chat or completion row whose table price has no
+        per-token input rate (a call to it is billed the default, so the table's
+        figure would mislead).
+    """
+    if row.get("custom"):
         return None
-    resolved_name, pricing = found
-    priced = dict(pricing)
-    if resolved_name:
-        rates = dated_rates(resolved_name, at)
-        if rates:
-            priced.update(rates)
-    return priced
+    mode = row.get("mode") or "chat"
+    pricing = get_model_pricing(row["model_name"], at=at, non_token_call=mode == "tts")
+    if (
+        pricing is not None
+        and mode in _TOKEN_CALL_MODES
+        and "input_per_1M_tokens" not in pricing
+    ):
+        # A token call bills the default when the table price has no per-token input.
+        # Image, speech and transcription rows keep the price they are billed by.
+        return None
+    return pricing
 
 
 def list_available_models(

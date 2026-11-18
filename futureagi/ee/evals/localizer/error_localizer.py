@@ -4,6 +4,7 @@ import math
 import re
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import cached_property
 from io import BytesIO
 from typing import Any, Literal
@@ -773,6 +774,8 @@ class ErrorLocalizer:
                 file_images=file_images or None,
             )
 
+        # The request starts here; a fallback cost is priced at this instant.
+        agent_started_at = datetime.now(UTC)
         result = asyncio.run(_run())
 
         from agentic_eval.core.utils.json_utils import extract_dict_from_string
@@ -807,7 +810,10 @@ class ErrorLocalizer:
                     token_usage["prompt_tokens"] + token_usage["completion_tokens"]
                 )
                 calculated = (
-                    calculate_total_cost(self._llm.model_name, token_usage) or {}
+                    calculate_total_cost(
+                        self._llm.model_name, token_usage, at=agent_started_at
+                    )
+                    or {}
                 )
                 agentloop_cost = float(calculated.get("total_cost", 0) or 0)
             except Exception as exc:

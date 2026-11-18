@@ -6,6 +6,7 @@ import asyncio
 import json
 import tempfile
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ee.evals.localizer.agentcc_transport import (
@@ -505,6 +506,9 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
             },
             ensure_ascii=False,
         )
+        # The harness's first request starts at the query below; its tokens are
+        # priced at that instant. None (never reached) means now.
+        started_at = None
         try:
             async with asyncio.timeout(config.timeout):
                 with tempfile.TemporaryDirectory(
@@ -533,6 +537,7 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                         )
                         terminal = None
                         async with ClaudeSDKClient(options=options) as client:
+                            started_at = datetime.now(UTC)
                             await client.query(prompt)
                             async for message in client.receive_response():
                                 if isinstance(message, ResultMessage):
@@ -561,7 +566,7 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
             )
 
             self.cost = {
-                **calculate_total_cost(MODEL, transport.usage),
+                **calculate_total_cost(MODEL, transport.usage, at=started_at),
                 "model": MODEL,
                 "token_usage": transport.usage,
                 "requests": transport.request_count,
