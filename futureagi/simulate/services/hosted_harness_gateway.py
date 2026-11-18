@@ -39,23 +39,25 @@ from simulate.models import (
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
-    HostedHarnessExecution,
     HostedHarnessJob,
-    HostedHarnessReceipt,
     HostedHarnessSecret,
+    HostedSandboxLifetime,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
-    RERUN_EXECUTION_KEYS,
     HostedHarnessError,
     activate_attempt_capability,
+    executions_without_result,
     finish_deferred_delete,
+    keep_delivered_attempt,
     record_cleanup,
     register_attempt,
     request_cancellation,
     scope_dispatch_to_rerun,
+    validate_cancellation_reason,
 )
 from simulate.services.hosted_harness_conversation import (
+    RUNTIME_STALE_SECONDS,
     _unacked_commands,
     ensure_conversation,
     issue_conversation_capability,
@@ -77,6 +79,7 @@ from simulate.services.hosted_harness_diagnostics import (
 from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxProviderConfigurationError,
@@ -141,6 +144,12 @@ _CHAT_RUNTIME_PATH = (
     "/usr/sbin:/usr/bin:/sbin:/bin"
 )
 _CHAT_POLICY_PATH = "/run/futureagi/chat-capabilities.yaml"
+# Where the builder chat keeps its spend ledger (ALK reads ALK_SPEND_JOURNAL); a build runs
+# as a chat turn, so its spend is here. Outside /work/authoring: a chat beside a CLI build
+# would otherwise overwrite that build's cost.json, and checkpoints of that directory would
+# carry one sandbox's ledger into the next.
+_BUILDER_SPEND_PATH = "/work/builder-cost.json"
+_AUTHORING_SPEND_PATH = "/work/authoring/cost.json"
 _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
@@ -287,6 +296,29 @@ def _alk_source_overlay() -> bytes | None:
 
 def _chat_idle_seconds() -> int:
     return max(300, int(getattr(settings, "ALK_HOSTED_CHAT_TTL_SECONDS", 1800)))
+
+
+def _retired_chat_ending(
+    lease: HostedHarnessConversationLease, now
+) -> tuple[str, str, Any]:
+    """Why a chat sandbox of its own is retired, the failure domain when that is ours, and
+    the last moment its process was seen alive, which decides whether a sandbox found gone
+    had reached its lifetime limit. A fenced-out lease's process stops reporting while its
+    sandbox lives, so its heartbeat is not passed on."""
+    gone = HostedHarnessConversationLease.State
+    if lease.state in (gone.EXPIRED, gone.RELEASED):
+        return "lease_expired", "", None
+    if lease.heartbeat_at is None or now - lease.heartbeat_at >= timedelta(
+        seconds=RUNTIME_STALE_SECONDS
+    ):
+        # It stopped answering, whether or not its idle window is over since.
+        return "chat_runtime_stopped", "infrastructure", lease.heartbeat_at
+    if lease.expires_at <= now + timedelta(seconds=60):
+        return "idle_window_over", "", lease.heartbeat_at
+    if runtime_is_live(lease, now=now):
+        return "agent_changed", "", lease.heartbeat_at
+    # Its start never finished.
+    return "chat_runtime_stopped", "infrastructure", lease.heartbeat_at
 
 
 def _execution_ttl_seconds(
@@ -1211,6 +1243,9 @@ def attach_platform_simulator_secret_refs(
 # The decision whether a run exports to the agent's hidden simulation project is made once, at
 # launch, and shipped in job.json; the sandbox repeats none of it. It never fails a launch.
 _EXPORT_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS"
+# The listed snapshots whose hook can also measure an agent that traces nothing itself. An
+# older hook would put our key on any exporter the agent aims at its own traces endpoint.
+_MEASURE_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS"
 _EXPORT_SECRET_PURPOSE = "observability_export"
 # Only the endpoints name where a customer's spans go; their headers are merged by the hook.
 _OTEL_EXPORT_NAMES = frozenset(
@@ -1222,8 +1257,9 @@ _INGEST_ALIAS_PREFIX = "FI_SIMULATION_INGEST_"
 _INGEST_API_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}API_KEY"
 _INGEST_SECRET_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}SECRET_KEY"
 # Refusals that fire on every launch that was never meant to export: unbound, from an
-# unlisted snapshot, a hosted agent, observability off or no instrumentation. They log at info
-# so the reasons someone running the platform can act on stand out at warning.
+# unlisted snapshot, a hosted agent, a traced agent with observability off, or an
+# instrumentation the sandbox cannot measure. They log at info so the reasons someone running the
+# platform can act on stand out at warning.
 _QUIET_EXPORT_REASONS = frozenset(
     {
         "not_bound",
@@ -1300,6 +1336,10 @@ def _bound_agent_definition(job: HostedHarnessJob, payload: Mapping[str, Any]):
     return agent
 
 
+def _listed_snapshots(setting: str) -> set[str]:
+    return {name.strip() for name in getattr(settings, setting) if name.strip()}
+
+
 def _decide_observability_export(
     job: HostedHarnessJob,
     payload: Mapping[str, Any],
@@ -1308,28 +1348,35 @@ def _decide_observability_export(
     allowed_domains: Iterable[str],
     max_egress_domains: int | None,
 ) -> _ExportPlan:
-    listed = {
-        name.strip()
-        for name in os.environ.get(_EXPORT_SNAPSHOTS_SETTING, "").split(",")
-        if name.strip()
-    }
-    if selected_snapshot not in listed:
+    if selected_snapshot not in _listed_snapshots(_EXPORT_SNAPSHOTS_SETTING):
         raise _ExportRefused("snapshot_unsupported")
 
     agent = _bound_agent_definition(job, payload)
 
-    provider = agent.observability_provider
-    if provider is None or provider.deleted or not provider.enabled:
-        raise _ExportRefused("observability_off")
-    # The row only gates the export: spans go to the hidden project, never to this one.
-    project = provider.project
-    if project.deleted or project.organization_id != job.organization_id:
-        raise _ExportRefused("observability_off")
-    from simulate.services.agent_setup import agent_summary
+    from simulate.services.agent_setup import launched_agent_summary
 
-    summary = agent_summary(agent.id)
+    # The setup of the version this run launches decides, not the newest one's: a traced
+    # older version keeps its own observability switch when a newer one traces nothing.
+    summary = launched_agent_summary(agent.id, agent_version_id=job.agent_version_id)
     if summary.kind != "source":
         raise _ExportRefused("not_source")
+    # Decided before the hidden project or the key is made: on a snapshot that cannot measure,
+    # an agent that traces nothing exports nothing, as before.
+    if summary.instrumentation == "none" and selected_snapshot not in _listed_snapshots(
+        _MEASURE_SNAPSHOTS_SETTING
+    ):
+        raise _ExportRefused("not_instrumented")
+    # A traced agent exports what its own setup records, prompts and replies included, so its
+    # observability switch still decides. An untraced agent is measured whatever the switch
+    # says: the sandbox records its models, tokens and timing only, never prompts or replies.
+    if summary.instrumentation != "none":
+        provider = agent.observability_provider
+        if provider is None or provider.deleted or not provider.enabled:
+            raise _ExportRefused("observability_off")
+        # The row only gates the export: spans go to the hidden project, never to this one.
+        project = provider.project
+        if project.deleted or project.organization_id != job.organization_id:
+            raise _ExportRefused("observability_off")
     from tracer.services.simulation_project import ensure_simulation_project
 
     # A failure to make the project escapes to the guard, which logs the exception's class.
@@ -1369,8 +1416,11 @@ def _decide_observability_export(
     elif instrumentation == "traceai":
         if declared & (_OTEL_EXPORT_NAMES | {"FI_BASE_URL"}):
             raise _ExportRefused("customer_configuration")
-    else:
+    elif instrumentation != "none":
         raise _ExportRefused("not_instrumented")
+    # An agent that traces nothing itself is measured by the sandbox: its model SDKs'
+    # instrumentors export, through a provider of the sandbox's own, to a name no agent reads,
+    # so an endpoint the agent set for its own exporters is left as it is.
     # A customer value under one of our names would be overwritten by the sandbox key.
     if any(alias.startswith(_INGEST_ALIAS_PREFIX) for alias in declared):
         raise _ExportRefused("customer_configuration")
@@ -1454,8 +1504,35 @@ def _mark_is_acceptable(mark: Any) -> bool:
     return True
 
 
+# A model base URL the agent declares under a provider's or an LLM name. Its host is where the
+# agent's model calls go, so the sandbox counts a request there outside a measured SDK call as a
+# model call it did not measure. Other URLs (a database, a tool's API) are not model hosts.
+_MODEL_BASE_URL_ALIAS = re.compile(
+    r"(?:[A-Z0-9]+_)*(?:OPENAI|AZURE_OPENAI|ANTHROPIC|LLM|MODEL|GEMINI|GOOGLE_GENAI|MISTRAL"
+    r"|GROQ|COHERE|DEEPSEEK|OPENROUTER|LITELLM|TOGETHER|FIREWORKS|XAI|PERPLEXITY)"
+    r"_(?:API_)?(?:BASE_URL|BASE|ENDPOINT|URL|HOST)"
+)
+
+
+def _model_hosts(
+    secrets_map: Mapping[str, Any], simulator_env: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """The hosts the agent's model calls go to that the sandbox would not know as model APIs:
+    the platform's model gateway, and the host of any model base URL the agent declares."""
+    hosts = {_hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))}
+    hosts.update(
+        _hostname_from_url(value)
+        for alias, value in secrets_map.items()
+        if _MODEL_BASE_URL_ALIAS.fullmatch(str(alias).upper())
+    )
+    return tuple(sorted(host for host in hosts if host))
+
+
 def _simulation_mark(
-    job: Any, plan: _ExportPlan | None = None
+    job: Any,
+    plan: _ExportPlan | None = None,
+    *,
+    model_hosts: Iterable[str] = (),
 ) -> tuple[dict[str, str], bool]:
     """The environment dictionary for this run, and whether it may be used.
 
@@ -1477,6 +1554,7 @@ def _simulation_mark(
             collector_url=plan.collector_url,
             export=plan.export,
             instrumentation=plan.instrumentation,
+            model_hosts=model_hosts,
         )
     except Exception:  # noqa: BLE001 - the mark never fails a launch
         structlog_logger.warning(
@@ -1498,6 +1576,18 @@ def _with_simulation_mark(
     document = dict(payload)
     metadata = dict(document.get("metadata") or {})
     metadata["customer_code_environment"] = dict(mark)
+    document["metadata"] = metadata
+    return document
+
+
+def _with_egress_allowed_hosts(
+    payload: Mapping[str, Any], allowed_domains: Iterable[str]
+) -> dict[str, Any]:
+    """A copy of the document naming the hosts the sandbox allows, so the harness points the agent at a proxy that
+    refuses and logs every other host."""
+    document = dict(payload)
+    metadata = dict(document.get("metadata") or {})
+    metadata["egress_allowed_hosts"] = sorted(allowed_domains)
     document["metadata"] = metadata
     return document
 
@@ -2090,9 +2180,11 @@ def _persist_bundle_stage_outputs(
                 HostedHarnessStageOutput(
                     job=job,
                     title="Contract",
-                    summary=contract_data.get("one_liner", "")
-                    if isinstance(contract_data, dict)
-                    else "",
+                    summary=(
+                        contract_data.get("one_liner", "")
+                        if isinstance(contract_data, dict)
+                        else ""
+                    ),
                     kind="contract",
                     data=contract_data,
                 )
@@ -2162,6 +2254,18 @@ def _persist_bundle_stage_outputs(
                     summary=f"{len(goals)} sub-goals",
                     kind="sub_goals",
                     data=catalogue,
+                )
+            )
+    if "call_actors" not in existing:
+        listing = all_actors(_load_bundle_file(manifest, "actors.json", job))
+        if isinstance(listing, dict) and listing.get("call_actors"):
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Actors",
+                    summary=call_actors_summary(listing),
+                    kind="call_actors",
+                    data=listing,
                 )
             )
     if outputs:
@@ -2548,7 +2652,9 @@ class HostedHarnessGateway:
             allowed_domains=allowed_domains,
             max_egress_domains=self.client.max_egress_domains,
         )
-        simulation_mark, mark_accepted = _simulation_mark(job, export_plan)
+        simulation_mark, mark_accepted = _simulation_mark(
+            job, export_plan, model_hosts=_model_hosts(secrets_map, simulator_env)
+        )
         if not mark_accepted:
             # A guest must never get our key without the dictionary that says what to do
             # with it.
@@ -2626,6 +2732,10 @@ class HostedHarnessGateway:
                     simulator_env,
                     max_domains=self.client.max_egress_domains,
                 )
+            if not unrestricted:
+                dispatch_payload = _with_egress_allowed_hosts(
+                    dispatch_payload, allowed_domains
+                )
             launch_spec = SandboxLaunchSpec(
                 cpu_units=capacity.cpu_units,
                 memory_mb=capacity.memory_mb,
@@ -2641,6 +2751,13 @@ class HostedHarnessGateway:
                 unrestricted_egress=unrestricted,
                 runtime_name=selected_snapshot,
             )
+            from simulate.services.harness_usage import require_sandbox_create
+
+            # Queued runs and retries reach here long after submission; a refusal ends the
+            # attempt before any sandbox exists, and is not retried.
+            require_sandbox_create(str(job.organization_id), attempt=attempt)
+            # The provider's lifetime starts inside create: the recorded limit is never later.
+            create_requested_at = timezone.now()
             sandbox = self.client.create(
                 launch_spec, timeout=self.client.create_timeout_seconds
             )
@@ -2659,7 +2776,13 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
             from simulate.services.harness_usage import record_sandbox_runtime
 
-            record_sandbox_runtime(attempt, started=True)
+            record_sandbox_runtime(
+                attempt,
+                started=True,
+                provider=self.client.name,
+                lifetime_seconds=ttl_seconds,
+                armed_at=create_requested_at,
+            )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
@@ -2705,7 +2828,16 @@ class HostedHarnessGateway:
             )
             # Provider creation and uploads can consume much of the initial lease. Re-arm
             # providers with mutable leases before exposing a full-duration capability.
+            renewed_at = timezone.now()
             self.client.renew_ttl(sandbox, ttl_seconds)
+            from simulate.services.harness_usage import rearm_sandbox_runtime
+
+            rearm_sandbox_runtime(
+                attempt,
+                provider=self.client,
+                lifetime_seconds=ttl_seconds,
+                renewed_at=renewed_at,
+            )
             # The guest has not received its token yet. Start the runnable deadline here,
             # after E2B/Daytona creation and source/secret uploads, which can consume many
             # minutes without any guest work. Never refresh it after the guest starts.
@@ -3037,6 +3169,7 @@ class HostedHarnessGateway:
             }
         }
         chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+        chat_exports["ALK_SPEND_JOURNAL"] = _BUILDER_SPEND_PATH
         if overlay is not None:
             chat_exports["PYTHONPATH"] = "/work/alk-chat-src"
         command = sandbox.process.execute_session_command(
@@ -3115,6 +3248,7 @@ class HostedHarnessGateway:
         claim_ref = f"pending:{uuid.uuid4()}"
         claim_hash = hashlib.sha256(claim_ref.encode()).hexdigest()
         retired_ref = ""
+        retired_ending = ("deleted", "", None)
         with transaction.atomic():
             conversation = (
                 HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -3159,6 +3293,7 @@ class HostedHarnessGateway:
                     and not lease.provider_ref.startswith("pending:")
                 ):
                     retired_ref = lease.provider_ref
+                    retired_ending = _retired_chat_ending(lease, now)
                 settle_interrupted_turn(conversation)
                 HostedHarnessConversationLease.no_workspace_objects.update_or_create(
                     conversation=conversation,
@@ -3192,7 +3327,13 @@ class HostedHarnessGateway:
                 self._renew_chat_idle_window(live)
             return live
         if retired_ref:
-            self._delete_chat_sandbox(retired_ref, conversation.id)
+            self._delete_chat_sandbox(
+                retired_ref,
+                conversation.id,
+                reason=retired_ending[0],
+                failure_domain=retired_ending[1],
+                last_seen=retired_ending[2],
+            )
         try:
             if attempt is not None:
                 return self._start_chat_in_sandbox(
@@ -3244,9 +3385,35 @@ class HostedHarnessGateway:
             )
         return started
 
-    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> None:
+    def _delete_chat_sandbox(
+        self,
+        provider_ref: str,
+        conversation_id: Any,
+        *,
+        reason: str = "deleted",
+        failure_domain: str = "",
+        last_seen: Any = None,
+    ) -> None:
+        """Delete a chat sandbox of its own. ``last_seen`` is the last moment its process
+        was seen alive, where the caller knows one."""
+        from simulate.services.hosted_sandbox.base import delete_confirmed
+        from simulate.services.sandbox_usage import (
+            _lease_of,
+            close_sandbox_lifetime,
+            record_sandbox_end_reason,
+        )
+
+        ending = {
+            "reason": reason,
+            "failure_domain": failure_domain,
+            "last_seen": last_seen,
+        }
+        # The delete is asked for next: billing stops at this moment even if it fails.
+        record_sandbox_end_reason(
+            provider_ref=provider_ref, delete_requested=True, **ending
+        )
         try:
-            self.client.delete(
+            deleted = self.client.delete(
                 self.client.get(
                     provider_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
                 ),
@@ -3254,16 +3421,61 @@ class HostedHarnessGateway:
                 wait=True,
             )
         except SandboxNotFoundError:
-            pass
+            deleted = True
+            seen = last_seen
+            if seen is None:
+                try:
+                    with transaction.atomic():
+                        lease = _lease_of(provider_ref)
+                        limit = (
+                            HostedSandboxLifetime.no_workspace_objects.filter(
+                                provider_ref=provider_ref, ended_at__isnull=True
+                            )
+                            .values_list("lifetime_ends_at", flat=True)
+                            .first()
+                        )
+                    # Gone after its lifetime limit, it may simply have expired: only one
+                    # gone before it is read by its lease's last heartbeat.
+                    if (
+                        lease is not None
+                        and limit is not None
+                        and timezone.now() < limit
+                    ):
+                        seen = lease[1]
+                except Exception:  # noqa: BLE001 - the recorded ending stands
+                    logger.exception(
+                        "chat sandbox last heartbeat not read conversation=%s",
+                        conversation_id,
+                    )
+            if seen is not None:
+                # Already gone before this delete: lost on our side, unless it was seen
+                # alive up to its lifetime limit.
+                ending = {
+                    "reason": "sandbox_gone",
+                    "failure_domain": "infrastructure",
+                    "last_seen": seen,
+                }
         except Exception:
             logger.exception(
                 "retired conversation sandbox deletion failed conversation=%s",
                 conversation_id,
             )
+            return
+        if delete_confirmed(
+            self.client,
+            provider_ref,
+            deleted,
+            request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+        ):
+            # The ending again: it holds if the write before the delete was lost.
+            close_sandbox_lifetime(
+                provider_ref=provider_ref, delete_requested=True, **ending
+            )
 
     def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> None:
         """Keep a chat sandbox for the idle window after the user's latest message."""
         ttl_seconds = _chat_idle_seconds()
+        renewed_at = timezone.now()
         try:
             self.client.renew_ttl(
                 self.client.get(
@@ -3288,11 +3500,21 @@ class HostedHarnessGateway:
             )
         )
         if not renewed:
-            # A close or a release ended the lease first; it is not revived.
+            # A close or a release ended the lease first; it is not revived, and its
+            # billed lifetime is not extended either.
             logger.info(
                 "conversation sandbox renewal refused conversation=%s",
                 lease.conversation_id,
             )
+            return
+        from simulate.services.sandbox_usage import rearm_sandbox_lifetime
+
+        rearm_sandbox_lifetime(
+            provider=self.client,
+            provider_ref=lease.provider_ref,
+            lifetime_seconds=ttl_seconds,
+            renewed_at=renewed_at,
+        )
 
     def _start_chat_sandbox(
         self,
@@ -3363,11 +3585,44 @@ class HostedHarnessGateway:
             allowed_domains=tuple(sorted(allowed_domains)),
         )
 
+        from simulate.services.harness_usage import require_sandbox_create
+        from simulate.services.hosted_sandbox.base import delete_confirmed
+        from simulate.services.sandbox_usage import (
+            close_sandbox_lifetime,
+            open_sandbox_lifetime,
+            record_sandbox_end_reason,
+        )
+
+        # Started only for the platform's own messages (its check of a build it just made):
+        # the organization did not ask for it, so its limits are not checked.
+        platform_only = {
+            bool((payload or {}).get("from_platform"))
+            for payload in _unacked_commands(conversation).values_list(
+                "payload", flat=True
+            )
+        } == {True}
+        if not platform_only:
+            require_sandbox_create(str(job.organization_id))
         sandbox = None
         try:
+            create_requested_at = timezone.now()
             sandbox = self.client.create(
                 launch_spec,
                 timeout=self.client.create_timeout_seconds,
+            )
+            open_sandbox_lifetime(
+                kind=(
+                    HostedSandboxLifetime.Kind.PLATFORM_CHECK
+                    if platform_only
+                    else HostedSandboxLifetime.Kind.CHAT
+                ),
+                provider_name=self.client.name,
+                provider_ref=str(sandbox.id),
+                organization_id=job.organization_id,
+                workspace_id=job.workspace_id,
+                owner_id=conversation.id,
+                lifetime_seconds=ttl_seconds,
+                armed_at=create_requested_at,
             )
             capability = issue_conversation_capability(
                 conversation,
@@ -3382,15 +3637,23 @@ class HostedHarnessGateway:
                 claim_ref=claim_ref,
             )
             if capability is None:
-                self._delete_chat_sandbox(str(sandbox.id), conversation.id)
+                self._delete_chat_sandbox(
+                    str(sandbox.id),
+                    conversation.id,
+                    reason="claim_released",
+                    failure_domain="infrastructure",
+                )
                 return None
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
                     _with_used_scenario_keys(
-                        _with_simulation_mark(
-                            guest_job_document(job.payload), simulation_mark
+                        _with_egress_allowed_hosts(
+                            _with_simulation_mark(
+                                guest_job_document(job.payload), simulation_mark
+                            ),
+                            allowed_domains,
                         ),
                         job,
                     ),
@@ -3406,6 +3669,13 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            from simulate.services import evidence_drafts
+
+            # An evidence drafting chat reads its redacted evidence from outside the
+            # workspace, so no checkpoint carries it.
+            evidence = evidence_drafts.sandbox_evidence(conversation)
+            if evidence is not None:
+                sandbox.fs.upload_file(evidence, evidence_drafts.EVIDENCE_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -3421,6 +3691,11 @@ class HostedHarnessGateway:
                     "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
                     "rm /work/alk-src.tar.gz && "
                     if overlay is not None
+                    else ""
+                )
+                + (
+                    f"chmod 0444 {evidence_drafts.EVIDENCE_PATH} && "
+                    if evidence is not None
                     else ""
                 )
                 + f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
@@ -3452,6 +3727,7 @@ class HostedHarnessGateway:
                 }
             }
             chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+            chat_exports["ALK_SPEND_JOURNAL"] = _BUILDER_SPEND_PATH
             if overlay is not None:
                 chat_exports["PYTHONPATH"] = "/work/alk-src"
             command = sandbox.process.execute_session_command(
@@ -3475,13 +3751,30 @@ class HostedHarnessGateway:
             return capability.lease
         except Exception:
             if sandbox is not None:
+                ending = {"reason": "start_failed", "failure_domain": "infrastructure"}
+                record_sandbox_end_reason(
+                    provider_ref=str(sandbox.id), delete_requested=True, **ending
+                )
                 try:
-                    self.client.delete(sandbox, timeout=120, wait=True)
+                    deleted = self.client.delete(sandbox, timeout=120, wait=True)
                 except Exception:
                     logger.exception(
                         "conversation sandbox cleanup failed conversation=%s",
                         conversation.id,
                     )
+                else:
+                    if delete_confirmed(
+                        self.client,
+                        str(sandbox.id),
+                        deleted,
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    ):
+                        # The ending again: it holds if the write before was lost.
+                        close_sandbox_lifetime(
+                            provider_ref=str(sandbox.id),
+                            delete_requested=True,
+                            **ending,
+                        )
             raise
 
     @staticmethod
@@ -3880,12 +4173,14 @@ class HostedHarnessGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         sub_goals = _json("/work/authoring/sub_goals.json")
+        call_actors = all_actors(_json("/work/authoring/actors.json"))
         bundle = _json("/work/bundle/manifest.json")
         # Written when the world is sealed, so it appears later than the authoring
         # documents above and only once a store has actually been built.
         build_output = _json("/work/artifacts/build.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
-        spend = _json("/work/authoring/cost.json")
+        cli_spend = _json(_AUTHORING_SPEND_PATH)
+        builder_spend = _json(_BUILDER_SPEND_PATH)
         coverage = _json("/work/authoring/coverage.json")
         invariants = _json("/work/authoring/source-data-invariants.json")
         certified = _json("/work/authoring/generic-harness/certification.json")
@@ -3893,7 +4188,9 @@ class HostedHarnessGateway:
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         metadata = (job.payload or {}).get("metadata") or {}
         if not metadata.get("simulation_only"):
-            _record_harness_spend(job, spend, attempt.attempt_number)
+            _record_harness_spend(
+                job, attempt.attempt_number, cli=cli_spend, builder=builder_spend
+            )
         from simulate.services.harness_versioning import assembly as bundle_cache
 
         # Certifying prunes the suite index; a run reads the suite it was assembled with.
@@ -3965,6 +4262,7 @@ class HostedHarnessGateway:
             sub_goals=sub_goals,
             build_output=build_output,
             coverage=coverage,
+            call_actors=call_actors,
         )
         activities = _activity_events()
         if activities:
@@ -4254,6 +4552,7 @@ class HostedHarnessGateway:
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
+        validate_cancellation_reason(reason)
         settled = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job,
             attempt_number=job.current_attempt_number,
@@ -4409,47 +4708,13 @@ class HostedHarnessGateway:
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
 
-    def _results_missing(self, attempt: HostedHarnessAttempt) -> list[str] | None:
-        """The keys of the executions this attempt was sent and delivered no result for.
-
-        None when it was sent none: a build's product is its bundle, not call results. A
-        result an earlier attempt delivered is not this attempt's.
-        """
-        job = attempt.job
-        if job.environment_id is None:
-            return None
-        executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
-        rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
-        if rerun_keys:
-            executions = executions.filter(execution_key__in=rerun_keys)
-        if not executions.exists():
-            return None
-        received = HostedHarnessReceipt.no_workspace_objects.filter(
-            job=job, attempt_number=attempt.attempt_number, execution__isnull=False
-        ).values("execution_id")
-        return sorted(
-            executions.exclude(id__in=received).values_list("execution_key", flat=True)
-        )
-
-    def _relaunch_only_missing_results(self, attempt: HostedHarnessAttempt) -> None:
-        """Scope the relaunch to the calls this attempt left without a result, as an in-run
-        re-run is scoped to its chosen calls. The results that arrived stay the Run's.
-
-        With no result in, that scope is every call. A build relaunches whole.
-        """
-        missing = self._results_missing(attempt)
-        if not missing:
-            return
-        with transaction.atomic():
-            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-                id=attempt.job_id
-            )
-            metadata = {
-                **(job.payload.get("metadata") or {}),
-                RERUN_EXECUTION_KEYS: missing,
-            }
-            job.payload = {**job.payload, "metadata": metadata}
-            job.save(update_fields=["payload", "updated_at"])
+    def _keep_delivered_results(self, attempt: HostedHarnessAttempt) -> bool:
+        """Keep the Run of an attempt whose every call delivered its result, whatever
+        ended the guest, and say whether it did (`keep_delivered_attempt`). The results are
+        what the run page and a check run read."""
+        if executions_without_result(attempt.job, attempt.attempt_number) != []:
+            return False
+        return keep_delivered_attempt(attempt)
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4476,7 +4741,9 @@ class HostedHarnessGateway:
             observation = self.inspect(attempt)
         except SandboxNotFoundError:
             retry_pending = False
-            if not attempt.terminal_event_received:
+            if not attempt.terminal_event_received and not self._keep_delivered_results(
+                attempt
+            ):
                 attempt.terminal_stage = "failed"
                 attempt.terminal_failure = {
                     "domain": "infrastructure",
@@ -4524,34 +4791,37 @@ class HostedHarnessGateway:
                     attempt.provider_ref,
                 )
                 return None
-            attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
-                "domain": "infrastructure",
-                "stage": "running",
-                "code": "sandbox_unreachable",
-                "message": (
-                    "provider sandbox toolbox remained unreachable after the recovery "
-                    "grace period"
-                ),
-                "details": {
-                    "provider": self.client.name,
-                    "exception_type": type(exc).__name__,
-                    "grace_seconds": grace_seconds,
-                },
-            }
-            attempt.state = HostedHarnessAttempt.State.FAILED
-            attempt.save(
-                update_fields=[
-                    "terminal_stage",
-                    "terminal_failure",
-                    "state",
-                    "updated_at",
-                ]
-            )
+            kept = self._keep_delivered_results(attempt)
+            if not kept:
+                attempt.terminal_stage = "failed"
+                attempt.terminal_failure = {
+                    "domain": "infrastructure",
+                    "stage": "running",
+                    "code": "sandbox_unreachable",
+                    "message": (
+                        "provider sandbox toolbox remained unreachable after the "
+                        "recovery grace period"
+                    ),
+                    "details": {
+                        "provider": self.client.name,
+                        "exception_type": type(exc).__name__,
+                        "grace_seconds": grace_seconds,
+                    },
+                }
+                attempt.state = HostedHarnessAttempt.State.FAILED
+                attempt.save(
+                    update_fields=[
+                        "terminal_stage",
+                        "terminal_failure",
+                        "state",
+                        "updated_at",
+                    ]
+                )
             try:
                 return self._delete_and_record(
                     attempt,
-                    retry_pending=self._should_retry(attempt, "infrastructure"),
+                    retry_pending=not kept
+                    and self._should_retry(attempt, "infrastructure"),
                 )
             except SandboxConflictError:
                 # The first delete request can be accepted even when its wait call ends in a
@@ -4610,6 +4880,12 @@ class HostedHarnessGateway:
         if exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
+        elif (
+            not attempt.terminal_event_received or not attempt.manifest_acked
+        ) and self._keep_delivered_results(attempt):
+            # Every call's result is in, and the results are what a Run is: however the
+            # guest ended, only its ending or its manifest was lost.
+            pass
         elif exit_code == 4 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -4660,24 +4936,30 @@ class HostedHarnessGateway:
             label = (
                 RUNTIME_VALIDATION_FAILED
                 if exit_code == 78
-                else AUTHORING_FAILED
-                if authoring_failed
-                else f"guest entrypoint exited {exit_code}"
+                else (
+                    AUTHORING_FAILED
+                    if authoring_failed
+                    else f"guest entrypoint exited {exit_code}"
+                )
             )
             cause = guest_failure_cause(guest_logs)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "environment" if authoring_invalid else "infrastructure",
-                "stage": "validating_environment"
-                if exit_code == 78
-                else "generating_environment"
-                if authoring_failed
-                else "running",
-                "code": "authoring_runtime_validation_failed"
-                if exit_code == 78
-                else "authoring_failed"
-                if authoring_failed
-                else "guest_crashed",
+                "stage": (
+                    "validating_environment"
+                    if exit_code == 78
+                    else "generating_environment"
+                    if authoring_failed
+                    else "running"
+                ),
+                "code": (
+                    "authoring_runtime_validation_failed"
+                    if exit_code == 78
+                    else "authoring_failed"
+                    if authoring_failed
+                    else "guest_crashed"
+                ),
                 "message": f"{label}: {cause}" if cause else label,
                 "details": {
                     "guest_log_tail": guest_logs,
@@ -4705,40 +4987,6 @@ class HostedHarnessGateway:
                     logger.exception(
                         "could not mark the bundle cache failed attempt=%s", attempt.id
                     )
-        elif (
-            exit_code == 0
-            and attempt.terminal_event_received
-            and not attempt.manifest_acked
-            and attempt.terminal_stage == "completed"
-            and self._results_missing(attempt) == []
-        ):
-            # Every call's result is in, and the results are what the run page and a check
-            # run read; only the manifest listing the artifacts was lost. Keep the scored
-            # Run: manifest_acked stays False as the record of what never arrived.
-            logger.warning(
-                "hosted run kept without its manifest attempt=%s provider_ref=%s",
-                attempt.id,
-                attempt.provider_ref,
-            )
-        elif (
-            exit_code == 0
-            and not attempt.terminal_event_received
-            and self._results_missing(attempt) == []
-        ):
-            # Every call's result is in and only the guest's terminal event was lost. The
-            # platform records its own ending, as it does for a cancel: a reason no guest
-            # sends, and terminal_event_received stays False.
-            attempt.terminal_stage = "completed"
-            attempt.terminal_reason = "terminal_event_lost"
-            attempt.save(
-                update_fields=["terminal_stage", "terminal_reason", "updated_at"]
-            )
-            structlog_logger.warning(
-                "hosted_run_completed_by_platform",
-                job_id=str(attempt.job_id),
-                attempt_id=str(attempt.id),
-                reason="terminal_event_lost",
-            )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -4748,8 +4996,6 @@ class HostedHarnessGateway:
                 not attempt.terminal_event_received
                 or attempt.terminal_stage == "completed"
             ) and self._should_retry(attempt, "infrastructure")
-            if retry_pending:
-                self._relaunch_only_missing_results(attempt)
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",
@@ -4789,8 +5035,11 @@ class HostedHarnessGateway:
         ).first()
         if lease is None:
             return
+        from simulate.services.hosted_sandbox.base import delete_confirmed
+
         provider_ref = str(lease.provider_ref or "")
         absent = not provider_ref or provider_ref.startswith("pending:")
+        ending: dict[str, Any] = {}
         if not absent:
             try:
                 sandbox = self.client.get(
@@ -4799,6 +5048,13 @@ class HostedHarnessGateway:
                 )
             except SandboxNotFoundError:
                 absent = True
+                # Already gone before this delete: lost on our side, unless it was seen
+                # alive up to its lifetime limit.
+                ending = {
+                    "reason": "sandbox_gone",
+                    "failure_domain": "infrastructure",
+                    "last_seen": lease.heartbeat_at,
+                }
             except Exception:
                 logger.exception(
                     "conversation sandbox cleanup deferred conversation=%s",
@@ -4806,25 +5062,46 @@ class HostedHarnessGateway:
                 )
                 return
             else:
+                from simulate.services.sandbox_usage import record_sandbox_end_reason
+
+                # The delete is asked for next: billing stops at this moment even if it
+                # fails.
+                record_sandbox_end_reason(
+                    provider_ref=provider_ref,
+                    reason="deleted",
+                    delete_requested=True,
+                )
                 try:
-                    absent = self.client.delete(sandbox, timeout=120, wait=True)
-                    if not absent:
-                        try:
-                            self.client.get(
-                                provider_ref,
-                                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
-                            )
-                        except SandboxNotFoundError:
-                            absent = True
+                    absent = delete_confirmed(
+                        self.client,
+                        provider_ref,
+                        self.client.delete(sandbox, timeout=120, wait=True),
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
                 except Exception:
                     logger.exception(
                         "conversation sandbox deletion failed conversation=%s",
                         conversation.id,
                     )
-                    return
+                    absent = False
+        if not absent and not ending and not provider_ref.startswith("pending:"):
+            # The delete was asked for and did not complete: billing stopped at the ask,
+            # so nothing may keep using that sandbox.
+            lease.state = HostedHarnessConversationLease.State.EXPIRED
+            lease.save(update_fields=["state", "updated_at"])
+            return
         if absent:
             lease.state = HostedHarnessConversationLease.State.EXPIRED
             lease.save(update_fields=["state", "updated_at"])
+            if provider_ref and not provider_ref.startswith("pending:"):
+                from simulate.services.sandbox_usage import close_sandbox_lifetime
+
+                close_sandbox_lifetime(
+                    provider_ref=provider_ref,
+                    # A sandbox found gone was never asked to be deleted.
+                    delete_requested=not ending,
+                    **ending,
+                )
 
     def _delete_and_record(
         self,
@@ -4850,6 +5127,10 @@ class HostedHarnessGateway:
             # The last moment the ledger exists: after the delete there is nothing to ask.
             _read_harness_spend(attempt, sandbox)
             _read_harness_usage(attempt, sandbox)
+            from simulate.services.harness_usage import note_sandbox_delete_request
+
+            # Billing stops at this ask, even when the delete raises or never completes.
+            note_sandbox_delete_request(attempt)
             absent = self.client.delete(sandbox, timeout=120, wait=True)
             if not absent:
                 try:
@@ -5167,7 +5448,7 @@ def _provider_import_authoring_material(
 
 
 # Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
-_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves")
+_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves", "evidence_adds")
 
 
 def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:
@@ -5356,31 +5637,127 @@ def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
 
 
 def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:
-    """Record the guest's ledger from a sandbox that is about to go away.
+    """Record the guest's ledgers from a sandbox that is about to go away.
 
-    Silent on failure: a leaked sandbox costs more than the figure it was holding.
+    Never raises: a leaked sandbox costs more than the figure it was holding.
+    """
+    cli = _read_ledger(attempt, sandbox, _AUTHORING_SPEND_PATH)
+    builder = _read_ledger(attempt, sandbox, _BUILDER_SPEND_PATH)
+    if cli is None and builder is None:
+        logger.debug("no harness ledger to read attempt=%s", attempt.id)
+        return
+    try:
+        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
+        _record_harness_spend(job, attempt.attempt_number, cli=cli, builder=builder)
+    except Exception:  # noqa: BLE001 - see above
+        logger.exception("harness ledger could not be recorded attempt=%s", attempt.id)
+
+
+def _read_ledger(
+    attempt: HostedHarnessAttempt, sandbox, path: str
+) -> dict[str, Any] | None:
+    """One spend ledger from the sandbox, or None.
+
+    No ledger is the ordinary case (an early failure, or an attempt with no builder chat), so
+    it stays quiet. Any other failure is logged: the sandbox is deleted next, and its ledger
+    with it.
     """
     try:
-        body = sandbox.fs.download_file("/work/authoring/cost.json").decode("utf-8")
-        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
-        _record_harness_spend(job, json.loads(body), attempt.attempt_number)
-    except Exception:  # noqa: BLE001 - no ledger is the ordinary case for an early failure
-        logger.debug("no harness ledger to read attempt=%s", attempt.id)
+        body = sandbox.fs.download_file(path)
+    except (SandboxFileNotFoundError, SandboxNotFoundError):
+        return None
+    except Exception:  # noqa: BLE001 - never raises; see _read_harness_spend
+        logger.exception(
+            "harness ledger could not be read attempt=%s path=%s", attempt.id, path
+        )
+        return None
+    try:
+        ledger = json.loads(body.decode("utf-8"))
+    except ValueError:  # UnicodeDecodeError and JSONDecodeError are both ValueErrors
+        logger.exception(
+            "harness ledger is not JSON attempt=%s path=%s", attempt.id, path
+        )
+        return None
+    if not isinstance(ledger, dict):
+        logger.error(
+            "harness ledger is not an object attempt=%s path=%s", attempt.id, path
+        )
+        return None
+    return ledger
+
+
+def _combined_spend(cli: Any, builder: Any) -> dict[str, Any] | None:
+    """One attempt's spend from the build CLI's ledger and the builder chat's.
+
+    A stage both ledgers name keeps the chat's under a ``chat:`` prefix: billing prices each
+    stage once by name and refuses an attempt whose stages share one.
+    """
+    if not isinstance(builder, dict):
+        return cli if isinstance(cli, dict) else None
+    if not isinstance(cli, dict):
+        return builder
+    try:
+        taken = {stage.get("stage") for stage in cli.get("stages") or []}
+        return {
+            "total_usd": float(cli.get("total_usd") or 0.0)
+            + float(builder.get("total_usd") or 0.0),
+            "unpriced_turns": int(cli.get("unpriced_turns") or 0)
+            + int(builder.get("unpriced_turns") or 0),
+            "stages": [
+                *(cli.get("stages") or []),
+                *(
+                    {**stage, "stage": f"chat:{stage.get('stage')}"}
+                    if stage.get("stage") in taken
+                    else stage
+                    for stage in builder.get("stages") or []
+                ),
+            ],
+        }
+    except (AttributeError, TypeError, ValueError):
+        logger.exception("harness ledgers could not be combined")
+        return cli
+
+
+def _ledger_snapshot(ledger: Any) -> dict[str, Any] | None:
+    """The part of a spend ledger the job keeps, or None when it is not a usable ledger."""
+    if not isinstance(ledger, dict):
+        return None
+    try:
+        total = float(ledger.get("total_usd") or 0.0)
+        unpriced = int(ledger.get("unpriced_turns") or 0)
+    except (TypeError, ValueError):
+        return None
+    stages = ledger.get("stages") or []
+    # _combined_spend reads every stage's name, so a stage it cannot read must not be kept.
+    if not isinstance(stages, list) or not all(
+        isinstance(stage, dict) and isinstance(stage.get("stage"), (str, type(None)))
+        for stage in stages
+    ):
+        return None
+    return {"total_usd": total, "unpriced_turns": unpriced, "stages": stages}
 
 
 def _record_harness_spend(
-    job: HostedHarnessJob, spend: Any, attempt_number: int = 1
+    job: HostedHarnessJob,
+    attempt_number: int = 1,
+    *,
+    cli: Any = None,
+    builder: Any = None,
 ) -> None:
     """Keep the harness's own cost on the job, per attempt, and total across attempts.
 
     Per attempt because a retry's ledger starts at zero, so attempts are summed rather than
-    maxed. Within an attempt the figure only grows, so a reset ledger cannot erase an earlier read.
+    maxed. The build CLI's ledger and the builder chat's are kept apart (``sources``): a read
+    that fails or finds no ledger leaves that ledger's last good snapshot, and within an
+    attempt each ledger only grows, so a reset ledger cannot erase an earlier read. The
+    attempt's figure combines the two snapshots.
     """
-    if not isinstance(spend, dict):
-        return
-    try:
-        total = float(spend.get("total_usd") or 0.0)
-    except (TypeError, ValueError):
+    fresh = {
+        name: snapshot
+        for name, ledger in (("cli", cli), ("builder", builder))
+        if (snapshot := _ledger_snapshot(ledger)) is not None
+    }
+    if not fresh:
         return
     key = str(int(attempt_number or 1))
     # Re-read under the lock so a refusal or another attempt's entry written meanwhile is kept.
@@ -5397,7 +5774,19 @@ def _record_harness_spend(
             else {}
         )
         mine = attempts.get(key)
-        if isinstance(mine, dict):
+        mine = mine if isinstance(mine, dict) else {}
+        held = mine.get("sources")
+        sources = dict(held) if isinstance(held, dict) else {}
+        for name, snapshot in fresh.items():
+            kept = _ledger_snapshot(sources.get(name))
+            if kept is None or snapshot["total_usd"] >= kept["total_usd"]:
+                sources[name] = snapshot
+        spend = _combined_spend(sources.get("cli"), sources.get("builder"))
+        if spend is None:
+            return
+        total = float(spend.get("total_usd") or 0.0)
+        if not isinstance(held, dict):
+            # Recorded before the ledgers were kept apart: only a combined figure to beat.
             try:
                 if float(mine.get("total_usd") or 0.0) > total:
                     return
@@ -5407,6 +5796,7 @@ def _record_harness_spend(
             "total_usd": round(total, 6),
             "unpriced_turns": int(spend.get("unpriced_turns") or 0),
             "stages": spend.get("stages") or [],
+            "sources": sources,
         }
         metadata["harness_spend"] = {
             "total_usd": round(
@@ -5425,6 +5815,24 @@ def _record_harness_spend(
     job.updated_at = locked.updated_at
 
 
+def all_actors(actors_file: Any) -> dict[str, Any] | None:
+    """Every actor in the environment's one `actors.json`, speaking or acting only through the world, in the shape the
+    actor list stage output keeps: the scenarios list and drawer name each one, channel or not."""
+    if not isinstance(actors_file, dict):
+        return None
+    return {
+        "call_actors": [
+            one for one in actors_file.get("actors") or [] if isinstance(one, dict)
+        ]
+    }
+
+
+def call_actors_summary(listing: dict[str, Any]) -> str:
+    """The stage output's one-line summary of the environment's actor list."""
+    count = len(listing.get("call_actors") or [])
+    return f"{count} actor" + ("" if count == 1 else "s")
+
+
 def authoring_stage_outputs(
     contract: Any,
     environment: Any,
@@ -5436,6 +5844,7 @@ def authoring_stage_outputs(
     repair_history: Any = None,
     action_certification: Any = None,
     coverage: Any = None,
+    call_actors: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -5486,6 +5895,17 @@ def authoring_stage_outputs(
                 "title": "Sub-goal catalogue",
                 "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
                 "data": _secret_safe(sub_goals),
+            }
+        )
+    # Sent even when emptied, so a list read on an earlier poll does not outlive it.
+    if isinstance(call_actors, dict):
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "call_actors",
+                "title": "Actors",
+                "summary": call_actors_summary(call_actors),
+                "data": _secret_safe(call_actors),
             }
         )
     stores = _seeded_stores(build_output)
@@ -5589,6 +6009,7 @@ def authoring_stage_outputs_from_archive(
         "environment.json",
         "scenarios.json",
         "sub_goals.json",
+        "actors.json",
         "certification.json",
         "repair-history.json",
         "action-certification.json",
@@ -5639,6 +6060,7 @@ def authoring_stage_outputs_from_archive(
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
+        call_actors=all_actors(documents.get("actors.json")),
     )
 
 
@@ -5785,7 +6207,9 @@ def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -
     environment = job.environment or job
     job_ids = [
         environment.id,
-        *environment.simulation_runs.values_list("id", flat=True),
+        *environment.simulation_runs.filter(evidence_drafting__isnull=True).values_list(
+            "id", flat=True
+        ),
     ]
     refs = set(
         HostedHarnessConversationLease.no_workspace_objects.filter(
@@ -5987,7 +6411,9 @@ def rewrite_conversation_scenarios(job: HostedHarnessJob, suite: list[dict]) -> 
         HostedHarnessConversation.no_workspace_objects.filter(
             job_id__in=[
                 environment.id,
-                *environment.simulation_runs.values_list("id", flat=True),
+                *environment.simulation_runs.filter(
+                    evidence_drafting__isnull=True
+                ).values_list("id", flat=True),
             ],
             latest_workspace_object_key__isnull=False,
         )

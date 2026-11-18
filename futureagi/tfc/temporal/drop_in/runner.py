@@ -99,7 +99,12 @@ def start_activity(
                 )
             return await coroutine
 
-        result = _run_async_in_sync_context(dispatch)
+        if dispatch_timeout_seconds is None:
+            result = _run_async_in_sync_context(dispatch)
+        else:
+            result = _run_async_in_sync_context(
+                dispatch, dispatch_timeout_seconds=dispatch_timeout_seconds
+            )
         logger.info(
             "start_activity_completed",
             activity_name=activity_name,

@@ -86,9 +86,9 @@ class TestBillingYamlFile:
             "ee_bands",
             "ai_credit_models",
         }
-        assert required.issubset(
-            raw.keys()
-        ), f"Missing sections: {required - set(raw.keys())}"
+        assert required.issubset(raw.keys()), (
+            f"Missing sections: {required - set(raw.keys())}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +144,9 @@ class TestPlansSection:
 
 
 class TestDimensionsSection:
-    def test_has_seven_dimensions(self):
+    def test_has_eight_dimensions(self):
         raw = load_raw_yaml()
-        assert len(raw["dimensions"]) == 7
+        assert len(raw["dimensions"]) == 8
 
     def test_expected_dimensions(self):
         raw = load_raw_yaml()
@@ -157,6 +157,7 @@ class TestDimensionsSection:
             "gateway_cache_hits",
             "text_sim_tokens",
             "voice_sim_minutes",
+            "sandbox_minutes",
             "tracing_events",
         }
         assert set(raw["dimensions"].keys()) == expected
@@ -204,17 +205,17 @@ class TestPricingTiersSection:
         for dim, tiers in raw["pricing_tiers"].items():
             for i, tier in enumerate(tiers):
                 assert "up_to" in tier, f"Tier {dim}[{i}] missing 'up_to'"
-                assert (
-                    "price_per_unit" in tier
-                ), f"Tier {dim}[{i}] missing 'price_per_unit'"
+                assert "price_per_unit" in tier, (
+                    f"Tier {dim}[{i}] missing 'price_per_unit'"
+                )
 
     def test_last_tier_has_null_up_to(self):
         raw = load_raw_yaml()
         for dim, tiers in raw["pricing_tiers"].items():
             last = tiers[-1]
-            assert (
-                last["up_to"] is None
-            ), f"Dimension '{dim}' last tier up_to should be null, got {last['up_to']}"
+            assert last["up_to"] is None, (
+                f"Dimension '{dim}' last tier up_to should be null, got {last['up_to']}"
+            )
 
     def test_tiers_are_ascending(self):
         raw = load_raw_yaml()
@@ -291,9 +292,9 @@ class TestApiCallTypesSection:
     def test_dimensions_exist(self):
         raw = load_raw_yaml()
         for ct, config in raw["api_call_types"].items():
-            assert (
-                config["dimension"] in raw["dimensions"]
-            ), f"API call type '{ct}' references unknown dimension '{config['dimension']}'"
+            assert config["dimension"] in raw["dimensions"], (
+                f"API call type '{ct}' references unknown dimension '{config['dimension']}'"
+            )
 
     def test_ai_credit_types_have_per_call(self):
         raw = load_raw_yaml()
@@ -318,16 +319,16 @@ class TestCrossSectionConsistency:
             for plan_key in plan_map:
                 if plan_key == "_all":
                     continue
-                assert (
-                    plan_key in VALID_PLAN_KEYS
-                ), f"Entitlement '{feature}' has invalid plan key '{plan_key}'"
+                assert plan_key in VALID_PLAN_KEYS, (
+                    f"Entitlement '{feature}' has invalid plan key '{plan_key}'"
+                )
 
     def test_full_config_validates_via_pydantic(self):
         """The real billing.yaml should pass full Pydantic validation."""
         raw = load_raw_yaml()
         schema = BillingConfigSchema(**raw)
         assert len(schema.plans) == len(PlanChoices)
-        assert len(schema.dimensions) == 7
+        assert len(schema.dimensions) == 8
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +468,7 @@ class TestBillingConfigService:
     def test_get_all_dimensions(self):
         config = BillingConfig.get()
         dims = config.get_all_dimensions()
-        assert len(dims) == 7
+        assert len(dims) == 8
 
     def test_get_pricing_tiers(self):
         config = BillingConfig.get()

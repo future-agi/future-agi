@@ -2,6 +2,7 @@ package modeldb
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -33,7 +34,7 @@ func TestParseLiteLLM_BasicChat(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestParseLiteLLM_SkipsSampleSpec(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -173,7 +174,7 @@ func TestParseLiteLLM_ImageModel(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -221,7 +222,7 @@ func TestParseLiteLLM_ModeMapping(t *testing.T) {
 				}
 			}`)
 
-			models, err := parseLiteLLM(data)
+			models, err := parseLiteLLM(data, false)
 			if err != nil {
 				t.Fatalf("parseLiteLLM error: %v", err)
 			}
@@ -250,7 +251,7 @@ func TestParseLiteLLM_ProviderPrefixStripped(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -288,7 +289,7 @@ func TestParseLiteLLM_SkipsZeroPricingChat(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -332,7 +333,7 @@ func TestParseLiteLLM_ProviderNormalization(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestParseLiteLLM_MaxTokensFallback(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -373,7 +374,7 @@ func TestParseLiteLLM_MaxTokensFallback(t *testing.T) {
 }
 
 func TestParseLiteLLM_ActualFile(t *testing.T) {
-	models, err := parseLiteLLM(liteLLMData)
+	models, err := parseLiteLLM(liteLLMData, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM on actual file: %v", err)
 	}
@@ -449,6 +450,68 @@ func TestBundledModels_PriceModelsDevEntries(t *testing.T) {
 		}
 		if math.Abs(p.InputPerToken-c.input) > 1e-15 || math.Abs(p.OutputPerToken-c.output) > 1e-15 || math.Abs(p.CachedInputPerToken-c.hit) > 1e-15 {
 			t.Errorf("%s pricing = %g/%g/%g, want %g/%g/%g", c.model, p.InputPerToken, p.OutputPerToken, p.CachedInputPerToken, c.input, c.output, c.hit)
+		}
+	}
+}
+
+func TestParseLiteLLMRegionalUplift(t *testing.T) {
+	parsed, err := parseLiteLLM([]byte(`{
+		"vertex_ai/with-uplift": {
+			"input_cost_per_token": 1e-6,
+			"output_cost_per_token": 2e-6,
+			"litellm_provider": "vertex_ai-language-models",
+			"mode": "chat",
+			"regional_endpoint_uplift_multiplier": 1.1
+		},
+		"vertex_ai/without-uplift": {
+			"input_cost_per_token": 1e-6,
+			"output_cost_per_token": 2e-6,
+			"litellm_provider": "vertex_ai-language-models",
+			"mode": "chat"
+		}
+	}`), true)
+	if err != nil {
+		t.Fatalf("parseLiteLLM: %v", err)
+	}
+	if got := parsed["vertex_ai/with-uplift"].RegionalUplift; got != 1.1 {
+		t.Errorf("with-uplift RegionalUplift = %v, want 1.1", got)
+	}
+	if got := parsed["vertex_ai/without-uplift"].RegionalUplift; got != 0 {
+		t.Errorf("without-uplift RegionalUplift = %v, want 0", got)
+	}
+
+	// The count is pinned so a table refresh that adds or drops a factor is
+	// looked at.
+	const want = 38
+	carrying := 0
+	for key, m := range BundledModels {
+		if m.RegionalUplift == 0 {
+			continue
+		}
+		carrying++
+		if !strings.HasPrefix(key, "vertex_ai/") {
+			t.Errorf("%s carries a regional factor but is not a vertex_ai/ key", key)
+		}
+		if m.RegionalUplift != 1.1 {
+			t.Errorf("%s RegionalUplift = %v, want 1.1", key, m.RegionalUplift)
+		}
+	}
+	if carrying != want {
+		t.Errorf("%d bundled entries carry a regional factor, want %d", carrying, want)
+	}
+
+	for key, wantFactor := range map[string]float64{
+		"vertex_ai/gemini-3.8-flash": 1.1,
+		"gemini-3.8-flash":           0,
+		"gemini/gemini-3.8-flash":    0,
+	} {
+		m, ok := BundledModels[key]
+		if !ok {
+			t.Errorf("%s is not in the bundled table", key)
+			continue
+		}
+		if m.RegionalUplift != wantFactor {
+			t.Errorf("%s RegionalUplift = %v, want %v", key, m.RegionalUplift, wantFactor)
 		}
 	}
 }

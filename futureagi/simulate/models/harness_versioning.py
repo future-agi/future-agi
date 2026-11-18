@@ -30,6 +30,7 @@ class VersionOrigin(models.TextChoices):
     CHAT = "chat", "Chat"
     BACKFILL = "backfill", "Backfill"
     EXTEND = "extend", "Extend"
+    FIX = "fix", "Fix"
 
 
 class HashKind(models.TextChoices):
@@ -170,6 +171,15 @@ class HarnessSuiteVersion(_HarnessPieceVersion):
     authored_against = models.ForeignKey(
         HarnessEnvironmentVersion,
         on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # Set on a suite version private to one "Fix my agent" run: its failing cases and
+    # their variations. It never becomes the default and is listed nowhere.
+    fix_run = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="+",

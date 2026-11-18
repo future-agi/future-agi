@@ -11,6 +11,9 @@ from tfc.utils.base_model import BaseModel
 
 # Ceiling on one hosted run; enforced by the DB constraint below and reused by request validation.
 MAX_SCENARIOS_PER_JOB = 5000
+# A run's seed is drawn from 63 bits, so it always fits the signed BigInteger column; request validation reuses it.
+SEED_BITS = 63
+MAX_SEED = 2**SEED_BITS - 1
 
 
 class HostedHarnessJob(BaseModel):
@@ -147,6 +150,21 @@ class HostedHarnessJob(BaseModel):
     # then the fix holds a worst case for it.
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
+    )
+    # What the platform's evals of a fix's check run billed, in US dollars, added as each
+    # one bills. They run after the run's usage is sealed, so they are kept apart.
+    # db_default too: a build from before this column inserts jobs without it.
+    fix_eval_cost_usd = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0, db_default=0
+    )
+    # Set on a check run a retry read again from the failed fix it retries: the retry's
+    # winner grades it, so its evals count against the retry's limit. Null: its own fix's.
+    graded_for = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="adopted_check_runs",
     )
 
     class Meta:
@@ -298,6 +316,9 @@ class HostedHarnessScenario(BaseModel):
     persona = models.JSONField(null=True, blank=True)
     coverage = models.JSONField(null=True, blank=True)
     sub_goals = models.JSONField(null=True, blank=True)
+    actors = models.JSONField(null=True, blank=True)
+    # The scenario's test conditions: the faults the world gives the agent's calls in it.
+    faults = models.JSONField(null=True, blank=True)
     keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)
@@ -643,6 +664,41 @@ class HostedHarnessConversationMessage(BaseModel):
         ]
 
 
+class HostedHarnessBuilderTurnUsage(BaseModel):
+    """What a builder chat turn after a build spent, and what it billed.
+
+    Such a turn runs in a chat sandbox of its own, outside any attempt, so no attempt's
+    ledger covers it. One row per command: a replayed ending finds the row and bills nothing
+    new. ``report`` is frozen once written, and None when the turn could not be priced.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usages",
+    )
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    command_message = models.OneToOneField(
+        HostedHarnessConversationMessage,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usage",
+    )
+    outcome = models.CharField(max_length=16, default="")
+    # The turn's usage as the guest reported it: tokens, USD, unpriced turns and its models.
+    usage = models.JSONField(default=dict)
+    report = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_builder_turn_usage"
+        indexes = [models.Index(fields=["job"], name="idx_hbturn_job")]
+
+
 class HostedHarnessConversationEvent(BaseModel):
     event_id = models.CharField(primary_key=True, max_length=128)
     conversation = models.ForeignKey(
@@ -754,4 +810,61 @@ class HostedHarnessConversationLease(BaseModel):
         db_table = "simulate_hosted_harness_conversation_lease"
         indexes = [
             models.Index(fields=["state", "expires_at"], name="idx_hconv_lease_exp")
+        ]
+
+
+class HostedSandboxLifetime(BaseModel):
+    """One chat, rebuild or fix-engine sandbox, timed from create to confirmed deletion."""
+
+    class Kind(models.TextChoices):
+        CHAT = "chat", "Chat"
+        PLATFORM_CHECK = "platform_check", "Platform check"
+        FIX_ENGINE = "fix_engine", "Fix engine"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    # A deleted workspace must not take the sandbox's timing with it.
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    provider = models.CharField(max_length=32)
+    provider_ref = models.CharField(max_length=255)
+    # The conversation or fix run; not a foreign key, because the row outlives it.
+    owner_id = models.UUIDField()
+    started_at = models.DateTimeField()
+    lifetime_seconds = models.PositiveIntegerField()
+    armed_at = models.DateTimeField()
+    lifetime_ends_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True)
+    # When the platform first asked the provider to delete the sandbox. Billing stops
+    # there, whether or not the delete went through: time after a delete that did not
+    # complete is not the customer's.
+    delete_requested_at = models.DateTimeField(null=True, blank=True)
+    end_reason = models.CharField(max_length=64, blank=True, default="")
+    failure_domain = models.CharField(max_length=32, blank=True, default="")
+    billed_minutes = models.DecimalField(max_digits=12, decimal_places=4, null=True)
+    settled_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "simulate_hosted_sandbox_lifetime"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider_ref", "provider"],
+                name="uniq_hosted_sandbox_lifetime_ref",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["lifetime_ends_at"],
+                condition=models.Q(ended_at__isnull=True),
+                name="idx_hsandbox_open",
+            ),
+            models.Index(
+                fields=["updated_at"],
+                condition=models.Q(ended_at__isnull=False, settled_at__isnull=True),
+                name="idx_hsandbox_unsettled",
+            ),
         ]

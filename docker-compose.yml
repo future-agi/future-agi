@@ -101,6 +101,7 @@ services:
       # COMPOSE_PROFILES=sandbox in .env, bin/start points this default at
       # the nsjail executor (code-executor-nsjail) instead.
       CODE_EXECUTOR_URL: ${CODE_EXECUTOR_URL:-http://code-executor:8060}
+      LINK_EVAL_ALLOWED_HOSTS: ${LINK_EVAL_ALLOWED_HOSTS:-}
       # Never fall back to running eval code inside the API process when the
       # executor is down: that process holds every secret and /data.
       CODE_EXECUTOR_LOCAL_FALLBACK: "false"
@@ -260,6 +261,7 @@ services:
       HOSTED_SANDBOX_PROVIDER: ${HOSTED_SANDBOX_PROVIDER:-daytona}
       ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
       ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS: ${ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS:-}
+      ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS: ${ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS:-}
       ALK_HOSTED_EGRESS_UNRESTRICTED: ${ALK_HOSTED_EGRESS_UNRESTRICTED:-false}
       ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS: ${ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS:-3600}
       ALK_HOSTED_AUTHORING_TIMEOUT: ${ALK_HOSTED_AUTHORING_TIMEOUT:-}
@@ -442,6 +444,8 @@ services:
   # network access, as in the distributed stack.
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
+    environment:
+      LINK_EVAL_ALLOWED_HOSTS: ${LINK_EVAL_ALLOWED_HOSTS:-}
     profiles: ["sandbox"]
     privileged: true
     networks:

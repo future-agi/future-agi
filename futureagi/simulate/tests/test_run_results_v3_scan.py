@@ -22,6 +22,7 @@ from simulate.models.run_test import RunTest
 from simulate.services import run_results_v3_page as page_module
 from simulate.services import run_results_v3_scan as scan_module
 from simulate.services.harness_scenarios import AuthoredPick
+from simulate.services.run_results_v3 import call_outcome
 from simulate.services.run_results_v3_page import (
     CALL_VALUE_FIELDS,
     SQL_ORDERED_FIELDS,
@@ -36,6 +37,7 @@ from simulate.services.run_results_v3_queries import (
 )
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.scoring_status import SCORING_ROW_FIELDS
+from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
 from simulate.views.run_results_v3 import RunCallsV3QuerySerializer
 
 
@@ -969,8 +971,27 @@ def test_every_stored_entry_shape_scores_like_the_sql_read_model(
         calls.append(("completed", None, outputs))
     # The lifecycle and harness outcome around a sample of the entries.
     lifecycle = itertools.product(
-        ["completed", "failed", "pending", "queued", "ongoing", "analyzing", "x"],
-        [None, "failed", " Passed", "passed", "error", "unknown", 1],
+        [
+            "completed",
+            "failed",
+            "cancelled",
+            "pending",
+            "queued",
+            "ongoing",
+            "analyzing",
+            "x",
+        ],
+        [
+            None,
+            "failed",
+            " Passed",
+            "passed",
+            "error",
+            "unknown",
+            1,
+            "no_score",
+            "skipped",
+        ],
     )
     for index, (status, harness_status) in enumerate(lifecycle):
         outputs = {key: entries[index * 13 % len(entries)] for key in eval_ids[:3]}
@@ -992,6 +1013,96 @@ def test_every_stored_entry_shape_scores_like_the_sql_read_model(
         scan_call_values(execution, columns, "-started_at"),
         _orm_rows(execution, columns, "-started_at"),
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("skipped", "expected"),
+    [(True, "inconclusive"), (False, "passed"), ("true", "passed"), (None, "passed")],
+)
+def test_a_skipped_call_with_a_harness_pass_is_inconclusive_in_all_three_copies(
+    run, skipped, expected
+):
+    execution, scenario = run
+    metadata = {"harness_outcome_status": "passed"}
+    if skipped is not None:
+        metadata["harness_verdict_withheld"] = skipped
+        metadata["processing_skipped"] = True
+        metadata["processing_skip_reason"] = SILENT_AGENT_SKIP_REASON
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status="completed",
+        started_at=timezone.now(),
+        call_metadata=metadata,
+        eval_outputs={},
+    )
+    scanned = scan_call_values(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in scanned] == [expected]
+    orm = _orm_rows(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in orm] == [expected]
+    _assert_identical(scanned, orm)
+    assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("withheld", "reason", "harness_status", "expected"),
+    [
+        # The agent never answered: a harness failure still reads failed, a pass never does,
+        # whatever reason the eval job has since written over the silent one.
+        (True, SILENT_AGENT_SKIP_REASON, "failed", "failed"),
+        (True, SILENT_AGENT_SKIP_REASON, "passed", "inconclusive"),
+        (True, "Call too short to process.", "passed", "inconclusive"),
+        (
+            True,
+            "We could not find enough conversation from either side to process this call.",
+            "passed",
+            "inconclusive",
+        ),
+        # The executor's own skips never override the harness verdict.
+        (
+            False,
+            "We could not find enough customer conversation to process this call.",
+            "failed",
+            "failed",
+        ),
+        (
+            False,
+            "We could not find enough customer conversation to process this call.",
+            "passed",
+            "passed",
+        ),
+        # The silent reason alone, without the withheld key, is the executor's wording.
+        (False, SILENT_AGENT_SKIP_REASON, "passed", "passed"),
+        (False, "Call too short to process.", "failed", "failed"),
+        (False, None, "failed", "failed"),
+        (False, None, "passed", "passed"),
+    ],
+)
+def test_a_skip_never_hides_a_harness_failure_in_all_three_copies(
+    run, withheld, reason, harness_status, expected
+):
+    execution, scenario = run
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status="completed",
+        started_at=timezone.now(),
+        call_metadata={
+            "harness_outcome_status": harness_status,
+            "harness_verdict_withheld": withheld,
+            "processing_skipped": True,
+            "processing_skip_reason": reason,
+        },
+        eval_outputs={},
+    )
+    scanned = scan_call_values(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in scanned] == [expected]
+    orm = _orm_rows(execution, [], "-started_at")
+    assert [row["result_outcome"] for row in orm] == [expected]
+    _assert_identical(scanned, orm)
+    assert call_outcome(call, {}) == expected
 
 
 ORDERING_CHOICES = list(RunCallsV3QuerySerializer().fields["ordering"].choices)

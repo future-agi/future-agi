@@ -42,6 +42,7 @@ from simulate.services.run_results_v3_scoring import (
     HARNESS_ERROR,
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
     HARNESS_PASSED,
     IN_PROGRESS_CALL_STATUSES,
     NATIVE_FAILED,
@@ -450,11 +451,13 @@ _HARNESS_ERROR = frozenset(HARNESS_ERROR)
 _HARNESS_FAILED = frozenset(HARNESS_FAILED)
 _HARNESS_INCONCLUSIVE = frozenset(HARNESS_INCONCLUSIVE)
 _HARNESS_PASSED = frozenset(HARNESS_PASSED)
+_HARNESS_NO_SCORE = frozenset(HARNESS_NO_SCORE)
 
 
 def _outcome(
     status: str,
     harness_status: str | None,
+    withheld: bool,
     failed: Truth,
     errored: Truth,
     passed: Truth,
@@ -470,6 +473,11 @@ def _outcome(
         return "inconclusive"
     if harness_status in _HARNESS_FAILED or failed is True:
         return "failed"
+    # A call the agent never answered holds no pass, whatever the harness said.
+    if withheld:
+        return "inconclusive"
+    if harness_status in _HARNESS_NO_SCORE and passed is not True:
+        return "no_score"
     if errored is True or harness_status in _HARNESS_INCONCLUSIVE:
         return "inconclusive"
     if harness_status in _HARNESS_PASSED or passed is True:
@@ -625,6 +633,7 @@ SELECT ce.id, ce.status, ce.duration_seconds,
   ce.avg_stop_time_after_interruption_ms, ce.ai_interruption_count, ce.row_id,
   CASE WHEN jsonb_typeof(ce.call_metadata -> 'harness_outcome_status') = 'string'
     THEN ce.call_metadata ->> 'harness_outcome_status' END,
+  COALESCE(ce.call_metadata -> 'harness_verdict_withheld' = 'true'::jsonb, false),
   NULLIF(ce.call_metadata ->> 'harness_scenario_key', ''),
   NULLIF(ce.call_metadata ->> 'use_case', ''),
   NULLIF(ce.call_metadata ->> 'goal', ''),
@@ -795,6 +804,7 @@ def scan_call_values(
                 ai_interruptions,
                 row_id,
                 harness_status,
+                withheld,
                 scenario_key,
                 *metadata_goals,
                 metric_latency,
@@ -840,7 +850,7 @@ def scan_call_values(
                     "result_attack": UNGROUPED,
                     "result_task": UNGROUPED,
                     "result_outcome": _outcome(
-                        status, harness_status, failed, errored, passed
+                        status, harness_status, withheld, failed, errored, passed
                     ),
                     "scores": scores,
                 }
@@ -904,7 +914,9 @@ def scan_call_values(
         values = (
             _member_values(members[key])
             if key in members
-            else None if scenario is None else scenario._asdict()
+            else None
+            if scenario is None
+            else scenario._asdict()
         )
         if values is not None:
             row["result_sub_goal"] = (

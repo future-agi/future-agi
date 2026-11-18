@@ -2,9 +2,11 @@ name: Collector and compose CI
 
 on:
   pull_request:
-    branches: [dev, main]
+    # Every base branch, so stacked PRs into feature branches get CI too.
     paths:
       - "fi-collector/**"
+      - "agentcc-gateway/internal/modeldb/litellm.json"
+      - "agentcc-gateway/internal/modeldb/price_schedule.json"
       - "futureagi/tracer/utils/normalization/**"
       - "scripts/sync_trace_normalization.py"
       - "docker-compose*.yml"
@@ -25,6 +27,8 @@ on:
     branches: [dev, main]
     paths:
       - "fi-collector/**"
+      - "agentcc-gateway/internal/modeldb/litellm.json"
+      - "agentcc-gateway/internal/modeldb/price_schedule.json"
       - "futureagi/tracer/utils/normalization/**"
       - "scripts/sync_trace_normalization.py"
       - "docker-compose*.yml"

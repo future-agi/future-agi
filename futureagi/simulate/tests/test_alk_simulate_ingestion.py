@@ -1285,6 +1285,81 @@ class TestResultIngest:
         assert call.call_metadata["eval_started"] is True
         assert "eval_completed" not in call.call_metadata
 
+    def test_a_fix_check_run_starts_no_grading_whatever_its_run_test_selects(
+        self, auth_client, run_test
+    ):
+        """A fix grades its check runs only once it has a winner, so a check run's receipt
+        takes the short circuit even with the tool-call judge switched on."""
+        run_test.enable_tool_evaluation = True
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion.is_fix_check_run",
+                return_value=True,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ) as dispatch,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        dispatch.assert_not_called()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["eval_completed"] is True
+
+    @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
+    def test_a_fix_check_run_localizes_no_harness_judgement(
+        self, trigger_localizer, auth_client, run_test
+    ):
+        EvalTemplate.objects.create(
+            name="alk-platform-check",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        with patch(
+            "simulate.services.alk_simulate_ingestion.is_fix_check_run",
+            return_value=True,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {
+                                "name": "response_wording",
+                                "kind": "eval",
+                                "passed": True,
+                                "platform_template": "alk-platform-check",
+                            }
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        trigger_localizer.assert_not_called()
+
     @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
     def test_platform_judgement_is_linked_to_run_eval_config_and_output(
         self, trigger_localizer, auth_client, run_test
@@ -1350,6 +1425,55 @@ class TestResultIngest:
             )
         }
         assert localizer_call["eval_explanation"] == "matched the required response"
+
+    def test_not_applicable_and_inconclusive_results_are_stored_as_neither_pass_nor_fail(
+        self, auth_client, run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        evaluations = [
+            {
+                "name": name,
+                "kind": "checkpoint",
+                "passed": passed,
+                "result": result,
+                "reason": reason,
+            }
+            for name, passed, result, reason in (
+                ("done", True, "pass", "done"),
+                (
+                    "noticed",
+                    None,
+                    "not_applicable",
+                    "Not applicable: the caller never asked to cancel.",
+                ),
+                (
+                    "heard",
+                    None,
+                    "inconclusive",
+                    "Inconclusive: the deciding moment cannot be heard.",
+                ),
+            )
+        ]
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {"harness_evaluations": evaluations},
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs
+        stored = sorted(
+            (one["name"], one["output"], one.get("result")) for one in outputs.values()
+        )
+        assert stored == [
+            ("done", "Passed", "pass"),
+            ("heard", "Inconclusive", "inconclusive"),
+            ("noticed", "Not applicable", "not_applicable"),
+        ]
 
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
@@ -1555,6 +1679,46 @@ class TestResultIngest:
         resolver_log.error.assert_not_called()
         # Outbound: the tested agent speaks as "assistant", the simulator as "user".
         assert [row["speaker_role"] for row in rows] == ["user", "assistant", "user"]
+
+    def test_an_actor_turn_in_a_result_keeps_who_spoke_it(self, auth_client, run_test):
+        from simulate.models import CallTranscriptActor
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        call_id = call_ids[0]
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": [
+                    *_transcript_payload()[:2],
+                    {
+                        "speaker_role": "actor",
+                        "speaker_name": "Rowan",
+                        "content": "Add a stop.",
+                        "start_time_ms": 11500,
+                        "end_time_ms": 11900,
+                    },
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        call = CallExecution.objects.get(id=call_id)
+        assert list(
+            CallTranscriptActor.objects.filter(
+                transcript__call_execution=call
+            ).values_list("speaker_name", flat=True)
+        ) == ["Rowan"]
+        rows = CallExecutionDetailSerializer(
+            context={"detail_mode": True}
+        ).get_transcript(call)
+        assert [(row["speaker_role"], row["speaker_name"]) for row in rows][-1] == (
+            "actor",
+            "Rowan",
+        )
 
     def test_retell_inbound_result_swaps_speaker_roles(self, auth_client, run_test):
         """Same hosted Retell result, inbound direction: the simulator placed the
@@ -6941,3 +7105,339 @@ class TestViewGatesReadVersionSnapshot:
         results_by_id = {r["test_execution_id"]: r for r in response.data["results"]}
         assert results_by_id[str(native_execution.id)]["failure_count"] == 0
         assert results_by_id[str(hosted_execution.id)]["failure_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# TH-9724: a call the agent never answered gets no passing eval
+# ---------------------------------------------------------------------------
+
+_SILENT_REASON = "We could not find enough agent conversation to process this call."
+
+
+def _customer_only_transcript():
+    return [
+        {
+            "speaker_role": "user",
+            "content": "Hello? Is anyone there?",
+            "start_time_ms": 0,
+            "end_time_ms": 3000,
+        },
+        {
+            "speaker_role": "user",
+            "content": "Hello?",
+            "start_time_ms": 5000,
+            "end_time_ms": 6000,
+        },
+    ]
+
+
+def _answered_transcript():
+    return _customer_only_transcript() + [
+        {
+            "speaker_role": "assistant",
+            "content": "Sorry, I am here now. How can I help?",
+            "start_time_ms": 7000,
+            "end_time_ms": 10000,
+        }
+    ]
+
+
+def _tool_calls_only_transcript():
+    """The customer asks, and the agent only acts: a transfer, no words."""
+    return [
+        {
+            "speaker_role": "user",
+            "content": "Please transfer me to billing.",
+            "start_time_ms": 0,
+            "end_time_ms": 3000,
+        },
+        {
+            "speaker_role": "tool_calls",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "name": "transfer_call",
+                    "arguments": {"department": "billing"},
+                }
+            ],
+            "start_time_ms": 3500,
+            "end_time_ms": 4000,
+        },
+    ]
+
+
+def _ingest_with_harness_pass(auth_client, run_test, transcript):
+    _, call_ids = _start_and_batch(auth_client, run_test)
+    resp = auth_client.patch(
+        f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+        {
+            "status": "completed",
+            "transcript": transcript,
+            "call_metadata": {
+                "harness_outcome_status": "passed",
+                "harness_evaluations": [{"name": "ride_booked", "passed": True}],
+            },
+        },
+        format="json",
+    )
+    assert resp.status_code == 200, resp.content
+    return CallExecution.objects.get(id=call_ids[0])
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSilentAgentHarnessEvals:
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    def test_customer_only_call_gets_a_skipped_eval_and_no_pass(
+        self, auth_client, request, fixture_name
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _customer_only_transcript(),
+        )
+
+        (output,) = call.eval_outputs.values()
+        assert output["status"] == "skipped"
+        assert output["skipped"] is True
+        assert output["output"] is None
+        assert output["reason"] == _SILENT_REASON
+        assert output["name"] == "ride_booked"
+        assert output["source"] == "harness"
+        assert call.call_metadata["processing_skipped"] is True
+        assert call.call_metadata["processing_skip_reason"] == _SILENT_REASON
+        assert call_outcome(call, {}) == "inconclusive"
+
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    def test_call_the_agent_answered_keeps_its_pass(
+        self, auth_client, request, fixture_name
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _answered_transcript(),
+        )
+
+        (output,) = call.eval_outputs.values()
+        assert output["output"] == "Passed"
+        assert output["status"] == "completed"
+        assert not call.call_metadata.get("processing_skipped")
+        assert call_outcome(call, {}) == "passed"
+
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    def test_agent_that_only_acted_keeps_its_pass(
+        self, auth_client, request, fixture_name
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _tool_calls_only_transcript(),
+        )
+
+        (output,) = call.eval_outputs.values()
+        assert output["output"] == "Passed"
+        assert output["status"] == "completed"
+        assert not call.call_metadata.get("processing_skipped")
+        assert not call.call_metadata.get("harness_verdict_withheld")
+        assert call_outcome(call, {}) == "passed"
+
+    def test_only_acted_chat_agent_turn_counts_as_an_agent_message(
+        self, auth_client, text_run_test
+    ):
+        from simulate.services.test_executor import conversation_presence_signals
+
+        call = _ingest_with_harness_pass(
+            auth_client, text_run_test, _tool_calls_only_transcript()
+        )
+
+        _, has_agent_message, has_customer_message = conversation_presence_signals(call)
+        assert (has_agent_message, has_customer_message) == (True, True)
+
+    def test_call_with_no_transcript_at_all_gets_no_pass(
+        self, auth_client, text_run_test
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(auth_client, text_run_test, [])
+
+        (output,) = call.eval_outputs.values()
+        assert output["status"] == "skipped"
+        assert call.call_metadata["processing_skipped"] is True
+        assert call_outcome(call, {}) == "inconclusive"
+
+    def test_entries_from_other_sources_are_left_alone(self):
+        from simulate.services.alk_simulate_ingestion import (
+            _skip_harness_evals_without_agent,
+        )
+
+        native = {"name": "tone", "output": "Passed", "status": "completed"}
+        call = SimpleNamespace(
+            call_metadata={},
+            eval_outputs={
+                "native-id": native,
+                "harness-id": {
+                    "name": "ride_booked",
+                    "output": "Passed",
+                    "status": "completed",
+                    "source": "harness",
+                },
+            },
+        )
+        with patch(
+            "simulate.services.test_executor.conversation_presence_signals",
+            return_value=(2, False, True),
+        ):
+            assert _skip_harness_evals_without_agent(call) is True
+        assert call.eval_outputs["native-id"] == native
+        assert call.eval_outputs["harness-id"]["status"] == "skipped"
+        assert call.eval_outputs["harness-id"]["source"] == "harness"
+
+
+def _agent_answers_later(call, *, voice):
+    """Store the agent's turn that an earlier apply did not have."""
+    from simulate.models.test_execution import CallTranscript
+    from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
+
+    turn = {
+        "speaker_role": "assistant",
+        "content": "Sorry, I am here now. How can I help?",
+        "start_time_ms": 7000,
+        "end_time_ms": 10000,
+    }
+    if voice:
+        CallTranscript.objects.create(
+            call_execution=call,
+            speaker_role="assistant",
+            content=turn["content"],
+            start_time_ms=turn["start_time_ms"],
+            end_time_ms=turn["end_time_ms"],
+        )
+    else:
+        _store_alk_chat_messages(call, [turn])
+
+
+def _apply_harness_verdicts(call):
+    from simulate.services.alk_simulate_ingestion import (
+        _apply_harness_evaluation_outputs,
+        _skip_harness_evals_without_agent,
+    )
+
+    _apply_harness_evaluation_outputs(call)
+    _skip_harness_evals_without_agent(call)
+    call.save(update_fields=["eval_outputs", "call_metadata"])
+    call.refresh_from_db()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSilentAgentMarkFollowsTheTranscript:
+    @pytest.mark.parametrize(
+        ("fixture_name", "voice"), [("text_run_test", False), ("run_test", True)]
+    )
+    def test_a_later_agent_turn_restores_the_pass(
+        self, auth_client, request, fixture_name, voice
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _customer_only_transcript(),
+        )
+        assert call.call_metadata["processing_skipped"] is True
+        assert call_outcome(call, {}) == "inconclusive"
+
+        _agent_answers_later(call, voice=voice)
+        _apply_harness_verdicts(call)
+
+        (output,) = call.eval_outputs.values()
+        assert output["output"] == "Passed"
+        assert output["status"] == "completed"
+        assert call.call_metadata["processing_skipped"] is False
+        assert call.call_metadata["processing_skip_reason"] is None
+        assert call_outcome(call, {}) == "passed"
+
+    def test_an_executor_skip_is_left_alone_when_the_agent_spoke(
+        self, auth_client, text_run_test
+    ):
+        from simulate.utils.processing_outcomes import set_processing_skip_metadata
+
+        call = _ingest_with_harness_pass(
+            auth_client, text_run_test, _answered_transcript()
+        )
+        call.call_metadata = set_processing_skip_metadata(
+            call.call_metadata, skipped=True, reason="Call too short to process."
+        )
+        call.save(update_fields=["call_metadata"])
+
+        _apply_harness_verdicts(call)
+
+        assert call.call_metadata["processing_skipped"] is True
+        assert call.call_metadata["processing_skip_reason"] == (
+            "Call too short to process."
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSilentAgentSkipsTheErrorLocalizer:
+    @pytest.mark.parametrize("fixture_name", ["text_run_test", "run_test"])
+    @pytest.mark.parametrize(
+        ("transcript", "localized"),
+        [(_customer_only_transcript, False), (_answered_transcript, True)],
+    )
+    @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
+    def test_localizer_runs_only_on_a_verdict_that_is_kept(
+        self,
+        trigger_localizer,
+        auth_client,
+        request,
+        fixture_name,
+        transcript,
+        localized,
+    ):
+        run_test = request.getfixturevalue(fixture_name)
+        template = EvalTemplate.objects.create(
+            name=f"alk-platform-check-{fixture_name}",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": transcript(),
+                "call_metadata": {
+                    "harness_evaluations": [
+                        {
+                            "name": "response_wording",
+                            "kind": "eval",
+                            "passed": True,
+                            "platform_template": template.name,
+                        }
+                    ]
+                },
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.content
+        call = CallExecution.objects.get(id=call_ids[0])
+        (output,) = call.eval_outputs.values()
+        assert (output["status"] == "completed") is localized
+        assert trigger_localizer.called is localized

@@ -22,6 +22,8 @@ import litellm
 import structlog
 from asgiref.sync import sync_to_async
 
+from agentic_eval.core_evals.fi_utils.token_count_helper import request_started_at
+
 from model_hub.utils.websocket_manager import WebSocketManager
 from agentic_eval.core_evals.run_prompt.error_handler import (
     ErrorContext,
@@ -137,6 +139,8 @@ class LLMHandler(BaseModelHandler):
             return self._execute_custom_model(payload, start_time)
 
         response = None
+        # The request starts here; its tokens are priced at this instant.
+        started_at = request_started_at(time.time())
         with litellm_try_except():
             response = litellm.completion(**payload, drop_params=True)
 
@@ -164,6 +168,7 @@ class LLMHandler(BaseModelHandler):
             tools=self.context.tools,
             output_format=self.context.output_format,
             show_reasoning_process=self.context.show_reasoning_process,
+            started_at=started_at,
         )
 
         return HandlerResponse(
@@ -194,6 +199,8 @@ class LLMHandler(BaseModelHandler):
 
         # Note: litellm_try_except is a sync context manager, but we wrap just the call
         # since acompletion is atomic. For proper error handling, catch litellm exceptions.
+        # The request starts here; its tokens are priced at this instant.
+        started_at = request_started_at(time.time())
         with litellm_try_except():
             response = await litellm.acompletion(**payload, drop_params=True)
 
@@ -221,6 +228,7 @@ class LLMHandler(BaseModelHandler):
             tools=self.context.tools,
             output_format=self.context.output_format,
             show_reasoning_process=self.context.show_reasoning_process,
+            started_at=started_at,
         )
 
         return HandlerResponse(
@@ -274,8 +282,11 @@ class LLMHandler(BaseModelHandler):
         thinking_started = False
         thinking_finished = False
 
+        started_at = request_started_at(start_time)
         try:
             response = None
+            # The request starts here; its tokens are priced at this instant.
+            started_at = request_started_at(time.time())
             with litellm_try_except():
                 response = litellm.completion(**payload, drop_params=True)
 
@@ -367,7 +378,9 @@ class LLMHandler(BaseModelHandler):
             return self._build_stopped_response(response_content, chunk, start_time)
 
         # Build metadata from final chunk
-        metadata = ResponseFormatter.build_streaming_metadata(chunk, start_time)
+        metadata = ResponseFormatter.build_streaming_metadata(
+            chunk, start_time, started_at=started_at
+        )
 
         # Send completed message
         self._ws_send_completed(ws_manager, metadata)
@@ -421,7 +434,10 @@ class LLMHandler(BaseModelHandler):
         thinking_started = False
         thinking_finished = False
 
+        started_at = request_started_at(start_time)
         try:
+            # The request starts here; its tokens are priced at this instant.
+            started_at = request_started_at(time.time())
             response = await litellm.acompletion(**payload, drop_params=True)
 
             async for chunk in response:
@@ -526,7 +542,9 @@ class LLMHandler(BaseModelHandler):
             return self._build_stopped_response(response_content, chunk, start_time)
 
         # Build metadata from final chunk
-        metadata = ResponseFormatter.build_streaming_metadata(chunk, start_time)
+        metadata = ResponseFormatter.build_streaming_metadata(
+            chunk, start_time, started_at=started_at
+        )
 
         # Send completed message
         await self._ws_send_completed_async(ws_manager, metadata)
@@ -891,7 +909,9 @@ class LLMHandler(BaseModelHandler):
 
         from .custom_model_handler import CustomModelHandler
 
-        custom_handler = CustomModelHandler(self.context)
+        # The constructor loads the model config from the database, which
+        # Django refuses to do on the event loop.
+        custom_handler = await sync_to_async(CustomModelHandler)(self.context)
         response = await custom_handler.execute_async(streaming=False)
 
         # Send the full response as a single chunk since custom models

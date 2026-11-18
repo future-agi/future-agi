@@ -1,8 +1,11 @@
 import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from urllib.parse import parse_qs
 
 import structlog
+from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.exceptions import ValidationError
@@ -19,6 +22,7 @@ from sockets.saml_guard import SamlSocketGuard
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 
 logger = structlog.get_logger(__name__)
+_URL_FETCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="falcon-url")
 
 
 class FalconAIConsumer(AsyncJsonWebsocketConsumer):
@@ -223,11 +227,19 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         url_context = ""
         if message_content:
             try:
-                from ee.falcon_ai.url_fetcher import fetch_urls_from_message
-
-                url_context = await database_sync_to_async(fetch_urls_from_message)(
-                    message_content
+                from ee.falcon_ai.url_fetcher import (
+                    extract_urls,
+                    fetch_urls_from_message,
                 )
+
+                # This path does DNS/HTTP and in-memory text parsing only, not
+                # ORM work. Keep it off both the database and model-stream pools.
+                if extract_urls(message_content):
+                    url_context = await sync_to_async(
+                        fetch_urls_from_message,
+                        thread_sensitive=False,
+                        executor=_URL_FETCH_EXECUTOR,
+                    )(message_content)
             except Exception as e:
                 logger.warning("url_fetch_error", error=str(e))
 
@@ -369,6 +381,9 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             await database_sync_to_async(stream_buffer.append_event)(event)
 
         agent = None
+        # When the turn's first model request starts: the turn's tokens are priced
+        # at this instant, as the gateway prices a request at its start.
+        turn_started_at = None
         try:
             # Build ToolContext
             tool_context = ToolContext(
@@ -439,6 +454,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                 return
 
             # Run agent with buffered_send so events go to both WS and Redis
+            turn_started_at = datetime.now(UTC)
             result = await agent.run(
                 user_message=agent_message,
                 history_messages=history,
@@ -471,6 +487,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                     result.get("model_used", ""),
                     str(conversation_id),
                     getattr(agent.llm_client, "_gateway_cost", 0),
+                    turn_started_at,
                 )
 
             # Update conversation total_tokens for compaction tracking
@@ -523,6 +540,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                         "",
                         str(conversation_id),
                         getattr(agent.llm_client, "_gateway_cost", 0),
+                        turn_started_at,
                     )
             await database_sync_to_async(stream_buffer.set_status)("cancelled")
             self._agent_task = None
@@ -838,11 +856,13 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         model_used: str,
         conversation_id: str,
         gateway_cost_usd: float = 0,
+        started_at: datetime | None = None,
     ) -> None:
         """Calculate and emit an AI credit usage event for a Falcon AI turn.
 
         Looks up per-token pricing from AVAILABLE_MODELS via calculate_total_cost(),
-        then applies the platform markup via calculate_ai_credits().
+        at ``started_at`` (the instant the turn's model requests started; None
+        means now), then applies the platform markup via calculate_ai_credits().
         """
         if not self.organization_id:
             return
@@ -856,6 +876,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             cost_result = calculate_total_cost(
                 model_used,
                 {"prompt_tokens": input_tokens, "completion_tokens": output_tokens},
+                at=started_at,
             )
             gateway_cost_usd = float(gateway_cost_usd or 0)
             actual_cost_usd = (

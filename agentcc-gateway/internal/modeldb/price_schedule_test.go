@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -304,7 +305,7 @@ func bigTableDrift(table map[string]*ModelInfo, schedule map[string][]scheduleRo
 	for _, key := range keys {
 		m, ok := table[key]
 		if !ok {
-			drift = append(drift, fmt.Sprintf("%s: litellm.json does not list this key, which price_schedule.json dates. Restore the key or remove it from both copies of price_schedule.json.", key))
+			drift = append(drift, fmt.Sprintf("%s: litellm.json does not list this key, which price_schedule.json dates. Restore the key or remove it from all three copies of price_schedule.json.", key))
 			continue
 		}
 		rows := schedule[key]
@@ -313,7 +314,7 @@ func bigTableDrift(table map[string]*ModelInfo, schedule map[string][]scheduleRo
 		if got == rowRates(first) || (!now.Before(last.start) && got == rowRates(last)) {
 			continue
 		}
-		drift = append(drift, fmt.Sprintf("%s: litellm.json equals neither the dated file's first row nor, from %s, its last row (input %g, output %g, cached %g, batch %g / %g). If a refresh moved this price before its date, fix the refresh: the dated row keeps billing the old price until then. If the price changed again, update price_schedule.json in both copies.",
+		drift = append(drift, fmt.Sprintf("%s: litellm.json equals neither the dated file's first row nor, from %s, its last row (input %g, output %g, cached %g, batch %g / %g). If a refresh moved this price before its date, fix the refresh: the dated row keeps billing the old price until then. If the price changed again, update price_schedule.json in all three copies.",
 			key, last.From, got[0], got[1], got[2], got[3], got[4]))
 	}
 	return drift
@@ -398,7 +399,7 @@ func TestDatedKeysAreEveryGoogleKeyOfTheseModels(t *testing.T) {
 	sort.Strings(missing)
 	sort.Strings(extra)
 	if len(missing) > 0 {
-		t.Errorf("litellm.json keys of these models with no dated rows (add them to both copies of price_schedule.json, or to the other-model list here): %v", missing)
+		t.Errorf("litellm.json keys of these models with no dated rows (add them to all three copies of price_schedule.json, or to the other-model list here): %v", missing)
 	}
 	if len(extra) > 0 {
 		t.Errorf("price_schedule.json keys that are not Google keys of these models: %v", extra)
@@ -539,7 +540,7 @@ func freshEntry(t *testing.T, key string) *ModelInfo {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := parseLiteLLM(snippet)
+	fresh, err := parseLiteLLM(snippet, true)
 	if err != nil {
 		t.Fatalf("parseLiteLLM: %v", err)
 	}
@@ -588,4 +589,20 @@ func TestPriceOverrideSurvivesAnEntrySwap(t *testing.T) {
 	if !near(p.InputPerToken, 7.5e-7) || !near(p.OutputPerToken, 3.75e-6) || !near(p.CachedInputPerToken, 1e-8) {
 		t.Errorf("31 Dec after a swap: input %g output %g cached %g, want 7.5e-7, 3.75e-6, 1e-8", p.InputPerToken, p.OutputPerToken, p.CachedInputPerToken)
 	}
+}
+
+// The catalogue sync's rebuild keeps both the dated rows and an operator's
+// override on top of them: a fetched entry for a dated key, under an input
+// override, bills the override's input and the dated row's output.
+func TestCatalogueSyncKeepsTheDatedRowsAndTheOverride(t *testing.T) {
+	const key = "gemini/gemini-3.7-flash"
+	input := 1e-6
+	var target atomic.Pointer[ModelDB]
+	cat := NewCatalogue(&target, map[string]ModelOverride{key: {Pricing: &PricingOverride{InputPerToken: &input}}})
+	cat.Overlay(map[string]*ModelInfo{key: freshEntry(t, key)}, "https://catalogue.test/models.json")
+	db := target.Load()
+	// 1M in at the override, 100k out at the 2027 row.
+	assertCost(t, db, key, CostOptions{At: jan2}, 1.0+0.75)
+	// Before 1 Jan the output is the 2026 row.
+	assertCost(t, db, key, CostOptions{At: lastMs2026}, 1.0+0.375)
 }

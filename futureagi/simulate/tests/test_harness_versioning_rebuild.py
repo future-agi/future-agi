@@ -2448,6 +2448,47 @@ class TestChecks:
         )
         assert _names(inline, "ensure_hosted_harness_conversation_runtime")
 
+    def test_a_failed_sandbox_stop_still_restarts_the_waiting_message(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation, _reply = _rebuild_with_lease(
+            user,
+            workspace,
+            storage,
+            "r-stop-raises",
+            auth_client,
+            django_capture_on_commit_callbacks,
+            lease_state="active",
+            expires_in=timedelta(minutes=-1),
+            heartbeat_age=timedelta(minutes=30),
+        )
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(state="responding", active_invocation_id="turn-1")
+        enqueue_message(environment, content="later", client_request_id="later")
+        inline.clear()
+
+        def slow(**_options):
+            raise TimeoutError("temporal frontend is slow")
+
+        monkeypatch.setattr(nudge_tasks.stop_harness_nudge_sandbox, "apply_async", slow)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            rebuild.check_nudges(environment.id)
+
+        conversation.refresh_from_db()
+        assert conversation.state == "starting"
+        assert _names(inline, "ensure_hosted_harness_conversation_runtime")
+
     def test_a_restart_loop_that_keeps_renewing_the_lease_stays_on_the_hour_rule(
         self,
         user,
@@ -3461,6 +3502,9 @@ class TestSourceFreshness:
         HostedHarnessConversationLease.no_workspace_objects.filter(
             id=capability.lease.id
         ).update(state="active", heartbeat_at=timezone.now())
+        heartbeat = HostedHarnessConversationLease.no_workspace_objects.get(
+            id=capability.lease.id
+        ).heartbeat_at
         gateway = HostedHarnessGateway.__new__(HostedHarnessGateway)
         gateway.client = MagicMock(runtime_name="r", runtime_digest="d")
         assert rebuild.wanted_agent_version(environment, conversation) == a2
@@ -3475,7 +3519,13 @@ class TestSourceFreshness:
                 endpoint_base_url="https://platform.example",
             )
 
-        deleted.assert_called_once_with("sandbox-old", conversation.id)
+        deleted.assert_called_once_with(
+            "sandbox-old",
+            conversation.id,
+            reason="agent_changed",
+            failure_domain="",
+            last_seen=heartbeat,
+        )
         assert start.call_args.kwargs["agent_version"] == a2
 
     def test_the_sandbox_gets_the_agents_payload_with_names_only(
@@ -3936,6 +3986,8 @@ class TestChatSandboxFence:
             max_egress_domains=None,
             create_timeout_seconds=300,
         )
+        # A real provider names itself; the sandbox's billed lifetime records it.
+        gateway.client.name = "e2b"
         gateway.client.create.side_effect = create
         with (
             patch.object(

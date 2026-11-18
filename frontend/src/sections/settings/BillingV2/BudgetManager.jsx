@@ -55,6 +55,7 @@ const SCOPE_OPTIONS = [
   { value: "gateway_cache_hits", label: "Cache Hits" },
   { value: "text_sim_tokens", label: "Text Sim Tokens" },
   { value: "voice_sim_minutes", label: "Voice Sim Minutes" },
+  { value: "sandbox_minutes", label: "Sandbox Minutes" },
   { value: "tracing_events", label: "Tracing Events" },
   { value: "total_spend", label: "Total Spend ($)" },
 ];

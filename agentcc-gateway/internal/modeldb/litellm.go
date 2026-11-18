@@ -4,45 +4,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 )
 
 type liteLLMEntry struct {
-	InputCostPerToken               float64  `json:"input_cost_per_token"`
-	OutputCostPerToken              float64  `json:"output_cost_per_token"`
-	CacheReadInputTokenCost         float64  `json:"cache_read_input_token_cost"`
-	InputCostPerTokenBatches        float64  `json:"input_cost_per_token_batches"`
-	OutputCostPerTokenBatches       float64  `json:"output_cost_per_token_batches"`
-	OutputCostPerImage              float64  `json:"output_cost_per_image"`
-	InputCostPerImage               float64  `json:"input_cost_per_image"`
-	InputCostPerSecond              float64  `json:"input_cost_per_second"`
-	InputCostPerCharacter           float64  `json:"input_cost_per_character"`
-	InputCostPerQuery               float64  `json:"input_cost_per_query"`
-	OCRCostPerPage                  float64  `json:"ocr_cost_per_page"`
-	OutputCostPerSecond             float64  `json:"output_cost_per_second"`
-	InputCostPerPixel               float64  `json:"input_cost_per_pixel"`
-	OutputCostPerPixel              float64  `json:"output_cost_per_pixel"`
-	InputCostPerImageToken          float64  `json:"input_cost_per_image_token"`
-	OutputCostPerImageToken         float64  `json:"output_cost_per_image_token"`
-	Provider                        string   `json:"litellm_provider"`
-	Mode                            string   `json:"mode"`
-	MaxInputTokens                  float64  `json:"max_input_tokens"`
-	MaxOutputTokens                 float64  `json:"max_output_tokens"`
-	MaxTokens                       float64  `json:"max_tokens"`
-	DeprecationDate                 string   `json:"deprecation_date"`
-	SupportedRegions                []string `json:"supported_regions"`
-	SupportsFunctionCalling         *bool    `json:"supports_function_calling"`
-	SupportsParallelFunctionCalling bool     `json:"supports_parallel_function_calling"`
-	SupportsVision                  *bool    `json:"supports_vision"`
-	SupportsAudioInput              bool     `json:"supports_audio_input"`
-	SupportsAudioOutput             bool     `json:"supports_audio_output"`
-	SupportsPDFInput                bool     `json:"supports_pdf_input"`
-	SupportsResponseSchema          *bool    `json:"supports_response_schema"`
-	SupportsSystemMessages          bool     `json:"supports_system_messages"`
-	SupportsPromptCaching           bool     `json:"supports_prompt_caching"`
-	SupportsReasoning               bool     `json:"supports_reasoning"`
+	InputCostPerToken                float64  `json:"input_cost_per_token"`
+	OutputCostPerToken               float64  `json:"output_cost_per_token"`
+	CacheReadInputTokenCost          float64  `json:"cache_read_input_token_cost"`
+	InputCostPerTokenBatches         float64  `json:"input_cost_per_token_batches"`
+	OutputCostPerTokenBatches        float64  `json:"output_cost_per_token_batches"`
+	OutputCostPerImage               float64  `json:"output_cost_per_image"`
+	InputCostPerImage                float64  `json:"input_cost_per_image"`
+	InputCostPerSecond               float64  `json:"input_cost_per_second"`
+	InputCostPerCharacter            float64  `json:"input_cost_per_character"`
+	InputCostPerQuery                float64  `json:"input_cost_per_query"`
+	OCRCostPerPage                   float64  `json:"ocr_cost_per_page"`
+	OutputCostPerSecond              float64  `json:"output_cost_per_second"`
+	InputCostPerPixel                float64  `json:"input_cost_per_pixel"`
+	OutputCostPerPixel               float64  `json:"output_cost_per_pixel"`
+	InputCostPerImageToken           float64  `json:"input_cost_per_image_token"`
+	OutputCostPerImageToken          float64  `json:"output_cost_per_image_token"`
+	RegionalEndpointUpliftMultiplier float64  `json:"regional_endpoint_uplift_multiplier"`
+	Provider                         string   `json:"litellm_provider"`
+	Mode                             string   `json:"mode"`
+	MaxInputTokens                   float64  `json:"max_input_tokens"`
+	MaxOutputTokens                  float64  `json:"max_output_tokens"`
+	MaxTokens                        float64  `json:"max_tokens"`
+	DeprecationDate                  string   `json:"deprecation_date"`
+	SupportedRegions                 []string `json:"supported_regions"`
+	SupportsFunctionCalling          *bool    `json:"supports_function_calling"`
+	SupportsParallelFunctionCalling  bool     `json:"supports_parallel_function_calling"`
+	SupportsVision                   *bool    `json:"supports_vision"`
+	SupportsAudioInput               bool     `json:"supports_audio_input"`
+	SupportsAudioOutput              bool     `json:"supports_audio_output"`
+	SupportsPDFInput                 bool     `json:"supports_pdf_input"`
+	SupportsResponseSchema           *bool    `json:"supports_response_schema"`
+	SupportsSystemMessages           bool     `json:"supports_system_messages"`
+	SupportsPromptCaching            bool     `json:"supports_prompt_caching"`
+	SupportsReasoning                bool     `json:"supports_reasoning"`
 }
 
-func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
+// parseLiteLLM parses a LiteLLM-format catalogue. With strict, as for a
+// fetched catalogue, an entry that states no rate the gateway reads is skipped
+// instead of kept at zero: a download of the wrong shape must not price models
+// at zero. An explicit 0 is a stated rate (a free price).
+func parseLiteLLM(data []byte, strict bool) (map[string]*ModelInfo, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal litellm JSON: %w", err)
@@ -59,6 +65,17 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 		var entry liteLLMEntry
 		if err := json.Unmarshal(rawEntry, &entry); err != nil {
 			slog.Warn("skipping unparseable litellm entry", "key", key, "error", err)
+			skipped++
+			continue
+		}
+
+		if badRate(entry) {
+			slog.Warn("skipping litellm entry with a negative or invalid rate", "key", key)
+			skipped++
+			continue
+		}
+
+		if strict && !statesRate(rawEntry) {
 			skipped++
 			continue
 		}
@@ -118,6 +135,7 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 			},
 			DeprecationDate: entry.DeprecationDate,
 			Regions:         entry.SupportedRegions,
+			RegionalUplift:  entry.RegionalEndpointUpliftMultiplier,
 		}
 
 		models[key] = m
@@ -172,6 +190,49 @@ func normalizeProvider(p string) string {
 	default:
 		return p
 	}
+}
+
+// rates are e's rate fields: every price the gateway reads from an entry.
+func (e *liteLLMEntry) rates() []*float64 {
+	return []*float64{
+		&e.InputCostPerToken, &e.OutputCostPerToken, &e.CacheReadInputTokenCost,
+		&e.InputCostPerTokenBatches, &e.OutputCostPerTokenBatches,
+		&e.OutputCostPerImage, &e.InputCostPerImage, &e.InputCostPerSecond,
+		&e.InputCostPerCharacter, &e.InputCostPerQuery, &e.OCRCostPerPage,
+		&e.OutputCostPerSecond, &e.InputCostPerPixel, &e.OutputCostPerPixel,
+		&e.InputCostPerImageToken, &e.OutputCostPerImageToken,
+	}
+}
+
+// badRate reports a negative or non-finite value in any rate the gateway reads.
+// A rate that is absent is 0 and fine; an explicit 0 is a free price.
+func badRate(e liteLLMEntry) bool {
+	for _, r := range e.rates() {
+		if *r < 0 || math.IsNaN(*r) || math.IsInf(*r, 0) {
+			return true
+		}
+	}
+	return false
+}
+
+// statesRate reports whether an entry states any rate the gateway reads. An
+// explicit 0 counts; an absent or null rate does not.
+func statesRate(raw json.RawMessage) bool {
+	var probe liteLLMEntry
+	rates := probe.rates()
+	// JSON has no NaN, so a rate still NaN after decoding was not stated.
+	for _, r := range rates {
+		*r = math.NaN()
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return false
+	}
+	for _, r := range rates {
+		if !math.IsNaN(*r) {
+			return true
+		}
+	}
+	return false
 }
 
 func isZeroPricing(mode ModelMode, entry liteLLMEntry) bool {

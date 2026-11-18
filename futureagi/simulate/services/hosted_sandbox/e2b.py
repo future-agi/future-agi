@@ -12,6 +12,7 @@ from .base import (
     SandboxCommandLogs,
     SandboxCommandRequest,
     SandboxExecResult,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxPreview,
@@ -52,13 +53,17 @@ class E2BFilesystem:
         _call(self._sandbox.files.write, path, data, user=self._os_user)
 
     def download_file(self, path: str, timeout: int | None = None) -> bytes:
-        body = _call(
-            self._sandbox.files.read,
-            path,
-            format="bytes",
-            request_timeout=timeout,
-            user=self._os_user,
-        )
+        try:
+            body = self._sandbox.files.read(
+                path, format="bytes", request_timeout=timeout, user=self._os_user
+            )
+        except Exception as exc:
+            if _is_file_not_found(exc):
+                raise SandboxFileNotFoundError(str(exc)) from exc
+            translated = _translate_error(exc)
+            if translated is None:
+                raise
+            raise translated from exc
         return bytes(body)
 
     def download_file_stream(
@@ -244,6 +249,7 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     max_egress_domains = None
     supports_adjustments = True
     supports_public_ingress = True
+    renews_ttl = True
 
     def renew_ttl(self, sandbox: E2BSandbox, ttl_seconds: int) -> None:
         self.validate_requested_resources(*self.configured_resources(), ttl_seconds)

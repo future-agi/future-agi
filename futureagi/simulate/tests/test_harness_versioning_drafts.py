@@ -18,6 +18,7 @@ from simulate.models import (
     HarnessSuiteMember,
     HarnessSuiteValidation,
     HarnessSuiteVersion,
+    HostedHarnessAttempt,
     HostedHarnessConversation,
     HostedHarnessConversationEvent,
     HostedHarnessConversationLease,
@@ -31,7 +32,11 @@ from simulate.services.harness_provider import serialize_job
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.run_warnings import preview_run
 from simulate.services.harness_versioning.versions import move_default, record_authoring
-from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    VersionPicks,
+    hash_secret,
+)
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
     ensure_conversation,
@@ -75,6 +80,25 @@ STALE = json.dumps({"files": []})
 def versioning_on(settings):
     settings.HARNESS_VERSIONING_ENABLED = True
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+
+
+class _Stops(list):
+    error: Exception | None = None
+
+
+@pytest.fixture(autouse=True)
+def stops(monkeypatch):
+    from simulate.tasks import harness_nudges
+
+    recorded = _Stops()
+
+    def record(conversation_id, provider_ref):
+        if recorded.error is not None:
+            raise recorded.error
+        recorded.append((conversation_id, provider_ref))
+
+    monkeypatch.setattr(harness_nudges, "schedule_sandbox_stop", record)
+    return recorded
 
 
 def _conversation(environment):
@@ -195,8 +219,9 @@ class TestChatWritesADraft:
         assert _draft(environment, "environment") is None
         assert environment.suite_version_id == s1.id
         assert environment.scenario_count == 2
-        assert environment.payload["metadata"]["authoring_object_key"] == (
-            metadata["authoring_object_key"]
+        assert (
+            environment.payload["metadata"]["authoring_object_key"]
+            == (metadata["authoring_object_key"])
         )
         assert rows == set(
             HostedHarnessScenario.no_workspace_objects.filter(
@@ -642,11 +667,20 @@ def _run_of(environment, key):
     return run
 
 
-def _lease(conversation, state="active"):
+def _lease(
+    conversation,
+    state="active",
+    *,
+    provider_ref=None,
+    attempt=None,
+    control_only=False,
+):
     return HostedHarnessConversationLease.no_workspace_objects.create(
         conversation=conversation,
-        provider_ref=f"sandbox-{conversation.id}",
+        provider_ref=provider_ref or f"sandbox-{conversation.id}",
         state=state,
+        attempt=attempt,
+        control_only=control_only,
         token_hash="t" * 64,
         fence_hash="f" * 64,
         expires_at=timezone.now() + timedelta(minutes=10),
@@ -699,6 +733,197 @@ class TestLeases:
         assert running.state == "expired"
 
 
+class TestRetireStopsSandbox:
+    def test_an_idle_running_chat_is_stopped_after_commit(
+        self, user, workspace, storage, stops, django_capture_on_commit_callbacks
+    ):
+        environment = _built(user, workspace, "d-stop-one")
+        conversation = _conversation(environment)
+        lease = _lease(conversation)
+
+        with django_capture_on_commit_callbacks(execute=False) as callbacks:
+            assert drafts.retire_chat_runtime(environment) == 1
+
+        lease.refresh_from_db()
+        assert lease.state == "expired"
+        assert stops == []
+        assert len(callbacks) == 1
+        callbacks[0]()
+        assert stops == [(str(conversation.id), f"sandbox-{conversation.id}")]
+
+    def test_every_idle_conversation_is_stopped(
+        self, user, workspace, storage, stops, django_capture_on_commit_callbacks
+    ):
+        environment = _built(user, workspace, "d-stop-two")
+        first = _conversation(environment)
+        second = ensure_conversation(_run_of(environment, "stop-two-run"))
+        _lease(first)
+        _lease(second)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 2
+
+        assert len(stops) == 2
+        assert set(stops) == {
+            (str(first.id), f"sandbox-{first.id}"),
+            (str(second.id), f"sandbox-{second.id}"),
+        }
+
+    @pytest.mark.parametrize("kind", ["starting", "pending"])
+    def test_a_lease_with_no_sandbox_yet_is_expired_not_stopped(
+        self,
+        user,
+        workspace,
+        storage,
+        stops,
+        django_capture_on_commit_callbacks,
+        kind,
+    ):
+        environment = _built(user, workspace, f"d-stop-{kind}")
+        conversation = _conversation(environment)
+        if kind == "starting":
+            lease = _lease(
+                conversation, "starting", provider_ref=f"sandbox-{conversation.id}"
+            )
+        else:
+            lease = _lease(conversation, provider_ref=f"pending:{uuid.uuid4()}")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 1
+
+        lease.refresh_from_db()
+        assert lease.state == "expired"
+        assert stops == []
+
+    def test_a_running_turn_keeps_its_sandbox(
+        self, user, workspace, storage, stops, django_capture_on_commit_callbacks
+    ):
+        environment = _built(user, workspace, "d-stop-busy")
+        conversation = _conversation(environment)
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=conversation.id
+        ).update(active_invocation_id="turn-1")
+        lease = _lease(conversation)
+
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            assert drafts.retire_chat_runtime(environment) == 0
+
+        lease.refresh_from_db()
+        assert lease.state == "active"
+        assert callbacks == []
+        assert stops == []
+
+    def test_an_attempts_lease_is_left_alone(
+        self, user, workspace, storage, stops, django_capture_on_commit_callbacks
+    ):
+        environment = _built(user, workspace, "d-stop-attempt")
+        conversation = _conversation(environment)
+        attempt = HostedHarnessAttempt.no_workspace_objects.create(
+            job=_run_of(environment, "stop-attempt-run"),
+            attempt_number=1,
+            token_hash=hash_secret("a"),
+            fence_hash=hash_secret("b"),
+            expires_at=timezone.now(),
+        )
+        lease = _lease(conversation, attempt=attempt, control_only=True)
+
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            assert drafts.retire_chat_runtime(environment) == 0
+
+        lease.refresh_from_db()
+        assert lease.state == "active"
+        assert callbacks == []
+        assert stops == []
+
+    def test_a_lease_restarted_meanwhile_is_left_alone(
+        self,
+        user,
+        workspace,
+        storage,
+        stops,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _built(user, workspace, "d-stop-race")
+        conversation = _conversation(environment)
+        lease = _lease(conversation)
+        manager = HostedHarnessConversationLease.no_workspace_objects
+        original = manager.filter
+
+        def restarted_first(*args, **kwargs):
+            if "id" in kwargs:  # the conditional update, not the `own` read
+                original(id=kwargs["id"]).update(provider_ref="sandbox-new")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(manager, "filter", restarted_first)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 0
+
+        lease.refresh_from_db()
+        assert lease.state == "active"
+        assert lease.provider_ref == "sandbox-new"
+        assert stops == []
+
+    def test_a_failed_stop_does_not_fail_the_retire(
+        self,
+        user,
+        workspace,
+        storage,
+        stops,
+        caplog,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _built(user, workspace, "d-stop-raise")
+        conversation = _conversation(environment)
+        lease = _lease(conversation)
+        stops.error = RuntimeError("temporal down")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 1
+
+        lease.refresh_from_db()
+        assert lease.state == "expired"
+        assert "stop_chat_sandboxes_failed" in caplog.text
+
+    def test_the_first_failed_stop_ends_the_loop_and_the_save_still_succeeds(
+        self,
+        user,
+        workspace,
+        storage,
+        monkeypatch,
+        caplog,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.tasks import harness_nudges
+
+        environment = _built(user, workspace, "d-stop-three")
+        first = _conversation(environment)
+        second = ensure_conversation(_run_of(environment, "stop-three-run-a"))
+        third = ensure_conversation(_run_of(environment, "stop-three-run-b"))
+        leases = [_lease(one) for one in (first, second, third)]
+        attempts = []
+
+        def slow(conversation_id, provider_ref):
+            attempts.append(conversation_id)
+            raise TimeoutError("temporal frontend is slow")
+
+        monkeypatch.setattr(harness_nudges, "schedule_sandbox_stop", slow)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            assert drafts.retire_chat_runtime(environment) == 3
+
+        assert len(attempts) == 1
+        for lease in leases:
+            lease.refresh_from_db()
+            assert lease.state == "expired"
+        failures = [
+            r for r in caplog.records if "stop_chat_sandboxes_failed" in r.message
+        ]
+        assert len(failures) == 1
+        assert "skipped=2" in failures[0].message
+
+
 class TestSave:
     def test_save_makes_the_draft_the_next_default(
         self, user, workspace, storage, django_capture_on_commit_callbacks
@@ -740,8 +965,9 @@ class TestSave:
         ] == [*NAMES[:2], EXTRA]
         metadata = environment.payload["metadata"]
         assert metadata["authoring_object_key"] != first_pair
-        assert f"{environment.environment_version_id}:{suite.id}" in (
-            metadata["default_pairs"]
+        assert (
+            f"{environment.environment_version_id}:{suite.id}"
+            in (metadata["default_pairs"])
         )
         assert metadata["authoring_revision"] in suite.documents["authoring_revisions"]
         assert not HarnessSuiteValidation.no_workspace_objects.filter(
@@ -2146,8 +2372,9 @@ class TestEnqueue:
         assert message.payload["_author_id"] == str(user.id)
         assert "_origin" not in message.payload
         assert message.payload["mode"] == "edit"
-        assert message.payload["_environment_revision"] == (
-            environment.payload["metadata"]["authoring_revision"]
+        assert (
+            message.payload["_environment_revision"]
+            == (environment.payload["metadata"]["authoring_revision"])
         )
 
     def test_a_given_revision_is_stamped_without_reading_storage(

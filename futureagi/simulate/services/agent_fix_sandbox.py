@@ -13,10 +13,15 @@ from django.db import InterfaceError, OperationalError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
-from simulate.models import AgentFixRun
+from simulate.models import AgentFixRun, HostedSandboxLifetime
 from simulate.pydantic_schemas.agent_fix import EngineCapability, EngineModels
-from simulate.selectors.agent_fix import fix_deadline, queue_deadline, recent_lost_models
+from simulate.selectors.agent_fix import (
+    fix_deadline,
+    queue_deadline,
+    recent_lost_models,
+)
 from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.harness_usage import OUR_FIX_FAILURES, require_sandbox_create
 from simulate.services.hosted_harness import HostedHarnessError, hash_secret
 from simulate.services.hosted_harness_gateway import (
     _CHAT_RUNTIME_PATH,
@@ -32,6 +37,14 @@ from simulate.services.hosted_sandbox import (
     SandboxProviderError,
     SandboxRuntimeProvider,
     get_sandbox_provider,
+)
+from simulate.services.hosted_sandbox.base import delete_confirmed
+from simulate.services.sandbox_usage import (
+    close_sandbox_lifetime,
+    fix_engine_died_unseen,
+    open_sandbox_lifetime,
+    rearm_sandbox_lifetime,
+    record_sandbox_end_reason,
 )
 from simulate.temporal.types.agent_fix import AgentFixLaunch, Observation
 
@@ -63,16 +76,29 @@ class EngineCredentials:
 def launch(fix_run_id: str) -> AgentFixLaunch:
     """Start the fix's engine in a new sandbox: the first time, or again after the previous
     engine died. Says why instead when there is none."""
-    refusal = _claim_launch(fix_run_id)
+    refusal = claim(fix_run_id)
     if refusal is not None:
         return AgentFixLaunch(observation=refusal)
     release(fix_run_id)
     provider = _provider()
     fix_run = AgentFixRun.no_workspace_objects.get(id=fix_run_id)
     spec = _launch_spec(fix_run, provider)
+    require_sandbox_create(str(fix_run.organization_id))
+    create_requested_at = timezone.now()
     sandbox = provider.create(spec, timeout=provider.create_timeout_seconds)
+    open_sandbox_lifetime(
+        kind=HostedSandboxLifetime.Kind.FIX_ENGINE,
+        provider_name=provider.name,
+        provider_ref=str(sandbox.id),
+        organization_id=fix_run.organization_id,
+        workspace_id=fix_run.workspace_id,
+        owner_id=fix_run.id,
+        lifetime_seconds=LEASE_SECONDS,
+        armed_at=create_requested_at,
+    )
+    # A stop from here on is read against this sandbox, not the previous engine.
     AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
-        sandbox_ref=sandbox.id, updated_at=timezone.now()
+        sandbox_ref=sandbox.id, heartbeat_at=timezone.now(), updated_at=timezone.now()
     )
     credentials = rotate_credentials(fix_run.id)
     if credentials is None:
@@ -139,7 +165,7 @@ def observe(fix_run_id: str, command_id: str) -> Observation:
             AgentFixRun.State.FAILED,
             failure={
                 "code": "fix_watch_failed",
-                "message": "the platform could not watch the improvement engine",
+                "message": "the platform could not watch the engine",
             },
         )
         return Observation.ENDED
@@ -160,7 +186,7 @@ def _look(fix_run_id: str, command_id: str) -> Observation:
             AgentFixRun.State.FAILED,
             failure={
                 "code": "fix_deadline",
-                "message": "the fix ran out of the time it was given",
+                "message": "the epoch ran out of the time it was given",
             },
         )
         return Observation.ENDED
@@ -171,7 +197,7 @@ def _look(fix_run_id: str, command_id: str) -> Observation:
             fix_run=str(fix_run.id),
             silent_seconds=int(silent_for.total_seconds()),
         )
-        return Observation.ENGINE_GONE
+        return _engine_gone(fix_run)
     provider = _provider()
     try:
         sandbox = provider.get(
@@ -179,7 +205,7 @@ def _look(fix_run_id: str, command_id: str) -> Observation:
         )
     except SandboxNotFoundError:
         logger.warning("agent_fix_sandbox_gone", fix_run=str(fix_run.id))
-        return Observation.ENGINE_GONE
+        return _engine_gone(fix_run)
     command = sandbox.process.get_session_command(
         ENGINE_SESSION, command_id, request_timeout=_PROVIDER_TIMEOUT_SECONDS
     )
@@ -194,26 +220,82 @@ def _look(fix_run_id: str, command_id: str) -> Observation:
             # The sandbox is released next, and this is the only record of why it ended.
             output=logs.output[-_EXIT_OUTPUT_CHARS:],
         )
-        return Observation.ENGINE_GONE
+        return _engine_gone(fix_run)
+    renewed_at = timezone.now()
     provider.renew_ttl(sandbox, LEASE_SECONDS)
+    rearm_sandbox_lifetime(
+        provider=provider,
+        provider_ref=fix_run.sandbox_ref,
+        lifetime_seconds=LEASE_SECONDS,
+        renewed_at=renewed_at,
+    )
     return Observation.RUNNING
+
+
+def _engine_gone(fix_run: AgentFixRun) -> Observation:
+    """The engine in this sandbox died, vanished or went silent: an ending of ours, unless it
+    was still reporting when the sandbox reached its lifetime limit (an expiry)."""
+    record_sandbox_end_reason(
+        provider_ref=fix_run.sandbox_ref,
+        reason="engine_gone",
+        failure_domain="infrastructure",
+        last_seen=fix_run.heartbeat_at,
+    )
+    return Observation.ENGINE_GONE
+
+
+def _sandbox_ending(fix_run: AgentFixRun) -> dict:
+    """Why the fix's sandbox is released, and the failure domain when that is ours."""
+    if fix_run.state in (AgentFixRun.State.QUEUED, AgentFixRun.State.RUNNING):
+        # Still running, so the platform is starting it again: the sandbox it replaces
+        # ended on our side, even one that had reached its lifetime limit.
+        return {"reason": "engine_replaced", "failure_domain": "infrastructure"}
+    code = (fix_run.failure or {}).get("code") or ""
+    if code in OUR_FIX_FAILURES:
+        return {"reason": code, "failure_domain": "infrastructure"}
+    return {"reason": code or str(fix_run.state), "failure_domain": ""}
 
 
 def release(fix_run_id: str) -> None:
     """Delete the fix's sandbox, if it has one. Safe to repeat."""
-    sandbox_ref = AgentFixRun.no_workspace_objects.values_list(
-        "sandbox_ref", flat=True
+    fix_run = AgentFixRun.no_workspace_objects.only(
+        "sandbox_ref", "state", "failure", "heartbeat_at", "finished_at"
     ).get(id=fix_run_id)
+    sandbox_ref = fix_run.sandbox_ref
     if sandbox_ref:
+        ending = _sandbox_ending(fix_run)
+        if not ending["failure_domain"] and fix_engine_died_unseen(
+            state=fix_run.state,
+            heartbeat_at=fix_run.heartbeat_at,
+            ended_at=fix_run.finished_at,
+        ):
+            # The ending the watch would have recorded had it looked first. A stop was
+            # decided when it was asked for.
+            ending = {
+                "reason": "engine_gone",
+                "failure_domain": "infrastructure",
+                "last_seen": fix_run.heartbeat_at,
+            }
+        # The delete is asked for next: billing stops at this moment even if it fails.
+        record_sandbox_end_reason(
+            provider_ref=sandbox_ref, delete_requested=True, **ending
+        )
         provider = _provider()
         try:
-            provider.delete(
+            deleted = provider.delete(
                 provider.get(sandbox_ref, request_timeout=_PROVIDER_TIMEOUT_SECONDS),
                 timeout=120,
                 wait=True,
             )
         except SandboxNotFoundError:
-            pass
+            deleted = True
+        if delete_confirmed(
+            provider, sandbox_ref, deleted, request_timeout=_PROVIDER_TIMEOUT_SECONDS
+        ):
+            # The ending again: it holds if the write before the delete was lost.
+            close_sandbox_lifetime(
+                provider_ref=sandbox_ref, delete_requested=True, **ending
+            )
         AgentFixRun.no_workspace_objects.filter(
             id=fix_run_id, sandbox_ref=sandbox_ref
         ).update(sandbox_ref="", updated_at=timezone.now())
@@ -245,10 +327,10 @@ def _start_engine(sandbox, capability: EngineCapability) -> str:
     return str(command.cmd_id)
 
 
-def _claim_launch(fix_run_id: str) -> Observation | None:
-    """Take the run's next sandbox, or say why it gets none. The previous sandbox's
-    credentials stop working here, before anything new exists. A fix held back by the caps
-    stays queued, and its deadline has not started."""
+def claim(fix_run_id: str) -> Observation | None:
+    """Take the run's next step (a sandbox, or its first step writing variations), or say
+    why it gets none. The previous sandbox's credentials stop working here, before anything
+    new exists. A fix held back by the caps stays queued, and its deadline has not started."""
     with transaction.atomic():
         fix_run = AgentFixRun.no_workspace_objects.select_for_update().get(
             id=fix_run_id
@@ -283,15 +365,15 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
             return Observation.WAITING
         failure = {
             "code": "fix_queue_timeout",
-            "message": "too many fixes are running; try again later",
+            "message": "too many epochs are running; try again later",
         }
     elif timezone.now() >= fix_deadline(fix_run):
         failure = {
             "code": "fix_deadline",
-            "message": "the fix ran out of the time it was given",
+            "message": "the epoch ran out of the time it was given",
         }
     elif fix_run.sandbox_attempt >= attempts:
-        message = f"the improvement engine stopped {attempts} times before it finished"
+        message = f"the engine stopped {attempts} times before it finished"
         if last_error := (fix_run.engine_notes or {}).get("last_error"):
             message = f"{message}; last error: {last_error}"
         failure = {"code": "fix_engine_died", "message": message}
@@ -335,7 +417,7 @@ def _provider() -> SandboxRuntimeProvider:
     if provider.name != "e2b":
         raise HostedHarnessError(
             "fix_sandbox_unavailable",
-            "Fix my agent runs in an E2B sandbox; set HOSTED_SANDBOX_PROVIDER=e2b",
+            "Epoch runs in an E2B sandbox; set HOSTED_SANDBOX_PROVIDER=e2b",
             status_code=503,
         )
     return provider

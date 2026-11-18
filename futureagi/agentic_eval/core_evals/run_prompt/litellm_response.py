@@ -4,12 +4,18 @@ import os
 import re
 import time
 
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    calculate_total_cost,
+    request_started_at,
+)
 from model_hub.queries.tts_voices import resolve_voice_id
 
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 
-from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    LiteLLMModelManager,
+    MissingProviderKeyError,
+)
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.queries.tts_voices import resolve_voice_id
 from model_hub.utils import call_websocket
@@ -25,6 +31,7 @@ import requests
 import base64
 import copy
 import io
+from tfc.utils.media_tools import MediaToolUnavailable
 
 import structlog
 
@@ -89,6 +96,11 @@ async def create_model_manager_async(model_name, organization_id):
     manager = LiteLLMModelManager(model_name)
     await sync_to_async(manager._add_custom_models)(organization_id)
     return manager
+
+
+def _call_started_at():
+    """The aware UTC instant a request starts: read just before the call is made."""
+    return request_started_at(time.time())
 
 
 class RunPrompt:
@@ -342,7 +354,9 @@ class RunPrompt:
         }
         try:
             cost_payload = (
-                calculate_total_cost(self.model, usage_payload)
+                calculate_total_cost(
+                    self.model, usage_payload, at=request_started_at(start_time)
+                )
                 if (prompt_tokens is not None and completion_tokens is not None)
                 else {"total_cost": 0.0, "prompt_cost": 0.0, "completion_cost": 0.0}
             )
@@ -623,7 +637,9 @@ class RunPrompt:
         # Use actual_model (parsed/stripped model name) for pricing lookup
         # since self.model may have prefixes like "hd/1024-x-1792/dall-e-3"
         try:
-            cost_payload = calculate_total_cost(actual_model, usage_payload)
+            cost_payload = calculate_total_cost(
+                actual_model, usage_payload, at=request_started_at(start_time)
+            )
         except Exception as e:
             logger.warning(f"Failed to calculate image cost: {e}")
             # Fallback cost estimation for image models
@@ -746,6 +762,11 @@ class RunPrompt:
         # Ensure OpenAI Whisper gets a recognized file extension; convert if needed
         try:
             detected = (detect_audio_format(audio_bytes) or "").lower()
+        except MediaToolUnavailable as exc:
+            # No ffmpeg in this image: send the audio unconverted and let the
+            # provider decode it, as before, but say why it was not converted.
+            logger.warning("stt_audio_not_converted", reason=str(exc))
+            detected = ""
         except Exception:
             detected = ""
         allowed = {
@@ -791,7 +812,9 @@ class RunPrompt:
                 "audio_seconds": duration_seconds,
             },
             "cost": calculate_total_cost(
-                model_name=self.model, token_usage={"audio_seconds": duration_seconds}
+                model_name=self.model,
+                token_usage={"audio_seconds": duration_seconds},
+                at=request_started_at(start_time),
             ),
             "response_time": completion_time,
         }
@@ -1001,6 +1024,7 @@ class RunPrompt:
                     model_name=self.model,
                     token_usage=token_usage,
                     fallback_pricing=fallback_pricing,
+                    at=request_started_at(start_time),
                 )
 
                 metadata = {
@@ -1113,6 +1137,8 @@ class RunPrompt:
         chunk_buffer = ""
         try:
             response = None
+            # The request starts here; its tokens are priced at this instant.
+            started_at = _call_started_at()
             with litellm_try_except():
                 response = litellm.completion(**payload, drop_params=True)
 
@@ -1277,9 +1303,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -1398,7 +1424,7 @@ class RunPrompt:
                 "prompt_tokens": chunk.usage.prompt_tokens,
                 "total_tokens": chunk.usage.total_tokens,
             },
-            "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
+            "cost": calculate_total_cost(chunk.model, dict(chunk.usage), at=started_at),
             "response_time": end_time - start_time,
         }
 
@@ -1438,6 +1464,8 @@ class RunPrompt:
             return response_content, value_info
 
         response = None
+        # The request starts here; its tokens are priced at this instant.
+        started_at = _call_started_at()
         with litellm_try_except():
             response = litellm.completion(**payload, drop_params=True)
 
@@ -1504,7 +1532,9 @@ class RunPrompt:
                 "prompt_tokens": prompt_tokens,
                 "total_tokens": total_tokens,
             },
-            "cost": calculate_total_cost(response.model, dict(response.usage)),
+            "cost": calculate_total_cost(
+                response.model, dict(response.usage), at=started_at
+            ),
             "response_time": completion_time,  # Assuming a static time or calculated elsewhere
         }
 
@@ -2827,6 +2857,8 @@ class RunPrompt:
 
         chunk_buffer = ""
         try:
+            # The request starts here; its tokens are priced at this instant.
+            started_at = _call_started_at()
             response = await litellm.acompletion(**payload, drop_params=True)
             tool_calls = []
             tool_calls_str = ""
@@ -2988,9 +3020,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -3108,7 +3140,7 @@ class RunPrompt:
                 "prompt_tokens": chunk.usage.prompt_tokens,
                 "total_tokens": chunk.usage.total_tokens,
             },
-            "cost": calculate_total_cost(chunk.model, dict(chunk.usage)),
+            "cost": calculate_total_cost(chunk.model, dict(chunk.usage), at=started_at),
             "response_time": end_time - start_time,
         }
 
@@ -3216,6 +3248,10 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except MissingProviderKeyError:
+            # Expected setup failure: preserve the type for the run boundary.
+            # Logging here would multiply the warning for multi-row runs.
+            raise
         except Exception as e:
             context = ErrorContext(
                 model=self.model,
@@ -3228,7 +3264,6 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
-            logger.error(f"[NEW] An error occurred: {concise_error}")
             raise Exception(concise_error) from e
 
     async def _litellm_response_async_new(
@@ -3312,6 +3347,10 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except MissingProviderKeyError:
+            # Expected setup failure: preserve the type for the run boundary.
+            # Logging here would multiply the warning for multi-row runs.
+            raise
         except Exception as e:
             context = ErrorContext(
                 model=self.model,
@@ -3324,7 +3363,6 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
-            logger.error(f"[NEW] An error occurred: {concise_error}")
             raise Exception(concise_error) from e
 
     # =========================================================================

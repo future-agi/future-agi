@@ -38,7 +38,10 @@ from model_hub.models.experiments import (
     ExperimentsTable,
 )
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
-from model_hub.services.dataset_snapshot import create_dataset_snapshot
+from model_hub.services.dataset_snapshot import (
+    copied_column_metadata,
+    create_dataset_snapshot,
+)
 from model_hub.views.experiments import (
     _build_and_save_v2_column_order,
     _translate_eval_mapping,
@@ -248,9 +251,7 @@ class Command(BaseCommand):
             # copied each EDT column.
             snapshot_cols_by_source = {
                 c.source_id: c
-                for c in Column.objects.filter(
-                    dataset=snapshot_dataset, deleted=False
-                )
+                for c in Column.objects.filter(dataset=snapshot_dataset, deleted=False)
                 if c.source_id
             }
 
@@ -557,7 +558,7 @@ class Command(BaseCommand):
                         value_infos=cell.value_infos,
                         feedback_info=cell.feedback_info,
                         status=cell.status,
-                        column_metadata=cell.column_metadata,
+                        column_metadata=copied_column_metadata(cell),
                         prompt_tokens=cell.prompt_tokens,
                         completion_tokens=cell.completion_tokens,
                         response_time=cell.response_time,
@@ -584,8 +585,7 @@ class Command(BaseCommand):
             )
 
             logger.info(
-                f"Migrated EDT column {orig_col.id} -> {new_col.id} "
-                f"for EDT {edt.id}"
+                f"Migrated EDT column {orig_col.id} -> {new_col.id} for EDT {edt.id}"
             )
 
     def _get_or_create_prompt_template(

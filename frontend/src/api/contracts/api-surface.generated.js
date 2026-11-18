@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1139,
+  endpointCount: 1154,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -640,6 +640,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/kb/supported-embedding-models": ["get"],
       "/model-hub/kb/supported_embedding_models/": ["get"],
       "/model-hub/kb/{id}/": ["delete", "get", "patch", "put"],
+      "/model-hub/kb/{id}/download-file/": ["get"],
       "/model-hub/knowledge-base/": ["delete", "get", "patch", "post"],
       "/model-hub/knowledge-base/files/": ["delete", "post"],
       "/model-hub/knowledge-base/get/": ["get"],
@@ -872,6 +873,17 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/call-executions/": ["get"],
       "/simulate/api/harness-environments/": ["get"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+      "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
+      "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/actor-validation/": ["post"],
+      "/simulate/api/harness-environments/{id}/actors/": ["get", "post"],
+      "/simulate/api/harness-environments/{id}/actors/{actor_id}/": [
+        "delete",
+        "get",
+        "put",
+      ],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -883,6 +895,19 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "patch",
       ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/": [
+        "get",
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+        "delete",
+        "get",
+      ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/files/": ["post"],
       "/simulate/api/harness-environments/{id}/nudges/": ["get"],
       "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": [
         "post",
@@ -895,6 +920,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/":
         ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
+        ["get"],
+      "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
         ["post"],
       "/simulate/api/harness-environments/{id}/verify/": ["post"],
       "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
@@ -1131,6 +1160,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/eval-task/list_eval_tasks_with_project_name/": ["get"],
       "/tracer/eval-task/mark_eval_tasks_deleted/": ["post"],
       "/tracer/eval-task/pause_eval_task/": ["post"],
+      "/tracer/eval-task/sampling_audit/": ["get"],
+      "/tracer/eval-task/sampling_preview/": ["post"],
       "/tracer/eval-task/unpause_eval_task/": ["post"],
       "/tracer/eval-task/update_eval_task/": ["patch"],
       "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],
@@ -2022,6 +2053,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/kb/supported-embedding-models": ["get"],
   "/model-hub/kb/supported_embedding_models/": ["get"],
   "/model-hub/kb/{id}/": ["delete", "get", "patch", "put"],
+  "/model-hub/kb/{id}/download-file/": ["get"],
   "/model-hub/knowledge-base/": ["delete", "get", "patch", "post"],
   "/model-hub/knowledge-base/files/": ["delete", "post"],
   "/model-hub/knowledge-base/get/": ["get"],
@@ -2247,6 +2279,15 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/call-executions/": ["get"],
   "/simulate/api/harness-environments/": ["get"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+  "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
+  "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": ["post"],
+  "/simulate/api/harness-environments/{id}/actor-validation/": ["post"],
+  "/simulate/api/harness-environments/{id}/actors/": ["get", "post"],
+  "/simulate/api/harness-environments/{id}/actors/{actor_id}/": [
+    "delete",
+    "get",
+    "put",
+  ],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -2258,6 +2299,17 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "patch",
   ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/": ["get", "post"],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+    "delete",
+    "get",
+  ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/": [
+    "post",
+  ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+    ["post"],
+  "/simulate/api/harness-environments/{id}/files/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/": ["get"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": ["post"],
@@ -2267,6 +2319,10 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post",
   ],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+    ["post"],
+  "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
+    ["get"],
+  "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
     ["post"],
   "/simulate/api/harness-environments/{id}/verify/": ["post"],
   "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
@@ -2491,6 +2547,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/eval-task/list_eval_tasks_with_project_name/": ["get"],
   "/tracer/eval-task/mark_eval_tasks_deleted/": ["post"],
   "/tracer/eval-task/pause_eval_task/": ["post"],
+  "/tracer/eval-task/sampling_audit/": ["get"],
+  "/tracer/eval-task/sampling_preview/": ["post"],
   "/tracer/eval-task/unpause_eval_task/": ["post"],
   "/tracer/eval-task/update_eval_task/": ["patch"],
   "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],

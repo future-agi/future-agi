@@ -37,6 +37,10 @@ type ModelInfo struct {
 	DeprecationDate string          `json:"deprecation_date,omitempty"`
 	Regions         []string        `json:"regions,omitempty"`
 
+	// RegionalUplift is the factor Vertex AI adds to this model's token prices
+	// away from its global endpoint; 0 when the table states none.
+	RegionalUplift float64 `json:"regional_uplift,omitempty"`
+
 	// priceOverride is the config price override New merged into Pricing. A
 	// dated row in force replaces token prices, so PricingAt merges it again.
 	priceOverride *PricingOverride
@@ -47,6 +51,10 @@ type ModelInfo struct {
 type ModelDB struct {
 	models     map[string]*ModelInfo
 	byProvider map[string][]*ModelInfo
+	// priceOverridden holds the ids whose price comes from a config override,
+	// so a lookup across several names can rank an operator's price above a
+	// bundled one (DecisionPricingAny).
+	priceOverridden map[string]bool
 }
 
 // New creates a ModelDB from bundled data merged with config overrides.
@@ -68,6 +76,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 	}
 
 	// Apply overrides.
+	priceOverridden := make(map[string]bool)
 	for id, ov := range overrides {
 		existing, ok := models[id]
 		if !ok {
@@ -81,6 +90,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 			// PricingAt applies it after the row.
 			po := *ov.Pricing
 			existing.priceOverride = &po
+			priceOverridden[id] = true
 		}
 	}
 
@@ -93,7 +103,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 		sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	}
 
-	return &ModelDB{models: models, byProvider: byProvider}
+	return &ModelDB{models: models, byProvider: byProvider, priceOverridden: priceOverridden}
 }
 
 // Get returns model info by ID. Tries exact match, then strips "provider/"
@@ -117,6 +127,64 @@ func (db *ModelDB) Get(id string) (*ModelInfo, bool) {
 		}
 	}
 	return nil, false
+}
+
+// PriceKey is the key the price table lists a model under.
+//
+// The table keys many models by provider, as "mistral/mistral-ocr-latest" or
+// "perplexity/sonar", while a request names the bare model, and a lookup
+// strips a provider prefix but never adds one.
+//
+// A provider that resells other vendors' models names them with the vendor's
+// prefix, as Perplexity's "google/gemini-3.6-flash". The lookup would strip
+// that to the vendor's own price, so the provider's entry
+// ("perplexity/google/gemini-3.6-flash") is tried first.
+//
+// table is the name the provider states for itself, which its ID need not
+// match: the table lists new Gemini models only under "gemini/" and
+// "vertex_ai/", and a Gemini provider may be named "vertex_ai_global".
+func (db *ModelDB) PriceKey(model, provider, table string) string {
+	if provider == "" || model == "" {
+		return model
+	}
+	if _, ok := db.Get(model); ok && !strings.Contains(model, "/") {
+		return model
+	}
+	for _, name := range []string{provider, table, tableProviderNames[provider]} {
+		if name == "" {
+			continue
+		}
+		if prefixed := name + "/" + model; db.listsExactly(prefixed) {
+			return prefixed
+		}
+	}
+	return model
+}
+
+// tableProviderNames spells a provider the way the price table keys it, where
+// that differs from the gateway's name: "fireworks_ai/accounts/fireworks/models/glm-5p3".
+var tableProviderNames = map[string]string{
+	"fireworks": "fireworks_ai",
+	"together":  "together_ai",
+}
+
+// listsExactly says whether the table has an entry under id itself, not
+// under id with its prefix stripped.
+func (db *ModelDB) listsExactly(id string) bool {
+	m, ok := db.Get(id)
+	return ok && m.ID == id
+}
+
+// ListsExactly says whether the table has an entry under id itself, not
+// under id with its prefix stripped.
+func (db *ModelDB) ListsExactly(id string) bool {
+	return db.listsExactly(id)
+}
+
+// TableProviderName is how the price table spells a provider's name where it
+// differs from the gateway's ("fireworks" is "fireworks_ai"), or "".
+func TableProviderName(provider string) string {
+	return tableProviderNames[provider]
 }
 
 // GetPricing returns the pricing in force now for a model.
@@ -183,9 +251,16 @@ func (db *ModelDB) Count() int {
 // pricing in force at opts.At, or now when it is zero.
 // Returns 0, false if the model is not found or has no pricing.
 func (db *ModelDB) CalculateCost(modelID string, inputTokens, outputTokens int, opts CostOptions) (float64, bool) {
+	cost, _, ok := db.CalculateCostCached(modelID, inputTokens, outputTokens, opts)
+	return cost, ok
+}
+
+// CalculateCostCached is CalculateCost that also returns how many input tokens
+// were priced at the cached rate: zero when the entry gave no cached discount.
+func (db *ModelDB) CalculateCostCached(modelID string, inputTokens, outputTokens int, opts CostOptions) (float64, int, bool) {
 	m, ok := db.Get(modelID)
 	if !ok {
-		return 0, false
+		return 0, 0, false
 	}
 	at := opts.At
 	if at.IsZero() {
@@ -196,9 +271,10 @@ func (db *ModelDB) CalculateCost(modelID string, inputTokens, outputTokens int, 
 		pricing = m.PricingAt(at)
 	}
 	if pricing.InputPerToken == 0 {
-		return 0, false
+		return 0, 0, false
 	}
-	return pricing.Calculate(inputTokens, outputTokens, opts), true
+	cost, cached := pricing.calculate(inputTokens, outputTokens, opts)
+	return cost, cached, true
 }
 
 // AudioCost returns the cost of transcribing the given seconds of audio.

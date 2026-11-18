@@ -216,9 +216,7 @@ def test_evaluation_configs_endpoint_returns_template_id_and_eval_type(
 
 
 @pytest.mark.django_db
-def test_evaluation_configs_endpoint_surfaces_run_config(
-    auth_client, user, workspace
-):
+def test_evaluation_configs_endpoint_surfaces_run_config(auth_client, user, workspace):
     template = EvalTemplate.objects.create(
         name="workbench-fixture-runtime",
         description="",
@@ -341,9 +339,7 @@ def test_update_evaluation_configs_persists_error_localizer_from_fe(
     )
     assert save_response.status_code == 200, save_response.content
 
-    saved = PromptEvalConfig.objects.get(
-        prompt_template=prompt_template, deleted=False
-    )
+    saved = PromptEvalConfig.objects.get(prompt_template=prompt_template, deleted=False)
     assert saved.error_localizer is True
 
     read_response = auth_client.get(

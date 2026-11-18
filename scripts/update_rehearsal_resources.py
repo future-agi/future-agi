@@ -102,7 +102,7 @@ MIGRATION_NAME = re.compile(r"[A-Za-z0-9_]{1,128}\Z")
 class ResourceObservationError(RuntimeError):
     """Closed, path-free resource-observation refusal."""
 
-    def __init__(self, code: str = "resource_observation_unavailable"):
+    def __init__(self, code: str = "resource_observation_unavailable", *, sampling_failure: Any = None):
         allowed = {
             "resource_observation_unavailable", "resource_identity_ambiguous",
             "resource_sampling_gap", "resource_sampling_failed",
@@ -110,6 +110,8 @@ class ResourceObservationError(RuntimeError):
             "resource_reader_timeout", "resource_reader_failed",
         }
         self.code = code if code in allowed else "resource_observation_unavailable"
+        self.sampling_failure = (sampling_failure_diagnostics(sampling_failure)
+                                 if self.code == "resource_sampling_gap" else None)
         super().__init__(self.code)
 
 
@@ -124,6 +126,74 @@ def _is_int(value: Any) -> bool:
 
 def _is_number(value: Any) -> bool:
     return type(value) in (int, float) and math.isfinite(value)
+
+
+def sampling_failure_diagnostics(value: Any) -> Optional[dict]:
+    """Project only bounded numeric gap diagnostics, including after JSON decoding.
+
+    This is deliberately not raw evidence: at most the first offending pair's
+    two read timings survive. No caller/reader strings or unknown fields cross
+    the diagnostic boundary, even if an exception attribute was later mutated.
+    """
+    def number(item: Any, *, signed: bool = False) -> bool:
+        return (type(item) in (int, float)
+                and (-MAX_COUNTER if signed else 0) <= item <= MAX_COUNTER and math.isfinite(item))
+
+    if (type(value) is not dict or type(value.get("schema_version")) is not int
+            or value["schema_version"] != 1 or value.get("qualification_evidence") is not False
+            or type(value.get("sample_count")) is not int
+            or not 2 <= value["sample_count"] <= MAX_SAMPLE_COUNT):
+        return None
+    result = dict(schema_version=1, qualification_evidence=False, sample_count=value["sample_count"])
+    for key in ("started_monotonic", "completed_monotonic", "first_monotonic", "last_monotonic"):
+        item = value.get(key)
+        result[key] = item if number(item) else None
+    result["first_offending_pair"] = None
+    pair = value.get("first_offending_pair")
+    if (type(pair) is dict and type(pair.get("previous_index")) is int
+            and type(pair.get("index")) is int
+            and 0 <= pair["previous_index"] == pair["index"] - 1 < value["sample_count"] - 1
+            and number(pair.get("previous_monotonic")) and number(pair.get("monotonic"))
+            and number(pair.get("delta_seconds"), signed=True)
+            and pair["delta_seconds"] == pair["monotonic"] - pair["previous_monotonic"]
+            and not 0 < pair["delta_seconds"] <= MAX_SAMPLE_GAP_SECONDS):
+        result["first_offending_pair"] = {key: pair[key] for key in
+            ("previous_index", "index", "previous_monotonic", "monotonic", "delta_seconds")}
+    result["reads"] = []
+    reads = value.get("reads")
+    if result["first_offending_pair"] is not None and type(reads) is list and len(reads) <= 2:
+        seen = set()
+        for row in reads:
+            keys = ("started_monotonic", "completed_monotonic", "docker_seconds", "native_reader_seconds")
+            if (type(row) is not dict or type(row.get("sample_index")) is not int
+                    or row["sample_index"] not in (pair["previous_index"], pair["index"])
+                    or row["sample_index"] in seen or not all(number(row.get(key)) for key in keys)
+                    or row["completed_monotonic"] != pair["previous_monotonic" if
+                        row["sample_index"] == pair["previous_index"] else "monotonic"]
+                    or row["completed_monotonic"] < row["started_monotonic"]
+                    or any(row[key] > row["completed_monotonic"] - row["started_monotonic"]
+                           for key in ("docker_seconds", "native_reader_seconds"))
+                    or type(row.get("privileged_fallback")) is not bool
+                    or not (row.get("scheduling_lateness_seconds") is None
+                            or number(row["scheduling_lateness_seconds"]))):
+                continue
+            seen.add(row["sample_index"])
+            result["reads"].append(dict(sample_index=row["sample_index"],
+                **{key: row[key] for key in keys}, privileged_fallback=row["privileged_fallback"],
+                scheduling_lateness_seconds=row.get("scheduling_lateness_seconds")))
+    return result
+
+
+def _sampling_gap_details(samples: list[dict], started: Any, completed: Any,
+                          index: Optional[int] = None) -> dict:
+    pair = None if index is None else dict(previous_index=index - 1, index=index,
+        previous_monotonic=samples[index - 1]["monotonic"], monotonic=samples[index]["monotonic"],
+        delta_seconds=samples[index]["monotonic"] - samples[index - 1]["monotonic"])
+    return dict(schema_version=1, qualification_evidence=False, sample_count=len(samples),
+        started_monotonic=started, completed_monotonic=completed,
+        first_monotonic=samples[0]["monotonic"],
+        last_monotonic=samples[-1].get("monotonic") if type(samples[-1]) is dict else None,
+        first_offending_pair=pair, reads=[])
 
 
 def _hash(value: Any) -> str:
@@ -229,15 +299,18 @@ def validate_samples(samples: Any, duration_seconds: Any, *, started_monotonic: 
         _need(sample["boundary"] == expected, "resource_sampling_failed")
         if index:
             delta = stamp - samples[index - 1]["monotonic"]
-            _need(0 < delta <= MAX_SAMPLE_GAP_SECONDS, "resource_sampling_gap")
+            if not 0 < delta <= MAX_SAMPLE_GAP_SECONDS:
+                raise ResourceObservationError("resource_sampling_gap", sampling_failure=
+                    _sampling_gap_details(samples, started_monotonic, completed_monotonic, index))
     _need(_is_number(started_monotonic) and _is_number(completed_monotonic)
           and started_monotonic >= 0 and completed_monotonic > started_monotonic
           and math.isclose(completed_monotonic - started_monotonic, duration_seconds,
                            rel_tol=1e-12, abs_tol=1e-9), "resource_sampling_failed")
-    _need(samples[0]["monotonic"] <= started_monotonic < completed_monotonic <= samples[-1]["monotonic"]
-          and started_monotonic - samples[0]["monotonic"] <= MAX_SAMPLE_GAP_SECONDS
-          and samples[-1]["monotonic"] - completed_monotonic <= MAX_SAMPLE_GAP_SECONDS,
-          "resource_sampling_gap")
+    if not (samples[0]["monotonic"] <= started_monotonic < completed_monotonic <= samples[-1]["monotonic"]
+            and started_monotonic - samples[0]["monotonic"] <= MAX_SAMPLE_GAP_SECONDS
+            and samples[-1]["monotonic"] - completed_monotonic <= MAX_SAMPLE_GAP_SECONDS):
+        raise ResourceObservationError("resource_sampling_gap", sampling_failure=
+            _sampling_gap_details(samples, started_monotonic, completed_monotonic))
 
 
 def reduce_envelope(pending_plan: list[dict], tables: list[dict], migration_tables: list[dict],
@@ -346,6 +419,9 @@ class NormalBootstrapEnvelopeSampler:
         self.clock, self.interval = clock, float(interval_seconds)
         self._used = False
         self._samples: list[dict] = []
+        self._last_read_timing: Optional[dict] = None
+        self._last_sample_timing: Optional[dict] = None
+        self._first_gap_read_timings: Optional[list[dict]] = None
         self._sample_lock = threading.Lock()
         self._sample_error: Optional[BaseException] = None
         self._stop = threading.Event()
@@ -662,6 +738,7 @@ class NormalBootstrapEnvelopeSampler:
         }
 
     def _fixed_reader(self, request: dict) -> dict:
+        self._reader_fallback_used = False
         script = str(Path(__file__).resolve())
         payload = canonical_json(request)
         _need(len(payload) <= MAX_READER_INPUT, "resource_reader_failed")
@@ -721,6 +798,7 @@ class NormalBootstrapEnvelopeSampler:
             # already required native amd64 GitHub Actions and no local Docker.
             sudo = "/usr/bin/sudo"
             _need(Path(sudo).is_file() and os.access(sudo, os.X_OK), "resource_reader_failed")
+            self._reader_fallback_used = True
             result = invoke([sudo, "-n", *command])
         # Separate checks so a failure diagnostic's line names the reader outcome.
         _need(result.returncode != 4, "resource_reader_failed")  # a listed entry vanished mid-walk
@@ -735,23 +813,48 @@ class NormalBootstrapEnvelopeSampler:
         return counters
 
     def _read(self) -> dict:
+        # Elapsed Docker identity/validation and native-wrapper spans, not CPU
+        # time or causal attribution. The latter includes any permission retry.
+        started = self.clock()
         identity = self._verify_identity(check_ready=False, check_daemon=False)
+        docker_completed = self.clock()
         request = self._reader_request(identity)
+        reader_started = self.clock()
         counters = self._fixed_reader(request)
-        return dict(counters, monotonic=self.clock())
+        completed = self.clock()  # Still timestamp the end of the synchronous read.
+        self._last_read_timing = dict(started_monotonic=started, completed_monotonic=completed,
+            docker_seconds=docker_completed - started, native_reader_seconds=completed - reader_started,
+            privileged_fallback=self._reader_fallback_used)
+        return dict(counters, monotonic=completed)
 
-    def _take_sample(self, boundary: str) -> None:
+    def _take_sample(self, boundary: str, *, scheduled_monotonic: Optional[float] = None) -> None:
         _need(boundary in ("before_start", "during", "after_end"), "resource_sampling_failed")
+        self._last_read_timing = None
         row = self._read()
         sample = dict(row, boundary=boundary)
         with self._sample_lock:
             _need(len(self._samples) < MAX_SAMPLE_COUNT, "resource_sampling_failed")
+            index = len(self._samples)
+            timing = None if self._last_read_timing is None else dict(self._last_read_timing,
+                sample_index=index, scheduling_lateness_seconds=None if scheduled_monotonic is None else
+                max(0, self._last_read_timing["started_monotonic"] - scheduled_monotonic))
+            # Keep only the first bad pair, not a second per-sample evidence log.
+            if index and self._first_gap_read_timings is None:
+                delta = sample["monotonic"] - self._samples[-1]["monotonic"]
+                if not 0 < delta <= MAX_SAMPLE_GAP_SECONDS:
+                    self._first_gap_read_timings = [dict(item) for item in (self._last_sample_timing, timing)
+                                                    if item is not None]
             self._samples.append(sample)
+            self._last_sample_timing = timing
 
     def _sample_loop(self) -> None:
         try:
-            while not self._stop.wait(self.interval):
-                self._take_sample("during")
+            while True:
+                # Keep the wait-after-read cadence; never catch up to this label.
+                scheduled = self.clock() + self.interval
+                if self._stop.wait(self.interval):
+                    break
+                self._take_sample("during", scheduled_monotonic=scheduled)
         except BaseException as exc:
             self._sample_error = exc
             self._stop.set()
@@ -796,9 +899,15 @@ class NormalBootstrapEnvelopeSampler:
             raise ResourceObservationError("resource_identity_ambiguous") from None
         duration = completed - started
         samples = [dict(row) for row in self._samples]
-        measurement = reduce_envelope(self._bound_plan, self._bound_tables, self._bound_migration_tables,
-                                      samples, duration, started_monotonic=started,
-                                      completed_monotonic=completed)
+        try:
+            measurement = reduce_envelope(self._bound_plan, self._bound_tables, self._bound_migration_tables,
+                                          samples, duration, started_monotonic=started,
+                                          completed_monotonic=completed)
+        except ResourceObservationError as exc:
+            if exc.sampling_failure is not None:
+                exc.sampling_failure = sampling_failure_diagnostics(dict(exc.sampling_failure,
+                    reads=self._first_gap_read_timings or []))
+            raise  # Same refusal and traceback; no EnvelopeResult or qualifying evidence.
         _need(pending_migration_plan_hash(measurement["pending_plan"]) == self._bound_plan_hash
               and _hash(measurement["tables"]) == self._bound_tables_hash
               and _hash(measurement["migration_tables"]) == self._bound_migration_tables_hash,

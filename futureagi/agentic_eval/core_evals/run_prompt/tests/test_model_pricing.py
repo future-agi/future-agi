@@ -60,8 +60,8 @@ class TestTokenBasedPricing:
         assert pricing is not None
         assert "input_per_1M_tokens" in pricing
         assert "output_per_1M_tokens" in pricing
-        assert pricing["input_per_1M_tokens"] == 5
-        assert pricing["output_per_1M_tokens"] == 15
+        assert pricing["input_per_1M_tokens"] == 2.5
+        assert pricing["output_per_1M_tokens"] == 10
 
     def test_gpt4o_mini_pricing_lookup(self):
         """Test that gpt-4o-mini pricing is found correctly."""
@@ -70,8 +70,8 @@ class TestTokenBasedPricing:
         assert pricing is not None
         assert "input_per_1M_tokens" in pricing
         assert "output_per_1M_tokens" in pricing
-        assert pricing["input_per_1M_tokens"] == 2
-        assert pricing["output_per_1M_tokens"] == 4
+        assert pricing["input_per_1M_tokens"] == 0.15
+        assert pricing["output_per_1M_tokens"] == 0.6
 
     def test_calculate_cost_llm_model(self):
         """Test cost calculation for LLM model with token usage."""
@@ -87,16 +87,17 @@ class TestTokenBasedPricing:
         assert "completion_cost" in result
         assert "pricing_source" in result
 
-        # gpt-4o: $5/1M input, $15/1M output
-        # prompt_cost = 1000/1M * 5 = 0.005
-        # completion_cost = 500/1M * 15 = 0.0075
-        expected_prompt = round((1000 / 1_000_000) * 5, 6)
-        expected_completion = round((500 / 1_000_000) * 15, 6)
+        # gpt-4o: $2.5/1M input, $10/1M output (the gateway's price)
+        # prompt_cost = 1000/1M * 2.5 = 0.0025
+        # completion_cost = 500/1M * 10 = 0.005
+        expected_prompt = round((1000 / 1_000_000) * 2.5, 6)
+        expected_completion = round((500 / 1_000_000) * 10, 6)
 
         assert result["prompt_cost"] == expected_prompt
         assert result["completion_cost"] == expected_completion
         assert result["total_cost"] == round(expected_prompt + expected_completion, 6)
-        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == 0.0075
+        assert result["pricing_source"] == "gateway_table"
 
     def test_calculate_cost_zero_tokens(self):
         """Test cost calculation with zero tokens."""
@@ -125,8 +126,7 @@ class TestTokenBasedPricing:
         assert result["prompt_cost"] == 0.00021
         assert result["completion_cost"] == 0.000375
         assert result["total_cost"] == 0.000585
-        assert result["pricing_source"] == "available_models"
-
+        assert result["pricing_source"] == "gateway_table"
 
     def test_calculate_cost_prices_gemini_38_flash(self):
         result = calculate_total_cost(
@@ -140,14 +140,17 @@ class TestTokenBasedPricing:
         )
 
         assert result["total_cost"] == 0.000585
-        assert result["pricing_source"] == "available_models"
+        assert result["pricing_source"] == "gateway_table"
 
     @pytest.mark.requires_ee
     def test_turing_alias_pricing_lookup(self):
         """Test that evaluator aliases use catalog pricing instead of fallback."""
         expected_pricing = {
             "turing_large": {"input_per_1M_tokens": 5.5, "output_per_1M_tokens": 27.5},
-            "turing_large_xl": {"input_per_1M_tokens": 1.25, "output_per_1M_tokens": 10},
+            "turing_large_xl": {
+                "input_per_1M_tokens": 1.25,
+                "output_per_1M_tokens": 10,
+            },
             "turing_small": {"input_per_1M_tokens": 3.3, "output_per_1M_tokens": 16.5},
             "turing_flash": {"input_per_1M_tokens": 1.1, "output_per_1M_tokens": 5.5},
         }
@@ -796,8 +799,7 @@ class TestPricingStructureValidation:
             pricing = model["pricing"]
             has_token = self._TOKEN_KEYS.issubset(pricing)
             has_char = bool(
-                {"input_per_1k_characters", "input_per_1M_characters"}
-                & set(pricing)
+                {"input_per_1k_characters", "input_per_1M_characters"} & set(pricing)
             )
             assert has_token or has_char, (
                 f"Chat model {model['model_name']} missing token/character pricing keys"
@@ -806,8 +808,7 @@ class TestPricingStructureValidation:
     def test_tts_models_have_character_pricing(self):
         """TTS models must carry character or token keys."""
         tts_models = [
-            m for m in AVAILABLE_MODELS
-            if m.get("mode") == "tts" and m.get("pricing")
+            m for m in AVAILABLE_MODELS if m.get("mode") == "tts" and m.get("pricing")
         ]
 
         for model in tts_models:
@@ -821,8 +822,7 @@ class TestPricingStructureValidation:
     def test_stt_models_have_minute_pricing(self):
         """STT models must carry minute keys and no higher-precedence keys."""
         stt_models = [
-            m for m in AVAILABLE_MODELS
-            if m.get("mode") == "stt" and m.get("pricing")
+            m for m in AVAILABLE_MODELS if m.get("mode") == "stt" and m.get("pricing")
         ]
 
         for model in stt_models:
@@ -840,7 +840,8 @@ class TestPricingStructureValidation:
         """Image models must carry per_image/quality keys and no
         higher-precedence keys that would win the cost branch."""
         image_models = [
-            m for m in AVAILABLE_MODELS
+            m
+            for m in AVAILABLE_MODELS
             if m.get("mode") == "image_generation" and m.get("pricing")
         ]
 
@@ -849,9 +850,9 @@ class TestPricingStructureValidation:
             assert self._IMAGE_KEYS & set(pricing), (
                 f"Image model {model['model_name']} missing per_image/quality pricing"
             )
-            forbidden = (
-                self._TOKEN_KEYS | self._CHAR_KEYS | self._MINUTE_KEYS
-            ) & set(pricing)
+            forbidden = (self._TOKEN_KEYS | self._CHAR_KEYS | self._MINUTE_KEYS) & set(
+                pricing
+            )
             assert not forbidden, (
                 f"Image model {model['model_name']} has higher-precedence keys "
                 f"{forbidden} that would shadow image pricing in calculate_total_cost"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import override_settings
 from django.utils import timezone as django_timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
 from simulate.models import (
@@ -32,8 +34,8 @@ from simulate.services.hosted_harness import (
     update_execution_counts,
 )
 from simulate.services.hosted_harness_ingestion import (
-    _apply_target_metrics,
     _apply_receipt_to_call,
+    _apply_target_metrics,
     _call_lifecycle_status,
     _ingest_hosted_transcript,
     _normalized_artifact_content_type,
@@ -43,6 +45,7 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_artifact,
     ingest_result_receipt,
 )
+from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
 
 BASE = "/simulate/api/harness/attempts"
 
@@ -467,7 +470,7 @@ def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
             ],
             "evaluations": [],
         }
-    ) == {"expected": 2, "executed": 1, "failed": 1, "complete": False}
+    ) == {"expected": 2, "executed": 1, "failed": 1, "unmeasured": 0, "complete": False}
 
 
 def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
@@ -545,9 +548,11 @@ def test_receipt_projects_actual_call_end_time_and_duration():
         artifacts.filter.return_value.order_by.return_value.last.return_value = None
         _apply_receipt_to_call(registration, body)
 
-    assert call.started_at == "2026-08-27T10:00:00Z"
-    assert call.ended_at == "2026-08-27T10:01:22Z"
-    assert call.completed_at == "2026-08-27T10:01:22Z"
+    assert call.started_at == datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
+    assert call.ended_at == datetime(2026, 8, 27, 10, 1, 22, tzinfo=UTC)
+    assert call.completed_at == call.ended_at
+    assert body["call"]["started_at"] == "2026-08-27T10:00:00Z"
+    assert body["call"]["ended_at"] == "2026-08-27T10:01:22Z"
     assert call.duration_seconds == 82
     assert call.ended_reason == "simulator_end_call"
     assert (
@@ -752,6 +757,13 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
             "messages": [
                 {"role": "user", "content": "Where is my invoice?"},
                 {"role": "assistant", "content": "I can look that up."},
+                {
+                    "role": "actor",
+                    "actor": "partner",
+                    "name": "Sam",
+                    "content": "It is invoice 1046.",
+                },
+                {"role": "assistant", "content": "Looking up invoice 1046."},
             ]
         }
     ).encode()
@@ -768,7 +780,12 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
         ChatMessageModel.objects.filter(call_execution=call)
         .order_by("created_at", "role")
         .values_list("role", flat=True)
-    ) == ["user", "assistant"]
+    ) == ["user", "assistant", "user", "assistant"]
+    # What someone else in the conversation wrote reaches the chat view and every judge, named as not the person.
+    assert ChatMessageModel.objects.filter(
+        call_execution=call,
+        messages=["Sam (not the person being served): It is invoice 1046."],
+    ).exists()
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
 
@@ -1044,6 +1061,7 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "expected": 1,
         "executed": 1,
         "failed": 0,
+        "unmeasured": 0,
         "complete": True,
     }
 
@@ -1422,7 +1440,8 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     )
     assert created is True
     job.refresh_from_db()
-    assert job.completed_count == 1
+    # The receipt has no call, so no agent turn: its sealed pass is not counted.
+    assert job.completed_count == 0
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
     update_execution_counts(job)
     job.refresh_from_db()
@@ -1889,6 +1908,78 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
 
 
 @pytest.mark.django_db
+def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="world-state-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    content = json.dumps(
+        {
+            "schema": "futureagi.world-state.v1",
+            "tables": {"orders": []},
+            "skipped": [],
+            "action_log": [],
+        }
+    ).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=MagicMock(),
+    ):
+        response = APIClient().generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="application/json",
+            HTTP_X_ARTIFACT_KIND="world_state",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="refund-1",
+            **_headers(capability),
+        )
+    assert response.status_code == 201, response.content
+
+    # The trial's World changes name it by digest, so the result links the end state of that trial, not another's.
+    from simulate.selectors.call_detail import trial_state as _trial_state
+    from simulate.services.hosted_harness_ingestion import _world_change_fields
+
+    sealed = _world_change_fields(
+        {"end_state_artifact": f"sha256:{digest}", "start": {"state": "seeded"}}
+    )
+    assert sealed["end_state_artifact"] == f"sha256:{digest}"
+    assert (
+        _world_change_fields({"end_state_artifact": "not-a-digest"}).get(
+            "end_state_artifact"
+        )
+        is None
+    )
+    # The job names no platform run; the trial finds its end state by the job that sent its receipt.
+    assert "platform_run_id" not in (job.payload.get("metadata") or {})
+
+    def trial(organization_id, workspace_id, job_id=job.id):
+        run_test = SimpleNamespace(
+            organization_id=organization_id, workspace_id=workspace_id
+        )
+        return SimpleNamespace(
+            call_metadata={
+                "harness_trial_state": {"state_changes": [], **sealed},
+                "hosted_harness_receipt": {"job_id": str(job_id)},
+            },
+            test_execution=SimpleNamespace(run_test=run_test),
+        )
+
+    linked = _trial_state(trial(job.organization_id, job.workspace_id))
+    assert linked["end_state_url"] and digest in linked["end_state_url"]
+    # The same digest named by another organisation's, workspace's or job's trial links nothing.
+    for other in (
+        trial(uuid.uuid4(), job.workspace_id),
+        trial(job.organization_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, "not-a-job"),
+    ):
+        assert "end_state_url" not in _trial_state(other)
+
+
+@pytest.mark.django_db
 def test_artifact_budget_is_rechecked_after_concurrent_upload(organization, settings):
     settings.HARNESS_MAX_ARTIFACT_BYTES = 10
     payload = _payload(
@@ -2133,3 +2224,464 @@ def test_scenario_receipt_manifest_and_cleanup_finalize_platform_rows(organizati
     assert finalized.current_stage == "completed"
     finalized.test_execution.refresh_from_db()
     assert finalized.test_execution.status == "completed"
+
+
+@pytest.mark.django_db
+def test_hosted_receipt_for_a_silent_call_holds_no_passing_eval(organization):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="silent-agent-receipt-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Silent agent",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "silent-one",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    provisioned = provision.json()["result"]
+    scenario = provisioned["scenarios"][0]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["silent-one"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "silent-one",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "passed",
+        "sub_goals": [
+            {"name": "booking_created", "held": True, "judged": False, "reason": None}
+        ],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    _, created = ingest_result_receipt(capability.attempt, receipt)
+    assert created is True
+
+    call = CallExecution.objects.get(
+        hosted_registration__job=job,
+        hosted_registration__scenario_key="silent-one",
+    )
+    (output,) = call.eval_outputs.values()
+    assert output["status"] == "skipped"
+    assert output["source"] == "harness"
+    assert call.call_metadata["processing_skipped"] is True
+    assert call.status == CallExecution.CallStatus.COMPLETED
+    assert call_outcome(call, {}) == "inconclusive"
+
+
+_CUSTOMER_ONLY = [
+    {"role": "user", "content": "Hello? Is anyone there?"},
+    {"role": "user", "content": "Hello?"},
+]
+_ANSWERED = [
+    *_CUSTOMER_ONLY,
+    {"role": "assistant", "content": "Sorry, I am here now. How can I help?"},
+]
+
+
+def _begin_hosted_scenario(organization, workspace, *, key, modality):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=key, workspace=workspace
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Hosted silent",
+            "modality": modality,
+            "personas": [
+                {
+                    "scenario_key": "hosted-one",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    provisioned = provision.json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["hosted-one"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    return job, capability, provisioned["scenarios"][0]["scenario_id"]
+
+
+def _store_transcript_artifact(job, messages, *, kind="transcript"):
+    from simulate.models import HostedHarnessArtifact
+
+    content = json.dumps({"messages": messages}).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    HostedHarnessArtifact.no_workspace_objects.create(
+        job=job,
+        sha256=digest,
+        kind=kind,
+        size=len(content),
+        content_type="application/json",
+        object_key=f"hosted/{digest}.json",
+        scenario_key="hosted-one",
+    )
+    return digest, content
+
+
+def _hosted_receipt(job, capability, scenario_id, *, modality, transcript=None):
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "hosted-one",
+        "scenario_id": scenario_id,
+        "scenario_attempt": 1,
+        "world_index": None,
+        "modality": modality,
+        "status": "passed",
+        "sub_goals": [
+            {"name": "booking_created", "held": True, "judged": False, "reason": None}
+        ],
+        "evaluations": [],
+        "call": {
+            "started_at": "2026-09-28T10:00:00.000Z",
+            "ended_at": "2026-09-28T10:01:00.000Z",
+            "duration_ms": 60_000,
+            "turns": 3,
+            "transcript_artifact": transcript,
+            "recording_artifacts": [],
+        },
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    return receipt
+
+
+def _ingest_hosted(job, capability, receipt, content=None, **kwargs):
+    storage = MagicMock()
+    if content is not None:
+        storage.get_object.return_value.read.return_value = content
+    # The endpoint's serializer parses the call's timestamps before ingestion.
+    parsed = {
+        **receipt,
+        "call": {
+            **receipt["call"],
+            "started_at": parse_datetime(receipt["call"]["started_at"]),
+            "ended_at": parse_datetime(receipt["call"]["ended_at"]),
+        },
+    }
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion.get_storage_client",
+            return_value=storage,
+        ),
+        patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"),
+    ):
+        ingest_result_receipt(capability.attempt, parsed, digest_body=receipt, **kwargs)
+    call = CallExecution.objects.get(
+        hosted_registration__job=job, hosted_registration__scenario_key="hosted-one"
+    )
+    job.refresh_from_db()
+    return call
+
+
+@pytest.mark.django_db
+def test_hosted_silent_receipt_is_not_counted_as_a_completed_scenario(
+    organization, workspace
+):
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key="hosted-silent-count", modality="text"
+    )
+    receipt = _hosted_receipt(job, capability, scenario_id, modality="text")
+
+    call = _ingest_hosted(job, capability, receipt)
+
+    assert call.call_metadata["processing_skipped"] is True
+    assert job.completed_count == 0
+    assert HostedHarnessReceipt.no_workspace_objects.get(job=job).status == "passed"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
+def test_recovered_transcript_restores_the_pass_of_a_call_the_agent_answered(
+    organization, workspace, modality
+):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key=f"hosted-recovery-{modality}", modality=modality
+    )
+    receipt = _hosted_receipt(job, capability, scenario_id, modality=modality)
+    silent = _ingest_hosted(job, capability, receipt)
+    assert silent.call_metadata["processing_skipped"] is True
+    assert call_outcome(silent, {}) == "inconclusive"
+
+    digest, content = _store_transcript_artifact(job, _ANSWERED)
+    call = _ingest_hosted(
+        job,
+        capability,
+        receipt,
+        content,
+        recovered_artifact_ids=[f"sha256:{digest}"],
+    )
+
+    (output,) = call.eval_outputs.values()
+    assert output["output"] == "Passed"
+    assert output["status"] == "completed"
+    assert call.call_metadata["processing_skipped"] is False
+    assert call.call_metadata["processing_skip_reason"] is None
+    assert call_outcome(call, {}) == "passed"
+    assert job.completed_count == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
+def test_hosted_receipt_with_a_customer_only_transcript_holds_no_passing_eval(
+    organization, workspace, modality
+):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization,
+        workspace,
+        key=f"hosted-customer-only-{modality}",
+        modality=modality,
+    )
+    digest, content = _store_transcript_artifact(job, _CUSTOMER_ONLY)
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality=modality, transcript=f"sha256:{digest}"
+    )
+
+    call = _ingest_hosted(job, capability, receipt, content)
+
+    assert call.simulation_call_type == modality
+    assert call.transcripts.count() + call.chat_messages.count() > 0
+    (output,) = call.eval_outputs.values()
+    assert output["status"] == "skipped"
+    assert output["output"] is None
+    assert call.call_metadata["processing_skipped"] is True
+    assert call_outcome(call, {}) == "inconclusive"
+    assert job.completed_count == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
+def test_hosted_receipt_the_agent_answered_keeps_its_pass(
+    organization, workspace, modality
+):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key=f"hosted-answered-{modality}", modality=modality
+    )
+    digest, content = _store_transcript_artifact(job, _ANSWERED)
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality=modality, transcript=f"sha256:{digest}"
+    )
+
+    call = _ingest_hosted(job, capability, receipt, content)
+
+    (output,) = call.eval_outputs.values()
+    assert output["output"] == "Passed"
+    assert not call.call_metadata.get("processing_skipped")
+    assert call_outcome(call, {}) == "passed"
+    assert job.completed_count == 1
+
+
+_EITHER_SIDE_REASON = (
+    "We could not find enough conversation from either side to process this call."
+)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
+@pytest.mark.parametrize("signals", [None, (2, False, False)])
+def test_platform_eval_job_after_a_silent_ingest_keeps_the_call_inconclusive(
+    organization, workspace, modality, signals
+):
+    """The eval job rewrites the skip reason; the withheld verdict must outlive it."""
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models.eval_config import SimulateEvalConfig
+    from simulate.services.run_results_v3 import build_call_rows, call_outcome
+    from simulate.services.test_executor import TestExecutor
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key=f"hosted-eval-job-{modality}", modality=modality
+    )
+    receipt = _hosted_receipt(job, capability, scenario_id, modality=modality)
+    call = _ingest_hosted(job, capability, receipt)
+    assert call.call_metadata["processing_skipped"] is True
+    template = EvalTemplate.objects.create(
+        name="Tone", config={"prompt": "Judge the tone"}, organization=organization
+    )
+    eval_config = SimulateEvalConfig.objects.create(
+        name="Tone", eval_template=template, run_test=call.test_execution.run_test
+    )
+    run_test = call.test_execution.run_test
+    run_test.enable_tool_evaluation = False
+    run_test.save(update_fields=["enable_tool_evaluation"])
+
+    executor = TestExecutor()
+    patches = [
+        patch("simulate.services.test_executor.close_old_connections", lambda: None),
+        patch.object(
+            TestExecutor,
+            "_get_call_transcript_data",
+            return_value={"transcript": ""},
+        ),
+    ]
+    if signals is not None:
+        patches.append(
+            patch.object(
+                TestExecutor, "_get_conversation_presence_signals", return_value=signals
+            )
+        )
+    for item in patches:
+        item.start()
+    try:
+        executor._run_simulate_evaluations(call, eval_config_ids=[eval_config.id])
+    finally:
+        for item in patches:
+            item.stop()
+
+    call.refresh_from_db()
+    # The executor's own skip reason replaced the silent one ...
+    assert call.call_metadata["processing_skip_reason"] != SILENT_AGENT_SKIP_REASON
+    if signals is not None:
+        assert call.call_metadata["processing_skip_reason"] == _EITHER_SIDE_REASON
+    # ... but the verdict stays withheld on every surface that reads it.
+    assert call_outcome(call, {}) == "inconclusive"
+    rows, _ = build_call_rows(call.test_execution, [call], [], set())
+    assert rows[0]["outcome"] == "inconclusive"
+    assert rows[0]["harness_outcome_status"] is None
+
+
+@pytest.mark.django_db
+def test_hosted_scenario_count_scopes_its_silent_filter_to_the_run(
+    organization, workspace
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from simulate.models import RunTest, Scenarios, TestExecution
+    from simulate.services.hosted_harness import update_execution_counts
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key="hosted-silent-scope", modality="text"
+    )
+    digest, content = _store_transcript_artifact(job, _ANSWERED)
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality="text", transcript=f"sha256:{digest}"
+    )
+    answered = _ingest_hosted(job, capability, receipt, content)
+    assert answered.call_metadata.get("harness_verdict_withheld") is not True
+    assert job.completed_count == 1
+
+    # Withheld calls of another run, in the same organization, must not matter.
+    other_run = RunTest.objects.create(
+        name="Other run", organization=organization, workspace=workspace
+    )
+    other_execution = TestExecution.objects.create(
+        run_test=other_run, status=TestExecution.ExecutionStatus.COMPLETED
+    )
+    other_scenario = Scenarios.objects.create(
+        name="Other scenario",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.SCRIPT,
+        organization=organization,
+        workspace=workspace,
+    )
+    for _ in range(3):
+        CallExecution.objects.create(
+            test_execution=other_execution,
+            scenario=other_scenario,
+            status="completed",
+            call_metadata={"harness_verdict_withheld": True},
+            eval_outputs={},
+        )
+
+    with CaptureQueriesContext(connection) as queries:
+        update_execution_counts(job)
+
+    job.refresh_from_db()
+    assert job.completed_count == 1
+    (silent,) = [
+        q["sql"] for q in queries if "harness_verdict_withheld" in q["sql"].lower()
+    ]
+    # The filter reaches calls only through this run's receipts: no subquery selects
+    # from the call table, so the plan never scans the other runs' calls.
+    assert 'FROM "simulate_call_execution"' not in silent
+    assert job.id.hex in silent.replace("-", "")
+
+
+@pytest.mark.django_db
+def test_hosted_text_agent_that_only_acted_keeps_its_pass(organization, workspace):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key="hosted-tool-calls-only", modality="text"
+    )
+    digest, content = _store_transcript_artifact(
+        job,
+        [
+            {"role": "user", "content": "Please transfer me to billing."},
+            {
+                "role": "tool_calls",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "name": "transfer_call",
+                        "arguments": {"department": "billing"},
+                    }
+                ],
+            },
+        ],
+    )
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality="text", transcript=f"sha256:{digest}"
+    )
+
+    call = _ingest_hosted(job, capability, receipt, content)
+
+    (output,) = call.eval_outputs.values()
+    assert output["output"] == "Passed"
+    assert not call.call_metadata.get("processing_skipped")
+    assert call_outcome(call, {}) == "passed"
+    assert job.completed_count == 1

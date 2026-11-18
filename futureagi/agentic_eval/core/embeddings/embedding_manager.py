@@ -1,6 +1,7 @@
 import base64
 import concurrent.futures
 import csv
+import json
 import os
 import threading
 import time
@@ -12,6 +13,8 @@ from io import BytesIO
 
 import numpy as np
 from django.db import close_old_connections
+from django.db.models import JSONField
+from django.db.models.expressions import RawSQL
 from PIL import Image
 from tfc.telemetry import wrap_for_thread
 
@@ -1661,16 +1664,24 @@ class EmbeddingManager:
                 unique_keys=[unique_key],
             )
 
-            cells_to_update = list(Cell.objects.filter(id__in=cell_ids))
-
-            for cell in cells_to_update:
-                metadata = cell.column_metadata if cell.column_metadata else {}
-                metadata["embedding"] = True
-                if "audio_duration_seconds" not in metadata:
-                    metadata["audio_duration_seconds"] = 0
-                cell.column_metadata = metadata
-
-            Cell.objects.bulk_update(cells_to_update, ["column_metadata"])
+            # Merge this key into each cell's column_metadata in the database, in
+            # one statement: a read here and a write back would drop whatever
+            # another writer put in the column between the two (a run's
+            # ``run_started_at``, which dates the cell's price). The duration
+            # defaults to 0 only where the cell has none; ``embedding`` is set.
+            Cell.objects.filter(id__in=cell_ids).update(
+                column_metadata=RawSQL(
+                    "%s::jsonb"
+                    " || CASE WHEN jsonb_typeof(column_metadata) = 'object'"
+                    " THEN column_metadata ELSE '{}'::jsonb END"
+                    " || %s::jsonb",
+                    [
+                        json.dumps({"audio_duration_seconds": 0}),
+                        json.dumps({"embedding": True}),
+                    ],
+                    output_field=JSONField(),
+                )
+            )
 
             return cell_ids
 
