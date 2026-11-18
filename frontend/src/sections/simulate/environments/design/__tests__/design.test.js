@@ -67,4 +67,16 @@ describe("design", () => {
     expect(s.scenarios).toEqual([]);
     expect(s.approveBlocked).toBe(true);
   });
+
+  it("offers a stand-in for what can't be built and adds it once simulated", () => {
+    const d = draft({ description: "A customer emails a refund request." });
+    expect(designSummary(d, 1).deps.map((x) => [x.id, x.choice])).toEqual([
+      ["email", null],
+    ]);
+    const simulated = designSummary(
+      { ...d, depChoices: { email: "simulate" } },
+      1,
+    );
+    expect(simulated.tools.map((t) => t.name)).toContain("email_outbox");
+  });
 });

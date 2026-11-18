@@ -67,6 +67,38 @@ export const useDesignDraftStore = create(
           return note;
         },
 
+        // A behaviour that can't be built: "simulate" or "skip".
+        setDepChoice: (draftId, depId, choice) =>
+          set(
+            (s) =>
+              s.drafts[draftId]
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        depChoices: {
+                          ...s.drafts[draftId].depChoices,
+                          [depId]: choice,
+                        },
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "setDepChoice",
+          ),
+
+        discardDesignDraft: (draftId) =>
+          set(
+            (s) => {
+              const { [draftId]: _gone, ...drafts } = s.drafts;
+              return { drafts };
+            },
+            false,
+            "discardDesignDraft",
+          ),
+
         reset: () => set(store.getInitialState(), false, "reset"),
       }),
       {
