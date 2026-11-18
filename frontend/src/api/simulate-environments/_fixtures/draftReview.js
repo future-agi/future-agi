@@ -42,7 +42,7 @@ const PERSONAS = [
   "Rachel Greene",
   "Diane Sullivan",
 ];
-const ALL_SCENARIOS = SUBJECTS.flatMap((subject) =>
+export const ALL_SCENARIOS = SUBJECTS.flatMap((subject) =>
   PERSONAS.map((persona) => `${subject} · ${persona}`),
 );
 

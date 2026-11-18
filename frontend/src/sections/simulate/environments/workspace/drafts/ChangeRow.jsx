@@ -9,6 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 import ChangeDecision from "./ChangeDecision";
@@ -47,13 +48,12 @@ const sourceText = (source) => {
     hand: COPY.byHand,
     update: COPY.fromUpdate,
   }[line.kind];
-  return [from, line.where, clock(line.at)].filter(Boolean).join(" · ");
+  // A file row says where in the file, not when.
+  const at = line.kind === "file" ? null : clock(line.at);
+  return [from, line.where, at].filter(Boolean).join(" · ");
 };
 
-const linkText = (link) => {
-  if (link.kind === "chat") return COPY.openInChat;
-  return link.kind === "file" ? COPY.openFile(link.file) : COPY.open;
-};
+const linkText = (link) => (link.kind === "chat" ? COPY.openInChat : COPY.open);
 
 function DiffLine({ line }) {
   return (
@@ -183,26 +183,40 @@ export default function ChangeRow({
             </Typography>
           </OverflowTooltip>
         </Box>
-        <Button
-          size="small"
-          color="inherit"
-          onClick={() => onOpen(link)}
-          sx={{
-            flexShrink: 0,
-            maxWidth: LINK_MAX_WIDTH,
-            color: "text.secondary",
-            whiteSpace: "nowrap",
-          }}
-        >
-          <OverflowTooltip title={linkText(link)}>
-            <Box
-              component="span"
-              sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+        {link.kind === "file" ? (
+          // An icon, so the title keeps the room.
+          <CustomTooltip show size="small" arrow title={COPY.viewIn(link.file)}>
+            <IconButton
+              size="small"
+              aria-label={COPY.viewIn(link.file)}
+              onClick={() => onOpen(link)}
+              sx={{ flexShrink: 0, color: "text.secondary" }}
             >
-              {linkText(link)}
-            </Box>
-          </OverflowTooltip>
-        </Button>
+              <Iconify icon="solar:eye-linear" width={16} />
+            </IconButton>
+          </CustomTooltip>
+        ) : (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => onOpen(link)}
+            sx={{
+              flexShrink: 0,
+              maxWidth: LINK_MAX_WIDTH,
+              color: "text.secondary",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <OverflowTooltip title={linkText(link)}>
+              <Box
+                component="span"
+                sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                {linkText(link)}
+              </Box>
+            </OverflowTooltip>
+          </Button>
+        )}
         {canEdit && (
           <ChangeDecision
             decision={change.decision}
