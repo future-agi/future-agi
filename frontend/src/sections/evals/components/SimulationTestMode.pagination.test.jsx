@@ -258,6 +258,14 @@ describe("SimulationTestMode exact snapshot pagination", () => {
   const otherId = "4202acbe-7de9-4a00-a338-cc1003cf5a22";
   const columnName = "Expected reply";
 
+  async function goToSecondCall() {
+    fireEvent.click(screen.getByRole("button", { name: "Load more calls" }));
+    const counter = await screen.findByText("Call 1 · 2 of 2 loaded");
+    const [, nextCall] = within(counter.parentElement).getAllByRole("button");
+    fireEvent.click(nextCall);
+    expect(await screen.findByText("Call 2 · 2 of 2 loaded")).toBeVisible();
+  }
+
   it("keeps the selected scenario column UUID for save while the next call loads", async () => {
     const original = mocks.get.getMockImplementation();
     mocks.get.mockImplementation((url, config) => {
@@ -296,15 +304,66 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     );
     expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
 
-    fireEvent.click(screen.getByRole("button", { name: "Load more calls" }));
-    const counter = await screen.findByText("Call 1 · 2 of 2 loaded");
-    const [, nextCall] = within(counter.parentElement).getAllByRole("button");
-    fireEvent.click(nextCall);
-    expect(await screen.findByText("Call 2 · 2 of 2 loaded")).toBeVisible();
+    await goToSecondCall();
     expect(
       await screen.findByPlaceholderText("Loading columns..."),
     ).toBeDisabled();
     expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+  });
+
+  it("does not reuse a dotted column's UUID for a new nested field selection on the next call", async () => {
+    const path = "scenario.columns.profile.name";
+    const columnsByCall = {
+      "call-1": {
+        "profile.name": {
+          column_name: "profile.name",
+          dataset_column_id: selectedId,
+          value: "Literal name",
+        },
+      },
+      "call-2": {
+        profile: {
+          column_name: "profile",
+          dataset_column_id: otherId,
+          value: { name: "Nested name" },
+        },
+      },
+    };
+    const original = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation((url, config) => {
+      for (const [id, columns] of Object.entries(columnsByCall)) {
+        if (url === endpoints.runTests.callExecutionDetail(id)) {
+          return Promise.resolve({
+            data: { ...call(id), scenario_columns: columns },
+          });
+        }
+      }
+      return original(url, config);
+    });
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        variables={["first", "second"]}
+        onReadyChange={ready}
+      />,
+    );
+
+    await screen.findByText('"Literal name"');
+    fireEvent.mouseDown(screen.getAllByPlaceholderText("Search field...")[0]);
+    fireEvent.click(await screen.findByRole("option", { name: path }));
+    expect(ready).toHaveBeenLastCalledWith(false, { first: selectedId });
+
+    await goToSecondCall();
+    await screen.findByText('"Nested name"');
+    fireEvent.mouseDown(screen.getAllByPlaceholderText("Search field...")[1]);
+    fireEvent.click(await screen.findByRole("option", { name: path }));
+    expect(ready).toHaveBeenLastCalledWith(
+      true,
+      expect.objectContaining({
+        second: "scenario_columns.profile.value.name",
+      }),
+    );
   });
 
   function mockEmptyFirstExecution(scenarioColumns = {}) {

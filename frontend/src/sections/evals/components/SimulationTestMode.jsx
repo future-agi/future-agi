@@ -1169,20 +1169,22 @@ const SimulationTestMode = React.forwardRef(
       [selectedRunTestId, variables, mapping],
     );
 
-    // Keep selected fields' save keys across preview loads, not their call values.
-    const savedKeysByPath = useRef(new Map());
+    // A literal column and a nested field can share a display path across calls.
+    // Reuse a save key only for the variable that kept that selection.
+    const savedSelections = useRef(new Map());
     useEffect(() => {
       const persistedMapping = {};
-      const selectedKeys = new Map();
+      const nextSelections = new Map();
       for (const [variable, field] of Object.entries(mapping)) {
+        const previous = savedSelections.current.get(variable);
         const saveKey =
           preview?.scenarioIdsByPath.get(field) ??
-          savedKeysByPath.current.get(field) ??
+          (previous && previous.field === field ? previous.saveKey : null) ??
           (preview && translateDeepScenarioColumn(field));
-        if (saveKey) selectedKeys.set(field, saveKey);
+        if (saveKey) nextSelections.set(variable, { field, saveKey });
         persistedMapping[variable] = saveKey ?? field;
       }
-      savedKeysByPath.current = selectedKeys;
+      savedSelections.current = nextSelections;
       onReadyChange?.(isReady, persistedMapping);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isReady, mapping, preview]);
