@@ -1,22 +1,11 @@
 """Server-side score and response-time distributions for run dashboards."""
 
-from math import ceil
+from collections import Counter
+from math import ceil, floor
 from typing import Any
 
 from django.conf import settings
-from django.db.models import (
-    Case,
-    Count,
-    F,
-    FloatField,
-    Max,
-    Min,
-    Q,
-    QuerySet,
-    Value,
-    When,
-)
-from django.db.models.functions import Floor
+from django.db.models import Count, Max, Min, Q
 
 from simulate.services.run_results_v3_expressions import PercentileCont
 
@@ -31,29 +20,40 @@ def response_target_ms(*, voice: bool) -> int:
     return int(getattr(settings, name, 1500 if voice else 3000))
 
 
-def csat_distribution(queryset: QuerySet, total: int) -> dict[str, Any]:
-    counts = dict(
-        queryset.filter(dashboard_csat__isnull=False)
-        .order_by()
-        .annotate(score=Floor(F("dashboard_csat") + 0.5))
-        .values("score")
-        .annotate(count=Count("id"))
-        .values_list("score", "count")
-    )
-    satisfied = queryset.filter(dashboard_csat__gte=8).count()
-    comparison = queryset.filter(
+def csat_scalar_expressions() -> dict[str, Any]:
+    """Scalar CSAT aggregates, merged into the dashboard's single aggregate."""
+    compared = Q(
         dashboard_provider_success__in=["true", "false"],
         result_eval_outcome__in=["passed", "failed"],
-    ).aggregate(
-        compared=Count("id"),
-        agreed=Count(
+    )
+    return {
+        "csat_satisfied": Count("id", filter=Q(dashboard_csat__gte=8)),
+        "csat_compared": Count("id", filter=compared),
+        "csat_agreed": Count(
             "id",
-            filter=(
+            filter=compared
+            & (
                 Q(dashboard_provider_success="true", result_eval_outcome="passed")
                 | Q(dashboard_provider_success="false", result_eval_outcome="failed")
             ),
         ),
+    }
+
+
+def csat_distribution(
+    call_rows: list[dict[str, Any]], total: int, scalars: dict[str, Any]
+) -> dict[str, Any]:
+    # FLOOR(csat + 0.5) in float8, as Python floats compute it.
+    counts = Counter(
+        floor(row["dashboard_csat"] + 0.5)
+        for row in call_rows
+        if row["dashboard_csat"] is not None
     )
+    satisfied = scalars["csat_satisfied"]
+    comparison = {
+        "compared": scalars["csat_compared"],
+        "agreed": scalars["csat_agreed"],
+    }
     return {
         "bins": [
             {
@@ -82,36 +82,52 @@ def csat_distribution(queryset: QuerySet, total: int) -> dict[str, Any]:
     }
 
 
+def response_time_scalar_expressions() -> dict[str, Any]:
+    """Scalar response-time aggregates for both targets; the modality picks one."""
+    measured = Q(result_latency_ms__gte=0)
+    return {
+        "response_measured": Count("id", filter=measured),
+        "response_minimum": Min("result_latency_ms", filter=measured),
+        "response_maximum": Max("result_latency_ms", filter=measured),
+        "response_p50": PercentileCont("result_latency_ms", 0.5, filter=measured),
+        "response_p95": PercentileCont("result_latency_ms", 0.95, filter=measured),
+        **{
+            f"response_at_or_above_{modality}": Count(
+                "id",
+                filter=measured
+                & Q(result_latency_ms__gte=response_target_ms(voice=is_voice)),
+            )
+            for modality, is_voice in (("voice", True), ("chat", False))
+        },
+    }
+
+
 def response_time_distribution(
-    queryset: QuerySet, total: int, *, voice: bool
+    call_rows: list[dict[str, Any]], total: int, scalars: dict[str, Any], *, voice: bool
 ) -> dict[str, Any]:
     target_ms = response_target_ms(voice=voice)
-    measured = queryset.filter(result_latency_ms__gte=0)
-    stats = measured.aggregate(
-        measured=Count("id"),
-        minimum=Min("result_latency_ms"),
-        maximum=Max("result_latency_ms"),
-        p50=PercentileCont("result_latency_ms", 0.5),
-        p95=PercentileCont("result_latency_ms", 0.95),
-        at_or_above_target=Count("id", filter=Q(result_latency_ms__gte=target_ms)),
-    )
+    stats = {
+        "measured": scalars["response_measured"],
+        "minimum": scalars["response_minimum"],
+        "maximum": scalars["response_maximum"],
+        "p50": scalars["response_p50"],
+        "p95": scalars["response_p95"],
+        "at_or_above_target": scalars[
+            f"response_at_or_above_{'voice' if voice else 'chat'}"
+        ],
+    }
     # Keep the target on a bin boundary and the payload bounded for long tails.
     width = max(25, ceil((stats["maximum"] or 0) / 1000) * 25)
-    bucket = Case(
-        When(
-            result_latency_ms__lt=target_ms,
-            then=Floor(F("result_latency_ms") / float(width)) * width,
-        ),
-        default=Value(target_ms)
-        + Floor((F("result_latency_ms") - target_ms) / float(width)) * width,
-        output_field=FloatField(),
-    )
-    counts = dict(
-        measured.order_by()
-        .annotate(bucket=bucket)
-        .values("bucket")
-        .annotate(count=Count("id"))
-        .values_list("bucket", "count")
+
+    def bucket(latency: float) -> int:
+        if latency < target_ms:
+            return floor(latency / float(width)) * width
+        return target_ms + floor((latency - target_ms) / float(width)) * width
+
+    counts = Counter(
+        bucket(row["result_latency_ms"])
+        for row in call_rows
+        if row["result_latency_ms"] is not None and row["result_latency_ms"] >= 0
     )
     bounds = [*range(0, target_ms, width)]
     bounds.extend(range(target_ms, int(stats["maximum"] or 0) + width, width))

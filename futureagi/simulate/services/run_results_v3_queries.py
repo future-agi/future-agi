@@ -1454,6 +1454,7 @@ def build_run_comparison(
     *,
     against: TestExecution | None = None,
     with_pairs: bool = False,
+    live_evals: LiveEvals | None = None,
 ) -> dict[str, Any]:
     """Compare scenario verdicts with ``against``, else the immediately preceding
     completed run.
@@ -1550,7 +1551,11 @@ def build_run_comparison(
                 },
             )
         return comparison
-    previous_calls = run_calls_queryset(previous)
+    # ``live_evals`` belong to ``execution``'s run test; reuse them only there.
+    previous_live_evals = (
+        live_evals if previous.run_test_id == execution.run_test_id else None
+    )
+    previous_calls = run_calls_queryset(previous, live_evals=previous_live_evals)
     current_verdicts, current_labels, current_trials = verdicts(queryset)
     previous_verdicts, _, previous_trials = verdicts(previous_calls)
     shared = sorted(current_verdicts.keys() & previous_verdicts.keys())
@@ -1646,17 +1651,16 @@ def build_run_reliability(execution: TestExecution) -> dict[str, Any]:
 
 
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
-    from simulate.services.run_dashboard_v3 import build_run_dashboard
+    from simulate.services.run_dashboard_v3 import (
+        build_run_dashboard,
+        dashboard_call_rows,
+    )
     from simulate.services.run_outcome import call_outcome_counts, run_outcome
 
-    queryset = run_calls_queryset(execution)
+    # One eval-config load serves scoring and every same-run-test queryset.
+    live_evals = live_eval_specs(execution.run_test_id)
+    queryset = run_calls_queryset(execution, live_evals=live_evals)
     configs, _ = build_evaluation_catalog(execution)
-    scoring_configs = {
-        str(config.id): config
-        for config in SimulateEvalConfig.objects.filter(
-            run_test=execution.run_test, deleted=False
-        ).select_related("eval_template")
-    }
 
     risk = _breakdown_run_calls(queryset, "scenario")
     # Weakest first; slices with too few evaluated calls to rank go last.
@@ -1668,26 +1672,30 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             -item["total"],
         )
     )
-    turn_rows = (
-        queryset.filter(result_turn_count__isnull=False)
-        .order_by()
-        .values("result_turn_count", "result_outcome")
-        .annotate(count=Count("id"))
-        .order_by("result_turn_count")
+    # One per-call row fetch feeds every count-only breakdown below and in the
+    # dashboard; aggregates with float/numeric averages stay in SQL.
+    call_rows = dashboard_call_rows(queryset)
+    turn_counts = Counter(
+        (row["result_turn_count"], row["result_outcome"])
+        for row in call_rows
+        if row["result_turn_count"] is not None
     )
     turn_distribution: dict[int, dict[str, Any]] = {}
-    for row in turn_rows:
-        turn = int(row["result_turn_count"])
+    # ORDER BY the raw float turn count, so a later float overwrites the same int.
+    for (turn_count, outcome), count in sorted(
+        turn_counts.items(), key=lambda item: item[0][0]
+    ):
+        turn = int(turn_count)
         bucket = turn_distribution.setdefault(
             turn, {"turn_count": turn, **dict.fromkeys(OUTCOMES, 0)}
         )
-        bucket[row["result_outcome"]] = row["count"]
+        bucket[outcome] = count
 
     evaluation_expressions = {}
     for config in configs:
         eval_id = config["id"]
-        scoring_config = scoring_configs.get(eval_id)
-        if scoring_config is None:
+        live = live_evals.get(eval_id)
+        if live is None:
             score = _eval_score(eval_id)
             passed_q = _eval_verdict_q(
                 {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
@@ -1698,7 +1706,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             )
         else:
             score, passed_q, failed_q = _configured_eval_verdict(
-                eval_id, scoring_config
+                eval_id, live.config, live.spec
             )
         evaluation_expressions[f"passed_{eval_id}"] = Count("id", filter=passed_q)
         evaluation_expressions[f"failed_{eval_id}"] = Count("id", filter=failed_q)
@@ -1789,7 +1797,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         .values("id", "started_at")[:20]
     )
     trend_queryset = run_calls_queryset(
-        execution, [sibling["id"] for sibling in siblings]
+        execution, [sibling["id"] for sibling in siblings], live_evals=live_evals
     )
     trend_rows = (
         trend_queryset.exclude(NOT_COMPARABLE)
@@ -1819,7 +1827,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     comparable, excluded = comparable_trials(queryset)
     reliability = build_reliability(comparable, execution.trials, excluded)
     run_trials = trial_pass_from(*trial_outcomes(queryset))
-    comparison = build_run_comparison(execution, queryset)
+    comparison = build_run_comparison(execution, queryset, live_evals=live_evals)
     return {
         "execution": {
             "id": str(execution.id),
@@ -1848,7 +1856,13 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             ),
         ),
         "dashboard": build_run_dashboard(
-            queryset, summary, evaluations, risk, comparison, trials=run_trials
+            queryset,
+            summary,
+            evaluations,
+            risk,
+            comparison,
+            trials=run_trials,
+            call_rows=call_rows,
         ),
         "failure_breakdown": [
             {
