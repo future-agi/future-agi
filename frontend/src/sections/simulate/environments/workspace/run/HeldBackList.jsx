@@ -14,10 +14,7 @@ export function HeldBackView({ selection }) {
   // The run route acts on the same `next` the preview reads.
   if (selection.next === "run_unvalidated") {
     return (
-      <Typography
-        sx={{ typography: "s2", color: "text.primary" }}
-        data-testid="held-back"
-      >
+      <Typography sx={{ typography: "s2", color: "text.primary" }} data-testid="held-back">
         {COPY.runUnvalidated(held.count)}
       </Typography>
     );
@@ -45,10 +42,7 @@ export function HeldBackView({ selection }) {
             {shown ? COPY.hideCases : COPY.showCases}
           </Button>
           {shown && (
-            <Typography
-              sx={{ typography: "s3", color: "text.subtitle" }}
-              data-testid="held-back-keys"
-            >
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }} data-testid="held-back-keys">
               {held.keys.join(", ")}
             </Typography>
           )}

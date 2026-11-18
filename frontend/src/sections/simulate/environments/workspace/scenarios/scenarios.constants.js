@@ -134,15 +134,10 @@ export const SCENARIOS_COPY = {
   addMissingCases: "Add missing cases",
   uncoveredTitle: "Planned levels no scenario covers yet",
   requestedTitle: "Asked for, not written yet",
-  requestedGuidance: (lines) =>
-    `Write these cases you were asked for and have not written yet: ${lines.join("; ")}`,
+  requestedGuidance: (lines) => `Write these cases you were asked for and have not written yet: ${lines.join("; ")}`,
   workflowTitle: "Release checks per workflow",
   workflowColumn: "Workflow",
-  workflowKinds: {
-    success: "Success",
-    refusal: "Refusal",
-    wrong_result: "Wrong result",
-  },
+  workflowKinds: { success: "Success", refusal: "Refusal", wrong_result: "Wrong result" },
   workflowMissing: "Missing",
   workflowGuidance: (kind, workflow) =>
     `Write the missing ${kind.replace("_", " ")} case for the workflow "${workflow}".`,
@@ -150,8 +145,7 @@ export const SCENARIOS_COPY = {
 
 // The version pairs the Scenarios tab can show besides the saved one: each candidate pair Validate
 // built, and each other active suite or environment version on the other's default.
-const versionName = (version) =>
-  version?.label || `v${String(version?.id ?? "").slice(0, 6)}`;
+const versionName = (version) => version?.label || `v${String(version?.id ?? "").slice(0, 6)}`;
 export const versionPairs = (versions) => {
   if (!versions || versions.empty) return [];
   const suites = versions.suite ?? [];
@@ -160,42 +154,27 @@ export const versionPairs = (versions) => {
   const environmentDefault = versions.defaults?.environment;
   const pairs = [];
   const add = (suite, environment) => {
-    if (!suite || !environment || (suite.isDefault && environment.isDefault))
-      return;
+    if (!suite || !environment || (suite.isDefault && environment.isDefault)) return;
     const value = `${suite.id}:${environment.id}`;
     if (pairs.some((one) => one.value === value)) return;
-    const candidate =
-      suite.status === "candidate" || environment.status === "candidate";
+    const candidate = suite.status === "candidate" || environment.status === "candidate";
     pairs.push({
       value,
       suiteVersionId: suite.id,
       environmentVersionId: environment.id,
-      label: SCENARIOS_COPY.versionPair(
-        versionName(suite),
-        versionName(environment),
-        candidate,
-      ),
+      label: SCENARIOS_COPY.versionPair(versionName(suite), versionName(environment), candidate),
     });
   };
   const candidateSuite = suites.find((one) => one.status === "candidate");
-  const candidateEnvironment = environments.find(
-    (one) => one.status === "candidate",
-  );
+  const candidateEnvironment = environments.find((one) => one.status === "candidate");
   if (candidateSuite || candidateEnvironment) {
-    add(
-      candidateSuite ?? suiteDefault,
-      candidateEnvironment ?? environmentDefault,
-    );
+    add(candidateSuite ?? suiteDefault, candidateEnvironment ?? environmentDefault);
   }
   suites
-    .filter(
-      (one) => !one.isDefault && ["active", "candidate"].includes(one.status),
-    )
+    .filter((one) => !one.isDefault && ["active", "candidate"].includes(one.status))
     .forEach((one) => add(one, environmentDefault));
   environments
-    .filter(
-      (one) => !one.isDefault && ["active", "candidate"].includes(one.status),
-    )
+    .filter((one) => !one.isDefault && ["active", "candidate"].includes(one.status))
     .forEach((one) => add(suiteDefault, one));
   return pairs;
 };
