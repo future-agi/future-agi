@@ -2147,3 +2147,60 @@ describe("useCallWorkers", () => {
     }
   });
 });
+
+describe("useTrialRoutes", () => {
+  const wrapper = () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    return Wrapper;
+  };
+
+  it("reads one scenario's trials lined up, with tool calls only when asked", async () => {
+    const { useTrialRoutes } = await import("../runDetail");
+    const routes = { trials: [], columns: [], split: null, same_route: true };
+    axios.get.mockReset().mockResolvedValue({ status: 200, data: routes });
+    const { result } = renderHook(
+      () => useTrialRoutes("ex1", "refund-inside-window", true),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(routes));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/v3/test-executions/ex1/trial-routes/?scenario_key=refund-inside-window&tool_calls=true",
+      undefined,
+    );
+  });
+
+  it("keeps the last lining-up on screen while tool-call columns load", async () => {
+    const { useTrialRoutes } = await import("../runDetail");
+    const first = { trials: [], columns: [], split: null, same_route: true };
+    let release;
+    axios.get
+      .mockReset()
+      .mockResolvedValueOnce({ status: 200, data: first })
+      .mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    const { result, rerender } = renderHook(
+      ({ tools }) => useTrialRoutes("ex1", "s", tools),
+      { wrapper: wrapper(), initialProps: { tools: false } },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(first));
+    rerender({ tools: true });
+    expect(result.current.data).toEqual(first);
+    release({ status: 200, data: { ...first, tool_calls: true } });
+    await waitFor(() => expect(result.current.data.tool_calls).toBe(true));
+  });
+
+  it("reads nothing without a run or a scenario", async () => {
+    const { useTrialRoutes } = await import("../runDetail");
+    axios.get.mockReset();
+    renderHook(() => useTrialRoutes("ex1", null, false), {
+      wrapper: wrapper(),
+    });
+    renderHook(() => useTrialRoutes(null, "s", false), { wrapper: wrapper() });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+});

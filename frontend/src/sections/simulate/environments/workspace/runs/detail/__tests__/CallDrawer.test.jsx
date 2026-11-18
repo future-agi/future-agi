@@ -14,6 +14,7 @@ const useCallTraces = vi.fn(() => ({
   isError: false,
 }));
 const useHasWorkers = vi.fn(() => true);
+const useTrialRoutes = vi.fn(() => ({ data: undefined }));
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -22,6 +23,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     useCallExecutionV3Detail: (...a) => useCallExecutionV3Detail(...a),
     useCallTraces: (...a) => useCallTraces(...a),
     useHasWorkers: (...a) => useHasWorkers(...a),
+    useTrialRoutes: (...a) => useTrialRoutes(...a),
   };
 });
 
@@ -41,9 +43,11 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
     leftPanelTabs,
     leftPanelTab,
     onLeftPanelTabChange,
+    wide,
   }) => (
     <div
       data-testid="voice-drawer"
+      data-wide={String(!!wide)}
       data-left-tabs={(leftPanelTabs ?? []).map((tab) => tab.label).join(",")}
       data-hide-path-tabs={String(!!hidePathTabs)}
       data-show-fix-with-falcon={String(showFixWithFalcon)}
@@ -76,9 +80,16 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
 vi.mock("../CallWorkersPanel", async () => {
   const { useState } = await import("react");
   return {
-    default: function WorkersPanelStub({ callExecutionId }) {
+    default: function WorkersPanelStub({ callExecutionId, callStartedAt }) {
       const [mountedFor] = useState(callExecutionId);
-      return <div data-testid="workers-panel">{mountedFor}</div>;
+      return (
+        <div
+          data-testid="workers-panel"
+          data-call-started={callStartedAt ?? ""}
+        >
+          {mountedFor}
+        </div>
+      );
     },
   };
 });
@@ -175,6 +186,39 @@ describe("isVoiceCall", () => {
     expect(isVoiceCall({ simulationCallType: "voice" }, "text")).toBe(true);
     expect(isVoiceCall({ simulationCallType: null }, "voice")).toBe(true);
     expect(isVoiceCall({ simulationCallType: null }, "text")).toBe(false);
+  });
+});
+
+describe("CallDrawer — trial picker", () => {
+  it("lists a multi-agent call's trials from its trial routes, and opens one that is off the table's page", async () => {
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    useTrialRoutes.mockReturnValue({
+      data: {
+        trials: [
+          { number: 1, call_execution_id: "chat-1", result: "passed" },
+          { number: 2, call_execution_id: "off-page", result: "failed" },
+        ],
+      },
+    });
+    const onOpenTrial = vi.fn();
+    render(
+      <CallDrawer
+        task={{ ...chatTask, sourceScenarioKey: "refund" }}
+        executionId="ex1"
+        trials={[{ id: "chat-1", trialIndex: 1, status: "passed" }]}
+        onPickTrial={vi.fn()}
+        onOpenTrial={onOpenTrial}
+        agentType="text"
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Trial 2, Failed" }));
+    expect(onOpenTrial).toHaveBeenCalledWith("off-page", null);
+    useTrialRoutes.mockReturnValue({ data: undefined });
   });
 });
 
@@ -586,6 +630,66 @@ describe("CallDrawer — chat evals that have no verdict", () => {
 });
 
 describe("CallDrawer — voice branch", () => {
+  it("times a voice call's participants from the call's start, so a step seeks the recording to its moment", async () => {
+    const user = userEvent.setup();
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "v-start",
+        transcript: [],
+        evaluations: [],
+        start_time: "2026-09-29T11:35:29.394000Z",
+      },
+      isPending: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    render(
+      <CallDrawer
+        task={{ id: "v-start", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "choose participants" }),
+    );
+    expect(screen.getByTestId("workers-panel")).toHaveAttribute(
+      "data-call-started",
+      "2026-09-29T11:35:29.394000Z",
+    );
+  });
+
+  it("keeps a multi-agent call's width while the next call's record loads", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "v1", transcript: [], evaluations: [] },
+      isPending: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    const { rerender } = render(
+      <CallDrawer
+        task={{ id: "v1", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-wide",
+      "true",
+    );
+    useHasWorkers.mockReturnValue(undefined);
+    rerender(
+      <CallDrawer
+        task={{ id: "v2", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-wide",
+      "true",
+    );
+    useHasWorkers.mockReturnValue(true);
+  });
+
   it("says why a held voice trial was not graded above the voice drawer", () => {
     useCallExecutionV3Detail.mockReturnValue({
       data: { id: "voice-held", transcript: [], evaluations: [] },

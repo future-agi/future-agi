@@ -1,38 +1,69 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
-import {
-  CircularProgress,
-  FormControlLabel,
-  Stack,
-  Switch,
-  Typography,
-} from "@mui/material";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CircularProgress, Stack, Typography } from "@mui/material";
+import { keyframes } from "@mui/material/styles";
 import { useCallWorkers } from "src/api/simulate-environments/runDetail";
 import { fDateTime } from "src/utils/format-time";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 import { PlacedChecks, WorkerChecks } from "./CallWorkersChecks";
-import { EventList } from "./CallWorkersEventList";
-import { Turn } from "./CallWorkersParts";
-import { WorkersTable } from "./CallWorkersTable";
-import { callEvents, stepsByKey, turnLabel } from "./utils/callWorkersUtils";
+import ParticipantsHeader from "./participants/ParticipantsHeader";
+import SequenceDiagram from "./participants/SequenceDiagram";
+import {
+  participantsFromRecord,
+  recordStart,
+  recordingSeconds,
+} from "./participants/participantsFromRecord";
+import { sequenceOf } from "./participants/sequenceOf";
+import TrialRoutes from "./participants/TrialRoutes";
+import { STEP_PARAM, linkedStepKey } from "./participants/stepLink";
 
-// A call with more tool calls than this opens with their JSON closed, so a long record stays quick to draw.
-const MAX_OPEN_CALLS = 20;
 const NO_TRACES = [];
+
+const easeIn = keyframes`
+  from { opacity: 0; }
+  to { opacity: 1; }
+`;
 
 export default function CallWorkersPanel({
   callExecutionId,
   callStatus = null,
+  callerName = null,
+  callStartedAt = null,
   onOpenTrace,
   traceIds = NO_TRACES,
+  onShowInTranscript,
   attempt = null,
+  testExecutionId = null,
+  scenarioKey = null,
+  onOpenTrial,
 }) {
   const { data, isError } = useCallWorkers(
     callExecutionId,
     callStatus,
     attempt,
   );
-  const [rawEvents, setRawEvents] = useState(false);
+  // The picked step by its API key, so a record read again with a step added before it keeps the same step.
+  const [selectedKey, setSelectedKey] = useState(null);
+  const seq = useMemo(
+    () =>
+      data?.state === "recorded"
+        ? sequenceOf(participantsFromRecord(data), { callerName })
+        : null,
+    [data, callerName],
+  );
+  const selected = seq?.steps.find((one) => one.key === selectedKey)?.n ?? null;
+  const setSelected = (n) =>
+    setSelectedKey(seq?.steps.find((one) => one.n === n)?.key ?? null);
+  // A link to a step names the API's own step key. It opens that step once per call, so a refetch keeps the user's pick.
+  const linkedFor = useRef(null);
+  useEffect(() => {
+    // A step key belongs to one record: a link names the latest attempt's, never an earlier one's.
+    if (!seq || attempt || linkedFor.current === callExecutionId) return;
+    linkedFor.current = callExecutionId;
+    const key = linkedStepKey();
+    const step = key && seq.steps.find((one) => String(one.key) === key);
+    if (step) setSelectedKey(step.key);
+  }, [seq, callExecutionId, attempt]);
   // An earlier attempt with no hand-off: the server answers 204, never a pending read, so there is nothing to wait for.
   if (data === null && attempt)
     return (
@@ -68,20 +99,19 @@ export default function CallWorkersPanel({
     ofWorker: (id) => (id ? workers[id]?.name ?? C.unknown : coordinator),
     workerOf: (id) => workers[id],
   };
-  const start = data.started_at;
-  const byKey = stepsByKey(data);
-  // Each failed or unsure check the API places on a step, shown on that step's row.
-  const placedOn = {};
-  data.placements.forEach((one) => {
-    if (one.step !== null) (placedOn[one.step] ||= []).push(one);
-  });
   const handOffs = data.counts.hand_offs;
-  // With no hand-off there is nothing to tabulate, so the steps are the whole story.
-  const showSteps = rawEvents || !handOffs;
-  const events = showSteps ? callEvents(data, byKey, names) : [];
-  const openAll =
-    data.steps.filter((one) => one.kind === "tool_call").length <=
-    MAX_OPEN_CALLS;
+  const linkOf = (step) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set(STEP_PARAM, String(step.key));
+    return url.toString();
+  };
+  const showInTranscript = onShowInTranscript
+    ? ({ turn, at }) =>
+        onShowInTranscript({
+          turn,
+          at: recordingSeconds(at, recordStart(data), callStartedAt),
+        })
+    : undefined;
   const named = (test) =>
     data.workers
       .filter(test)
@@ -114,25 +144,43 @@ export default function CallWorkersPanel({
     });
 
   return (
-    <Stack spacing={1.25} sx={{ p: 1.5 }}>
-      {handOffs ? (
-        <Stack direction="row" spacing={1} alignItems="flex-start">
-          <Typography sx={{ typography: "s1", fontWeight: 600, flex: 1 }}>
-            {C.handOffSummary(data.counts)}
-          </Typography>
-          <FormControlLabel
-            control={
-              <Switch
-                size="small"
-                checked={rawEvents}
-                onChange={(e) => setRawEvents(e.target.checked)}
-              />
-            }
-            label={C.rawEvents}
-            slotProps={{ typography: { typography: "s1" } }}
-            sx={{ m: 0, flexShrink: 0, gap: 0.5 }}
-          />
-        </Stack>
+    <Stack
+      spacing={1.25}
+      sx={{
+        p: 1.5,
+        // Each call's record eases in, so a switch between trials reads as a change; the trials table holds still.
+        "& > :not([data-trial-routes])": {
+          animation: `${easeIn} 200ms ease-out`,
+          "@media (prefers-reduced-motion: reduce)": { animation: "none" },
+        },
+      }}
+    >
+      <ParticipantsHeader
+        summary={handOffs ? C.handOffSummary(data.counts) : null}
+        notes={[
+          data.spans_received === false &&
+            data.collection !== "no_evidence" &&
+            data.collection !== "partial" &&
+            data.collection !== "unavailable" &&
+            C.sandboxOnly,
+          data.workers.length && C.supportedBoundary,
+          data.workers.length && data.beyond_boundary && C.beyondBoundary,
+        ].filter(Boolean)}
+        seq={seq}
+        onPick={setSelected}
+      />
+      {/* The scenario's trials as they ran last: an earlier attempt has no place among them. */}
+      {!attempt && testExecutionId && scenarioKey ? (
+        <TrialRoutes
+          testExecutionId={testExecutionId}
+          scenarioKey={scenarioKey}
+          currentId={callExecutionId}
+          onOpen={(id, stepKey) => {
+            if (id !== callExecutionId) return onOpenTrial?.(id, stepKey);
+            if (seq?.steps.some((one) => one.key === stepKey))
+              setSelectedKey(stepKey);
+          }}
+        />
       ) : null}
       {data.stopped_by_user &&
       data.collection !== "no_evidence" &&
@@ -161,81 +209,30 @@ export default function CallWorkersPanel({
             ? C.partialCollection
             : C.unavailableCollection}
         </Typography>
-      ) : data.spans_received === false ? (
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {C.sandboxOnly}
-        </Typography>
       ) : null}
-      {data.workers.length ? (
-        <Typography
-          data-testid="supported-boundary"
-          sx={{ typography: "s3", color: "text.subtitle" }}
-        >
-          {C.supportedBoundary}
-          {data.beyond_boundary ? (
-            <span data-testid="beyond-boundary"> {C.beyondBoundary}</span>
-          ) : null}
-        </Typography>
+      {seq?.steps.length ? (
+        <SequenceDiagram
+          seq={seq}
+          selected={selected}
+          onSelect={setSelected}
+          // Open in trace waits for the record's trace project. The transcript, Traces and step links hold the
+          // latest attempt only, so an earlier attempt offers none of them.
+          onOpenTrace={!attempt && data.project_id ? onOpenTrace : undefined}
+          canOpenTrace={(traceId) => traceIds.includes(traceId)}
+          onShowInTranscript={attempt ? undefined : showInTranscript}
+          linkOf={attempt ? undefined : linkOf}
+        />
       ) : null}
-      {showSteps ? (
-        events.length ? (
-          <EventList
-            bordered
-            events={events}
-            start={start}
-            openJson={() => openAll}
-            onOpenTrace={onOpenTrace}
-            traceIds={traceIds}
-          />
-        ) : null
-      ) : (
-        data.turns.map((round) => {
-          const label = turnLabel(round, data.turns);
-          const roundRows = round.handoffs.map((key) => byKey[key]);
-          return (
-            <Stack key={round.turn} spacing={1.25} data-testid="turn">
-              {!round.expects_messages && !round.request ? null : (
-                <Turn
-                  title={`${label}${C.request}`}
-                  turn={round.request}
-                  start={start}
-                  empty={C.noRequest}
-                />
-              )}
-              {roundRows.length ? (
-                <WorkersTable
-                  rows={roundRows}
-                  byKey={byKey}
-                  names={names}
-                  placedOn={placedOn}
-                  start={start}
-                  onOpenTrace={onOpenTrace}
-                  traceIds={traceIds}
-                />
-              ) : null}
-              {round.calls_outside ? (
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {C.callsOutsideTable(round.calls_outside)}
-                </Typography>
-              ) : null}
-              {!round.expects_messages && !round.response ? null : (
-                <Turn
-                  title={`${label}${C.response}`}
-                  turn={round.response}
-                  agent
-                  start={start}
-                  empty={C.noReply}
-                />
-              )}
-            </Stack>
-          );
-        })
-      )}
       {data.workers.some((one) => one.checks.length) ? (
         <WorkerChecks workers={data.workers} />
       ) : null}
       {data.placements.length ? (
-        <PlacedChecks placements={data.placements} names={names} />
+        <PlacedChecks
+          placements={data.placements}
+          names={names}
+          stepOf={(key) => seq?.steps.find((one) => one.key === key)?.n ?? null}
+          onPick={setSelected}
+        />
       ) : null}
       {notObserved ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -303,10 +300,21 @@ CallWorkersPanel.propTypes = {
   callExecutionId: PropTypes.string,
   // The call's status, so a call that ends while open is read again.
   callStatus: PropTypes.string,
+  // The caller's name for the first lane.
+  callerName: PropTypes.string,
+  // When the call itself started, so a step's time lands on the recording's clock.
+  callStartedAt: PropTypes.string,
   // Opens one of the call's traces in its Traces tab, at the step's span when it has one.
   onOpenTrace: PropTypes.func,
-  // The traces that tab lists: a step offers to open only one of these.
+  // The traces the Traces tab lists: a step offers to open only one of these.
   traceIds: PropTypes.arrayOf(PropTypes.string),
+  // Opens the transcript at a step: ({ turn, at }) with `at` in seconds from the record's start.
+  onShowInTranscript: PropTypes.func,
   // An earlier attempt's id: its record, as the rerun kept it.
   attempt: PropTypes.string,
+  // The run and the call's scenario, to line up the scenario's trials.
+  testExecutionId: PropTypes.string,
+  scenarioKey: PropTypes.string,
+  // (callExecutionId, stepKey | null) → opens another trial of the scenario, on that step.
+  onOpenTrial: PropTypes.func,
 };

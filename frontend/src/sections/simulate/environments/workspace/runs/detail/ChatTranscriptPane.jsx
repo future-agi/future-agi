@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Stack,
@@ -88,24 +88,50 @@ export default function ChatTranscriptPane({
   customerName,
   participants,
   hasCustomer,
+  focusTurn = null,
 }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const rowRefs = useRef({});
+  // Turn n starts at the caller's nth message; turn 0, before the caller spoke, is the top.
+  const focusIndex = !focusTurn
+    ? -1
+    : focusTurn.turn < 1
+      ? turns.length
+        ? 0
+        : -1
+      : turns.reduce(
+          (found, s, i) =>
+            found.index >= 0 || s.role !== "customer"
+              ? found
+              : found.seen + 1 === focusTurn.turn
+                ? { seen: found.seen + 1, index: i }
+                : { seen: found.seen + 1, index: -1 },
+          { seen: 0, index: -1 },
+        ).index;
+  useEffect(() => {
+    if (focusIndex < 0) return;
+    setRoleFilter("all");
+    setQuery("");
+    rowRefs.current[focusIndex]?.scrollIntoView?.({ block: "center" });
+  }, [focusIndex, focusTurn]);
   // The pane stays mounted across calls; the next call may have no others.
   const activeFilter =
     roleFilter === "others" && !participants.length ? "all" : roleFilter;
 
-  const shown = turns.filter((s) => {
-    if (
-      activeFilter === "others"
-        ? !isOtherRole(s.role)
-        : activeFilter !== "all" && s.role !== activeFilter
-    )
-      return false;
-    if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
-      return false;
-    return true;
-  });
+  const shown = turns
+    .map((s, index) => ({ ...s, index }))
+    .filter((s) => {
+      if (
+        activeFilter === "others"
+          ? !isOtherRole(s.role)
+          : activeFilter !== "all" && s.role !== activeFilter
+      )
+        return false;
+      if (query && !s.text?.toLowerCase().includes(query.toLowerCase()))
+        return false;
+      return true;
+    });
 
   return (
     <>
@@ -161,8 +187,17 @@ export default function ChatTranscriptPane({
       <Stack sx={{ px: 2, pb: 2 }}>
         {shown.map((s, i) => (
           <Box
-            key={i}
+            key={s.index}
+            ref={(el) => {
+              rowRefs.current[s.index] = el;
+            }}
+            data-focused={String(s.index === focusIndex)}
             sx={{
+              ...(s.index === focusIndex && {
+                outline: "2px solid",
+                outlineColor: "primary.main",
+                outlineOffset: -2,
+              }),
               borderLeft: "2px solid",
               // Each speaker keeps its own mark, so a tool call never reads as the customer.
               borderColor: (t) =>
@@ -232,6 +267,8 @@ export default function ChatTranscriptPane({
 }
 ChatTranscriptPane.propTypes = {
   customerName: PropTypes.string,
+  // A turn to bring into view and mark: `{ turn }`, a new object each time it is asked for.
+  focusTurn: PropTypes.shape({ turn: PropTypes.number }),
   // Who took part, as the server says: one with no channel only acted in the world.
   participants: PropTypes.arrayOf(
     PropTypes.shape({
