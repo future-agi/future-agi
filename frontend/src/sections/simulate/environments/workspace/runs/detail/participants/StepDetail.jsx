@@ -116,6 +116,7 @@ export default function StepDetail({
   seq,
   step,
   onOpenTrace,
+  canOpenTrace,
   onShowInTranscript,
   linkOf,
 }) {
@@ -225,20 +226,22 @@ export default function StepDetail({
             {C.showInTranscript}
           </Button>
         )}
-        {onOpenTrace && step.traceId && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            onClick={() => onOpenTrace(step.traceId, step.spanId)}
-            startIcon={
-              <Iconify icon="solar:square-top-down-linear" width={14} />
-            }
-            sx={smallBtn}
-          >
-            {C.openInTrace}
-          </Button>
-        )}
+        {onOpenTrace &&
+          step.traceId &&
+          (!canOpenTrace || canOpenTrace(step.traceId)) && (
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={() => onOpenTrace(step.traceId, step.spanId)}
+              startIcon={
+                <Iconify icon="solar:square-top-down-linear" width={14} />
+              }
+              sx={smallBtn}
+            >
+              {C.openInTrace}
+            </Button>
+          )}
         {link && <CopyLink url={link} />}
       </Stack>
       {meta.length > 0 && (
@@ -287,6 +290,8 @@ StepDetail.propTypes = {
   seq: PropTypes.object.isRequired,
   step: PropTypes.object.isRequired,
   onOpenTrace: PropTypes.func,
+  // Whether the Traces tab lists a trace, so opening it shows something.
+  canOpenTrace: PropTypes.func,
   onShowInTranscript: PropTypes.func,
   linkOf: PropTypes.func,
 };

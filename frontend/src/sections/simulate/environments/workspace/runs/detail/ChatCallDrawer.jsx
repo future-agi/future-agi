@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Chip,
@@ -152,6 +152,10 @@ export default function ChatCallDrawer({
   // An earlier attempt's record is read on its own, whatever the latest attempt kept.
   const showWorkers = hasWorkers || artifact === "workers" || Boolean(attempt);
   const callTraces = useCallTraces(executionId, task.id);
+  const traceIds = useMemo(
+    () => callTraces.traces.map((trace) => trace.traceId),
+    [callTraces.traces],
+  );
   const showTraces = artifact === "traces";
   const showChanges = artifact === "world_changes";
 
@@ -323,6 +327,7 @@ export default function ChatCallDrawer({
                   onOpenTrial={onOpenTrial}
                   callStatus={task.status}
                   onOpenTrace={openTrace}
+                  traceIds={traceIds}
                   attempt={attempt}
                   callerName={callDetail?.persona || task.persona}
                   onShowInTranscript={({ turn }) => {

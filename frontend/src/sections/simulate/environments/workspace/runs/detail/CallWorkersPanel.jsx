@@ -17,6 +17,8 @@ import { sequenceOf } from "./participants/sequenceOf";
 import TrialRoutes from "./participants/TrialRoutes";
 import { STEP_PARAM, linkedStepKey } from "./participants/stepLink";
 
+const NO_TRACES = [];
+
 const easeIn = keyframes`
   from { opacity: 0; }
   to { opacity: 1; }
@@ -28,6 +30,7 @@ export default function CallWorkersPanel({
   callerName = null,
   callStartedAt = null,
   onOpenTrace,
+  traceIds = NO_TRACES,
   onShowInTranscript,
   attempt = null,
   testExecutionId = null,
@@ -211,6 +214,7 @@ export default function CallWorkersPanel({
           // Open in trace waits for the record's trace project. The transcript, Traces and step links hold the
           // latest attempt only, so an earlier attempt offers none of them.
           onOpenTrace={!attempt && data.project_id ? onOpenTrace : undefined}
+          canOpenTrace={(traceId) => traceIds.includes(traceId)}
           onShowInTranscript={attempt ? undefined : showInTranscript}
           linkOf={attempt ? undefined : linkOf}
         />
@@ -294,6 +298,8 @@ CallWorkersPanel.propTypes = {
   callStartedAt: PropTypes.string,
   // Opens one of the call's traces in its Traces tab, at the step's span when it has one.
   onOpenTrace: PropTypes.func,
+  // The traces the Traces tab lists: a step offers to open only one of these.
+  traceIds: PropTypes.arrayOf(PropTypes.string),
   // Opens the transcript at a step: ({ turn, at }) with `at` in seconds from the record's start.
   onShowInTranscript: PropTypes.func,
   // An earlier attempt's id: its record, as the rerun kept it.
