@@ -17,6 +17,7 @@ from simulate.services.certification import (
 )
 from simulate.services.harness_credentials import request_scope
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import EmptyRequestSerializer
 
 
@@ -57,15 +58,18 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
         organization, workspace = request_scope(request)
         if organization is None:
             return Response(
-                {"detail": "an organization is required"},
+                build_error_envelope(
+                    "an organization is required",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not _allowlisted(organization):
             return Response(
-                {
-                    "detail": "certification campaigns are not enabled for "
-                    "this organization"
-                },
+                build_error_envelope(
+                    "certification campaigns are not enabled for this organization",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                ),
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -74,7 +78,10 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
         idem_header = request.headers.get("Idempotency-Key", "").strip()
         if not idem_header or len(idem_header) > 255:
             return Response(
-                {"detail": "a valid Idempotency-Key header is required"},
+                build_error_envelope(
+                    "a valid Idempotency-Key header is required",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -90,7 +97,14 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
                 requested_by=str(getattr(request.user, "email", "") or ""),
             )
         except CertificationError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
+            return Response(
+                build_error_envelope(
+                    exc.message,
+                    status_code=exc.status_code,
+                    code=exc.code,
+                ),
+                status=exc.status_code,
+            )
 
         return self._campaign_response(
             campaign, status.HTTP_201_CREATED if created else status.HTTP_200_OK
@@ -100,7 +114,10 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
         organization, _workspace = request_scope(request)
         if organization is None:
             return Response(
-                {"detail": "an organization is required"},
+                build_error_envelope(
+                    "an organization is required",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
         from simulate.models import CertificationCampaign
@@ -137,7 +154,10 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
             _CC.State.FAILED,
         ):
             return Response(
-                {"detail": f"campaign is already {campaign.state}"},
+                build_error_envelope(
+                    f"campaign is already {campaign.state}",
+                    status_code=status.HTTP_409_CONFLICT,
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
         request_campaign_cancel(campaign)
@@ -152,7 +172,10 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
         organization, _workspace = request_scope(request)
         if organization is None:
             return Response(
-                {"detail": "an organization is required"},
+                build_error_envelope(
+                    "an organization is required",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
                 status=status.HTTP_400_BAD_REQUEST,
             )
         campaign = (
@@ -164,7 +187,10 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
         )
         if campaign is None:
             return Response(
-                {"detail": "campaign not found"},
+                build_error_envelope(
+                    "campaign not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         return campaign

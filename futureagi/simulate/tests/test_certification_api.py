@@ -219,7 +219,7 @@ def test_workflow_start_failure_returns_retryable_service_error(
         failed = _post(auth_client, organization)
 
     assert failed.status_code == 503
-    assert failed.json()["error"] == "workflow_unavailable"
+    assert failed.json()["code"] == "workflow_unavailable"
     assert CertificationCampaign.objects.count() == 1
 
     with (
@@ -278,7 +278,7 @@ def test_duplicate_admission_rejects_conflicting_identity(auth_client, organizat
             idem="key-2",
         )
     assert response.status_code == 409
-    assert response.json()["error"] == "deployment_identity_conflict"
+    assert response.json()["code"] == "deployment_identity_conflict"
 
 
 @pytest.mark.django_db(transaction=True)
