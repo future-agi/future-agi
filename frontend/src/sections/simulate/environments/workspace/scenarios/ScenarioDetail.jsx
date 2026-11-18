@@ -1,6 +1,14 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Stack, Typography, Collapse, MenuItem, TextField } from "@mui/material";
+import {
+  Box,
+  Button,
+  Stack,
+  Typography,
+  Collapse,
+  MenuItem,
+  TextField,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
@@ -465,11 +473,21 @@ function RecordChoice({ jobId, scenarioKey, scenarioName, sources }) {
           scenario: scenarioName,
           field: "sources",
           value: [
-            ...sources.map(({ kind, ref, quote, supports }) => ({ kind, ref, quote, supports })),
+            ...sources.map(({ kind, ref, quote, supports }) => ({
+              kind,
+              ref,
+              quote,
+              supports,
+            })),
             {
               kind: "assumption",
               ref: `synthetic:${table}/${syntheticId}`,
-              quote: SCENARIOS_COPY.syntheticQuote(user?.displayName || user?.name || user?.email || "the reviewer"),
+              quote: SCENARIOS_COPY.syntheticQuote(
+                user?.displayName ||
+                  user?.name ||
+                  user?.email ||
+                  "the reviewer",
+              ),
               supports: `${table} record ${syntheticId}`,
             },
           ],
@@ -478,31 +496,65 @@ function RecordChoice({ jobId, scenarioKey, scenarioName, sources }) {
     });
   return (
     <Stack spacing={1} data-testid="record-choice">
-      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{SCENARIOS_COPY.recordHint}</Typography>
-      <TextField select size="small" label={SCENARIOS_COPY.recordTable} value={table} onChange={(e) => setTable(e.target.value)}>
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        {SCENARIOS_COPY.recordHint}
+      </Typography>
+      <TextField
+        select
+        size="small"
+        label={SCENARIOS_COPY.recordTable}
+        value={table}
+        onChange={(e) => setTable(e.target.value)}
+      >
         {tables.map((one) => (
-          <MenuItem key={one} value={one}>{one}</MenuItem>
+          <MenuItem key={one} value={one}>
+            {one}
+          </MenuItem>
         ))}
       </TextField>
       {table && (
         <Stack direction="row" spacing={1} alignItems="center">
-          <TextField select size="small" label={SCENARIOS_COPY.recordPick} value={record} onChange={(e) => setRecord(e.target.value)} sx={{ minWidth: 180 }}>
+          <TextField
+            select
+            size="small"
+            label={SCENARIOS_COPY.recordPick}
+            value={record}
+            onChange={(e) => setRecord(e.target.value)}
+            sx={{ minWidth: 180 }}
+          >
             {rows.map((one, at) => {
               const id = String(one.id ?? at);
               return (
-                <MenuItem key={id} value={id}>{id}</MenuItem>
+                <MenuItem key={id} value={id}>
+                  {id}
+                </MenuItem>
               );
             })}
           </TextField>
-          <Button size="small" variant="outlined" disabled={!record} onClick={sendRealRecord}>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!record}
+            onClick={sendRealRecord}
+          >
             {SCENARIOS_COPY.useRealRecord}
           </Button>
         </Stack>
       )}
       {table && (
         <Stack direction="row" spacing={1} alignItems="center">
-          <TextField size="small" label={SCENARIOS_COPY.syntheticId} value={syntheticId} onChange={(e) => setSyntheticId(e.target.value)} />
-          <Button size="small" variant="outlined" disabled={!syntheticId.trim() || amend.isPending} onClick={approve}>
+          <TextField
+            size="small"
+            label={SCENARIOS_COPY.syntheticId}
+            value={syntheticId}
+            onChange={(e) => setSyntheticId(e.target.value)}
+          />
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!syntheticId.trim() || amend.isPending}
+            onClick={approve}
+          >
             {SCENARIOS_COPY.approveSynthetic}
           </Button>
         </Stack>
@@ -528,7 +580,11 @@ function ActivateButton({ jobId }) {
   const [versionName, setVersionName] = useState("");
   const nothing = !drafts?.any;
   return (
-    <Stack spacing={0.25} alignItems="flex-start" data-testid="lifecycle-activate">
+    <Stack
+      spacing={0.25}
+      alignItems="flex-start"
+      data-testid="lifecycle-activate"
+    >
       {canSaveValidated && (
         <TextField
           size="small"
@@ -573,7 +629,11 @@ function ValidateDraftsButton({ jobId }) {
     ? refusalText(validate.error, DRAFTS_COPY.validateError)
     : validationStateNote(drafts?.validation);
   return (
-    <Stack spacing={0.25} alignItems="flex-start" data-testid="lifecycle-validate-drafts">
+    <Stack
+      spacing={0.25}
+      alignItems="flex-start"
+      data-testid="lifecycle-validate-drafts"
+    >
       <Button
         size="small"
         variant="outlined"
@@ -585,7 +645,10 @@ function ValidateDraftsButton({ jobId }) {
         {validating ? SCENARIOS_COPY.validating : SCENARIOS_COPY.validateDrafts}
       </Button>
       {note && (
-        <Typography role="status" sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Typography
+          role="status"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
           {note}
         </Typography>
       )}

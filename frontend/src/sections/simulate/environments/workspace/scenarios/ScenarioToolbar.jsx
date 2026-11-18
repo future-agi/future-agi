@@ -122,9 +122,14 @@ export default function ScenarioToolbar({
                     versionPairs.find((one) => one.value === value)?.label ??
                     SCENARIOS_COPY.versionsDefault
                   }`,
-                SelectDisplayProps: { "aria-label": SCENARIOS_COPY.versionsLabel },
+                SelectDisplayProps: {
+                  "aria-label": SCENARIOS_COPY.versionsLabel,
+                },
               }}
-              sx={{ minWidth: 190, "& .MuiSelect-select": { py: 0.5, typography: "s2" } }}
+              sx={{
+                minWidth: 190,
+                "& .MuiSelect-select": { py: 0.5, typography: "s2" },
+              }}
             >
               <MenuItem value="">{SCENARIOS_COPY.versionsDefault}</MenuItem>
               {versionPairs.map((one) => (

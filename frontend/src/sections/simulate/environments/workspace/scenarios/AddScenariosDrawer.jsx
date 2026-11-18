@@ -124,7 +124,10 @@ export default function AddScenariosDrawer({
           route === "file"
             ? fileMessage(n, path, text)
             : recordsMessage(n, path, text);
-        await sendHarnessConversationMessage(jobId, message(`${content}${suffix()}`));
+        await sendHarnessConversationMessage(
+          jobId,
+          message(`${content}${suffix()}`),
+        );
       }
       queryClient.invalidateQueries({
         queryKey: harnessScenariosListKey(jobId),
@@ -216,7 +219,9 @@ export default function AddScenariosDrawer({
               options={actorNames}
               value={actors}
               onChange={(_, value) => setActors(value)}
-              renderInput={(params) => <TextField {...params} label={ADD_COPY.actors} />}
+              renderInput={(params) => (
+                <TextField {...params} label={ADD_COPY.actors} />
+              )}
               data-testid="add-actors"
             />
             <Autocomplete
@@ -227,12 +232,18 @@ export default function AddScenariosDrawer({
                 ...fileOptions.map((value) => ({ kind: "file", value })),
               ]}
               value={grounding}
-              isOptionEqualToValue={(a, b) => a.kind === b.kind && a.value === b.value}
+              isOptionEqualToValue={(a, b) =>
+                a.kind === b.kind && a.value === b.value
+              }
               getOptionLabel={(one) =>
-                one.kind === "rule" ? ADD_COPY.ruleOption(one.value) : ADD_COPY.fileOption(one.value)
+                one.kind === "rule"
+                  ? ADD_COPY.ruleOption(one.value)
+                  : ADD_COPY.fileOption(one.value)
               }
               onChange={(_, value) => setGrounding(value)}
-              renderInput={(params) => <TextField {...params} label={ADD_COPY.groundIn} />}
+              renderInput={(params) => (
+                <TextField {...params} label={ADD_COPY.groundIn} />
+              )}
               data-testid="add-ground-in"
             />
           </>

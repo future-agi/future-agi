@@ -14,16 +14,24 @@ describe("LifecycleBadge", () => {
     ["kept_as_written", "Kept as written"],
     ["archived", "Archived"],
   ])("labels the %s state", (state, label) => {
-    render(<LifecycleBadge row={row({ state, reason: null, reason_text: null })} />);
+    render(
+      <LifecycleBadge row={row({ state, reason: null, reason_text: null })} />,
+    );
     expect(screen.getByTestId("lifecycle-badge")).toHaveTextContent(label);
   });
 
   it("marks a legacy validation and explains it on hover", async () => {
     const user = userEvent.setup();
-    render(<LifecycleBadge row={row({ state: "kept_as_written", legacy: true, reason_text: null })} />);
+    render(
+      <LifecycleBadge
+        row={row({ state: "kept_as_written", legacy: true, reason_text: null })}
+      />,
+    );
     await user.hover(screen.getByTestId("lifecycle-badge"));
     expect(
-      await screen.findByText("Validated before checks were recorded. Validate again to confirm."),
+      await screen.findByText(
+        "Validated before checks were recorded. Validate again to confirm.",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -31,20 +39,36 @@ describe("LifecycleBadge", () => {
     const user = userEvent.setup();
     render(
       <LifecycleBadge
-        row={row({ state: "kept_as_written", warning: "solution_assumed", warning_text: "never ran" })}
+        row={row({
+          state: "kept_as_written",
+          warning: "solution_assumed",
+          warning_text: "never ran",
+        })}
       />,
     );
-    expect(screen.getByTestId("lifecycle-badge")).toHaveTextContent("Kept as written");
-    expect(screen.getByTestId("lifecycle-badge")).not.toHaveTextContent("Active");
+    expect(screen.getByTestId("lifecycle-badge")).toHaveTextContent(
+      "Kept as written",
+    );
+    expect(screen.getByTestId("lifecycle-badge")).not.toHaveTextContent(
+      "Active",
+    );
     await user.hover(screen.getByTestId("lifecycle-badge"));
     expect(await screen.findByText("never ran")).toBeInTheDocument();
   });
 
   it("adds a Not measured chip when a check reads evidence the agent does not give", () => {
     const { rerender } = render(
-      <LifecycleBadge row={row({ state: "active", warning: "evidence_not_captured", warning_text: "x" })} />,
+      <LifecycleBadge
+        row={row({
+          state: "active",
+          warning: "evidence_not_captured",
+          warning_text: "x",
+        })}
+      />,
     );
-    expect(screen.getByTestId("lifecycle-not-measured-chip")).toHaveTextContent("Not measured at run time");
+    expect(screen.getByTestId("lifecycle-not-measured-chip")).toHaveTextContent(
+      "Not measured at run time",
+    );
     rerender(<LifecycleBadge row={row({ state: "active", warning: null })} />);
     expect(screen.queryByTestId("lifecycle-not-measured-chip")).toBeNull();
   });
@@ -52,10 +76,16 @@ describe("LifecycleBadge", () => {
   it("marks a change the builder could not apply", () => {
     render(
       <LifecycleBadge
-        row={row({ state: "draft", reason: "apply_failed", reason_text: "This change could not be applied: bad check." })}
+        row={row({
+          state: "draft",
+          reason: "apply_failed",
+          reason_text: "This change could not be applied: bad check.",
+        })}
       />,
     );
-    expect(screen.getByTestId("lifecycle-apply-failed-chip")).toHaveTextContent("Could not apply");
+    expect(screen.getByTestId("lifecycle-apply-failed-chip")).toHaveTextContent(
+      "Could not apply",
+    );
   });
 
   it("shows nothing for an environment without versions", () => {

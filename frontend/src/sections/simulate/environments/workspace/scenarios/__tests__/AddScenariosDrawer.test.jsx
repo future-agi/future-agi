@@ -13,7 +13,9 @@ vi.mock("src/api/harness/harness", () => ({
     sendHarnessConversationMessage(...args),
   harnessIdempotencyKey: () => "req-1",
 }));
-const cast = vi.hoisted(() => ({ data: { actors: [], knowledge_sources: { files: [] } } }));
+const cast = vi.hoisted(() => ({
+  data: { actors: [], knowledge_sources: { files: [] } },
+}));
 vi.mock("src/api/simulate-environments/versions", () => ({
   uploadEnvironmentFile: (...args) => uploadEnvironmentFile(...args),
   useActors: () => cast,
@@ -57,7 +59,9 @@ describe("AddScenariosDrawer routes", () => {
     );
     await user.click(screen.getByRole("button", { name: "Write scenarios" }));
     const [, body] = sendHarnessConversationMessage.mock.calls[0];
-    expect(body.content).toBe(`${DESCRIBE_PREFIX}\nRequested case 1: a 20-day refund`);
+    expect(body.content).toBe(
+      `${DESCRIBE_PREFIX}\nRequested case 1: a 20-day refund`,
+    );
     expect(body.kind).toBe("user_message");
   });
 
@@ -105,19 +109,33 @@ describe("AddScenariosDrawer grounding", () => {
   it("selected actors and sources appear in the sent message", async () => {
     const user = userEvent.setup();
     renderWithClient(
-      <AddScenariosDrawer open onClose={vi.fn()} env={{ id: "env-1", rules: ["Refund within 14 days."] }} />,
+      <AddScenariosDrawer
+        open
+        onClose={vi.fn()}
+        env={{ id: "env-1", rules: ["Refund within 14 days."] }}
+      />,
     );
     await user.click(screen.getByRole("button", { name: "Describe a case" }));
     await user.type(
-      screen.getByLabelText("What should the agent face, and what should it do?"),
+      screen.getByLabelText(
+        "What should the agent face, and what should it do?",
+      ),
       "a late refund{enter}a second refund",
     );
     await user.click(screen.getByLabelText("Actors to include"));
-    await user.click(await screen.findByRole("option", { name: "Dana Brooks" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Dana Brooks" }),
+    );
     await user.click(screen.getByLabelText("Ground in"));
-    await user.click(await screen.findByRole("option", { name: "Rule: Refund within 14 days." }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Rule: Refund within 14 days.",
+      }),
+    );
     await user.click(screen.getByLabelText("Ground in"));
-    await user.click(await screen.findByRole("option", { name: "File: knowledge/policy.md" }));
+    await user.click(
+      await screen.findByRole("option", { name: "File: knowledge/policy.md" }),
+    );
     await user.click(screen.getByRole("button", { name: "Write scenarios" }));
 
     const [, body] = sendHarnessConversationMessage.mock.calls[0];
@@ -129,7 +147,14 @@ describe("AddScenariosDrawer grounding", () => {
 
   it("nothing added when none chosen", async () => {
     const user = userEvent.setup();
-    renderWithClient(<AddScenariosDrawer open onClose={vi.fn()} env={{ id: "env-1" }} initialCount={2} />);
+    renderWithClient(
+      <AddScenariosDrawer
+        open
+        onClose={vi.fn()}
+        env={{ id: "env-1" }}
+        initialCount={2}
+      />,
+    );
     await user.click(screen.getByRole("button", { name: "Write scenarios" }));
     expect(extendHarnessJob).toHaveBeenCalledWith("env-1", { count: 2 });
   });

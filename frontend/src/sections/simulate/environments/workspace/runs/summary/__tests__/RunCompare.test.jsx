@@ -211,8 +211,12 @@ describe("RunCompare", () => {
       within(moved).getByText("Sub-goal changed: refunded"),
     ).toBeInTheDocument();
     // A case edited between the two runs says so; an unchanged one does not.
-    expect(within(row("Steady refund")).getByTestId("changed-test")).toHaveTextContent("Changed test");
-    expect(within(row("Card dispute")).queryByTestId("changed-test")).toBeNull();
+    expect(
+      within(row("Steady refund")).getByTestId("changed-test"),
+    ).toHaveTextContent("Changed test");
+    expect(
+      within(row("Card dispute")).queryByTestId("changed-test"),
+    ).toBeNull();
     // The worst change comes first.
     const rows = within(section()).getAllByRole("row");
     expect(within(rows[1]).getByText("Card dispute")).toBeInTheDocument();
@@ -314,6 +318,8 @@ describe("RunCompare", () => {
     });
     renderCompare();
 
-    expect(within(section()).getByText(/^2 trials left out/)).toBeInTheDocument();
+    expect(
+      within(section()).getByText(/^2 trials left out/),
+    ).toBeInTheDocument();
   });
 });
