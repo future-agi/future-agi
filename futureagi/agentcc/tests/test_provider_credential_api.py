@@ -315,6 +315,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         assert bytes(cred.encrypted_credentials) == bytes(original)
         mock_push.assert_not_called()
         assert response.status_code == 404, response.json()
+        assert response.json()["message"] == "Provider credential not found"
 
     @pytest.mark.parametrize("method", ["put", "patch"])
     def test_update_missing_credential_returns_404_without_gateway_push(
@@ -333,6 +334,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
 
         mock_push.assert_not_called()
         assert response.status_code == 404, response.json()
+        assert response.json()["message"] == "Provider credential not found"
 
     def test_patch_updates_single_field_leaving_others_intact(
         self, secondary_org_context, secondary_org_client

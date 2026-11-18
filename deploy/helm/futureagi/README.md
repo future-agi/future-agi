@@ -647,7 +647,7 @@ probing what its readiness probe probes:
 | Service | Load balancer health check |
 | --- | --- |
 | backend | `GET /health/` with Host `localhost`, on the serving port |
-| fi-collector | `GET /healthz` on the admin port, 9464 |
+| fi-collector | `GET /healthz` on the Pod's admin port (default 9464) |
 | agentcc-gateway (with `gatewayApi.llmGateway`) | `GET /readyz` on the serving port |
 | frontend | `GET /` on the serving port |
 
@@ -723,9 +723,48 @@ spec:
     - app.example.com
 ```
 
-Replace `futureagi` with your release name and namespace, and use a trusted
-issuer or distribute the gateway CA through `global.caBundle`. Configure the
-Service addresses in your DNS (or set the Service types to `LoadBalancer`):
+These names are for release `futureagi` in namespace `futureagi`. The
+Services are `<prefix>-agentcc-gateway` and `<prefix>-frontend` in the
+release namespace, where `<prefix>` is:
+
+- `fullnameOverride`, when set;
+- otherwise the release name, when it already contains the chart name
+  (`futureagi`, or `nameOverride` when set);
+- otherwise `<release>-futureagi` (`<release>-<nameOverride>` with
+  `nameOverride`);
+
+cut to 40 characters, then one trailing `-` removed. So the prefix is not
+simply the release name:
+
+| Release | Namespace | Values | Gateway Service | Dashboard Service |
+|---|---|---|---|---|
+| `futureagi` | `futureagi` | | `futureagi-agentcc-gateway` | `futureagi-frontend` |
+| `futureagi-prod` | `prod` | | `futureagi-prod-agentcc-gateway` | `futureagi-prod-frontend` |
+| `demo` | `team-a` | | `demo-futureagi-agentcc-gateway` | `demo-futureagi-frontend` |
+| `demo` | `team-b` | | `demo-futureagi-agentcc-gateway` | `demo-futureagi-frontend` |
+| `demo` | `demo` | `nameOverride: fagi` | `demo-fagi-agentcc-gateway` | `demo-fagi-frontend` |
+| `futureagi` | `futureagi` | `nameOverride: fagi` | `futureagi-fagi-agentcc-gateway` | `futureagi-fagi-frontend` |
+| `demo` | `demo` | `fullnameOverride: fagi` | `fagi-agentcc-gateway` | `fagi-frontend` |
+| `customer-analytics-platform-production-eu1` | `analytics` | | `customer-analytics-platform-production-e-agentcc-gateway` | `customer-analytics-platform-production-e-frontend` |
+| `observability-platform-staging-eu-west1` | `observability` | | `observability-platform-staging-eu-west1-agentcc-gateway` | `observability-platform-staging-eu-west1-frontend` |
+
+The certificate's names are then `<service>`, `<service>.<namespace>`,
+`<service>.<namespace>.svc` and `<service>.<namespace>.svc.cluster.local`;
+the same release in two namespaces gets the same Service names and different
+namespace-qualified ones. Read the exact names from your own values before
+issuing the certificates:
+
+```bash
+helm template <release> oci://ghcr.io/future-agi/charts/futureagi --version "$VERSION" \
+  -n <namespace> -f values.yaml \
+  --show-only templates/agentcc-gateway/service.yaml \
+  --show-only templates/frontend/service.yaml | grep -E '^  (name|namespace):'
+```
+
+or, once installed, `kubectl get svc -n <namespace> -l app.kubernetes.io/instance=<release>`.
+Use a trusted issuer or distribute the gateway CA through `global.caBundle`.
+Configure the Service addresses in your DNS (or set the Service types to
+`LoadBalancer`):
 
 ```yaml
 agentccGateway:
@@ -790,6 +829,17 @@ mounted TLS Secrets), or explicitly exclude those Secrets in your Reloader
 configuration. The chart does not checksum the TLS Secret (the frontend
 ConfigMap checksum is unrelated to certificate rotation). The frontend nginx key needs to be
 readable by uid/fsGroup 101.
+
+When the pod has an `fsGroup`, as it does by default (65532 for the gateway,
+101 for the frontend), the chart mounts the gateway's and the frontend's
+private keys with mode 0440: owned by root and readable by that group, not by
+other users. Both images log a warning with the key's path and mode, never its
+contents, when the key is accessible to other users or writable by its group,
+and keep serving; neither refuses a key for its mode. When no `fsGroup` is
+rendered, because OpenShift security-context adaptation leaves the pod's
+groups to the SCC or `agentccGateway.podSecurityContext` /
+`frontend.podSecurityContext` removes it, the chart keeps the Secret default
+0644 so the key stays readable, and that image's warning is expected.
 
 `urls.gateway` sets `AGENTCC_GATEWAY_PUBLIC_URL` on the API and workers so
 the dashboard shows a reachable HTTPS gateway rather than localhost. The
@@ -1110,7 +1160,7 @@ prove application-consistent recovery.
 - **Logs.** `config.envType: production` (the default) writes JSON logs;
   `config.logLevel` sets the level. Every component logs to stdout.
 - **Health.** The API answers `/health/`, fi-collector `/healthz` on its
-  admin port 9464 (with its insert counters), the gateway `/healthz`.
+  Service port 9464 (with its insert counters), the gateway `/healthz`.
   `helm test` checks them all. The app's first-run setup screen
   (`/api/setup-checks/`) checks every datastore.
 - **Metrics.** The chart has no ServiceMonitor yet. The LLM gateway serves
@@ -1618,7 +1668,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `fiCollector.autoscaling.behavior` | `{}` | HorizontalPodAutoscaler `behavior` (autoscaling/v2), e.g. `{scaleDown: {stabilizationWindowSeconds: 300}}`. Empty: the Kubernetes defaults. |
 | `fiCollector.pdb.enabled` | `true` | PodDisruptionBudget for the collector. |
 | `fiCollector.pdb.maxUnavailable` | `1` | At most this many collector pods down during voluntary disruptions. |
-| `fiCollector.extraEnv` | `{}` | Extra environment variables (FI_* overrides, see fi-collector/README.md), as `NAME: value`. |
+| `fiCollector.extraEnv` | `{}` | Extra environment variables as `NAME: value`. `FI_ADMIN_ADDR: ":9500"` moves the Pod listener, readiness and GKE check; the Service still accepts 9464. See UPGRADING.md for supported binds. |
 | `fiCollector.podAnnotations` | `{}` | Pod annotations. |
 | `fiCollector.podLabels` | `{}` | Extra pod labels. |
 | `fiCollector.podSecurityContext` | `{}` | Merged over the chart's pod security context (non-root uid 65532, distroless). |
@@ -1756,7 +1806,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `gatewayApi.llmGateway.timeout` | `"310s"` | Route timeout (Gateway API duration) of LLM calls; keep it above the gateway's `config.server.write_timeout`. Empty: the Gateway's default. |
 | `gatewayApi.timeouts.request` | `"300s"` | Route timeout of API requests (Gateway API duration, e.g. `300s`). Empty: the Gateway's default, often 15 s, which cuts long requests. |
 | `gatewayApi.timeouts.websocket` | `"24h"` | Route timeout of the WebSocket paths (`/ws/`). `0s` disables it where the Gateway supports that; some also need a backend or client traffic policy for idle connections (README). |
-| `gatewayApi.gke.healthChecks.enabled` | `false` | GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs). |
+| `gatewayApi.gke.healthChecks.enabled` | `false` | GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its configured Pod admin port, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs). |
 | `networkPolicy.enabled` | `false` | NetworkPolicies: the datastores, the gateway, serving and the code sandbox accept traffic only from this release's pods; the UI, API and collector also from `ingressFrom`. A component whose Service is a LoadBalancer or NodePort accepts any source on its Service ports. Egress is open, except for the code sandbox. |
 | `networkPolicy.ingressFrom` | `[]` | Peers (NetworkPolicy `from` entries) that may reach the UI, API and collector, e.g. your ingress controller's namespace: `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]`. Empty: any source. |
 | `serviceAccount.create` | `true` | Create a ServiceAccount for the application pods. |

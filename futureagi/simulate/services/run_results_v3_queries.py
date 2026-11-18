@@ -68,7 +68,7 @@ from simulate.models import (
 )
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.selectors.runs import user_executions
-from simulate.semantics import SupportedProviders
+from simulate.services.call_provider import call_agent_provider_expression
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.harness_scenarios import (
     NO_CALL_ACTOR,
@@ -771,10 +771,6 @@ def run_calls_queryset(
         if execution_ids is not None
         else Q(test_execution=execution)
     )
-    provider_cases = [
-        When(provider_call_data__has_key=provider, then=Value(provider))
-        for provider in sorted(SupportedProviders)
-    ]
     dataset_goal = Cell.all_objects.filter(
         row_id=OuterRef("row_id"),
         column__name__in=["use_case", "goal"],
@@ -955,13 +951,7 @@ def run_calls_queryset(
         ),
         result_tokens=_safe_json_float("conversation_metrics_data", "total_tokens"),
         result_cost_cents=Cast("customer_cost_cents", FloatField()),
-        result_provider=Case(
-            *provider_cases,
-            default=Coalesce(
-                F("test_execution__agent_definition__provider"), Value("Unknown")
-            ),
-            output_field=CharField(),
-        ),
+        result_provider=call_agent_provider_expression(),
         result_scenario_key=Coalesce(
             _json_text("call_metadata", "harness_scenario_key"),
             _json_text("call_metadata", "hosted_harness_receipt", "scenario_key"),
