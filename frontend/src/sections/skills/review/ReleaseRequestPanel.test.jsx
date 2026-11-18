@@ -53,7 +53,7 @@ describe('ReleaseRequestPanel acknowledgments', () => {
     view.rerender(<ReleaseRequestPanel {...props({ request: request('approved'), onExecute })} />);
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.getByText('You checked this release when you approved it.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Move production to v\d+$/ }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Move production' }));
@@ -67,7 +67,7 @@ describe('ReleaseRequestPanel acknowledgments', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: REVIEWER }));
     // Renewed and approved again: revision 2, a new fingerprint. The old tick does not carry.
     view.rerender(<ReleaseRequestPanel {...props({ request: request('approved', 2), preview: { packet, current: true, fingerprint: 'fp-2' } })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Move production to v\d+$/ }));
     const dialog = screen.getByRole('dialog');
     const move = within(dialog).getByRole('button', { name: 'Move production' });
     expect(move).toBeDisabled();
@@ -76,7 +76,7 @@ describe('ReleaseRequestPanel acknowledgments', () => {
     view.unmount();
     // Another person (an admin who did not tick) is asked in the confirmation.
     render(<ReleaseRequestPanel {...props({ request: request('approved'), currentUserId: 'admin' })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Move production to v\d+$/ }));
     expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move production' })).toBeDisabled();
   });
 
@@ -85,12 +85,12 @@ describe('ReleaseRequestPanel acknowledgments', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: REVIEWER }));
     view.rerender(<ReleaseRequestPanel {...props({ request: request('approved'), staleCode: 'release_conflict', onRenew: vi.fn() })} />);
     expect(screen.getByRole('button', { name: 'Renew request' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Move production to v\d+$/ })).toBeDisabled();
     view.unmount();
     // Same revision and fingerprint shown current again later in the session: asked again.
     render(<ReleaseRequestPanel {...props({ request: request('approved') })} />);
     expect(screen.queryByText('You checked this release when you approved it.')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Move production to v\d+$/ }));
     expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move production' })).toBeDisabled();
   });
 
@@ -98,5 +98,37 @@ describe('ReleaseRequestPanel acknowledgments', () => {
     render(<ReleaseRequestPanel {...props({ request: request('pending'), permissions: { canDecide: false, canExecute: false } })} />);
     fireEvent.click(screen.getByRole('checkbox', { name: REVIEWER }));
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
+  });
+});
+
+// A staging request says "staging" everywhere: the footer button, the confirm and the review body
+// are built from the request's own label, with one verb ("Move").
+describe('ReleaseRequestPanel wording follows the request label', () => {
+  const staging = { ...packet, subjectKind: 'skill', transition: { label: 'staging', expectedVersion: null, version: 1 } };
+  it('a staging request never says production', async () => {
+    const onExecute = vi.fn().mockResolvedValue({});
+    render(<ReleaseRequestPanel {...props({ preview: { packet: staging, current: true, fingerprint: 'fp-1' }, request: request('approved'), onExecute, review: { complete: true, changes } })} />);
+    expect(screen.getByText(/Staging stays unchanged until approval and release\. After the move, check Activity to confirm delivery\./)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Move staging to v1' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Move staging to v1?')).toBeVisible();
+    expect(within(dialog).getByText(/^Staging for support-agent will point to v1\. Apps that follow staging/)).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/production|Consumers/i);
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: REVIEWER }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move staging' }));
+    await waitFor(() => expect(onExecute).toHaveBeenCalled());
+    expect(onExecute.mock.calls[0][0]).toMatchObject({ requestId: 'request', revision: 1, expectedFingerprint: 'fp-1' });
+  });
+  it('says why the move asks again after the request was revised or renewed', () => {
+    render(<ReleaseRequestPanel {...props({ request: request('approved', 2) })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Move production to v2' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('This request was revised or renewed, so confirm once more.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Move production' })).toBeDisabled();
+    expect(within(dialog).queryByText(/Approval is checked again/)).not.toBeInTheDocument();
+  });
+  it('the requester picker names the label that waits for approval', () => {
+    render(<ReleaseRequestPanel {...props({ preview: { packet: staging, current: true, fingerprint: 'fp-1' }, permissions: { canSubmit: true }, onSubmit: vi.fn(), recipients: [{ id: 'reviewer', name: 'Robin Reviewer' }, { id: 'other', name: 'Other' }] })} />);
+    expect(screen.getByText('An independent reviewer must approve before staging can move.')).toBeVisible();
   });
 });

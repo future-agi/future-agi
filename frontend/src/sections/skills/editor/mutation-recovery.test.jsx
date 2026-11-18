@@ -25,7 +25,7 @@ afterEach(cleanup);
 it.each([false, true])('recovers a real queued mutation through its visible control (head=%s)', async (head) => {
   const send = vi.fn().mockRejectedValueOnce(new Error('response lost')).mockResolvedValueOnce({ ...initial, revision: 5 });
   render(<Harness head={head} send={send} />);
-  const previewLabel = head ? 'Review against current latest' : 'Preview dependency changes';
+  const previewLabel = head ? 'Compare with latest version' : 'Preview changes to linked skills';
   const applyLabel = head ? 'Acknowledge reviewed head' : 'Apply selected updates to draft';
   fireEvent.click(screen.getByRole('button', { name: previewLabel }));
   const confirmation = await screen.findByRole('checkbox', { name: head ? 'I reviewed both comparisons and the new-latest consequence.' : 'Accept these skill versions and update rules into 1 context draft.' });

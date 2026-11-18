@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
 import { PRIVATE_RESULTS_NOTE } from './ReleaseReviewBody';
-import { useReviewOptions, useShareReleaseEvidence } from 'src/api/skills/review-authoring';
+import { usePrepareReleaseReview, useReviewOptions, useShareReleaseEvidence } from 'src/api/skills/review-authoring';
 import { RETIRED_TERMS } from '../utils/terms';
 
 // UXF-17: one bulk share button, a per-row consent dialog, "From your test"
@@ -14,8 +14,10 @@ vi.mock('src/api/skills/testing', async (load) => ({ ...(await load()), useSkill
 vi.mock('src/api/skills/review-authoring', () => ({
   useReviewSubjects: () => ({ data: { results: [], total_pages: 1 } }),
   useReviewCandidates: () => ({ data: { results: [], total_pages: 1 } }),
-  useReviewOptions: vi.fn(), usePrepareReleaseReview: () => ({ mutateAsync: vi.fn() }), useSubmitReleaseReview: () => ({}), useShareReleaseEvidence: vi.fn(),
+  useReviewOptions: vi.fn(), usePrepareReleaseReview: vi.fn(), useSubmitReleaseReview: () => ({}), useShareReleaseEvidence: vi.fn(),
 }));
+// The prepared packet is rendered by the confirm step; these tests read what Continue sent.
+vi.mock('./ReleaseRequestPanel', () => ({ default: () => <div data-testid="prepared-request" /> }));
 
 const base = { subjectId: 'context', subjectKind: 'agent_context', candidateDigest: 'digest', configuration: { digest: 'config', text: {} }, annotationRevision: 2,
   status: 'completed', payloadExpiresAt: '2999-01-01', outcome: 'works_on_examples', counts: { cases: 1, graded: 2, planned: 2, regressed: 0 }, source: 'skills_text' };
@@ -25,6 +27,7 @@ const people = [{ id: 'priya', name: 'Priya Shah' }, { id: 'sam', name: 'Sam Lee
 const prefill = { kind: 'agent_context', subjectId: 'context', name: 'support-agent', candidate: { id: 'version', digest: 'digest', number: 2 }, evidence: ['skills_text:run-from-test'] };
 
 const share = vi.fn();
+const prepare = vi.fn();
 let options;
 const shared = (...ids) => ({ targets: [], recipients: people, evidence: [fromTest, other].map((ref) => (ids.includes(ref.sourceId) ? { ...ref, visibility: 'workspace' } : ref)) });
 
@@ -34,6 +37,8 @@ beforeEach(() => {
   options = { data: shared(), isFetching: false, refetch: vi.fn() };
   useReviewOptions.mockImplementation(() => options);
   useShareReleaseEvidence.mockReturnValue({ mutateAsync: share });
+  prepare.mockResolvedValue({ preview: { packet: {}, fingerprint: 'fp', current: true } });
+  usePrepareReleaseReview.mockReturnValue({ mutateAsync: prepare, isPending: false });
 });
 afterEach(cleanup);
 
@@ -53,8 +58,10 @@ describe('ReleaseRequestComposer', () => {
     expect(screen.getByRole('button', { name: 'Share and attach 1 selected' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Attach all' })).not.toBeInTheDocument();
     expect(share).not.toHaveBeenCalled();
-    // Not attached until shared: the footer says so without blocking.
-    expect(screen.getByText('No test evidence attached')).toBeVisible();
+    // Not attached until shared: the footer names the ticked row as not attached, never "No test evidence attached".
+    expect(screen.getByText('1 ticked result not attached until shared. Continue asks you to share it.')).toBeVisible();
+    expect(screen.queryByText('No test evidence attached')).not.toBeInTheDocument();
+    expect(screen.getByText(/ticked but private, so it isn.t attached until you share it/)).toBeVisible();
   });
 
   it('keeps Continue disabled with "Choose a reviewer" until a reviewer is chosen', () => {
@@ -98,6 +105,65 @@ describe('ReleaseRequestComposer', () => {
     await waitFor(() => expect(share).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'run-from-test', acknowledgeSnapshotSharing: true })));
     await waitFor(() => expect(screen.queryByRole('button', { name: /selected$/ })).not.toBeInTheDocument());
     await waitFor(() => expect(attachBox('Your answer check')).toBeChecked());
+  });
+
+  // UXF-17: the ticked state, the footer and Continue agree; a ticked private row is never sent unshared.
+  const chooseReviewer = async () => {
+    fireEvent.mouseDown(screen.getByLabelText('Assigned reviewer'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Priya Shah' }));
+  };
+  it('Continue with a ticked private row asks to share it; closing the dialog sends nothing', async () => {
+    renderComposer();
+    await chooseReviewer();
+    const next = screen.getByRole('button', { name: 'Continue' });
+    expect(next).toBeEnabled();
+    fireEvent.click(next);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Share 1 private result with the workspace?')).toBeVisible();
+    expect(within(dialog).getByText('Your answer check')).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(share).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(attachBox('Your answer check')).toBeChecked();
+  });
+
+  it('"Continue without it" shares nothing, unticks the row and sends no evidence', async () => {
+    renderComposer();
+    await chooseReviewer();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue without it' }));
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    expect(share).not.toHaveBeenCalled();
+    expect(prepare.mock.calls[0][0]).toMatchObject({ resourceId: 'context', kind: 'agent_context', candidateId: 'version', label: 'production', evidence: [] });
+  });
+
+  it('sharing from Continue attaches the row and sends it with the request', async () => {
+    options.refetch.mockImplementation(async () => { options = { ...options, data: shared('run-from-test') }; return { data: options.data }; });
+    renderComposer();
+    await chooseReviewer();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Share and attach' }));
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    expect(share).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'run-from-test', acknowledgeSnapshotSharing: true }));
+    expect(prepare.mock.calls[0][0].evidence).toEqual([{ source: 'skills_text', sourceId: 'run-from-test', annotationRevision: 2 }]);
+  });
+
+  it('with nothing ticked, the footer warns and Continue goes straight on', async () => {
+    renderComposer();
+    fireEvent.click(attachBox('Your answer check'));
+    expect(screen.getByText('No test evidence attached')).toBeVisible();
+    await chooseReviewer();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(prepare.mock.calls[0][0].evidence).toEqual([]);
+  });
+
+  it('names the label it moves in the lead, not a fixed "Production"', () => {
+    render(<MemoryRouter><ReleaseRequestComposer scopeKey="scope" prefill={{ ...prefill, label: 'staging' }} /></MemoryRouter>);
+    expect(screen.getByText(/Staging stays unchanged until approval and release\./)).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Production stays unchanged|configuration r\d/);
   });
 
   it('uses the release request names only', () => {

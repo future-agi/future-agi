@@ -123,7 +123,7 @@ export function nativeSummaryConclusion(summary) {
 // Release impact as short sentences. Every app is counted once: "moves" and "pinned" split the apps,
 // and "hasn't reported" is said of those same apps, never as a third group. With three apps or fewer
 // and their names known, each is named: "acme-support production agent follows production and moves
-// v1 → v2. acme-support application is pinned to v2 and doesn't move; it hasn't reported a version yet."
+// v1 → v2. acme-support application is pinned to v2, so it already uses this version; it hasn't reported a version yet."
 const hasVerb = (count) => (count === 1 ? "hasn't" : "haven't");
 export function impactSentence({ following = 0, pinned = 0, unobserved = 0, apps } = {}, transition) {
   const total = following + pinned;
@@ -137,7 +137,10 @@ export function impactSentence({ following = 0, pinned = 0, unobserved = 0, apps
     const pinnedLast = [...apps].sort((a, b) => (a.selector?.version != null) - (b.selector?.version != null));
     const sentences = pinnedLast.map((app) => {
       const pin = app.selector?.version;
-      const base = pin != null ? `${app.name} is pinned to v${pin} and doesn't move` : `${app.name} follows ${transition.label} and ${move}`;
+      // An app pinned to the version being released already runs it; say so rather than "doesn't move".
+      const base = pin != null
+        ? (to != null && Number(pin) === Number(to) ? `${app.name} is pinned to v${pin}, so it already uses this version` : `${app.name} is pinned to v${pin} and stays on it`)
+        : `${app.name} follows ${transition.label} and ${move}`;
       return `${base}${attributed && !app.reported ? "; it hasn't reported a version yet" : ''}.`;
     });
     if (!attributed && unobserved) sentences.push(`${unobserved === total ? (total === 1 ? "It hasn't" : `None of the ${total} has`) : `${unobserved} of the ${total} ${hasVerb(unobserved)}`} reported a version yet.`);

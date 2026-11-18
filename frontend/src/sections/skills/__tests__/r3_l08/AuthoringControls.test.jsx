@@ -35,7 +35,7 @@ describe("historical head review", () => {
   it("reviews origin v4 and head v6 without replacing bytes, then acknowledges exact preconditions", async () => {
     const session = draft(); const preview = vi.fn(async () => headPreview); const acknowledge = vi.fn(async () => ({ ...session, revision: 13 }));
     render(<HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={preview} onAcknowledge={acknowledge} />);
-    click("Review against current latest");
+    click("Compare with latest version");
     await screen.findByText(/v4-derived/);
     expect(session.flush).toHaveBeenCalledOnce();
     check("I reviewed both comparisons and the new-latest consequence.");
@@ -47,7 +47,7 @@ describe("historical head review", () => {
   });
   it("does not acknowledge a head when either full comparison is missing", async () => {
     render(<HotfixHeadReview scopeKey={scopeKey} session={draft()} onPreview={async () => ({ review: headPreview.review })} onAcknowledge={vi.fn()} />);
-    click("Review against current latest"); await screen.findByText(/v4-derived/);
+    click("Compare with latest version"); await screen.findByText(/v4-derived/);
     expect(screen.getAllByText(/complete file comparison is unavailable/)).toHaveLength(2);
     expect(screen.getByRole("checkbox")).toBeDisabled(); expect(button("Acknowledge reviewed head")).toBeDisabled();
     expect(screen.queryByText("No file changes.")).not.toBeInTheDocument();
@@ -55,21 +55,21 @@ describe("historical head review", () => {
   it("a failed flush cannot preview a runnable snapshot", async () => {
     const session = draft(); session.flush.mockResolvedValue(null); const preview = vi.fn();
     render(<HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={preview} />);
-    click("Review against current latest");
+    click("Compare with latest version");
     await screen.findByText(/could not be confirmed/);
     expect(preview).not.toHaveBeenCalled();
   });
   it("immediately invalidates head acknowledgment after any local mutation", async () => {
     const session = draft(); const props = { scopeKey, session, onPreview: async () => headPreview, onAcknowledge: vi.fn() };
     const view = render(<HotfixHeadReview {...props} />);
-    click("Review against current latest"); await screen.findByText(/v4-derived/);
+    click("Compare with latest version"); await screen.findByText(/v4-derived/);
     check("I reviewed both comparisons and the new-latest consequence.");
     view.rerender(<HotfixHeadReview {...props} session={{ ...session, dirty: true, editSequence: 1 }} />);
     expect(button("Acknowledge reviewed head")).toBeDisabled();
   });
   it("ignores a delayed old-scope preview rather than filling the new view", async () => {
     const pending = deferred(); const view = render(<HotfixHeadReview scopeKey={scopeKey} session={draft()} onPreview={() => pending.promise} />);
-    click("Review against current latest");
+    click("Compare with latest version");
     view.rerender(<HotfixHeadReview scopeKey="other:scope" session={draft()} onPreview={vi.fn()} />);
     await act(async () => pending.resolve(headPreview));
     expect(screen.queryByText(/v4-derived/)).not.toBeInTheDocument();
@@ -84,7 +84,7 @@ describe("accepted dependency review", () => {
     expect(screen.getByText("v9 available")).toBeVisible();
     expect(screen.getByText("v8", { exact: true })).toBeVisible();
     expect(preview).not.toHaveBeenCalled();
-    check("Check for update: refunds"); click("Preview dependency changes");
+    check("Check for update: refunds"); click("Preview changes to linked skills");
     await screen.findByText(/Compiled candidate/);
     expect(preview).toHaveBeenCalledWith({ revision: 12, links: session.contextSpec.links, refreshSkillIds: ["child"] });
     check("Accept these skill versions and update rules into 1 context draft."); click("Apply selected updates to draft");
@@ -102,7 +102,7 @@ describe("accepted dependency review", () => {
   it("blocks applying a stale revision or failed compiled closure", async () => {
     const session = draft(); const props = { scopeKey, session, onPreview: async () => ({ revision: 12, fingerprint: "plan", checks: { summary: { errors: 1 } } }), onApply: vi.fn() };
     const view = render(<ContextLinksPanel {...props} />);
-    click("Preview dependency changes"); await screen.findByText(/blocking checks/);
+    click("Preview changes to linked skills"); await screen.findByText(/blocking checks/);
     check("Accept these skill versions and update rules into 1 context draft.");
     expect(button("Apply selected updates to draft")).toBeDisabled();
     view.rerender(<ContextLinksPanel {...props} session={{ ...session, revision: 13 }} />);
@@ -110,7 +110,7 @@ describe("accepted dependency review", () => {
   });
   it("is entirely read-only for a retained release", () => {
     render(<ContextLinksPanel scopeKey={scopeKey} session={draft()} readOnly />);
-    expect(screen.queryByRole("button", { name: /Preview dependency changes|Apply selected updates to draft|Add to proposed links|Remove/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Preview changes to linked skills|Apply selected updates to draft|Add to proposed links|Remove/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getByText("v8", { exact: true })).toBeVisible();
   });

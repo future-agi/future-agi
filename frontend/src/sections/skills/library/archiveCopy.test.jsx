@@ -5,7 +5,7 @@ import ArchiveConfirmContent, { protectedArchiveSentence } from "./archiveCopy";
 describe("ArchiveConfirmContent (UXF-09)", () => {
   it("keeps the label sentence and adds who may archive when a protected label points at a version", () => {
     render(<ArchiveConfirmContent labels={[{ name: "production", version: 2, isProtected: true }]} />);
-    expect(screen.getByText("production points at v2. Agents following production will stop receiving this skill.")).toBeInTheDocument();
+    expect(screen.getByText("Production points at v2. Agents following production will stop receiving this skill.")).toBeInTheDocument();
     expect(screen.getByText("Production is a protected label (only admins can move it), so only workspace admins can archive this skill.")).toBeInTheDocument();
     expect(document.body.textContent.replace(/protected labels?/gi, "").match(/protected/i)).toBeNull();
   });

@@ -145,7 +145,7 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
         <Stack spacing={1.5}>
           <TextField
             size="small"
-            label="Target name"
+            label="App name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             inputProps={{ maxLength: 120 }}

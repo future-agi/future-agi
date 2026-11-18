@@ -74,7 +74,7 @@ it('closes the move confirmation before a stale response can open renewal', asyn
   let reject;
   const execute = vi.fn(() => new Promise((resolve, fail) => { reject = fail; }));
   render(<ReleaseRequestPanel scopeKey="scope" state="ready" request={{ id: 'request', revision: 1, status: 'approved' }} preview={{ packet, current: true, fingerprint: 'fp' }} review={{ complete: true }} permissions={{ canExecute: true }} onExecute={execute} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Move production to v\d+$/ }));
   fireEvent.click(screen.getByRole('checkbox'));
   fireEvent.click(screen.getByRole('button', { name: 'Move production', exact: true }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -147,7 +147,7 @@ it('heads the release diff with the subject\'s own versions, never a bare "Produ
 it('names the affected apps in the summary and keeps the per-app counts one click away', () => {
   const apps = [{ id: 'b2', name: 'acme-support application', selector: { version: 2 }, reported: false }, { id: 'b1', name: 'acme-support production agent', selector: { label: 'production' }, reported: true }];
   render(<ReleaseReviewBody packet={summaryPacket} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={{ following: 1, pinned: 1, unobserved: 1, moreAvailable: false, apps }} />);
-  expect(summaryRows().getByText("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2 and doesn't move; it hasn't reported a version yet.")).toBeVisible();
+  expect(summaryRows().getByText("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2, so it already uses this version; it hasn't reported a version yet.")).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: /Apps affected/ }));
   expect(screen.getByText(/1 follower · 1 intentional pin · 1 application without observations/)).toBeVisible();
   expect(screen.getByText('impact-fp')).toBeInTheDocument();
@@ -174,11 +174,12 @@ it('states evidence, impact, permissions and files once in a key/value table, wi
   expect(screen.getByRole('button', { name: 'Copy full Before' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Copy full Candidate' })).toBeVisible();
 });
-it('keeps the target configuration digest one hover away on the visible summary line', () => {
+it('keeps the target configuration out of the summary and its digest under Technical details', () => {
   const target = { bindingId: 'binding', environmentId: null, revision: 2, configurationDigest: 'd'.repeat(64) };
   render(<ReleaseReviewBody packet={{ ...summaryPacket, target }} changes={[]} dependencyChanges={[]} checks={emptyChecks} capabilities={capabilities} impact={impact} />);
-  expect(summaryRows().getByText('App configuration')).toBeVisible();
-  expect(screen.getByTitle('d'.repeat(64))).toBeVisible();
+  // No summary row that only says "App configuration" (Fable P2): the target lives in Technical details.
+  expect(summaryRows().queryByText('Application target')).not.toBeInTheDocument();
+  expect(screen.queryByText('App configuration')).not.toBeInTheDocument();
   expect(screen.queryByText(/dddddddddddd/)).not.toBeInTheDocument();
   // The revision is a technical detail, not part of the summary line.
   expect(screen.queryByText(/App configuration r2/)).not.toBeInTheDocument();
@@ -246,7 +247,7 @@ it('pauses a stale request with one title, one sentence, one action and Refresh 
   expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Why this request is paused' }));
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeVisible();
-  const release = screen.getByRole('button', { name: 'Release to production' });
+  const release = screen.getByRole('button', { name: /^Move production to v\d+$/ });
   expect(release).toBeDisabled();
   expect(release).toHaveAccessibleDescription('Renew the request first');
   // The notice lives in the page; the sticky decision bar stays one row (acknowledgment, reason, disabled release).

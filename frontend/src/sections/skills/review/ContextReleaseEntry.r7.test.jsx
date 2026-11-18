@@ -53,7 +53,7 @@ it('suggests only an eligible Application test matching the target, not an uncar
 it('only permits approval of pending requests while preserving release of an approved revision', () => {
   render(<ReleaseRequestPanel scopeKey="reviewer" state="ready" preview={{ packet, fingerprint: 'fp', current: true }} review={{ complete: true, dependencyChanges: [] }} request={{ id: 'request', status: 'approved', revision: 1 }} permissions={{ canDecide: true, canExecute: true }} reviewedIdentity="1:fp" onDecide={vi.fn()} onExecute={vi.fn()} />);
   expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Release to production' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: /^Move production to v\d+$/ })).toBeEnabled();
 });
 
 it('does not offer a release request for the production version', () => {

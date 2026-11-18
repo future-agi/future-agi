@@ -390,7 +390,7 @@ export default function ContextReleaseReview({
           ? [{ label: "Agent contexts", to: paths.dashboard.skills.contexts }, { label: name || "Agent context", to: paths.dashboard.skills.contextDetail(draftReview.subjectId) }, { label: "Publish" }]
           : [{ label: "Reviews", to: paths.dashboard.skills.reviews }, { label: name || "Agent context" }]}
         title={draftReview ? `Publish ${name || "agent context"} v${(draftReview.expectedHeadVersion ?? 0) + 1}` : name ? `Review ${name}` : "Review agent context"}
-        purpose={draftReview ? "Review the saved changes and linked skills before publishing a version." : "Inspect the changes before making a release decision. Production stays unchanged until released."}
+        purpose={draftReview ? "Check the saved changes and linked skills, then publish." : "Inspect the changes before making a release decision. Production stays unchanged until released."}
       />
       {!scopeKey || state !== "ready" ? (
         <ReviewState

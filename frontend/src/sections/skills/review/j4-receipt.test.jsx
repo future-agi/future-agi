@@ -25,7 +25,7 @@ it('renders a metadata-only receipt without requiring retained packet contents',
   expect(screen.getByText(/"release_revision": 1/)).toBeVisible();
   expect(screen.getByText(/Before: release revision 1/)).toBeVisible();
   expect(screen.getByText(/"releaseRevision": 2/)).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Release to production' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Move production to v\d+$/ })).not.toBeInTheDocument();
   expect(screen.queryByText(/Review is stale or unavailable/)).not.toBeInTheDocument();
 });
 it.each(['loading', 'error', 'forbidden', 'unavailable'])('does not expose cached metadata in %s state', (state) => {

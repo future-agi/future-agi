@@ -383,7 +383,7 @@ describe("exact decisions and retry safety", () => {
     expect(
       screen.getByRole("button", { name: "Approve release" }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Release to production" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Move production to v\d+$/ })).toBeDisabled();
     click('Add comment');
     fireEvent.change(screen.getByRole("textbox", { name: "Review comment" }), {
       target: { value: "Production moved while this was pending." },
@@ -409,7 +409,7 @@ describe("exact decisions and retry safety", () => {
         onExecute={execute}
       />,
     );
-    click("Release to production");
+    click(/^Move production to v\d+$/);
     acknowledge();
     expect(execute).not.toHaveBeenCalled();
     click("Move production");
@@ -436,7 +436,7 @@ describe("exact decisions and retry safety", () => {
     for (const name of [
       "Approve release",
       "Request changes",
-      "Release to production",
+      /^Move production to v\d+$/,
     ]) {
       const action = screen.queryByRole("button", { name });
       if (action) expect(action).toBeDisabled();
@@ -807,7 +807,7 @@ it('stacks each phone card as name and status, request title, then who and when,
   // No separate Review or Open button on a phone: the card is the one tap target; the menu stays at its top right.
   expect(screen.queryByRole('button', { name: 'Open request', exact: true })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Open', exact: true })).not.toBeInTheDocument();
-  expect(within(card).getByText('In review')).toBeVisible();
+  expect(within(card).getByText('Waiting for approval')).toBeVisible();
   expect(within(card).getByText(/Sam Rivera ·/)).toBeVisible();
   expect(screen.getByRole('button', { name: 'Actions for Pending review' })).toBeVisible();
   expect(card.contains(screen.getByRole('button', { name: 'Actions for Pending review' }))).toBe(false);

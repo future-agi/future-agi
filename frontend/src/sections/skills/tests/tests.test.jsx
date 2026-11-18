@@ -398,12 +398,10 @@ const choose = async (label, name) => {
   fireEvent.click(await screen.findByRole("option", { name }));
 };
 const configure = async () => {
-  fireEvent.click(screen.getByText("Model parameters and token stop"));
-  fireEvent.click(
-    screen.getByText("0 selected competitors · manage comparison context"),
-  );
+  // Model parameters, the result's use and other skills to compare are under More options.
+  fireEvent.click(screen.getByRole("button", { name: "More options" }));
   await choose("Task model", "fixture-task");
-  fireEvent.change(screen.getByLabelText("Estimated-cost stop (USD)"), {
+  fireEvent.change(screen.getByLabelText("Maximum estimated cost (USD)"), {
     target: { value: "1.00" },
   });
 };
@@ -411,9 +409,9 @@ const configure = async () => {
 const SEND = /^Send (this file|these \d+ files) and 1 test case to Fixture, up to \$\d+\.\d{2}\. (It contains|They contain) no answer keys or grading material\.$/;
 const reviewPlan = async () => {
   fireEvent.click(
-    screen.getByRole("button", { name: "Preview work and spend" }),
+    screen.getByRole("button", { name: "Preview answer check" }),
   );
-  await screen.findByText("Confirm the reviewed plan");
+  await screen.findByText("Before this runs");
   fireEvent.click(screen.getByLabelText(SEND));
 };
 // The visible sub-tab panel (Results, Run a test or Cases).
@@ -698,7 +696,7 @@ describe("reviewed run setup", () => {
     mount(setup({ draft }));
     await configure();
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     );
     await waitFor(() => expect(api.preview).toHaveBeenCalled());
     expect(api.preview.mock.calls[0][0].candidate.digest).toBe(
@@ -715,7 +713,7 @@ describe("reviewed run setup", () => {
       "/dashboard/settings/workspace/workspace/ai-providers",
     );
     expect(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     ).toBeDisabled();
     expect(api.preview).not.toHaveBeenCalled();
   });
@@ -726,7 +724,7 @@ describe("reviewed run setup", () => {
       screen.getByText("Workspace write access is required to run tests."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     ).toBeDisabled();
   });
   it("blocks a reviewed start after permission loss without erasing setup", async () => {
@@ -736,9 +734,9 @@ describe("reviewed run setup", () => {
     api.skill = { ...skill, permissions: { canRunTests: false } };
     view.rerender(<MemoryRouter>{setup()}</MemoryRouter>);
     expect(
-      screen.getByRole("button", { name: "Run quick check" }),
+      screen.getByRole("button", { name: "Run answer check" }),
     ).toBeDisabled();
-    expect(screen.getByLabelText("Estimated-cost stop (USD)")).toHaveValue(
+    expect(screen.getByLabelText("Maximum estimated cost (USD)")).toHaveValue(
       "1.00",
     );
     expect(api.create).not.toHaveBeenCalled();
@@ -748,7 +746,7 @@ describe("reviewed run setup", () => {
     mount(setup());
     await configure();
     expect(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     ).toBeDisabled();
     expect(
       screen.getByText(
@@ -756,7 +754,7 @@ describe("reviewed run setup", () => {
       ),
     ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByLabelText("Compare without this skill · without any skills"),
+      screen.getByLabelText("Without this skill"),
     );
     fireEvent.mouseDown(screen.getByLabelText("Add published competitor"));
     expect(
@@ -764,7 +762,7 @@ describe("reviewed run setup", () => {
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "nearby-policy · v4" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     );
     await waitFor(() => expect(api.preview).toHaveBeenCalled());
     expect(api.preview.mock.calls[0][0]).toMatchObject({
@@ -778,7 +776,7 @@ describe("reviewed run setup", () => {
     mount(setup({ onStarted }));
     await configure();
     await reviewPlan();
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await screen.findByRole("button", { name: "Retry same submission" });
     const first = api.create.mock.calls[0][0];
     expect(first).toMatchObject({
@@ -808,7 +806,7 @@ describe("reviewed run setup", () => {
     expect(screen.getByText("$1")).toHaveAttribute("title", "Exact: USD 1.00");
     expect(screen.queryByText(/fixture-prices/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
-    expect(screen.getByText("Price source: fixture-prices")).toBeInTheDocument();
+    expect(screen.getByText(/^Price source: fixture-prices\./)).toBeInTheDocument();
     expect(screen.getByText(/Upper-bound estimate: USD 0\.23869440/)).toBeInTheDocument();
     // The one send tick names the rounded-up ceiling.
     expect(screen.getByLabelText(SEND)).toHaveAccessibleName(expect.stringContaining("up to $0.24"));
@@ -821,10 +819,10 @@ describe("reviewed run setup", () => {
     mount(setup());
     await configure();
     await reviewPlan();
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await screen.findByText(/Workspace model capacity is busy/);
     const first = api.create.mock.calls[0][0];
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await waitFor(() => expect(api.create).toHaveBeenCalledTimes(2));
     expect(api.create.mock.calls[1][0]).toBe(first);
   });
@@ -833,7 +831,7 @@ describe("reviewed run setup", () => {
     mount(setup({ onBeforePreview }));
     await configure();
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     );
     await screen.findByText(/Save your draft and resolve any conflict/);
     expect(onBeforePreview).toHaveBeenCalledTimes(1);
@@ -851,7 +849,7 @@ describe("reviewed run setup", () => {
     mount(setup({ onBeforePreview }));
     await configure();
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     );
     expect(api.preview).not.toHaveBeenCalled();
     await act(async () => acknowledge({ ...savedDraft, revision: 9 }));
@@ -870,7 +868,7 @@ describe("reviewed run setup", () => {
     const view = mount(setup({ onBeforePreview, onStarted }));
     await configure();
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     );
     const latest = {
       ...savedDraft,
@@ -883,7 +881,7 @@ describe("reviewed run setup", () => {
       </MemoryRouter>,
     );
     await act(async () => acknowledge(latest));
-    await screen.findByText("Confirm the reviewed plan");
+    await screen.findByText("Before this runs");
     expect(api.preview.mock.calls[0][0].candidate.revision).toBe(9);
     expect(
       screen.queryByText("For earlier content. Preview again before starting."),
@@ -907,7 +905,7 @@ describe("reviewed run setup", () => {
       screen.getByText("For earlier content. Preview again before starting."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Run quick check" }),
+      screen.getByRole("button", { name: "Run answer check" }),
     ).toBeDisabled();
   });
   it("requires a separate explicit judge for semantic checks", async () => {
@@ -922,14 +920,14 @@ describe("reviewed run setup", () => {
     mount(setup());
     await configure();
     expect(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     ).toBeDisabled();
     await choose(
       "AI judge for plain-language checks",
       "fixture-task · use selected task model as judge",
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     );
     await waitFor(() => expect(api.preview).toHaveBeenCalled());
     expect(api.preview.mock.calls[0][0].judge).toEqual({
@@ -947,13 +945,13 @@ describe("reviewed run setup", () => {
       512,
     );
     expect(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     ).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Estimated-cost stop (USD)"), {
+    fireEvent.change(screen.getByLabelText("Maximum estimated cost (USD)"), {
       target: { value: "0.25" },
     });
     expect(
-      screen.getByRole("button", { name: "Preview work and spend" }),
+      screen.getByRole("button", { name: "Preview answer check" }),
     ).toBeEnabled();
   });
   it("shows server finding IDs for both bundle and fixture findings and requires reasons", async () => {
@@ -976,7 +974,7 @@ describe("reviewed run setup", () => {
     await configure();
     await reviewPlan();
     expect(
-      screen.getByRole("button", { name: "Run quick check" }),
+      screen.getByRole("button", { name: "Run answer check" }),
     ).toBeDisabled();
     screen
       .getAllByLabelText("This is not a real secret")
@@ -986,13 +984,13 @@ describe("reviewed run setup", () => {
       { target: { value: "Synthetic documented placeholder" } },
     );
     expect(
-      screen.getByRole("button", { name: "Run quick check" }),
+      screen.getByRole("button", { name: "Run answer check" }),
     ).toBeDisabled();
     fireEvent.change(
       screen.getByLabelText("False-positive reason (fixture-finding)"),
       { target: { value: "Synthetic fixture identifier" } },
     );
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await waitFor(() => expect(api.create).toHaveBeenCalled());
     expect(
       api.create.mock.calls[0][0].inventoryReview.falsePositiveSecretFindings.map(
@@ -1021,7 +1019,7 @@ describe("reviewed run setup", () => {
       { target: { value: "Genuine policy" } },
     );
     expect(
-      screen.getByRole("button", { name: "Run quick check" }),
+      screen.getByRole("button", { name: "Run answer check" }),
     ).toBeDisabled();
     expect(
       screen.getByText(/Case or expected-answer overlap makes this diagnostic/),
@@ -1050,7 +1048,7 @@ describe("reviewed run setup", () => {
     });
     expect(apply).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Run quick check" }),
+      screen.getByRole("button", { name: "Run answer check" }),
     ).toBeDisabled();
     await choose("Classify all 3 flagged files", "Reference material");
     fireEvent.change(screen.getByLabelText("Reason for all 3 flagged files"), {
@@ -1061,7 +1059,7 @@ describe("reviewed run setup", () => {
     expect(
       screen.getByLabelText("Classification reason for benchmark/b.md (bbbbbbbb)"),
     ).toHaveValue("Genuine policy references");
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await waitFor(() => expect(api.create).toHaveBeenCalled());
     expect(
       api.create.mock.calls[0][0].inventoryReview.classifications.map(
@@ -1081,15 +1079,15 @@ describe("reviewed run setup", () => {
     mount(setup());
     await configure();
     await reviewPlan();
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await screen.findByText(
       /The draft, cases, baseline or model configuration changed/,
     );
-    expect(screen.getByLabelText("Estimated-cost stop (USD)")).toHaveValue(
+    expect(screen.getByLabelText("Maximum estimated cost (USD)")).toHaveValue(
       "1.00",
     );
     expect(
-      screen.queryByText("Confirm the reviewed plan"),
+      screen.queryByText("Before this runs"),
     ).not.toBeInTheDocument();
   });
 });
@@ -1363,7 +1361,7 @@ describe("editor integration seam", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run example" }));
     await configure();
     await reviewPlan();
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await screen.findByText("Draft test evidence");
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(api.preview.mock.calls[0][0].candidate.revision).toBe(8);
@@ -1399,12 +1397,12 @@ it.each([400, 403])("unlocks normalized first-attempt admission rejection %s and
   mount(setup());
   await configure();
   await reviewPlan();
-  fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+  fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
   await screen.findByText("Paid runs need a workspace allowance");
   expect(screen.queryByText(/request may already have been accepted/)).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Preview work and spend" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Preview answer check" })).toBeEnabled();
   const first = api.create.mock.calls[0][0];
-  fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+  fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
   await waitFor(() => expect(api.create).toHaveBeenCalledTimes(2));
   expect(api.create.mock.calls[1][0].idempotencyKey).not.toBe(first.idempotencyKey);
 });
@@ -1414,7 +1412,7 @@ it("does not discard an uncertain paid request after a normalized recovery denia
   mount(setup());
   await configure();
   await reviewPlan();
-  fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+  fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
   fireEvent.click(await screen.findByRole("button", { name: "Retry same submission" }));
   await screen.findByText("Paid runs need a workspace allowance");
   expect(screen.getByRole("button", { name: "Retry same submission" })).toBeEnabled();
@@ -1436,7 +1434,7 @@ it("shows a missing allowance before consent and disables the paid run with its 
     expect(consent).toBeDisabled();
     expect(consent).not.toBeChecked();
     expect(consent).toHaveAccessibleDescription("Set an allowance first");
-    const run = screen.getByRole("button", { name: "Run quick check" });
+    const run = screen.getByRole("button", { name: "Run answer check" });
     expect(run).toBeDisabled();
     expect(run).toHaveAccessibleDescription("Paid runs are off for this workspace.");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -1481,7 +1479,7 @@ it("brings the provider acknowledgment back unticked once an allowance exists", 
     expect(consent).toBeEnabled();
     expect(consent).not.toBeChecked();
     expect(screen.queryByText("Set an allowance first")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run quick check" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run answer check" })).toBeDisabled();
     fireEvent.click(consent);
     expect(consent).toBeChecked();
   } finally {
@@ -1531,10 +1529,10 @@ describe("skill Tests sub-tabs", () => {
     mount(<TestsTab skill={skill} />, `/dashboard/skills/skill?tab=tests&run=${ids.run}`);
     expect(within(visiblePanel()).getByText("Expectations met on these test cases.")).toBeVisible();
     expect(within(visiblePanel()).getByText("History")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Preview work and spend" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Preview answer check" })).not.toBeInTheDocument();
     fireEvent.click(within(visiblePanel()).getByRole("button", { name: "Run a test" }));
     expect(screen.getByRole("tab", { name: "Run a test" })).toHaveAttribute("aria-selected", "true");
-    expect(within(visiblePanel()).getByRole("button", { name: "Preview work and spend" })).toBeVisible();
+    expect(within(visiblePanel()).getByRole("button", { name: "Preview answer check" })).toBeVisible();
     expect(within(visiblePanel()).getByRole("checkbox", { name: `Select ${testCase.title}` })).toBeChecked();
     openTab("Cases");
     expect(within(visiblePanel()).getByRole("table", { name: "Saved test cases" })).toBeVisible();
@@ -1545,7 +1543,7 @@ describe("skill Tests sub-tabs", () => {
     await configure();
     openTab("Cases");
     openTab("Run a test");
-    expect(screen.getByLabelText("Estimated-cost stop (USD)")).toHaveValue("1.00");
+    expect(screen.getByLabelText("Maximum estimated cost (USD)")).toHaveValue("1.00");
   });
   it("opens a test case from its row, with Edit and Remove in the row's ⋯", () => {
     mount(<TestsTab skill={skill} />);
@@ -1576,16 +1574,16 @@ describe("one send tick (UXF-03)", () => {
     const onStarted = vi.fn();
     mount(setup({ onStarted }));
     await configure();
-    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
-    await screen.findByText("Confirm the reviewed plan");
+    fireEvent.click(screen.getByRole("button", { name: "Preview answer check" }));
+    await screen.findByText("Before this runs");
     // Saved, approved test cases ask no case tick; files, answer keys and provider consent are one tick.
     expect(sendBoxes()).toHaveLength(1);
     expect(screen.queryByLabelText("The files sent to the model contain no answer keys or grading material.")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("I reviewed every file and input that will be sent to the model.")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "View all files sent to the model" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Run quick check" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run answer check" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText(SEND));
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
     const request = api.create.mock.calls[0][0];
     expect(request.expectedFingerprint).toBe("plan-fingerprint");
@@ -1598,8 +1596,8 @@ describe("one send tick (UXF-03)", () => {
     api.preview.mockResolvedValue({ ...preview, outboundFindings: findings, inventory: [{ ...preview.inventory[0], files: [base, { ...base, path: "eval.md", sha256: "e".repeat(64), flags: ["evaluation_artifact"] }] }] });
     mount(setup());
     await configure();
-    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
-    await screen.findByText("Confirm the reviewed plan");
+    fireEvent.click(screen.getByRole("button", { name: "Preview answer check" }));
+    await screen.findByText("Before this runs");
     expect(sendBoxes()).toHaveLength(1);
     expect(screen.getAllByLabelText("This is not a real secret")).toHaveLength(1);
     expect(screen.getByLabelText(`Classify eval.md (${"e".repeat(8)})`)).toBeInTheDocument();
@@ -1608,11 +1606,11 @@ describe("one send tick (UXF-03)", () => {
     const onStarted = vi.fn();
     mount(setup({ onStarted, parentRunId: ids.run }));
     await configure();
-    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
-    await screen.findByText("Confirm the reviewed plan");
+    fireEvent.click(screen.getByRole("button", { name: "Preview answer check" }));
+    await screen.findByText("Before this runs");
     const tick = screen.getByLabelText(/^Send this file and 1 test case to Fixture, up to \$0\.10\.$/);
     fireEvent.click(tick);
-    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run answer check" }));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
     expect(api.create.mock.calls[0][0].inventoryReview).toMatchObject({ reviewedAllFiles: true, noKnownAnswerKeys: false });
   });
@@ -1673,10 +1671,52 @@ describe("evidence summary (UXF-11)", () => {
     cleanup();
     mount(setup());
     await configure();
-    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
-    await screen.findByText("Confirm the reviewed plan");
+    fireEvent.click(screen.getByRole("button", { name: "Preview answer check" }));
+    await screen.findByText("Before this runs");
+    fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
     expect(screen.getByText("1 test case × 2 versions × 1 attempt per version = 2 attempts")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/per arm|attempt\(s\)|\bexact\b/i);
+  });
+});
+
+describe("skill Run a test uses the context form's words (UXF-03, UXF-14)", () => {
+  it("names the test once, keeps harness settings under More options and sends the same plan", async () => {
+    mount(setup());
+    // One name for the test, the same as the context form; no harness labels on the page.
+    expect(screen.getByRole("button", { name: "Preview answer check" })).toBeInTheDocument();
+    expect(screen.getByText("Compare with")).toBeInTheDocument();
+    for (const retired of ["Evidence purpose", "Preview work and spend", "Confirm the reviewed plan", "Comparison profile", "Estimated-cost stop", "manage comparison context", "Effective execution limits", "quick check"]) {
+      expect(document.body.textContent).not.toContain(retired);
+    }
+    expect(document.querySelector("details")).toBeNull();
+    // Profile, model parameters, the result's use and other skills are one disclosure away.
+    expect(screen.queryByLabelText("Use of the result")).not.toBeInTheDocument();
+    await configure();
+    expect(screen.getByLabelText("Use of the result")).toBeInTheDocument();
+    expect(screen.getByLabelText("Add published competitor")).toBeInTheDocument();
+    await reviewPlan();
+    // The one cost line leads; calls, limits and the price source are under Technical details.
+    expect(screen.getByRole("heading", { level: 3, name: "Before this runs" })).toBeInTheDocument();
+    expect(screen.queryByText(/task calls and/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run answer check" })).toBeEnabled();
+    // The preview payload is the one the form always sent.
+    expect(api.preview.mock.calls[0][0]).toMatchObject({
+      cases: { kind: "saved" },
+      baselines: ["production"],
+      competitors: [],
+      model: { modelId: "fixture-task", temperature: 0 },
+      profile: "quick",
+      limits: { maxEstimatedCostUsd: "1.00" },
+      purpose: "regression",
+      parentRunId: null,
+    });
+  });
+  it("calls the repeated profile a repeated answer check", async () => {
+    mount(setup());
+    await configure();
+    fireEvent.mouseDown(screen.getByLabelText("Test"));
+    fireEvent.click(await screen.findByRole("option", { name: "Repeated answer check" }));
+    expect(screen.getByRole("button", { name: "Preview repeated answer check" })).toBeInTheDocument();
   });
 });
 

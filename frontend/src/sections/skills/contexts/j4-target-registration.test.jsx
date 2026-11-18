@@ -22,7 +22,7 @@ it('registers one runtime target with the build manifest, never a typed digest',
   fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
   const submit = screen.getByRole('button', { name: 'Connect app' });
   expect(submit).toBeDisabled();
-  fireEvent.change(screen.getByLabelText('Target name'), { target: { value: 'Refund agent' } });
+  fireEvent.change(screen.getByLabelText('App name'), { target: { value: 'Refund agent' } });
   choose(manifest);
   await screen.findByText(manifest.entrypoint);
   fireEvent.click(submit);
@@ -36,7 +36,7 @@ it('registers one runtime target with the build manifest, never a typed digest',
 it('rejects a manifest that is not a JSON object', async () => {
   render(<ContextTargetRegistration contextId="context" canRegister />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
-  fireEvent.change(screen.getByLabelText('Target name'), { target: { value: 'Refund agent' } });
+  fireEvent.change(screen.getByLabelText('App name'), { target: { value: 'Refund agent' } });
   choose('[1, 2]');
   expect(await screen.findByText(/not a JSON object/)).toBeVisible();
   expect(screen.getByRole('button', { name: 'Connect app' })).toBeDisabled();
@@ -47,16 +47,16 @@ it('defaults the target name from the manifest entrypoint without overriding a t
   fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
   choose({ ...manifest, entrypoint: 'refund_agent.app:invoke' });
   await screen.findByText('refund_agent.app:invoke');
-  expect(screen.getByLabelText('Target name')).toHaveValue('refund_agent');
+  expect(screen.getByLabelText('App name')).toHaveValue('refund_agent');
   fireEvent.click(screen.getByRole('button', { name: 'Connect app' }));
   await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ name: 'refund_agent' })));
   cleanup();
   render(<ContextTargetRegistration contextId="context" canRegister />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
-  fireEvent.change(screen.getByLabelText('Target name'), { target: { value: 'Refund agent' } });
+  fireEvent.change(screen.getByLabelText('App name'), { target: { value: 'Refund agent' } });
   choose({ ...manifest, entrypoint: 'refund_agent.app:invoke' });
   await screen.findByText('refund_agent.app:invoke');
-  expect(screen.getByLabelText('Target name')).toHaveValue('Refund agent');
+  expect(screen.getByLabelText('App name')).toHaveValue('Refund agent');
 });
 
 it('cannot be opened without writer permission', () => {

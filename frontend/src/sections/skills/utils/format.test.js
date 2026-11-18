@@ -120,13 +120,13 @@ describe('release impact', () => {
   it('names each app when three or fewer are affected, and says which one has not reported', () => {
     // Bindings arrive in id order; the app that moves is named first.
     expect(impactSentence({ following: 1, pinned: 1, unobserved: 1, apps: [pinnedApp, follower] }, transition))
-      .toBe("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2 and doesn't move; it hasn't reported a version yet.");
+      .toBe("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2, so it already uses this version; it hasn't reported a version yet.");
     expect(impactSentence({ following: 1, pinned: 0, unobserved: 0, apps: [follower] }, { ...transition, expectedVersion: null }))
       .toBe('acme-support production agent follows production and moves to v2.');
   });
   it('never attributes a report status the app rows disagree with', () => {
     expect(impactSentence({ following: 1, pinned: 1, unobserved: 1, apps: [follower, { ...pinnedApp, reported: true }] }, transition))
-      .toBe("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2 and doesn't move. 1 of the 2 hasn't reported a version yet.");
+      .toBe("acme-support production agent follows production and moves v1 → v2. acme-support application is pinned to v2, so it already uses this version. 1 of the 2 hasn't reported a version yet.");
   });
   it('falls back to counts when the names do not cover every affected app', () => {
     expect(impactSentence({ following: 1, pinned: 1, unobserved: 1, apps: [follower] }, transition))

@@ -28,7 +28,7 @@ import ReleaseReviewBody, {
 } from "./ReleaseReviewBody";
 import Acknowledgment, { acknowledgedInSession, forgetSessionAcknowledgment, useAcknowledgment } from '../components/Acknowledgment';
 import { COMPOSER_SEND, RENEW_REQUEST } from '../utils/terms';
-import { counted } from './reviewPresentation';
+import { counted, deliveryTab, labelTitle, moveLabelTo, reviewerBeforeMove } from './reviewPresentation';
 
 // UXF-02: each actor's one tick states that actor's decision.
 export const REQUESTER_ACKNOWLEDGMENT = "I've checked this version, where it's going and the evidence I'm attaching.";
@@ -320,7 +320,7 @@ function PacketActions({
           <Stack spacing={1.5}>
             {!request && !onEdit && <PeoplePicker label="Assigned reviewer" people={recipients} value={recipientId} loading={recipientsLoading} error={recipientsError} onRetry={onRetryRecipients}
                 onChange={setRecipientId} disabled={locked || !permissions.canSubmit}
-                helperText="An independent reviewer must approve before production can move." />}
+                helperText={reviewerBeforeMove(packet.transition.label)} />}
             {/* One decision footer (REV4): the acknowledgment and any text buttons on the left; on the right the reason while the primary waits, the outlined secondary, then the contained primary. */}
             <DecisionFooterRow
               left={<>
@@ -398,7 +398,7 @@ function PacketActions({
                     disabled={!onExecute || !canExecute || locked}
                     onClick={() => setConfirm(true)}
                   >
-                    Release to production
+                    {moveLabelTo(packet.transition.label, packet.transition.version)}
                   </Button>}
                 </>}
               </>}
@@ -419,10 +419,12 @@ function PacketActions({
           if (!operation.busy) setConfirm(false);
         }}
         closeDisabled={operation.busy}
-        title={`Move ${packet.transition.label} to v${packet.transition.version}?`}
+        title={`${moveLabelTo(packet.transition.label, packet.transition.version)}?`}
         content={<Stack spacing={1.5}>
-          <Typography variant="s1">{`${packet.transition.label[0].toUpperCase()}${packet.transition.label.slice(1)} for ${request?.name || "this resource"} will point to v${packet.transition.version}. Apps that follow ${packet.transition.label} pick it up the next time they fetch it; check ${packet.subjectKind === 'agent_context' ? 'Connected apps' : 'Consumers'} to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.`}</Typography>
-          {/* Asked only when this person hasn't ticked this exact request (same ack key) in this session. */}
+          <Typography variant="s1">{`${labelTitle(packet.transition.label)} for ${request?.name || "this resource"} will point to v${packet.transition.version}. Apps that follow ${packet.transition.label} pick it up the next time they fetch it; check ${deliveryTab(packet.subjectKind)} to confirm delivery. Running conversations aren't changed. If the request changed after it was approved, the move is refused and nothing moves.`}</Typography>
+          {/* Asked only when this person hasn't ticked this exact request (same ack key) in this session.
+              A renewal makes a new revision, so a tick given before it never carries over; say why it is asked. */}
+          {moveTickNeeded && <Typography variant="s3" color="text.secondary">{request?.revision > 1 ? 'This request was revised or renewed, so confirm once more.' : 'Confirm you checked this request before moving it.'}</Typography>}
           {moveTickNeeded && <Acknowledgment
             acknowledgment={{ ...ack, acknowledged: reviewed, setAcknowledged: setReviewed }}
             disabled={!current || locked}
