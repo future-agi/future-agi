@@ -490,6 +490,17 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
+    // This error-only x-string-or-object serializer has a typed object branch.
+    // Preserve Orval's generated fields instead of widening them to a record.
+    // Error responses are emitted as TS models, not response Zod validators;
+    // the runtime mapper already handles the extension on shaped definitions.
+    schemas = assertReplace(
+      schemas,
+      "export interface GatewayHealthErrorResultApi {",
+      "export type GatewayHealthErrorResultApi = string | {",
+      "GatewayHealthErrorResultApi → string | typed probe result",
+    );
+
     // Orval ignores x-json-value and narrows arbitrary JSON to object-only.
     // Define one recursive JSON type, then use it for every field carrying the
     // extension (including dynamic trace/span list row cells).
@@ -530,6 +541,12 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "EvalRollupSpanApiValue",
       "EvalRollupEvalApiChoicesMap",
       "EvalRollupEvalApiAggregate",
+      "ModelListEntryApiBestFor",
+      "ModelListEntryApiUseCase",
+      "ModelListEntryApiCutoff",
+      "ModelListEntryApiRateLimits",
+      "ModelListEntryApiLatency",
+      "ModelListEntryApiPricing",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -561,6 +578,21 @@ export type ${jsonAlias} = JsonValueApi;`,
         `export type ${rowType} = { [key: string]: JsonValueApi };`,
         `${rowType} → recursive JSON row`,
       );
+    }
+
+    for (const [type, fields] of [
+      ["ModelListEntryApi", ["unavailable_reason", "logo_url"]],
+      ["ModelListResponseApi", ["next", "previous"]],
+    ]) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${type} {`,
+          `${field}?: string;`,
+          `${field}?: string | null;`,
+          `${type}.${field} nullable`,
+        );
+      }
     }
 
     // Eval rollups use nullable JSON/scalar fields in the wire response. Keep
@@ -1483,6 +1515,30 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       '"error": zod.boolean().optional()\n}).optional(),',
       '"error": zod.boolean().optional()\n}).nullish(),',
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
+    );
+
+    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    for (const [field, schema] of [
+      ["next", "zod.string()"],
+      ["previous", "zod.string()"],
+      ["logo_url", "zod.string()"],
+      ["unavailable_reason", "zod.string().min(1)"],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        modelListResponse,
+        `"${field}": ${schema}.optional()`,
+        `"${field}": ${schema}.nullish()`,
+        `ModelHubApiModelsListListResponse.${field} nullable`,
+      );
+    }
+
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      modelListResponse,
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "ModelHubApiModelsListListResponse provider metadata → JSON value",
     );
 
     const listResponseExports = [

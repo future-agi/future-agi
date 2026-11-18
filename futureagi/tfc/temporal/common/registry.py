@@ -32,6 +32,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.background_tasks.activities",
     # agentcc gateway alert emails
     "agentcc.services.email_sender",
+    # agentcc gateway config re-sync after a health check on a cold sync cache
+    "agentcc.services.config_push",
     # model_hub tasks
     "model_hub.tasks.run_prompt",
     "model_hub.tasks.experiment_runner",

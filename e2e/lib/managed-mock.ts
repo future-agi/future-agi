@@ -33,16 +33,28 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
   requireSafe(cfg && same(Object.keys(cfg).sort(), ['logging', 'providers', 'server']), 'unexpected gateway sections');
-  requireSafe(same(Object.keys(cfg.providers ?? {}), ['openai']), 'provider set is not mock-only');
-  const provider = cfg.providers.openai;
-  requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
-    'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
-  requireSafe(provider.base_url === 'http://mock-llm:8080' && provider.api_key === 'e2e-mock' &&
-    provider.api_format === 'openai', 'upstream route or key is not the deterministic mock');
-  const judgeModels = ['gpt-3.5-turbo', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini'];
-  const routes = Array.isArray(provider.models) ? [...provider.models].sort() : [];
-  requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
-    (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
+  requireSafe(same(Object.keys(cfg.providers ?? {}).sort(), ['openai', 'openrouter', 'perplexity', 'typesafe']),
+    'provider set is not mock-only');
+  for (const [name, provider] of Object.entries(cfg.providers) as [string, any][]) {
+    requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
+      'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
+    requireSafe(provider.base_url === 'http://mock-llm:8080' && provider.api_key === 'e2e-mock' &&
+      provider.api_format === (name === 'openai' ? 'openai' : 'systemone'),
+    'upstream route or key is not the deterministic mock');
+    const pinned: Record<string, string[]> = {
+      openrouter: ['openai/gpt-6-luna-decisions', 'typesafe/jev-1.13', 'typesafe/jev-1.14', '~typesafe/jev-latest'],
+      perplexity: ['pplx-decider-flash-v1.2', 'pplx-decider-v1.2'],
+      typesafe: ['jev-1.13.0', 'jev-1.14.0', 'jev-latest'],
+    };
+    const routes = Array.isArray(provider.models) ? [...provider.models].sort() : [];
+    if (name !== 'openai') {
+      requireSafe(same(routes, pinned[name]), 'unexpected decision model routes');
+      continue;
+    }
+    const judgeModels = ['gpt-3.5-turbo', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini', 'gpt-6-luna', 'o1', 'o1-mini'];
+    requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
+      (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
+  }
   requireSafe(Object.keys(cfg.server).every(k => ['port', 'host', 'read_timeout', 'write_timeout',
     'idle_timeout', 'shutdown_timeout', 'max_request_body_size', 'default_request_timeout',
     'max_request_timeout'].includes(k)) &&

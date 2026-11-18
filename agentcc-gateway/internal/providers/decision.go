@@ -28,7 +28,8 @@ const defaultOpenAIBaseURL = "https://api.openai.com"
 var decisionProxy = http.ProxyFromEnvironment
 
 // DecisionDialectFormat returns the wire format a decision dialect speaks:
-// "typesafe" and "perplexity" speak System One, "openai" OpenAI Decisions.
+// "typesafe", "perplexity" and "openrouter" speak System One; "openai" speaks
+// OpenAI Decisions.
 func DecisionDialectFormat(dialect string) (string, bool) {
 	if strings.EqualFold(dialect, DecisionDialectOpenAI) {
 		return models.DecisionFormatOpenAI, true

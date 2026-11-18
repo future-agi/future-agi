@@ -42,6 +42,18 @@ import {
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { getProviderLogoFilterSx } from "./modelLogo";
+import DecisionModelSection from "./DecisionModelSection";
+import useDecisionModels from "src/api/evaluations/decision-models";
+import {
+  decisionModelLabel,
+  filterDecisionGroups,
+  findDecisionGroup,
+  isDecisionModel,
+  isJevDecisionModel,
+  isNativeJevModel,
+  legacyDecisionGroups,
+  NATIVE_JEV_LABELS,
+} from "../utils/decisionModels";
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -194,19 +206,7 @@ const FAGI_MODELS = [
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
 
-export const JEV_MODELS = [
-  {
-    value: "jev-1.13.0",
-    label: "Jev 1.13 (pinned)",
-    description: "Pinned System One model (jev-1.13.0)",
-  },
-  {
-    value: "jev-latest",
-    label: "Jev latest",
-    description: "Tracks the current Jev release (jev-latest)",
-  },
-];
-export const JEV_MODEL_VALUES = new Set(JEV_MODELS.map((m) => m.value));
+export const JEV_MODEL_VALUES = new Set(Object.keys(NATIVE_JEV_LABELS));
 
 const FAGI_MODEL_LOCKED_TOOLTIP =
   "Turing models aren't enabled for this workspace. Select your own model.";
@@ -706,6 +706,8 @@ const ModelSelector = ({
   // menu arrive together. A counter rather than a boolean so repeat attempts
   // re-open it without the parent having to reset the flag.
   openModelMenuSignal = 0,
+  outputType,
+  choiceCount,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -717,7 +719,10 @@ const ModelSelector = ({
     },
     [onModeChange],
   );
-  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const isJevModel = isDecisionModel(model);
+  const typedModelName = isNativeJevModel(model)
+    ? "Jev"
+    : "This decision model";
   const previousModeLocalRef = useRef(null);
   const previousModeRef = previousModeRefProp || previousModeLocalRef;
 
@@ -821,7 +826,7 @@ const ModelSelector = ({
     setKeysDrawerModel(null);
   };
   const selectModel = (value) => {
-    if (JEV_MODEL_VALUES.has(value)) {
+    if (isDecisionModel(value)) {
       if (!isJevModel) previousModeRef.current = mode;
       setMode("quick");
     } else if (isJevModel && previousModeRef.current !== null) {
@@ -845,9 +850,26 @@ const ModelSelector = ({
   const jevModelsLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   // Jev runs on the org's own TypeSafe key (Settings -> AI Providers).
   const { data: providerStatuses } = useApiKeysStatus();
-  const hasTypesafeKey = (providerStatuses || []).some(
-    (p) => p.provider === "typesafe" && p.hasKey,
-  );
+  const decisionCatalog = useDecisionModels(Boolean(modelAnchor) || isJevModel);
+  const decisionGroups = useMemo(() => {
+    // Catalog readiness uses the backend's exact workspace key resolver.
+    // The older provider-status list is only a fallback for legacy Jev rows.
+    if (decisionCatalog.data?.length) return decisionCatalog.data;
+    return legacyDecisionGroups.map((group) => ({
+      ...group,
+      connections: group.connections.map((connection) => {
+        const status = providerStatuses?.find(
+          (item) => item.provider === connection.provider,
+        );
+        return {
+          ...connection,
+          is_available: status
+            ? status.hasKey
+            : connection.is_available === true,
+        };
+      }),
+    }));
+  }, [decisionCatalog.data, providerStatuses]);
   const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
   const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
@@ -934,13 +956,20 @@ const ModelSelector = ({
     const all =
       modelPages?.pages.reduce((acc, p) => [...acc, ...p.data.results], []) ||
       [];
-    // Filter out FAGI models to avoid duplicates
+    // Filter immediately while the server-side search debounce is pending;
+    // stale general models must not crowd the matching decision results.
+    const query = modelSearch.trim().toLowerCase();
     return all.filter(
       (m) =>
         !FAGI_MODEL_VALUES.has(m.model_name) &&
-        !JEV_MODEL_VALUES.has(m.model_name),
+        !isDecisionModel(m.model_name) &&
+        m.type !== "decision" &&
+        (!query ||
+          [m.model_name, m.providers].some((value) =>
+            value?.toLowerCase().includes(query),
+          )),
     );
-  }, [modelPages]);
+  }, [modelPages, modelSearch]);
 
   // Determine display name for the current model. Match on the full
   // canonical value first (e.g. "turing_small"); fall back to a suffix
@@ -949,14 +978,22 @@ const ModelSelector = ({
   // — still resolves to its FAGI label instead of rendering as "small".
   const modelDisplayName = useMemo(() => {
     if (!model) return "Select model";
-    const jev = JEV_MODELS.find((m) => m.value === model);
-    if (jev) return jev.label;
+    if (isDecisionModel(model)) {
+      const group = findDecisionGroup(decisionGroups, model);
+      const connection = group?.connections.find(
+        (route) => route.model_name === model,
+      );
+      const label = decisionModelLabel(model, decisionGroups);
+      return isNativeJevModel(model) || !connection
+        ? label
+        : `${label} · ${connection.label}`;
+    }
     const exact = FAGI_MODELS.find((m) => m.value === model);
     if (exact) return exact.label;
     const suffix = FAGI_MODELS.find((m) => m.value.endsWith(`_${model}`));
     if (suffix) return suffix.label;
     return model;
-  }, [model]);
+  }, [model, decisionGroups]);
 
   const handleToggleConnector = useCallback((id) => {
     setActiveConnectorIds((prev) =>
@@ -978,12 +1015,10 @@ const ModelSelector = ({
     );
   }, [modelSearch]);
 
-  const filteredJevModels = useMemo(() => {
-    const search = modelSearch.toLowerCase();
-    return JEV_MODELS.filter(
-      (m) => m.label.toLowerCase().includes(search) || m.value.includes(search),
-    );
-  }, [modelSearch]);
+  const filteredDecisionModels = useMemo(
+    () => filterDecisionGroups(decisionGroups, modelSearch),
+    [decisionGroups, modelSearch],
+  );
 
   // When Turing models aren't enabled, callers still seed `model` with
   // "turing_large". Drop it so the pill reads "Select model" instead of
@@ -1313,7 +1348,7 @@ const ModelSelector = ({
                 sx={{ fontSize: "12px" }}
               >
                 {isJevModel && m.value !== "quick"
-                  ? "Jev runs in Quick mode only. Your previous mode is preserved."
+                  ? `${typedModelName} runs in Quick mode only. Your previous mode is preserved.`
                   : m.description}
               </Typography>
             </Box>
@@ -1336,7 +1371,16 @@ const ModelSelector = ({
         onKeyDown={(event) => handleMenuNavigation(event, closeModelMenu)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{ paper: { sx: { width: 320, borderRadius: "8px", p: 0 } } }}
+        slotProps={{
+          paper: {
+            sx: {
+              width: 440,
+              maxWidth: "calc(100vw - 32px)",
+              borderRadius: "8px",
+              p: 0,
+            },
+          },
+        }}
       >
         {/* Search */}
         <Box sx={{ p: 1, borderBottom: "1px solid", borderColor: "divider" }}>
@@ -1364,7 +1408,7 @@ const ModelSelector = ({
         <Box
           role="menu"
           aria-label="Evaluation models"
-          sx={{ maxHeight: 350, overflowY: "auto" }}
+          sx={{ maxHeight: 480, overflowY: "auto" }}
           onScroll={(e) => {
             const { scrollTop, scrollHeight, clientHeight } = e.target;
             if (
@@ -1410,53 +1454,23 @@ const ModelSelector = ({
             </>
           )}
 
-          {filteredJevModels.length > 0 && (
-            <>
-              <Typography
-                variant="caption"
-                sx={{
-                  px: 1.5,
-                  pt: 1.5,
-                  pb: 0.5,
-                  display: "block",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  textTransform: "none",
-                  letterSpacing: "0.5px",
-                  color: "primary.main",
-                }}
-              >
-                Jev models
-              </Typography>
-              {filteredJevModels.map((m) => (
-                <EvaluatorModelRow
-                  key={m.value}
-                  m={m}
-                  selected={m.value === model}
-                  locked={jevModelsLocked}
-                  lockedTooltip="Not included in your plan"
-                  secondaryText={
-                    hasTypesafeKey ? m.value : "Add your TypeSafe API key"
-                  }
-                  onSelect={() => {
-                    if (!hasTypesafeKey) {
-                      // Close the picker so its backdrop doesn't swallow the
-                      // first click in the keys drawer.
-                      openKeysDrawer({
-                        model_name: m.value,
-                        providers: "typesafe",
-                      });
-                      return;
-                    }
-                    selectModel(m.value);
-                  }}
-                />
-              ))}
-            </>
-          )}
+          <DecisionModelSection
+            groups={filteredDecisionModels}
+            model={model}
+            search={modelSearch}
+            outputType={outputType}
+            choiceCount={choiceCount}
+            jevLocked={jevModelsLocked}
+            loading={decisionCatalog.isLoading}
+            error={decisionCatalog.isError}
+            onRetry={decisionCatalog.refetch}
+            onSelect={selectModel}
+            onAddKey={openKeysDrawer}
+          />
 
           {/* Divider between sections */}
-          {(filteredFagiModels.length > 0 || filteredJevModels.length > 0) &&
+          {(filteredFagiModels.length > 0 ||
+            filteredDecisionModels.length > 0) &&
             apiModels.length > 0 && <Divider sx={{ my: 0.5 }} />}
 
           {/* Section 2: Your LLM Models (BYOK) */}
@@ -1586,8 +1600,10 @@ const ModelSelector = ({
 
           {/* Empty state */}
           {!modelsLoading &&
+            !decisionCatalog.isLoading &&
+            !decisionCatalog.isError &&
             filteredFagiModels.length === 0 &&
-            filteredJevModels.length === 0 &&
+            filteredDecisionModels.length === 0 &&
             apiModels.length === 0 && (
               <Typography
                 variant="body2"
@@ -1642,7 +1658,7 @@ const ModelSelector = ({
                 sx={{ fontSize: "12px" }}
               >
                 {isJevModel
-                  ? "Jev does not support internet access. Your selection is preserved."
+                  ? `${typedModelName} does not support internet access through this setting. Your selection is preserved.`
                   : "Search the web during evaluation"}
               </Typography>
             </Box>
@@ -1731,7 +1747,7 @@ const ModelSelector = ({
                     sx={{ fontSize: "12px" }}
                   >
                     {isJevModel
-                      ? `Jev does not support ${item.key === "injection" ? "automatic context" : item.label.toLowerCase()}. Your selection is preserved.`
+                      ? `${typedModelName} does not support ${item.key === "injection" ? "automatic context" : item.label.toLowerCase()}. Your selection is preserved.`
                       : item.desc}
                   </Typography>
                 </Box>
@@ -2132,7 +2148,7 @@ const ModelSelector = ({
             !pending ||
             disabled ||
             provider.toLowerCase() !== pending.providers?.toLowerCase() ||
-            (JEV_MODEL_VALUES.has(pending.model_name) && jevModelsLocked)
+            (isJevDecisionModel(pending.model_name) && jevModelsLocked)
           )
             return;
           selectModel(pending.model_name);
@@ -2150,6 +2166,8 @@ ModelSelector.propTypes = {
   showPlus: PropTypes.bool,
   hideDatasetContextToggle: PropTypes.bool,
   openModelMenuSignal: PropTypes.number,
+  outputType: PropTypes.string,
+  choiceCount: PropTypes.number,
 };
 
 export default ModelSelector;
