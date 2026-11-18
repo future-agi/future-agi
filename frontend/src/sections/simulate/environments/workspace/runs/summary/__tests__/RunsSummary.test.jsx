@@ -49,6 +49,7 @@ const RUNS = [
     total: 20,
     passed: 15,
     failed: 5,
+    passRate: 75,
     agentVersion: "v2",
     durationS: 11.9,
     scores: { task_success: 58, policy_adherence: 39 },
@@ -64,6 +65,7 @@ const RUNS = [
     total: 20,
     passed: 10,
     failed: 10,
+    passRate: 50,
     agentVersion: "v1",
     durationS: 13.2,
     scores: { task_success: 49, policy_adherence: 28 },
@@ -165,8 +167,8 @@ describe("RunsSummary", () => {
 
   it("shows a real pass rate per run", () => {
     renderSummary();
-    expect(screen.getByText("75%")).toBeInTheDocument(); // Run 2: 15/20
-    expect(screen.getByText("50%")).toBeInTheDocument(); // Run 1: 10/20
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
   });
 
   it("renders the derived eval columns from the runs' score keys", () => {

@@ -92,6 +92,7 @@ def start_eval_task_workflow_sync(
     *,
     replace_existing: bool = False,
     workflow_confirmed_stopped: bool | None = None,
+    start_once: bool = False,
 ) -> str:
     """Start the workflow for ``task`` from synchronous Django code.
 
@@ -110,7 +111,14 @@ def start_eval_task_workflow_sync(
     reaches a run that started with nothing draining. A replacing start
     terminates whatever it finds, and whether that was a live drain is exactly
     what the starter's own describe, taken just before, has to say.
+
+    ``start_once`` fences both create's initial dispatch and retries of an
+    unconfirmed start: coalesce with a live execution, but reject a closed one
+    rather than run the task again. The server enforces this even if the
+    execution closes after our describe.
     """
+    if start_once and replace_existing:
+        raise ValueError("an initial start retry cannot replace an execution")
     if workflow_confirmed_stopped is None:
         workflow_confirmed_stopped = _describe_says_nothing_is_draining(task.id)
     elif replace_existing:
@@ -134,8 +142,12 @@ def start_eval_task_workflow_sync(
         workflow_id=_workflow_id(str(task.id)),
         task_queue=task_queue,
         cancel_existing=False,
-        # Closed executions may be followed by a new run under the per-task ID.
-        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        # Initial starts and their retries must not re-run a closed execution.
+        id_reuse_policy=(
+            WorkflowIDReusePolicy.REJECT_DUPLICATE
+            if start_once
+            else WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        ),
         id_conflict_policy=conflict_policy,
     )
     return handle.id

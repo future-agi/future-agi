@@ -34,6 +34,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_input_validation import (
@@ -42,6 +43,9 @@ from model_hub.utils.eval_input_validation import (
 )
 from tfc.routers import primary_required
 from tfc.temporal.eval_tasks.client import (
+    WF_ABSENT,
+    WF_PROGRESSING,
+    describe_eval_task_workflow_sync,
     signal_pause_eval_task_workflow,
     start_eval_task_workflow_sync,
 )
@@ -62,6 +66,7 @@ from tracer.models.eval_task import (
     RowType,
     RunType,
 )
+from tracer.models.instant_eval import InstantEvalRun
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.selectors.eval_tasks.scope import (
@@ -81,6 +86,7 @@ from tracer.serializers.eval_task import (
     EvalTaskListWithProjectNameQuerySerializer,
     EvalTaskMessageResponseSerializer,
     EvalTaskSerializer,
+    EvalTaskUnpauseRequestSerializer,
     EvalTaskUpdateRequestSerializer,
     EvalTaskUpdateResponseSerializer,
     EvalTaskUsageQuerySerializer,
@@ -111,6 +117,28 @@ from tracer.utils.helper import get_default_eval_task_config
 from tracer.views.eval_sampling import SamplingPreviewMixin
 
 logger = structlog.get_logger(__name__)
+
+
+class _EvalTaskCreateFailure(Exception):
+    """Local create/start failure carrying only a bounded exception type name."""
+
+    def __init__(self, error_type: str):
+        self.error_type = error_type[:80]
+        super().__init__(self.error_type)
+
+
+@contextmanager
+def _normalize_eval_task_create_failure(*, preserve_validation_errors: bool):
+    """Expose only bounded failure metadata to create's local handlers."""
+    try:
+        yield
+    except Exception as exc:
+        # Validation remains client-facing only in the precommit path.
+        if preserve_validation_errors and isinstance(
+            exc, (ValidationError, FilterPrincipalContextError)
+        ):
+            raise
+        raise _EvalTaskCreateFailure(type(exc).__name__) from None
 
 
 class _RegexpReplace(Func):
@@ -1507,6 +1535,31 @@ def _eval_task_progress_by_id(tasks):
     }
 
 
+def _can_start_saved_task(task: EvalTask) -> bool:
+    """DB eligibility only; Temporal still arbitrates an unconfirmed start.
+
+    Create stamps last_run before dispatch, so it is not execution evidence.
+    Instant eval owns an unfenced dispatch and must use its own controls.
+    Include retired loggers: deleting results does not make a task never run.
+    The caller scopes the task first; eligibility reads must not lag that task.
+    """
+    return (
+        task.status == EvalTaskStatus.PENDING
+        and task.start_time is None
+        and task.end_time is None
+        and task.continuous_cursor is None
+        and not InstantEvalRun.objects.using("default")
+        .filter(eval_task_id=task.id)
+        .exists()
+        and not EvalTaskLogger.all_objects.using("default")
+        .filter(eval_task_id=task.id)
+        .exists()
+        and not EvalLogger.all_objects.using("default")
+        .filter(eval_task_id=str(task.id))
+        .exists()
+    )
+
+
 class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = _EvalTaskPageNumberPagination
@@ -1915,50 +1968,81 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     )
     def create(self, request, *args, **kwargs):
         try:
-            data = request.data.copy()
-            data["status"] = EvalTaskStatus.PENDING
-            filters = data.get("filters") or {}
-            project_id = data.get("project")
-            if (
-                project_id
-                and not self._scope_project_queryset(Project.objects.all())
-                .filter(id=project_id)
-                .exists()
-            ):
-                return self._gm.bad_request("Project not found")
-            if project_id:
-                filters["project_id"] = project_id
-            data["filters"] = filters
+            with _normalize_eval_task_create_failure(preserve_validation_errors=True):
+                data = request.data.copy()
+                data["status"] = EvalTaskStatus.PENDING
+                filters = data.get("filters") or {}
+                project_id = data.get("project")
+                if (
+                    project_id
+                    and not self._scope_project_queryset(Project.objects.all())
+                    .filter(id=project_id)
+                    .exists()
+                ):
+                    return self._gm.bad_request("Project not found")
+                if project_id:
+                    filters["project_id"] = project_id
+                data["filters"] = filters
 
-            data["last_run"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            invalid_eval_ids = self._invalid_eval_ids_for_project(
-                [eval_config.id for eval_config in serializer.validated_data["evals"]],
-                project_id,
-            )
-            if invalid_eval_ids:
-                return self._gm.bad_request(
-                    "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
+                data["last_run"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                serializer = self.get_serializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                invalid_eval_ids = self._invalid_eval_ids_for_project(
+                    [
+                        eval_config.id
+                        for eval_config in serializer.validated_data["evals"]
+                    ],
+                    project_id,
                 )
-            eval_task = serializer.save()
-
-            # The workflow's first step materializes entries, so create returns
-            # immediately even for large tasks.
-            start_eval_task_workflow_sync(eval_task)
-
-            return self._gm.success_response({"id": eval_task.id})
+                if invalid_eval_ids:
+                    return self._gm.bad_request(
+                        "Eval configs not found for project: "
+                        + ", ".join(invalid_eval_ids)
+                    )
+                # DRF saves the row before assigning its M2M relations. Both must
+                # roll back together if any part of persistence fails.
+                with transaction.atomic(using="default"):
+                    eval_task = serializer.save()
 
         except ValidationError as exc:
             return self._gm.bad_request(exc.detail)
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
-        except Exception as exc:
-            logger.exception(
+        except _EvalTaskCreateFailure as failure:
+            logger.warning(
                 "eval_task.create_failed",
-                error_type=type(exc).__name__,
+                error_type=failure.error_type,
+                exc_info=False,
             )
             return self._gm.bad_request("Evaluation task could not be created")
+
+        def dispatch_saved_task():
+            try:
+                with _normalize_eval_task_create_failure(
+                    preserve_validation_errors=False
+                ):
+                    # A delayed create dispatch must share the retry's fence:
+                    # a completed retry is not permission to run the task again.
+                    try:
+                        start_eval_task_workflow_sync(eval_task, start_once=True)
+                    except WorkflowAlreadyStartedError:
+                        logger.info(
+                            "eval_task.create_already_started",
+                            task_id=str(eval_task.id),
+                            exc_info=False,
+                        )
+            except _EvalTaskCreateFailure as failure:
+                logger.warning(
+                    "eval_task.create_start_unconfirmed",
+                    error_type=failure.error_type,
+                    exc_info=False,
+                )
+
+        # Outside the failed-create boundary: dispatch must see the actual
+        # primary commit, including any outer transaction. An outer rollback
+        # discards this callback. HTTP 200 acknowledges saving, not running.
+        transaction.on_commit(dispatch_saved_task, using="default", robust=True)
+        return self._gm.success_response({"id": eval_task.id})
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(
@@ -2847,11 +2931,12 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request("Evaluation task could not be paused")
 
     @validated_request(
-        request_serializer=EmptyRequestSerializer,
+        request_serializer=EvalTaskUnpauseRequestSerializer,
         query_serializer=EvalTaskIdQuerySerializer,
         responses={
             200: EvalTaskMessageResponseSerializer,
             400: ApiErrorResponseSerializer,
+            409: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
         },
     )
@@ -2863,14 +2948,48 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Eval task ID is required")
 
             try:
-                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
-                    id=eval_task_id,
-                )
+                eval_task = self._scope_eval_task_queryset(
+                    EvalTask.objects.using("default")
+                ).get(id=eval_task_id)
             except EvalTask.DoesNotExist:
                 return self._gm.bad_request("Eval task not found")
 
-            # PAUSED and FAILED; ``RESUMABLE_TASK_STATUSES`` says why failed is
-            # in it. The AI tool and the task UIs accept the same set.
+            start_only = request.validated_data.get("start", False)
+            if start_only and eval_task.status != EvalTaskStatus.PENDING:
+                # A stale Start task click must never become a replacing resume.
+                return self._saved_task_already_started()
+
+            if eval_task.status == EvalTaskStatus.PENDING:
+                if not _can_start_saved_task(eval_task):
+                    if start_only:
+                        return self._saved_task_already_started()
+                    return self._gm.bad_request(
+                        "Only pending tasks that have never started can be started."
+                    )
+
+                # A lost acknowledgement is not proof that no workflow exists.
+                # Describe must succeed, and the server's reuse/conflict policies
+                # close the race if another start lands after this read.
+                workflow_state = describe_eval_task_workflow_sync(eval_task.id)
+                if workflow_state == WF_PROGRESSING:
+                    return self._gm.success_response(
+                        {"message": "Task start already accepted"}
+                    )
+                if workflow_state != WF_ABSENT:
+                    return self._saved_task_already_started()
+                try:
+                    start_eval_task_workflow_sync(
+                        eval_task,
+                        start_once=True,
+                        workflow_confirmed_stopped=True,
+                    )
+                except WorkflowAlreadyStartedError:
+                    return self._saved_task_already_started()
+                # Do not stamp RUNNING or start_time on an acknowledgement.
+                # The worker owns those markers, just as it does after create.
+                return self._gm.success_response({"message": "Task start accepted"})
+
+            # PAUSED and FAILED keep their existing replacing-resume semantics.
             if eval_task.status not in RESUMABLE_TASK_STATUSES:
                 return self._gm.bad_request(
                     f"Cannot unpause eval task with status '{eval_task.status}'. "
@@ -2906,6 +3025,13 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 error_type=type(exc).__name__,
             )
             return self._gm.bad_request("Evaluation task could not be resumed")
+
+    def _saved_task_already_started(self):
+        return self._gm.custom_error_response(
+            drf_status.HTTP_409_CONFLICT,
+            "This task has already started. Refresh to see its current status.",
+            code="eval_task_already_started",
+        )
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(
@@ -3277,7 +3403,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             eval_id = str(request.validated_query_data["eval_id"])
 
             queryset = (
-                self._scope_eval_task_queryset(EvalTask.objects)
+                self._scope_eval_task_queryset(EvalTask.objects.using("default"))
                 .select_related("project")
                 .get(id=eval_id)
             )
@@ -3330,6 +3456,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 "project_id": queryset.project.id,
                 "project_name": queryset.project.name,
                 "status": queryset.status,
+                "can_start": _can_start_saved_task(queryset),
                 "filters_applied": queryset.filters,
                 "created_at": queryset.created_at,
                 "evals_applied": evals_rich,

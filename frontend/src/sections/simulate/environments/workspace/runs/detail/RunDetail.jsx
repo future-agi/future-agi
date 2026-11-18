@@ -4,6 +4,7 @@ import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
   Box,
   Stack,
   Typography,
@@ -191,6 +192,7 @@ export default function RunDetail({
     identity?.environmentVersion?.label &&
       `env ${identity.environmentVersion.label}`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+    identity?.seed != null && `seed ${identity.seed}`,
   ]
     .filter(Boolean)
     .map((label) => ` · ${label}`)
@@ -199,13 +201,13 @@ export default function RunDetail({
   const resumeState = identity?.resume;
   const resume = useResumeRun(executionId);
   const lastResume = resumeState?.history?.at(-1);
-  // A re-run starts from the versions this run used.
   const rerunOptions = {
     initialPicks: {
       agent: identity?.pinnedAgentVersion?.id,
       environment: identity?.environmentVersion?.id,
       suite: identity?.suiteVersion?.id,
     },
+    seed: identity?.seed ?? undefined,
   };
 
   // A check run opened from a fix carries the fix page as its way back; it is
@@ -326,6 +328,15 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
+          {identity?.buildNotice && (
+            <Alert
+              severity="warning"
+              sx={{ mt: 1 }}
+              data-testid="run-build-notice"
+            >
+              {identity.buildNotice}
+            </Alert>
+          )}
         </Box>
 
         <ReliabilityHeadline

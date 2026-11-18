@@ -289,6 +289,7 @@ class EvalTaskDetailsResultSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=[*EvalTaskStatus.choices, ("", "")], allow_null=True, allow_blank=True
     )
+    can_start = serializers.BooleanField(required=False)
     filters_applied = eval_task_filters_field(allow_null=True)
     created_at = serializers.DateTimeField()
     evals_applied = EvalTaskDetailsEvalSerializer(many=True)
@@ -338,6 +339,10 @@ class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
 
 class EvalTaskIdQuerySerializer(StrictInputSerializer):
     eval_task_id = serializers.UUIDField(required=True)
+
+
+class EvalTaskUnpauseRequestSerializer(StrictInputSerializer):
+    start = serializers.BooleanField(required=False)
 
 
 class EvalTaskDeleteRequestSerializer(StrictInputSerializer):
@@ -438,6 +443,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "failed_spans",
             "progress",
         ]
+        read_only_fields = ["start_time", "end_time"]
 
     def create(self, validated_data):
         # Lifecycle timestamps are server-owned. A new continuous task's

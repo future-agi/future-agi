@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "a79f9dc6db4aa9d74ed5d989366a790f320928ab546e3d930bc4fce2b275befe",
+  "source_contract_sha256": "0ef11339bfc82bb97f24a4e6c47a721081087ba71fce2d37588354b640a634fe",
   "tool_count": 111,
   "tools": [
     {
@@ -4660,30 +4660,6 @@
               }
             ]
           },
-          "start_time": {
-            "anyOf": [
-              {
-                "title": "Start time",
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "end_time": {
-            "anyOf": [
-              {
-                "title": "End time",
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "evals_details": {
             "anyOf": [
               {
@@ -4999,8 +4975,6 @@
             "run_type",
             "row_type",
             "status",
-            "start_time",
-            "end_time",
             "evals_details",
             "evals",
             "failed_spans"
@@ -6120,6 +6094,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "start": {
+            "title": "Start",
+            "type": "boolean"
+          },
           "eval_task_id": {
             "type": "string",
             "format": "uuid"
@@ -6144,7 +6122,9 @@
           "query": [
             "eval_task_id"
           ],
-          "body": []
+          "body": [
+            "start"
+          ]
         }
       },
       "response": {
