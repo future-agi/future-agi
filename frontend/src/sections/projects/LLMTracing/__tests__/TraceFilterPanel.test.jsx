@@ -32,6 +32,7 @@ import TraceFilterPanel, {
   normalizeFilterRowOperator,
   PropertyPickerPaginationControl,
   shouldUseRetainedAttributePages,
+  shouldUseLegacyAttributeSearchFallback,
   supplementCatalogSearchCategoryCounts,
   toStaticFilterProperty,
 } from "../TraceFilterPanel";
@@ -40,6 +41,40 @@ import {
   getPickerOptionSecondaryLabel,
   normalizePickerValues,
 } from "../filterValuePickerUtils";
+
+describe("property catalog rollout fallback", () => {
+  it("only falls back for a settled terminal empty search", () => {
+    const base = {
+      unifiedCatalogActive: true,
+      open: true,
+      hasScope: true,
+      source: "traces",
+      search: "customer.plan",
+      searchSettled: true,
+      catalog: {
+        isSuccess: true,
+        isFetching: false,
+        isError: false,
+        cursorChainStopped: false,
+        hasNextPage: false,
+        metrics: [],
+      },
+    };
+    expect(shouldUseLegacyAttributeSearchFallback(base)).toBe(true);
+    expect(
+      shouldUseLegacyAttributeSearchFallback({
+        ...base,
+        catalog: { ...base.catalog, isFetching: true },
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseLegacyAttributeSearchFallback({
+        ...base,
+        catalog: { ...base.catalog, metrics: [{ name: "customer.plan" }] },
+      }),
+    ).toBe(false);
+  });
+});
 
 const parseQueryMock = vi.fn();
 const dashboardFilterValuesMock = vi.hoisted(() => vi.fn());
@@ -3527,6 +3562,64 @@ describe("voice-call property search aliases", () => {
     ).toBe(false);
 
     document.body.removeChild(anchorEl);
+  });
+
+  it("falls back to the bounded legacy attribute read when a settled catalog search is empty", async () => {
+    const get = vi.spyOn(axios, "get").mockImplementation((url, config) => {
+      if (url !== endpoints.dashboard.metrics) {
+        return Promise.resolve({ data: { result: {} } });
+      }
+      const isAttributeSearch =
+        config?.params?.category === "custom_attribute" &&
+        config?.params?.search === "missing.attribute";
+      return Promise.resolve({
+        data: {
+          result: {
+            metrics: isAttributeSearch
+              ? [
+                  {
+                    name: "missing.attribute",
+                    display_name: "missing.attribute",
+                    category: "custom_attribute",
+                    source: "traces",
+                    type: "string",
+                  },
+                ]
+              : [],
+            has_more: false,
+            page: 1,
+          },
+        },
+      });
+    });
+    propertyCatalogMock.mockImplementation(() =>
+      settledPropertyCatalog({ metrics: [] }),
+    );
+
+    const { anchorEl } = renderPanel({
+      projectId: "project-catalog-rollout-gap",
+      source: "traces",
+      tab: "trace",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    fireEvent.change(screen.getByPlaceholderText("Search properties..."), {
+      target: { value: "missing.attribute" },
+    });
+
+    expect(await screen.findByText("missing.attribute")).toBeInTheDocument();
+    expect(get).toHaveBeenCalledWith(
+      endpoints.dashboard.metrics,
+      expect.objectContaining({
+        params: expect.objectContaining({
+          category: "custom_attribute",
+          source: "traces",
+          search: "missing.attribute",
+          project_ids: "project-catalog-rollout-gap",
+        }),
+      }),
+    );
+    document.body.removeChild(anchorEl);
+    get.mockRestore();
   });
 
   it("keeps partial system results visibly loading until matching attributes arrive", async () => {
