@@ -120,6 +120,7 @@ export default function ScenariosStep({
   patch,
   locked = false,
   onStartRun,
+  runDialogOpen = false,
   canRun = false,
   runBlockedReason,
 }) {
@@ -396,7 +397,12 @@ export default function ScenariosStep({
   // Escape clears the selection, unless it is closing something on top
   // (drawer, editor, confirm) or the user is typing in a field.
   const overlayOpen =
-    !!openRow || !!editing || !!pendingDelete || adding || !!importId;
+    runDialogOpen ||
+    !!openRow ||
+    !!editing ||
+    !!pendingDelete ||
+    adding ||
+    !!importId;
   const clearSelection = sel.clear;
   const hasSelection = sel.count > 0;
   useEffect(() => {
@@ -742,6 +748,7 @@ ScenariosStep.propTypes = {
   locked: PropTypes.bool,
   // Starts a run scoped to the selected scenarios × trials — (ids, trials).
   onStartRun: PropTypes.func,
+  runDialogOpen: PropTypes.bool,
   // Whether the env is runnable; gates the selection bar's Run button.
   canRun: PropTypes.bool,
   // Why it can't run yet; Run shows disabled with this instead of hiding.
