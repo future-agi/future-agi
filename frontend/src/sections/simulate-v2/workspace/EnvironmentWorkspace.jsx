@@ -800,11 +800,15 @@ export default function EnvironmentWorkspace() {
           env.builtFrom?.kind === "scratch" &&
           designIsEmpty(env, latestEnvState.current)
         ? emptyDesignGreeting(env, latestEnvState.current)
-        : env.buildStatus === "awaiting_approval"
-          ? `${env.name}'s design is waiting for your approval — it's on the right. Nothing is built until you approve.`
-          : env.buildStatus === "building"
-            ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
-            : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`;
+        : env.buildStatus === "awaiting_approval" &&
+            env.builtFrom?.kind === "scratch" &&
+            designSourcesSummary(env, latestEnvState.current).sources.length
+          ? designFoundGreeting(env, latestEnvState.current)
+          : env.buildStatus === "awaiting_approval"
+            ? `${env.name}'s design is waiting for your approval — it's on the right. Nothing is built until you approve.`
+            : env.buildStatus === "building"
+              ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
+              : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`;
     setTurns((prev) =>
       prev.length && !switched
         ? prev
@@ -2115,12 +2119,19 @@ export default function EnvironmentWorkspace() {
       0,
     );
     const list = (xs) => xs.join(", ");
+    const csvTables = merged.fresh
+      .filter((f) => f.parsed?.kind === "table")
+      .map(
+        (f) =>
+          `the ${f.parsed.table} records (${(f.parsed.accepted ?? f.parsed.rows ?? 0).toLocaleString()} rows, from ${f.name})`,
+      );
     const parts = [
+      ...csvTables,
       res?.added.tables.length &&
         `${res.added.tables.length} table${res.added.tables.length === 1 ? "" : "s"} (${list(res.added.tables.map((t) => t.name))})`,
       res?.added.tools.length &&
         `${res.added.tools.length} tool${res.added.tools.length === 1 ? "" : "s"} (${list(res.added.tools.map((t) => t.name))})`,
-      fileRules && `${fileRules} rule${fileRules === 1 ? "" : "s"}, cited`,
+      fileRules && `${fileRules} cited rule${fileRules === 1 ? "" : "s"}`,
       res?.added.cases.length &&
         `${res.added.cases.length} scenario${res.added.cases.length === 1 ? "" : "s"}`,
     ].filter(Boolean);
@@ -2132,8 +2143,10 @@ export default function EnvironmentWorkspace() {
         `${list(merged.skipped)} ${merged.skipped.length === 1 ? "is" : "are"} already in the design — skipped.`,
       merged.fresh.length &&
         (parts.length
-          ? `The design now has ${parts.join(", ")} more.`
+          ? `Added to the design: ${parts.join(", ")}.`
           : "Nothing new for the design from it — it reads as background for the agent."),
+      res?.replacedGenerated?.length &&
+        `${list(res.replacedGenerated)} now ${res.replacedGenerated.length === 1 ? "comes" : "come"} from your file instead of generated rows.`,
       "Nothing is built until you approve.",
     ].filter(Boolean);
     setTurns((prev) => [
@@ -2169,7 +2182,11 @@ export default function EnvironmentWorkspace() {
       awaitingApproval &&
       !(latestEnvState.current.designQuestions || []).some((q) => !q.answer)
     ) {
-      const res = designDetailPatch(env, trimmed);
+      const res = designDetailPatch(
+        env,
+        trimmed,
+        latestEnvState.current.sources || [],
+      );
       const asked = new Set(
         (latestEnvState.current.designQuestions || []).map((q) => q.id),
       );
@@ -4506,6 +4523,8 @@ export default function EnvironmentWorkspace() {
                   page
                   onOpenChat={() => setCollapsed(false)}
                   env={env}
+                  envState={envState}
+                  patch={patch}
                   sources={designSourcesSummary(env, envState)}
                   onAddFiles={(files) =>
                     files?.length && addFilesToDesign(files)
@@ -5006,16 +5025,45 @@ SystemBanners.propTypes = {
 
 /* The builder's first note on a design with nothing to build: what it read
    from the attached files, if anything, then the one thing it needs. */
-function emptyDesignGreeting(env, envState) {
+/* After reading the files: what each gave the design, in one line. */
+function designFoundGreeting(env, envState) {
   const f = designSourcesSummary(env, envState);
-  const ask =
-    "What does the agent work with, and what can it do? For example: “customers and their orders; it can look up an order and refund up to $200.”";
+  const names = f.sources
+    .filter((x) => !f.unusable.some((u) => u.name === x.name))
+    .map((x) => x.name)
+    .join(", ");
+  const tables = (env.seed?.tables || []).length + f.tableItems.length;
+  const tools = (env.tools || []).length;
+  const rules = (env.rules || []).length + f.ruleItems.length;
+  const bits = [
+    tables && `${tables} kind${tables === 1 ? "" : "s"} of record`,
+    tools && `${tools} tool${tools === 1 ? "" : "s"}`,
+    rules && `${rules} rule${rules === 1 ? "" : "s"}`,
+  ].filter(Boolean);
   const unread = f.unusable.length
     ? ` I couldn't read ${f.unusable.map((x) => x.name).join(", ")}.`
     : "";
+  return `I read ${names} — the design has ${bits.join(", ")}, each saying where it came from.${unread} It's on the right; nothing is built until you approve.`;
+}
+
+function emptyDesignGreeting(env, envState) {
+  const f = designSourcesSummary(env, envState);
+  /* Only the files it could read are "read"; the rest are named as such. */
+  const readNames = f.sources
+    .filter((x) => !f.unusable.some((u) => u.name === x.name))
+    .map((x) => x.name);
+  /* The same example as the banner on the right. */
+  const ask = f.sources.length
+    ? "What does the agent do? For example: “it triages new issues: labels, assigns and closes duplicates.”"
+    : "What does the agent work with, and what can it do? For example: “customers and their orders; it can look up an order and refund up to $200.”";
+  const unread = f.unusable.length
+    ? ` I couldn't read ${f.unusable.map((x) => x.name).join(", ")}.`
+    : "";
+  if (!readNames.length && f.unusable.length)
+    return `I couldn't read ${f.unusable.map((x) => x.name).join(", ")}, so there's nothing to design from yet. ${ask}`;
   if (f.ruleItems.length)
-    return `I read ${f.sources.map((x) => x.name).join(", ")} — it gives ${f.ruleItems.length} rule${f.ruleItems.length === 1 ? "" : "s"}, now in the design.${unread} It doesn't say what the agent works with, so there's nothing to build yet. ${ask}`;
+    return `I read ${readNames.join(", ")} — it gives ${f.ruleItems.length} rule${f.ruleItems.length === 1 ? "" : "s"}, now in the design.${unread} It doesn't say what the agent works with, so there's nothing to build yet. ${ask}`;
   if (f.sources.length)
-    return `I read ${f.sources.map((x) => x.name).join(", ")}, but it doesn't name records or actions for the agent.${unread} ${ask}`;
+    return `I read ${readNames.join(", ")}, but ${readNames.length === 1 ? "it doesn't" : "they don't"} name records or actions for the agent.${unread} ${ask}`;
   return `Your description doesn't name any records or actions yet, so there's nothing to build.${unread} ${ask}`;
 }

@@ -2634,6 +2634,8 @@ function Deriving({
                 env={env}
                 {...review}
                 onOpenChat={() => setCollapsed(false)}
+                envState={envState}
+                patch={patch}
               />
             </Box>
           ) : (

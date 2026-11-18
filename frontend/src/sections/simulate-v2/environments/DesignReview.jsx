@@ -14,6 +14,7 @@ import {
 import Iconify from "src/components/iconify";
 import SideDrawer from "../components/SideDrawer";
 import AddSourceMenu from "../workspace/data/AddSourceMenu";
+import SourceDrawer from "../workspace/data/SourceDrawer";
 import { getActor } from "../_mock/actors";
 import {
   leaveOutDepPatch,
@@ -46,6 +47,9 @@ export default function DesignReview({
   question = null,
   page = false,
   onOpenChat,
+  /* With these, a file in Sources opens what the builder took from it. */
+  envState = null,
+  patch = null,
 }) {
   const [anchor, setAnchor] = useState(null);
   const [planOpen, setPlanOpen] = useState(false);
@@ -56,6 +60,7 @@ export default function DesignReview({
   const [draft, setDraft] = useState("");
   /* The last removal, so it can be put back. */
   const [undo, setUndo] = useState(null);
+  const [openSource, setOpenSource] = useState(null);
   /* Built from scratch there's no agent: the world comes from the words. */
   const scratch = env?.builtFrom?.kind === "scratch";
   /* Files before the build (plan: "Attach a policy and optional CSV"):
@@ -89,10 +94,39 @@ export default function DesignReview({
       .map((f) => f.name)
       .slice(0, 2)
       .join(", ") + (files.length > 2 ? ` and ${files.length - 2} more` : "");
+  /* A file that couldn't be read is listed under Couldn't read, not here. */
+  const unreadable = new Set((sources?.unusable || []).map((f) => f.name));
+  const readable = files.filter((f) => !unreadable.has(f.name));
+  const fileLinks = readable.map((f, i) => (
+    <Box component="span" key={f.id || f.name}>
+      {i > 0 && ", "}
+      {envState ? (
+        <Box
+          component="button"
+          type="button"
+          onClick={() => setOpenSource(f.id)}
+          title="What the builder took from it"
+          sx={{
+            ...linkSx,
+            font: "inherit",
+            border: 0,
+            p: 0,
+            bgcolor: "transparent",
+            cursor: "pointer",
+          }}
+        >
+          {f.name}
+        </Box>
+      ) : (
+        f.name
+      )}
+    </Box>
+  ));
   const sourcesValue = (
     <>
-      {files.length
-        ? `${files.map((f) => f.name).join(", ")} · adds ${
+      {readable.length && fileLinks}
+      {readable.length
+        ? ` · adds ${
             [
               sources.rules &&
                 `${sources.rules} rule${sources.rules === 1 ? "" : "s"}`,
@@ -102,9 +136,11 @@ export default function DesignReview({
               .filter(Boolean)
               .join(" and ") || "background for the agent"
           }${sources.needsInput ? ` · ${sources.needsInput} to answer after the build` : ""}`
-        : scratch
-          ? "Your description"
-          : "The agent alone"}
+        : files.length
+          ? "None readable yet"
+          : scratch
+            ? "Your description"
+            : "The agent alone"}
       {canAdd && (
         <Button
           size="small"
@@ -274,7 +310,7 @@ export default function DesignReview({
           : emptyWorld
             ? {
                 text: files.length
-                  ? `${readingNames} ${files.length === 1 ? "doesn't" : "don't"} say what the agent does. Describe it — for example “it triages new issues: labels, assigns and closes duplicates” — or add a file that does.`
+                  ? `${readable.map((f) => f.name).join(", ") || readingNames} ${readable.length === 1 ? "doesn't" : "don't"} say what the agent does. Describe it — for example “it triages new issues: labels, assigns and closes duplicates” — or add a file that does.`
                   : "There's nothing to build yet. Say what the agent does and works with — for example “customers and their orders; it can look up an order and refund up to $200”.",
                 cta: "Describe in builder",
                 onClick: onOpenChat,
@@ -814,6 +850,17 @@ export default function DesignReview({
         )}
 
         <Box sx={{ mt: 3 }}>{planBody}</Box>
+        {envState && (
+          <SourceDrawer
+            open={!!openSource}
+            onClose={() => setOpenSource(null)}
+            env={env}
+            envState={envState}
+            patch={patch}
+            sourceId={openSource}
+            readOnly={!patch}
+          />
+        )}
       </Box>
     );
   }
@@ -1205,6 +1252,8 @@ PlanLine.propTypes = {
   src: PropTypes.string,
 };
 DesignReview.propTypes = {
+  envState: PropTypes.object,
+  patch: PropTypes.func,
   env: PropTypes.object,
   draftCount: PropTypes.number,
   waiting: PropTypes.bool,

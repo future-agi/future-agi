@@ -200,15 +200,45 @@ export const scratchDesignOf = (flowText) => {
     if (x.re.test(t) && !tables.some((y) => y.name === x.name))
       tables.push({ name: x.name, rows: x.rows, note: x.note });
   });
-  const tools = TOOLS.filter((x) => x.re.test(t)).map(({ name, desc }) => ({
+  let tools = TOOLS.filter((x) => x.re.test(t)).map(({ name, desc }) => ({
     name,
     desc,
   }));
+  /* Outside the preset domains (issues, tickets, leads…): the actions it
+     names on the thing it works with become its tools, and that thing its
+     records. Stray words alone never make a world. */
+  let ownTables = tables;
+  if (!tools.length) {
+    const g = genericDesignOf(t);
+    if (g) {
+      tools = g.tools;
+      ownTables = [g.table];
+    }
+  }
   return {
-    tables,
+    tables: ownTables,
     tools,
     questions: scratchQuestionsOf(flowText),
     unsupported: unsupportedOf(flowText),
+  };
+};
+
+/* Actions an agent takes on the thing it works with. */
+const ACTIONS = ["triage", "label", "tag", "assign", "close", "reopen", "merge", "reply", "respond", "comment", "escalate", "route", "notify", "schedule", "approve", "reject", "review", "summarize", "summarise", "update", "create", "search", "flag", "prioritize", "prioritise", "archive", "dedupe"];
+const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+/** The records and tools a description names outside the preset domains, or null. */
+export const genericDesignOf = (t) => {
+  const verbs = ACTIONS.filter((v) => new RegExp(`\\b${v}(s|es|d|ed|ing)?\\b`).test(t));
+  if (!verbs.length) return null;
+  const m =
+    t.match(new RegExp(`\\b(?:${ACTIONS.join("|")})(?:s|es)?\\s+(?:new |incoming |open |the |each |every )?([a-z]+s)\\b`)) ||
+    t.match(/\b(?:new|incoming|open)\s+([a-z]+s)\b/);
+  if (!m) return null;
+  const plural = m[1];
+  const one = plural.replace(/s$/, "");
+  return {
+    table: { name: plural, rows: 150, note: `generated ${plural} to ${verbs[0]}` },
+    tools: verbs.slice(0, 6).map((v) => ({ name: `${v}_${one}`, desc: `${cap(v)} ${/^[aeiou]/.test(one) ? "an" : "a"} ${one}` })),
   };
 };
 
@@ -280,7 +310,29 @@ export const specificScenarioSeeds = (tools) => {
       task: "Check it qualifies and refund no more than was paid.",
       subTasks: ["Check it qualifies", "Refund the right amount", "Refund it once"],
     });
-  if (out.length)
+  /* Tools outside the presets: one case each, plus one where it shouldn't act. */
+  const generic = tools.filter((x) => /^[a-z]+_[a-z]+$/.test(x.name) && ACTIONS.includes(x.name.split("_")[0]));
+  generic.forEach((x) => {
+    const [verb, one] = x.name.split("_");
+    out.push({
+      key: `${x.name}-right`,
+      branch: "core",
+      situation: `A new ${one} that needs ${verb === "triage" ? "triaging" : `to be ${verb.replace(/e$/, "")}ed`}.`,
+      task: `${cap(verb)} the ${one} correctly and say what was done.`,
+      subTasks: [`Read the ${one}`, `${cap(verb)} it`, "Say what was done"],
+    });
+  });
+  if (generic.length) {
+    const [, one] = generic[0].name.split("_");
+    out.push({
+      key: `${one}-leave-alone`,
+      branch: "edge case",
+      situation: `A ${one} that shouldn't be changed — it's already handled.`,
+      task: `Leave the ${one} as it is and say why.`,
+      subTasks: [`Read the ${one}`, "See it's already handled", "Change nothing"],
+    });
+  }
+  if (out.length && tools.some((x) => /book|refund|discount/.test(x.name)))
     out.push({
       key: "booking-tool-fails",
       branch: "failure mode",
@@ -290,6 +342,14 @@ export const specificScenarioSeeds = (tools) => {
     });
   return out;
 };
+
+const USE_CASE_OF = {
+  core: "The flow as described",
+  "edge case": "Edge cases",
+  adversarial: "Callers who push",
+  "failure mode": "When a tool fails",
+};
+const PERSONA_NAMES = ["Ellie Marsh", "Marcus Reid", "Aditi Rao", "Harper Lang", "Priya Shah", "Kevin Delaney"];
 
 /* Sentences that read as a rule the agent is graded on. */
 const RULEISH =
@@ -301,34 +361,67 @@ const RULEISH =
  * guessed. Returns { envPatch, added: { tables, tools, rules }, questions },
  * or null when the text names nothing the builder can use.
  */
-export const designDetailPatch = (env, text) => {
+export const designDetailPatch = (env, text, sources = []) => {
   const flow = [env?.builtFrom?.intake?.flow, text].filter(Boolean).join("\n");
   const next = scratchDesignOf(flow);
   const haveT = new Set((env?.seed?.tables || []).map((t) => t.name));
   const haveTools = new Set((env?.tools || []).map((t) => t.name));
-  const tables = next.tables.filter((t) => !haveT.has(t.name));
+  /* A table a file supplies is never generated next to it. */
+  const fromFiles = new Set(sources.filter((f) => f.parsed?.kind === "table").map((f) => f.parsed.table));
+  const tables = next.tables.filter((t) => !haveT.has(t.name) && !fromFiles.has(t.name));
   const tools = next.tools.filter((t) => !haveTools.has(t.name));
   const haveRules = new Set(env?.rules || []);
+  /* A rule is a limit, not a capability: "it can look up an order, refund up
+     to $200" gives "Refund up to $200", not the whole sentence. */
   const rules = String(text)
-    .split(/[.!?;\n]\s*/)
-    .map((x) => x.trim())
-    .filter((x) => x && RULEISH.test(x) && !haveRules.has(x))
+    .split(/[.!?;\n,]\s*/)
+    .map((x) => x.trim().replace(/^(and|but|so|it|they)\s+/i, "").replace(/^(can|may|will|should)\s+/i, "").trim())
+    .filter((x) => x && x.split(/\s+/).length >= 3 && RULEISH.test(x))
+    .map(cap)
+    .filter((x) => !haveRules.has(x))
     .slice(0, 4);
   if (!tables.length && !tools.length && !rules.length) return null;
+  /* Cases for the tools it now knows — written like a file's (designFromSourcesPatch). */
+  const allTools = [...(env?.tools || []), ...tools];
+  const haveCases = new Set((env?.starterScenarios || []).map((r) => r.key || r.id));
+  const short = String(env?.name || "flow").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 24);
+  const cases = tools.length
+    ? specificScenarioSeeds(allTools)
+        .filter((c) => !haveCases.has(c.key) && !haveCases.has(`sc-scratch-${short}-${c.key}`))
+        .map((c, i) => ({
+          id: `sc-scratch-${short}-${c.key}`,
+          key: c.key,
+          name: `${short}-${c.key}`,
+          title: c.situation,
+          summary: c.task,
+          task: c.task,
+          situation: c.situation,
+          useCase: USE_CASE_OF[c.branch] || "The flow as described",
+          expected: c.task,
+          outcome: c.task,
+          fromDescription: true,
+          subTasks: c.subTasks.map((label, j) => ({ id: `${c.key}-${j}`, label })),
+          persona: { name: PERSONA_NAMES[i % PERSONA_NAMES.length], role: "user", gender: null, ageGroup: null, traits: [] },
+          branchCategory: c.branch,
+        }))
+    : [];
   return {
     envPatch: {
       seed: {
         ...(env?.seed || {}),
         tables: [...(env?.seed?.tables || []), ...tables],
       },
-      tools: [...(env?.tools || []), ...tools],
+      tools: allTools,
       rules: [...(env?.rules || []), ...rules],
+      ...(cases.length && {
+        starterScenarios: [...cases, ...(env?.starterScenarios || [])],
+      }),
       builtFrom: {
         ...env.builtFrom,
         intake: { ...(env.builtFrom?.intake || {}), flow },
       },
     },
-    added: { tables, tools, rules },
+    added: { tables, tools, rules, cases },
     questions: next.questions,
   };
 };
@@ -389,10 +482,12 @@ export const designFromSourcesPatch = (env, fresh, allSources = []) => {
       persona: { name: PERSONAS[i % PERSONAS.length], role: "user", gender: null, ageGroup: null, traits: [] },
       branchCategory: c.branch,
     }));
-  if (!tables.length && !tools.length && !cases.length) return null;
+  /* A generated table a file now supplies gives way to the file's rows. */
+  const replacedGenerated = (env?.seed?.tables || []).filter((t) => fileTables.has(t.name) && !t.fromFile && !t.source).map((t) => t.name);
+  if (!tables.length && !tools.length && !cases.length && !replacedGenerated.length) return null;
   return {
     envPatch: {
-      seed: { ...(env?.seed || {}), tables: [...(env?.seed?.tables || []), ...tables] },
+      seed: { ...(env?.seed || {}), tables: [...(env?.seed?.tables || []).filter((t) => !replacedGenerated.includes(t.name)), ...tables] },
       tools: allTools,
       starterScenarios: [...cases, ...(env?.starterScenarios || [])],
       builtFrom: {
@@ -401,6 +496,7 @@ export const designFromSourcesPatch = (env, fresh, allSources = []) => {
       },
     },
     added: { tables, tools, cases },
+    replacedGenerated,
   };
 };
 
