@@ -1027,7 +1027,7 @@ Every request goes through a pluggable router stack. Mix and match — per virtu
 |---|---|---|
 | **Weighted round-robin** | `roundrobin` | Distribute traffic across providers by configurable weights |
 | **Latency-aware** | `latency` | Route to the provider with the lowest current P95 for the same model |
-| **Cost-optimized** | `costopt` | Route to the cheapest provider that meets your SLO |
+| **Cost-optimized** | `costopt` | Round-robin among targets with the lowest configured priority value. No price or latency lookup. |
 | **Adaptive** | `adaptive` | Online learning — continuously adjust weights based on success/latency |
 | **Complexity-based** | `complexity` | Route simple queries to small/fast models, complex queries to large models |
 | **Conditional** | `conditional` | Rule-based routing (by user, region, header, model family, prompt length…) |
