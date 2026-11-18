@@ -8,11 +8,12 @@ import {
   NameCell,
   AgentCell,
   LastRunCell,
+  RunButtonCell,
 } from "./environmentTableCells";
 
 // No column sorts: the list API takes no ordering and always returns newest
 // first, so a sort arrow would promise something the server can't do.
-export function buildEnvironmentColumns({ onRowActions }) {
+export function buildEnvironmentColumns({ onRowActions, onRun }) {
   return [
     {
       id: "name",
@@ -56,6 +57,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "lastRun",
       accessorKey: "lastRun",
       header: "Last run",
+      meta: { align: "right" },
       enableSorting: false,
       size: 100,
       cell: LastRunCell,
@@ -64,6 +66,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "scenarios",
       accessorKey: "scenarios",
       header: "Scenarios",
+      meta: { align: "right" },
       enableSorting: false,
       size: 84,
       cell: NumberCell,
@@ -72,6 +75,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "subgoals",
       accessorKey: "subgoals",
       header: "Sub-goals",
+      meta: { align: "right" },
       enableSorting: false,
       size: 84,
       cell: NumberCell,
@@ -80,6 +84,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       id: "runs",
       accessorKey: "runsTotal",
       header: "Runs",
+      meta: { align: "right" },
       enableSorting: false,
       size: 64,
       cell: NumberCell,
@@ -91,10 +96,18 @@ export function buildEnvironmentColumns({ onRowActions }) {
       enableSorting: false,
       size: 100,
       cell: ({ getValue }) => (
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
           {relativeTime(getValue())}
         </Typography>
       ),
+    },
+    {
+      id: "run",
+      accessorKey: "id",
+      header: "",
+      size: 96,
+      enableSorting: false,
+      cell: (props) => <RunButtonCell {...props} onRun={onRun} />,
     },
     {
       id: "actions",
