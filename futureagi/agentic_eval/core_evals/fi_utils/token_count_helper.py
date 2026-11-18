@@ -193,14 +193,13 @@ def _select_fallback_pricing(
     """
     if fallback_pricing:
         return fallback_pricing, "custom"
-    if "images_generated" in token_usage:
-        # Image generation model
+    # Automatic estimates need evidence of that unit. An explicit zero is
+    # still priced normally when the catalog or caller specifies the rate.
+    if token_usage.get("images_generated"):
         return DEFAULT_IMAGE_FALLBACK_PRICING, "default_image"
-    if "input_characters" in token_usage:
-        # TTS model
+    if token_usage.get("input_characters"):
         return DEFAULT_TTS_FALLBACK_PRICING, "default_tts"
-    if "audio_seconds" in token_usage:
-        # STT model
+    if token_usage.get("audio_seconds"):
         return DEFAULT_STT_FALLBACK_PRICING, "default_stt"
     # Default to LLM token-based pricing
     return DEFAULT_FALLBACK_PRICING, "default"
@@ -215,7 +214,7 @@ def _is_nonnegative_number(value: Any) -> TypeGuard[int | float]:
     )
 
 
-def optional_character_count(value: object) -> int | None:
+def optional_usage_count(value: object) -> int | None:
     """Parse a reported whole count, preserving zero without manufacturing usage."""
     if not isinstance(value, (int, str, float)) or isinstance(value, bool):
         return None
@@ -226,6 +225,16 @@ def optional_character_count(value: object) -> int | None:
         return count if count >= 0 and math.isfinite(count) else None
     except (ValueError, OverflowError):
         return None
+
+
+def optional_audio_seconds(value: object) -> float | None:
+    if not isinstance(value, (int, str, float)) or isinstance(value, bool):
+        return None
+    try:
+        seconds = float(value)
+    except (ValueError, OverflowError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
 def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool]:
@@ -342,7 +351,9 @@ def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool
             cost_per_minute = pricing.get("per_minute_audio")
         if not _is_nonnegative_number(cost_per_minute):
             return 0.0, 0.0, False
-        audio_seconds = token_usage.get("audio_seconds") or 0.0
+        audio_seconds = token_usage.get("audio_seconds", 0.0)
+        if audio_seconds is None:  # explicitly reported, but unusable
+            return 0.0, 0.0, False
 
         # Convert seconds to minutes
         audio_minutes = audio_seconds / 60.0
@@ -351,9 +362,9 @@ def _compute_costs(pricing: dict, token_usage: dict) -> tuple[float, float, bool
 
     # Image-based pricing (Image generation models)
     elif "per_image" in pricing or "low_quality_per_image" in pricing:
-        images_generated = token_usage.get("images_generated")
-        if images_generated is None:
-            images_generated = 1
+        images_generated = token_usage.get("images_generated", 1)
+        if images_generated is None:  # do not invent one image for a rejected count
+            return 0.0, 0.0, False
         quality = token_usage.get("quality") or "standard"
 
         # Handle quality-based pricing (gpt-image models)
@@ -431,14 +442,22 @@ def calculate_total_cost(
 
         return calculate_decision_cost(model_name, token_usage)
 
-    # Raw provider usage (e.g. streaming chunks) may include unusable counts.
-    # Filter before selecting units so the fallback never prices a rejected count.
-    if "input_characters" in token_usage or "output_characters" in token_usage:
-        token_usage = token_usage.copy()
-        for key in ("input_characters", "output_characters"):
-            count = optional_character_count(token_usage.pop(key, None))
-            if count is not None:
-                token_usage[key] = count
+    # Use the same values for selecting units and calculating the amount. Keep
+    # an explicitly rejected image count distinct from an omitted count (the
+    # latter historically defaults to one for image-generation models).
+    token_usage = token_usage.copy()
+    for key in (
+        "input_characters",
+        "output_characters",
+        "images_generated",
+        "num_images",
+    ):
+        if key in token_usage:
+            token_usage[key] = optional_usage_count(token_usage[key])
+    if "audio_seconds" in token_usage:
+        token_usage["audio_seconds"] = optional_audio_seconds(
+            token_usage["audio_seconds"]
+        )
 
     # Try to get pricing from available_models.py
     pricing = get_model_pricing(model_name)
@@ -460,38 +479,19 @@ def calculate_total_cost(
     # Unrecognized pricing structure from AVAILABLE_MODELS: do NOT silently bill
     # $0 with source "available_models". Fall through to fallback pricing and
     # stamp a detectable source so downstream can distinguish a real $0.
-    selection_usage = token_usage
     if not recognized and pricing_source == "available_models":
-        if any(
-            unit in pricing
-            for unit in (
-                "input_per_1M_characters",
-                "input_per_1k_characters",
-                "output_per_1k_characters",
-            )
-        ):
-            # A zero image or audio count is not evidence for that fallback on a
-            # character-priced request. Keep the original usage for arithmetic,
-            # including an explicit custom fallback with a genuine zero.
-            selection_usage = {
-                key: value
-                for key, value in token_usage.items()
-                if not (key in ("images_generated", "audio_seconds") and value == 0)
-            }
         logger.warning(
             "unrecognized_model_pricing_using_fallback",
             model=model_name,
             pricing=pricing,
         )
-        pricing, fallback_type = _select_fallback_pricing(
-            selection_usage, fallback_pricing
-        )
+        pricing, fallback_type = _select_fallback_pricing(token_usage, fallback_pricing)
         pricing_source = "fallback" if fallback_pricing else "default"
         prompt_cost, completion_cost, recognized = _compute_costs(pricing, token_usage)
 
     # A custom fallback may itself be a placeholder or use unsupported units.
     if not recognized:
-        pricing, _ = _select_fallback_pricing(selection_usage, None)
+        pricing, _ = _select_fallback_pricing(token_usage, None)
         pricing_source = "default"
         prompt_cost, completion_cost, _ = _compute_costs(pricing, token_usage)
 

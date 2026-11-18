@@ -20,7 +20,7 @@ import structlog
 from agentic_eval.core.utils.json_utils import strip_code_fence
 from agentic_eval.core_evals.fi_utils.token_count_helper import (
     calculate_total_cost,
-    optional_character_count,
+    optional_usage_count,
 )
 
 logger = structlog.get_logger(__name__)
@@ -161,10 +161,10 @@ class ResponseFormatter:
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
             total_tokens=response.usage.total_tokens,
-            input_characters=optional_character_count(
+            input_characters=optional_usage_count(
                 getattr(response.usage, "input_characters", None)
             ),
-            output_characters=optional_character_count(
+            output_characters=optional_usage_count(
                 getattr(response.usage, "output_characters", None)
             ),
         )

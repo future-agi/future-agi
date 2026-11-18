@@ -293,36 +293,18 @@ def _compute_cost_details(entry):
     except (TypeError, ValueError):
         completion_tokens = 0
 
-    try:
-        audio_seconds = float(metadata.get("audio_seconds") or 0)
-    except (TypeError, ValueError):
-        audio_seconds = 0.0
-
-    raw_images_generated = metadata.get("images_generated")
-    try:
-        images_generated = (
-            int(raw_images_generated) if raw_images_generated is not None else None
-        )
-    except (TypeError, ValueError):
-        images_generated = 0
-
-    # Input images are separate from generated images. Keep an explicit zero
-    # rather than treating it as an absent count.
-    try:
-        num_images = max(int(metadata.get("num_images") or 0), 0)
-    except (TypeError, ValueError, OverflowError):
-        num_images = 0
-
-    quality = metadata.get("quality") or "standard"
-
     from agentic_eval.core_evals.fi_utils.token_count_helper import (
         calculate_total_cost,
-        optional_character_count,
+        optional_audio_seconds,
+        optional_usage_count,
     )
     from agentic_eval.core_evals.run_prompt.model_pricing import get_model_info
 
-    input_characters = optional_character_count(metadata.get("input_characters"))
-    output_characters = optional_character_count(metadata.get("output_characters"))
+    audio_seconds = optional_audio_seconds(metadata.get("audio_seconds"))
+    images_generated = optional_usage_count(metadata.get("images_generated"))
+    num_images = optional_usage_count(metadata.get("num_images"))
+    input_characters = optional_usage_count(metadata.get("input_characters"))
+    output_characters = optional_usage_count(metadata.get("output_characters"))
     estimate = None
     for model in [entry.get("resolved_model"), entry.get("model")]:
         if not model:
@@ -375,11 +357,11 @@ def _compute_cost_details(entry):
         if "num_images" in metadata:
             token_usage["num_images"] = num_images
 
-        if images_generated is not None or is_image_model:
+        if "images_generated" in metadata or is_image_model:
             token_usage["images_generated"] = (
-                images_generated if images_generated is not None else 1
+                images_generated if "images_generated" in metadata else 1
             )
-            token_usage["quality"] = quality
+            token_usage["quality"] = metadata.get("quality") or "standard"
 
         try:
             result = calculate_total_cost(model, token_usage)
