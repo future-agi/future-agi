@@ -217,10 +217,24 @@ const readFrom = (sourceId, name, cite) => {
   };
 };
 
+// What each proposal changes, so Review changes files it under that area.
+// Anything else (background for the agent) is the file itself.
+const CHANGE_KINDS = {
+  rule: "rule",
+  conflict: "rule",
+  table: "world_state",
+  state: "world_state",
+  tool: "tool",
+  actor: "actor",
+  scenario: "scenario",
+};
+// Scenarios name these, so they touch a list of scenarios, not all.
+const NAMED = ["tool", "actor", "scenario"];
+
 // Added from Review proposed changes, so it arrives accepted.
-const fileChange = ({ kind, key, piece = "environment", summary, from }) => ({
+const fileChange = ({ kind, key, summary, from }) => ({
   id: `${kind}:${key}`,
-  piece,
+  piece: kind === "scenario" ? "suite" : "environment",
   kind,
   key,
   document: "sources.json",
@@ -231,7 +245,8 @@ const fileChange = ({ kind, key, piece = "environment", summary, from }) => ({
   draft_digest: null,
   summary,
   decision: "accepted",
-  affects: "all",
+  affects: NAMED.includes(kind) ? [] : "all",
+  ...(kind === "world_state" && { rows: [] }),
   sources: [from],
   depends_on: [],
   graded: false,
@@ -262,9 +277,8 @@ export const appendAcceptedEdits = (
         ? item.edited || item.pick?.rule || item.rule
         : null;
       return fileChange({
-        kind: "source",
+        kind: CHANGE_KINDS[item.kind] || "source",
         key: item.id,
-        piece: item.kind === "scenario" ? "suite" : "environment",
         summary: rule ? `Rule: ${rule}` : item.title,
         from: readFrom(sourceId, nameOf(sourceId), item.cite),
       });
@@ -301,7 +315,7 @@ export const upsertPersonalDataEdit = (queryClient, envId, source) => {
   addSampleEdits(queryClient, envId, {
     changes: [
       fileChange({
-        kind: "file",
+        kind: "world_state",
         key: `personal-${source.source_id}`,
         summary: `${source.name}: personal data, ${PERSONAL_CHOICES[choice] || choice}`,
         from: readFrom(source.source_id, source.name),

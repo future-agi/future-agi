@@ -113,7 +113,7 @@ export const UI_ONLY_FEATURES = Object.freeze({
   },
   environmentSources: {
     label: "Environment files",
-    ask: "per-file state (reading, rows rejected, can't read, not supported), the parsed table or text preview with rejected rows, per-column personal data handling, tool, actor and scenario proposals cited to the file, and whether a Knowledge base file changed since it was added",
+    ask: "per-file state (reading, rows rejected, can't read, not supported), the parsed table or text preview with rejected rows, per-column personal data handling, tool, actor and scenario proposals cited to the file, and whether a Knowledge base file changed since it was added; in the draft review, each change's cited file with its name and the spot as people read it (used[].name, used[].place), and each failed change's file name and fix (source_name, fix: supply the records or attach a file)",
     note: "UI only: files are read from sample data and nothing reaches the environment.",
   },
   environmentSettings: {
