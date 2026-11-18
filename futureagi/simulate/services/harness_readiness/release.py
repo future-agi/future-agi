@@ -15,6 +15,7 @@ from typing import Any, Literal, TypedDict
 from django.core.cache import cache
 
 from simulate.models import HarnessAssembledBundle, HarnessEnvironmentVersion
+from simulate.services.harness_versioning.versions import control_ran
 
 Result = Literal["passed", "failed", "pending"]
 RELEASE_CHECKS = (
@@ -196,7 +197,7 @@ def _proof_release_results(
         return [
             c
             for c in one.get("controls") or []
-            if isinstance(c, Mapping) and not c.get("assumed")
+            if isinstance(c, Mapping) and control_ran(c) and not c.get("assumed")
         ]
 
     if any(c.get("failed") is False for one in format_two for c in ran(one)):

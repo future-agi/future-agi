@@ -1328,15 +1328,18 @@ _KEY_SHAPE = re.compile(r"[A-Za-z0-9_.:-]+")
 def prove_suite_command(
     *, deadline_at: float | None = None, keys: list[str] | None = None
 ) -> str:
-    """Prove every scenario of the certified pair (or only ``keys``) into ``SCENARIO_PROOFS_PATH``.
-    The outer timeout is the last resort: the module's own budget writes partial results first."""
+    """Prove the certified pair's scenarios (or only ``keys``) into ``SCENARIO_PROOFS_PATH`` on the pair's sealed
+    runtime, the way a build proves them: ALK's ``--prove-only`` starts that runtime, its services included, so a
+    step a running service serves is proved live, and proves the rest offline. Never fails the command; the outer
+    timeout is the last resort, the deadline gives ALK its own margin first."""
     named = [
         one for one in keys or [] if isinstance(one, str) and _KEY_SHAPE.fullmatch(one)
     ]
     keys_flag = f" --keys {','.join(named)}" if named else ""
     return (
-        "timeout 1500 python -m fi.alk.harness.prove_suite --authoring /work/authoring "
-        f"--output {SCENARIO_PROOFS_PATH} --budget-seconds 1200{_deadline_flag(deadline_at)}{keys_flag} || true; "
+        "timeout 1500 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+        f"--source /work/source --output {PurePosixPath(SCENARIO_PROOFS_PATH).parent} "
+        f"--prove-only{keys_flag}{_deadline_flag(deadline_at)} || true; "
     )
 
 

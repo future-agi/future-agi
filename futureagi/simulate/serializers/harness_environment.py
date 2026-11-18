@@ -1009,9 +1009,12 @@ class HarnessProofControlSerializer(serializers.Serializer):
 
     name = serializers.CharField(allow_null=True)
     why = serializers.CharField(allow_null=True, allow_blank=True)
+    ran = serializers.BooleanField(
+        help_text="The control ran; false when a step of it could not run here."
+    )
     failed = serializers.BooleanField(
         allow_null=True,
-        help_text="The checks failed the wrong behaviour, as they should.",
+        help_text="The checks failed the wrong behaviour, as they should; null when the control never ran.",
     )
     assumed = serializers.ListField(child=serializers.CharField())
 

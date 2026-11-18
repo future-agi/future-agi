@@ -32,7 +32,11 @@ from simulate.services.harness_seed_joins import (
     broken_join_text,
     environment_broken_joins,
 )
-from simulate.services.harness_versioning.versions import legacy_verdict, proof_passes
+from simulate.services.harness_versioning.versions import (
+    control_ran,
+    legacy_verdict,
+    proof_passes,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.types import LifecycleState
 
@@ -98,10 +102,12 @@ LEGACY_TEXT = "Validated before checks were recorded. Validate again to confirm.
 
 
 class ProofControl(TypedDict):
-    """One negative control as the proof ran it: `failed` true when the checks failed it, as they should."""
+    """One negative control as the proof ran it: `failed` true when the checks failed it, as they should; null when
+    it never ran (`ran` false)."""
 
     name: str | None
     why: str | None
+    ran: bool
     failed: bool | None
     assumed: list[str]
 
@@ -185,7 +191,9 @@ def reason_text(
             (
                 one
                 for one in entry.get("controls") or []
-                if isinstance(one, Mapping) and one.get("failed") is False
+                if isinstance(one, Mapping)
+                and control_ran(one)
+                and one.get("failed") is False
             ),
             {},
         )
@@ -246,7 +254,9 @@ def _summary(entry: Mapping[str, Any] | None) -> ProofSummary | None:
             ProofControl(
                 name=one.get("name"),
                 why=one.get("why"),
-                failed=one.get("failed"),
+                ran=control_ran(one),
+                # A control that never ran has no verdict to show.
+                failed=one.get("failed") if control_ran(one) else None,
                 assumed=list(one.get("assumed") or []),
             )
             for one in entry.get("controls") or []
@@ -776,7 +786,9 @@ def workflow_proof(
                 else:
                     counts["success"] += 1
             if any(
-                one.get("failed") is True and not one.get("assumed")
+                control_ran(one)
+                and one.get("failed") is True
+                and not one.get("assumed")
                 for one in proof.get("controls") or []
             ):
                 counts["wrong_result"] += 1

@@ -945,6 +945,25 @@ def _carried_proofs(
     return carried
 
 
+def control_ran(control: Mapping[str, Any]) -> bool:
+    """Whether a negative control ran. ALK writes `ran`; a proof saved before it did ran the control exactly when it
+    recorded a verdict (`failed` true or false), never when it left `failed` empty."""
+    if "ran" in control:
+        return control["ran"] is True
+    return control.get("failed") is not None
+
+
+def build_proofs(suite: Mapping[str, bytes]) -> dict[str, Any]:
+    """A build's proofs of its cases: those its certify made on the sealed runtime (`scenario-proofs.json`, live
+    where a running service served a step) over those its authoring made offline (`proofs.json`), case by case."""
+    offline = _json(suite, "proofs.json")
+    live = _json(suite, "scenario-proofs.json")
+    return {
+        **(offline if isinstance(offline, dict) else {}),
+        **(live if isinstance(live, dict) else {}),
+    }
+
+
 def _validation(
     suite_version: HarnessSuiteVersion,
     environment_version: HarnessEnvironmentVersion,
@@ -1148,7 +1167,7 @@ def record_authoring(
             _validation(
                 suite_version,
                 environment_version,
-                _json(split.suite, "proofs.json"),
+                build_proofs(split.suite),
                 paired,
                 locked,
                 proved_since,

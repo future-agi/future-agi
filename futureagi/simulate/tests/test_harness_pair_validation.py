@@ -2340,6 +2340,29 @@ class TestScenarioProving:
         command = gateway.client.sandbox.process.session_request.command
         deadline = int(validation.check_deadline(attempt.job).timestamp())
         assert assembly.prove_suite_command(deadline_at=deadline) + "true" in command
+        # ALK's live prover on the sealed runtime, the way a build proves: never the offline-only module.
+        assert (
+            "python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+            f"--source /work/source --output /work/authoring --prove-only --deadline-at {deadline} || true"
+        ) in command
+        assert "fi.alk.harness.prove_suite " not in command
+        assert assembly.SCENARIO_PROOFS_PATH == "/work/authoring/scenario-proofs.json"
+        # The live prover reads the job, the source and the pair's authoring tree, as a build does.
+        assert {
+            "/work/job.json",
+            "/work/source.tar.gz",
+            "/work/authoring.tar.gz",
+        } <= set(gateway.client.sandbox.fs.uploads)
+
+    def test_the_prove_command_names_its_keys_and_deadline(self):
+        command = assembly.prove_suite_command(
+            deadline_at=1_800_000_000.7, keys=["refund-1", "status_2", "bad key;rm"]
+        )
+        assert command == (
+            "timeout 1500 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+            "--source /work/source --output /work/authoring --prove-only --keys refund-1,status_2 "
+            "--deadline-at 1800000000 || true; "
+        )
 
     def test_scenario_proofs_kept_after_certify(
         self,

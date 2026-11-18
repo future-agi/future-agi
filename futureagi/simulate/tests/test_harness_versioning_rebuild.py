@@ -2782,7 +2782,10 @@ class TestSuite:
         from simulate.tests.test_harness_amend_archive import _key
 
         made = (now + timedelta(minutes=1)).isoformat()
-        proofs = {_key(name): {"holds": True, "proved_at": made} for name in NAMES}
+        proofs = {
+            _key(name): {"format": 2, "holds": True, "proved": True, "proved_at": made}
+            for name in NAMES
+        }
         proofs[_key(NAMES[0])]["proved_at"] = old
 
         suite = _turn(
