@@ -49,6 +49,7 @@ services:
       - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
       - ./e2e/stack/backend/e2e_clean_signup.py:/app/backend/accounts/views/e2e_clean_signup.py:ro
       - ./e2e/stack/backend/e2e_feed_issue.py:/app/backend/tracer/views/e2e_feed_issue.py:ro
+      - ./e2e/stack/backend/e2e_legacy_eval.py:/app/backend/sdk/views/e2e_legacy_eval.py:ro
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.
