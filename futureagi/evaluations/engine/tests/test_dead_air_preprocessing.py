@@ -96,6 +96,7 @@ def test_silent_audio_is_mostly_dead_air():
 def _recording(name):
     # Pre-encoded 440 Hz, 8 kHz mono clips. Audio-enabled slim workers can
     # decode these formats but don't ship an AAC encoder or an M4A muxer.
+    pytest.importorskip("librosa")
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         pytest.skip("ffmpeg and ffprobe required")
     return (Path(__file__).parent / "fixtures" / "dead_air" / name).read_bytes()
