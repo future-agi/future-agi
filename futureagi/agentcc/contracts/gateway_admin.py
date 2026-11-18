@@ -503,7 +503,7 @@ class OrgConfig(GatewayAdminContractModel):
 
 
 class CreateKeyRequest(GatewayAdminContractModel):
-    name: str = ...
+    name: str
     owner: str | None = None
     models: list[str] | None = None
     providers: list[str] | None = None
@@ -543,7 +543,7 @@ class KeyListResponse(GatewayAdminContractModel):
 
 
 class SyncedKey(GatewayAdminContractModel):
-    id: str = ...
+    id: str
     name: str | None = None
     owner: str | None = None
     key_hash: str = Field(..., validation_alias=AliasChoices('key_hash', 'keyHash'))
@@ -555,12 +555,12 @@ class SyncedKey(GatewayAdminContractModel):
 
 
 class ImportKeysRequest(GatewayAdminContractModel):
-    keys: list[SyncedKey] = ...
+    keys: list[SyncedKey]
 
 
 class ImportKeysResponse(GatewayAdminContractModel):
-    received: int = ...
-    loaded: int = ...
+    received: int
+    loaded: int
 
 
 class StatusResponse(GatewayAdminContractModel):

@@ -8,7 +8,7 @@ aiofiles==25.1.0
     #   livekit
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.14.3
+aiohttp==3.14.5
     # via
     #   aiohttp-retry
     #   core-backend
@@ -38,7 +38,7 @@ anthropic==0.76.0
     # via
     #   core-backend
     #   traceai-anthropic
-anyio==4.12.1
+anyio==4.16.0
     # via
     #   anthropic
     #   claude-agent-sdk
@@ -99,11 +99,12 @@ billiard==4.2.4
     # via celery
 blis==1.3.3
     # via thinc
-boto3==1.42.28
+boto3==1.44.3
     # via
     #   core-backend
+    #   litellm
     #   traceai-bedrock
-botocore==1.42.28
+botocore==1.44.3
     # via
     #   boto3
     #   s3transfer
@@ -119,7 +120,7 @@ catalogue==2.0.10
     #   spacy
     #   srsly
     #   thinc
-cbor2==5.8.0
+cbor2==5.9.0
     # via webauthn
 celery==5.6.2
     # via
@@ -127,7 +128,7 @@ celery==5.6.2
     #   django-celery-beat
     #   django-celery-results
     #   flower
-certifi==2026.1.4
+certifi==2026.10.23
     # via
     #   clickhouse-connect
     #   httpcore
@@ -566,7 +567,7 @@ joblib==1.5.3
     #   librosa
     #   nltk
     #   scikit-learn
-json-repair==0.55.0
+json-repair==0.64.9
     # via core-backend
 jsonpatch==1.33
     # via langchain-core
@@ -586,13 +587,13 @@ kombu==5.6.2
     # via celery
 kubernetes==33.1.0
     # via chromadb
-langchain==0.3.27
+langchain==0.3.30
     # via
     #   core-backend
     #   langchain-community
 langchain-community==0.3.31
     # via core-backend
-langchain-core==0.3.83
+langchain-core==0.3.86
     # via
     #   langchain
     #   langchain-community
@@ -603,7 +604,7 @@ langchain-text-splitters==0.3.11
     #   langchain
 langfuse==3.1.3
     # via core-backend
-langsmith==0.6.3
+langsmith==0.8.18
     # via
     #   langchain
     #   langchain-community
@@ -618,7 +619,7 @@ librosa==0.11.0
     # via core-backend
 lightning-utilities==0.15.3
     # via torchmetrics
-litellm==1.84.10
+litellm==1.100.4
     # via
     #   core-backend
     #   traceai-litellm
@@ -665,7 +666,7 @@ mmh3==5.2.0
     # via chromadb
 mpmath==1.3.0
     # via sympy
-msgpack==1.1.2
+msgpack==1.2.4
     # via
     #   channels-rabbitmq
     #   channels-redis
@@ -686,9 +687,9 @@ mypy-extensions==1.1.0
     # via typing-inspect
 networkx==3.6.1
     # via torch
-nexus-rpc==1.3.0
+nexus-rpc==1.5.0
     # via temporalio
-nltk==3.10.3
+nltk==3.10.4
     # via
     #   core-backend
     #   rouge-score
@@ -938,7 +939,7 @@ opentelemetry-util-http==0.60b1
     #   opentelemetry-instrumentation-wsgi
 optuna==4.6.0
     # via core-backend
-orjson==3.11.5
+orjson==3.13.0
     # via
     #   chromadb
     #   langsmith
@@ -987,7 +988,7 @@ pdfplumber==0.11.10
     # via core-backend
 phonenumbers==9.0.26
     # via presidio-analyzer
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   core-backend
     #   pdfplumber
@@ -1071,7 +1072,7 @@ pyarrow==23.0.1
     # via
     #   core-backend
     #   datasets
-pyasn1==0.6.1
+pyasn1==0.6.5
     # via
     #   pyasn1-modules
     #   rsa
@@ -1119,10 +1120,11 @@ pydantic-core==2.46.5
     # via
     #   elevenlabs
     #   pydantic
-pydantic-settings==2.12.0
+pydantic-settings==2.16.3
     # via
     #   chromadb
     #   langchain-community
+    #   litellm
     #   mcp
 pydub==0.25.1
     # via core-backend
@@ -1142,7 +1144,7 @@ pyotp==2.9.0
     # via core-backend
 pyparsing==3.3.2
     # via httplib2
-pypdf==6.19.0
+pypdf==6.21.4
     # via core-backend
 pypdfium2==5.14.0
     # via pdfplumber
@@ -1179,7 +1181,7 @@ python-dateutil==2.9.0.post0
     #   pysaml2
 python-docx==1.2.0
     # via core-backend
-python-dotenv==1.2.1
+python-dotenv==1.2.4
     # via
     #   daytona
     #   litellm
@@ -1299,7 +1301,7 @@ rpds-py==0.30.0
     #   referencing
 rsa==4.9.1
     # via google-auth
-s3transfer==0.16.0
+s3transfer==0.19.3
     # via boto3
 safetensors==0.7.0
     # via transformers
@@ -1316,7 +1318,7 @@ scipy==1.17.0
     #   scikit-learn
 sentry-sdk==2.49.0
     # via core-backend
-setuptools==80.9.0
+setuptools==81.0.0
     # via
     #   grpcio-tools
     #   spacy
@@ -1347,7 +1349,7 @@ soundfile==0.13.1
     # via
     #   core-backend
     #   librosa
-soupsieve==2.8.3
+soupsieve==2.10
     # via beautifulsoup4
 soxr==1.0.0
     # via librosa
@@ -1367,7 +1369,7 @@ sqlalchemy==2.0.45
     #   optuna
 sqlglot==28.10.1
     # via core-backend
-sqlparse==0.5.5
+sqlparse==0.6.1
     # via django
 srsly==2.5.3
     # via
@@ -1386,7 +1388,7 @@ standard-sunau==3.13.0 ; python_full_version >= '3.13'
     # via
     #   audioread
     #   librosa
-starlette==1.0.0
+starlette==1.10.0
     # via
     #   mcp
     #   sse-starlette
@@ -1402,7 +1404,7 @@ sympy==1.14.0
     # via
     #   onnxruntime
     #   torch
-temporalio==1.21.1
+temporalio==1.36.1
     # via core-backend
 tenacity==9.1.2
     # via
@@ -1440,7 +1442,7 @@ torchvision==0.26.0
     # via
     #   core-backend
     #   torch-fidelity
-tornado==6.5.4
+tornado==6.6.1
     # via flower
 tqdm==4.67.1
     # via
@@ -1526,6 +1528,7 @@ typing-extensions==4.16.0
     #   psycopg-pool
     #   pydantic
     #   pydantic-core
+    #   pydantic-settings
     #   pyopenssl
     #   python-docx
     #   referencing
@@ -1562,7 +1565,7 @@ uritemplate==4.2.0
     # via
     #   drf-yasg
     #   google-api-python-client
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   botocore
     #   clickhouse-connect
@@ -1628,6 +1631,7 @@ websockets==15.0.1
     # via
     #   elevenlabs
     #   google-genai
+    #   langsmith
     #   uvicorn
 whitenoise==6.11.0
     # via core-backend
@@ -1657,8 +1661,10 @@ xmlschema==2.5.1
 xmlsec==1.3.17
     # via core-backend
 xxhash==3.6.0
-    # via datasets
-yarl==1.22.0
+    # via
+    #   datasets
+    #   langsmith
+yarl==1.25.1
     # via aiohttp
 zipp==3.23.0
     # via importlib-metadata
