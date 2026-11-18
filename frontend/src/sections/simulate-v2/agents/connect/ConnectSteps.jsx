@@ -52,7 +52,9 @@ export default function ConnectSteps({
     build && countOk ? buildCreditsCheck(count, creditBalance) : null;
   const waitsForPreflight = !!build && !!preflight && !preflight.state.ready;
   const testOk =
-    !build?.setRequest || (build.request || "").trim().length >= BUILD_TEST_MIN;
+    !build?.setRequest ||
+    build.testOptional ||
+    (build.request || "").trim().length >= BUILD_TEST_MIN;
   const next = asked.disabled
     ? asked
     : !testOk
@@ -169,6 +171,7 @@ export default function ConnectSteps({
               <BuildTestField
                 value={build.request}
                 onChange={build.setRequest}
+                optional={!!build.testOptional}
               />
             )}
             {build && (

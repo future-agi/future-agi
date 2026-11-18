@@ -183,7 +183,16 @@ export default function DesignReview({
       : origin;
   const testRequest = env?.builtFrom?.testRequest || null;
   const rows = [
-    ...(testRequest ? [["Tests", testRequest]] : []),
+    ...(testRequest
+      ? [["Tests", testRequest]]
+      : env?.builtFrom?.kind === "platform"
+        ? [
+            [
+              "Tests",
+              "Proposed from the agent's prompt and tools — the scenarios below",
+            ],
+          ]
+        : []),
     ...(canAdd || files.length ? [["Sources", sourcesValue]] : []),
     [
       "World",

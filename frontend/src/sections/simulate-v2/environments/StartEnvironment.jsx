@@ -66,6 +66,7 @@ import {
   sourceFromAgentRecord,
   agentRecordFromSource,
   PROVIDER_LABELS,
+  sourceKindOf,
 } from "../_mock/agentRegistry";
 import AgentStateTags from "../agents/AgentStateTags";
 import {
@@ -1279,8 +1280,13 @@ function useBuildEnvironment() {
       connect.onConnect(source);
       return;
     }
-    /* What to test is required, as on every other build form. */
-    if (buildFiles && buildFiles.request.trim().length < BUILD_TEST_MIN) {
+    /* What to test is required — except for a hosted agent, whose prompt and
+       tools the builder reads to propose it. */
+    if (
+      buildFiles &&
+      source.kind !== "platform" &&
+      buildFiles.request.trim().length < BUILD_TEST_MIN
+    ) {
       buildFiles.setMissing(true);
       return;
     }
@@ -1498,7 +1504,11 @@ function PanelConnectedAgent() {
               </Select>
             </Box>
           )}
-          <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
+          <ScenarioCountRow
+            testOptional={!!agent && sourceKindOf(agent) === "platform"}
+            value={scenarioCount}
+            onChange={setScenarioCount}
+          />
           <ContinueRow
             disabled={!agent}
             hint="Pick an agent"
@@ -2131,7 +2141,11 @@ function PanelHostedPlatform() {
         </>
       )}
       {chosen && credsOk && <HowWeCopyIt agent={pseudo} aside={null} />}
-      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
+      <ScenarioCountRow
+        testOptional
+        value={scenarioCount}
+        onChange={setScenarioCount}
+      />
       <ContinueRow
         disabled={!canGo}
         hint={
@@ -3709,7 +3723,7 @@ ToggleRow.propTypes = {
 const MAX_SCENARIOS = 1000;
 const DEFAULT_SCENARIOS = "10";
 
-function ScenarioCountRow(props) {
+function ScenarioCountRow({ testOptional = false, ...props }) {
   const buildFiles = useContext(BuildFilesContext);
   /* Every panel that builds shows its files with the count. */
   return buildFiles ? (
@@ -3720,7 +3734,8 @@ function ScenarioCountRow(props) {
           buildFiles.setRequest(v);
           buildFiles.setMissing(false);
         }}
-        error={buildFiles.missing}
+        error={buildFiles.missing && !testOptional}
+        optional={testOptional}
       />
       <ScenarioCountBox {...props} />
       <BuildFilesField
@@ -3732,6 +3747,10 @@ function ScenarioCountRow(props) {
     <ScenarioCountBox {...props} />
   );
 }
+ScenarioCountRow.propTypes = {
+  /* A hosted agent: what to test is optional. */
+  testOptional: PropTypes.bool,
+};
 
 function ScenarioCountBox({ value: ownValue, onChange: ownOnChange }) {
   const connect = useContext(ConnectModeContext);

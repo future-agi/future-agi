@@ -71,6 +71,15 @@ export default function ConnectAgentPicker({
   const [buildFiles, setBuildFiles] = useState([]);
   /* What it should test — asked first, as on an agent's Build environment. */
   const [buildRequest, setBuildRequest] = useState("");
+  const { state, commit } = useSimStore();
+  const { enqueueSnackbar } = useSnackbar();
+  /* Who it is and how it's reached (the confirm step), and the Observe
+     project its traces land in — the same for every kind, so kept here. */
+  const [profile, setProfile] = useState(() =>
+    emptyProfile(currentUser().name),
+  );
+  const [observe, setObserve] = useState(null);
+  const [choice, setChoice] = useState(preset ? "repo" : null);
   const buildCtx = useMemo(
     () =>
       buildMode
@@ -81,19 +90,12 @@ export default function ConnectAgentPicker({
             setFiles: setBuildFiles,
             request: buildRequest,
             setRequest: setBuildRequest,
+            /* A hosted agent's prompt and tools say what to test. */
+            testOptional: choice === "hosted",
           }
         : null,
-    [buildMode, scenarioCount, buildFiles, buildRequest],
+    [buildMode, scenarioCount, buildFiles, buildRequest, choice],
   );
-  const { state, commit } = useSimStore();
-  const { enqueueSnackbar } = useSnackbar();
-  /* Who it is and how it's reached (the confirm step), and the Observe
-     project its traces land in — the same for every kind, so kept here. */
-  const [profile, setProfile] = useState(() =>
-    emptyProfile(currentUser().name),
-  );
-  const [observe, setObserve] = useState(null);
-  const [choice, setChoice] = useState(preset ? "repo" : null);
   /* What the pick already knew (a platform, a pasted ID), which row it
      was, and what the drawer's header shows. */
   const [picked, setPicked] = useState(
