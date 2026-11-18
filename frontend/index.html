@@ -121,7 +121,9 @@
         function allowed(value) {
           try {
             var url = new URL(value, document.baseURI);
-            if (paths.test(url.pathname)) return false;
+            // Match what the router sees: decoded, with repeated slashes collapsed.
+            var path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, "/");
+            if (paths.test(path)) return false;
             var fragment = new URLSearchParams(url.hash.slice(1));
             for (var i = 0; i < params.length; i++) {
               if (url.searchParams.has(params[i]) || fragment.has(params[i])) return false;

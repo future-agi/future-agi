@@ -67,6 +67,9 @@ describe("index.html third-party requests", () => {
     "https://app.example.test/dashboard?access_token=a",
     "https://app.example.test/auth/jwt/login#access_token=a",
     "https://app.example.test/mcp/consent?code=a",
+    "https://app.example.test/%73hared/token-1",
+    "https://app.example.test//shared/token-1",
+    "https://app.example.test/auth/jwt/%76erify/uuid-1/token-1",
   ])("does not load Tag Manager on %s", (url) => {
     expect(googleUrls({ VITE_GTM_ID: "GTM-TEST" }, url)).toEqual([]);
   });
