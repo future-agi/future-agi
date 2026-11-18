@@ -15,8 +15,8 @@ type Client struct {
 	serverID  string
 	transport Transport
 	tools     atomic.Pointer[[]Tool]     // cached tool list (lock-free reads)
-	resources atomic.Pointer[[]Resource]  // cached resource list
-	prompts   atomic.Pointer[[]Prompt]    // cached prompt list
+	resources atomic.Pointer[[]Resource] // cached resource list
+	prompts   atomic.Pointer[[]Prompt]   // cached prompt list
 	healthy   atomic.Bool
 	mu        sync.Mutex // serializes reconnection
 	closed    atomic.Bool
@@ -57,7 +57,7 @@ func NewClient(cfg ClientConfig) *Client {
 }
 
 // Connect establishes the connection, performs the MCP handshake, and discovers tools.
-func (c *Client) Connect(ctx context.Context) error {
+func (c *Client) Connect(ctx context.Context) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -67,6 +67,12 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("create transport: %w", err)
 	}
 	c.transport = transport
+	// A failed client is never registered, so nobody else will close it.
+	defer func() {
+		if err != nil {
+			transport.Close()
+		}
+	}()
 
 	// Send initialize.
 	initParams := InitializeParams{
@@ -455,6 +461,7 @@ func (c *Client) reconnect() {
 		resp, err := c.transport.Send(ctx, initMsg)
 		if err != nil || resp.Error != nil {
 			cancel()
+			transport.Close() // Don't leave the failed process running through backoff.
 			c.mu.Unlock()
 			slog.Warn("mcp reconnect init failed", "server", c.serverID, "error", err)
 			backoff = min(backoff*2, maxBackoff)
