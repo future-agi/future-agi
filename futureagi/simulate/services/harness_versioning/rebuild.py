@@ -719,8 +719,7 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     meanwhile) and the default environment version is recorded as fitting it."""
     from simulate.services.harness_agent_versions import hand_move
     from simulate.services.harness_versioning.validation import (
-        agent_move,
-        start_validation,
+        gate_agent_move,
     )
     from simulate.services.harness_versioning.versions import move_agent
 
@@ -731,17 +730,10 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     if locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
         if reason is None:
-            validation = start_validation(
-                locked,
-                trigger,
-                locked.environment_version,
-                locked.suite_version,
-                purpose="agent_move",
-                move=agent_move(
-                    "no_change", locked, trigger, user=nudge.answered_by, nudge=nudge
-                ),
+            pending = gate_agent_move(
+                "no_change", locked, trigger, user=nudge.answered_by, nudge=nudge
             )
-            if validation is not None and not validation.ready:
+            if pending is not None:
                 # Moved, and E stamped, by the validation once the pairing passes.
                 reason = "validating"
         if reason is None:
@@ -1745,9 +1737,8 @@ def _land(
     """Make the turn's draft the default; ``None`` when the pair can't be run."""
     from simulate.services.harness_versioning import drafts
     from simulate.services.harness_versioning.validation import (
-        agent_move,
         can_validate,
-        start_validation,
+        gate_agent_move,
     )
     from simulate.services.harness_versioning.versions import move_agent
 
@@ -1784,22 +1775,15 @@ def _land(
     if activated is None:
         return None
     if validate and agent is not None:
-        validation = start_validation(
+        validation = gate_agent_move(
+            "land",
             locked,
             agent,
-            locked.environment_version,
-            locked.suite_version,
-            purpose="agent_move",
-            move=agent_move(
-                "land",
-                locked,
-                agent,
-                user=nudge.answered_by,
-                nudge=nudge,
-                from_environment_version_id=environment_before,
-            ),
+            user=nudge.answered_by,
+            nudge=nudge,
+            from_environment_version_id=environment_before,
         )
-        if validation is None or validation.ready:
+        if validation is None:
             try:
                 with transaction.atomic():
                     move_agent(locked, agent)
