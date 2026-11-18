@@ -177,17 +177,19 @@ def calculate_rouge(reference, hypothesis):
     """
 
     from rouge_score import rouge_scorer  # lazy
-    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+
+    scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
     scores = scorer.score(reference, hypothesis)
 
-    # `result` must be the numeric fmeasure like every other evaluator: the
-    # framework does `not eval_response["result"]` to decide failure and
-    # `float(result_value)` to record the metric. A formatted string is always
-    # truthy, so a string result could never be flagged as a failure (even
-    # ROUGE 0.0), and the `:.3f` rounding silently dropped precision. The
-    # human-readable breakdown stays in `reason`.
-    rouge1_score = f"ROUGE-1: P={scores['rouge1'].precision:.3f}, R={scores['rouge1'].recall:.3f}, F={scores['rouge1'].fmeasure:.3f}"
-    return {"result": scores["rouge1"].fmeasure, "reason": f"ROUGE score: {rouge1_score}"}
+    # Only round the explanation; callers use the score for metrics and failure checks.
+    rouge1 = scores["rouge1"]
+    return {
+        "result": rouge1.fmeasure,
+        "reason": (
+            f"ROUGE score: ROUGE-1: P={rouge1.precision:.3f}, "
+            f"R={rouge1.recall:.3f}, F={rouge1.fmeasure:.3f}"
+        ),
+    }
 
 def _pil_to_uint8_tensor(img, size: int = 299):
     """
