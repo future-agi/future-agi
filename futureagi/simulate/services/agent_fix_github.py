@@ -2,9 +2,12 @@
 request on its repository: the candidate's patch, applied to the commit the fix started
 from, on a branch of its own."""
 
+import base64
 import html
 import re
+import subprocess
 import tempfile
+from collections.abc import Callable
 from math import floor
 from pathlib import Path
 from typing import Any
@@ -39,13 +42,11 @@ from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
     GitHubAppTokenProvider,
     github_checkout,
-    run_git,
 )
 
 logger = structlog.get_logger(__name__)
 
 _COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
-_AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
 _TITLE_CHARS = 72
 # GitHub refuses a pull request body over 65,536 characters; this leaves it room.
@@ -104,7 +105,7 @@ def open_pull_request(
         if head is not None and head != commit:
             name = short_ref(ref) if ref.startswith("refs/tags/") else base
             raise base_moved(f"{name} @ {commit[:7]}", f"{name} @ {head[:7]}")
-        # Before the push: the commit carries the reason, so a retry pushes the same commit.
+        # Before the description, whose body gives the reason.
         record_override(candidate, reason=override_reason, user=user)
         title, body = _description(candidate, patch)
         _push(repository, commit, branch, patch, candidate, title, body, token)
@@ -709,53 +710,172 @@ def _push(
     body: str,
     token: str,
 ) -> None:
-    """Commit the patch on ``commit`` and push it to ``branch``. The commit is the same on
-    every call, so a push the branch already has succeeds without changing it, and a branch
-    someone changed since is refused, never overwritten."""
+    """Make the patch, applied on ``commit``, the head of ``branch`` through GitHub's Git
+    Data API. GitHub signs a commit the App makes that way, with no author, committer or
+    signature of its own: it reads Verified, under the App's name and icon. A branch that
+    already holds the change on ``commit`` (the same tree, on that parent alone) is kept,
+    so a retry writes nothing, whatever the description says by then; a branch someone
+    changed is refused, never overwritten."""
     with tempfile.TemporaryDirectory(prefix=f"agent-fix-{candidate.id}-") as temp:
         checkout = Path(temp) / "source"
         environment = github_checkout(repository, commit, checkout, token)
-        patch_file = Path(temp) / "candidate.patch"
-        patch_file.write_bytes(patch)
-        stamp = f"{int(candidate.created_at.timestamp())} +0000"
-        environment.update(
-            {
-                "GIT_AUTHOR_NAME": _AUTHOR[0],
-                "GIT_AUTHOR_EMAIL": _AUTHOR[1],
-                "GIT_AUTHOR_DATE": stamp,
-                "GIT_COMMITTER_NAME": _AUTHOR[0],
-                "GIT_COMMITTER_EMAIL": _AUTHOR[1],
-                "GIT_COMMITTER_DATE": stamp,
-            }
+
+        def local(*args: str, data: bytes | None = None) -> bytes:
+            completed = subprocess.run(
+                ["git", "-C", str(checkout), *args],
+                env=environment,
+                input=data,
+                capture_output=True,
+                timeout=300,
+                check=False,
+            )
+            if completed.returncode:
+                detail = completed.stderr.decode(errors="replace")
+                raise HostedHarnessError(
+                    "fix_github_patch_failed",
+                    (detail.replace(token, "[REDACTED]") if token else detail)[:500],
+                    status_code=409,
+                )
+            return completed.stdout
+
+        local("apply", "--index", "--binary", "-", data=patch)
+        tree = local("write-tree").decode().strip()
+        # Before anything is uploaded, so a retry writes nothing.
+        if _branch_holds(repository, branch, tree, commit, token):
+            return
+        made = _create(
+            repository,
+            "trees",
+            token,
+            base_tree=local("rev-parse", f"{commit}^{{tree}}").decode().strip(),
+            tree=_tree_entries(repository, local, commit, tree, token),
         )
-        git = ["git", "-C", str(checkout)]
-        for command, code, status_code in (
-            ([*git, "apply", "--index", "--binary", str(patch_file)], "patch", 409),
-            ([*git, "commit", "--no-verify", "-m", title, "-m", body], "patch", 409),
-            ([*git, "push", "origin", f"HEAD:refs/heads/{branch}"], "push", 502),
+        if made["sha"] != tree:
+            raise HostedHarnessError(
+                "fix_github_push_failed",
+                "GitHub made another tree than the patch makes on this commit",
+                status_code=502,
+            )
+        made = _create(
+            repository,
+            "commits",
+            token,
+            message=f"{title}\n\n{body}",
+            tree=tree,
+            parents=[commit],
+        )
+        verification = made.get("verification") or {}
+        if not verification.get("verified"):
+            # Still the change it proved; only the badge is missing.
+            logger.warning(
+                "agent_fix_commit_unverified",
+                repository=repository,
+                reason=verification.get("reason"),
+            )
+        response = _api(
+            "POST",
+            f"/repos/{repository}/git/refs",
+            token,
+            json={"ref": f"refs/heads/{branch}", "sha": made["sha"]},
+        )
+        if response.status_code == 201:
+            return
+        # Another ship of the same candidate made the branch first.
+        if (
+            response.status_code == 422
+            and "already exists" in response.text.lower()
+            and _branch_holds(repository, branch, tree, commit, token)
         ):
-            returncode, detail = run_git(command, environment, token)
-            if returncode:
-                raise _git_error(repository, branch, code, status_code, detail)
+            return
+        raise _refused(repository, response)
 
 
-def _git_error(
-    repository: str, branch: str, step: str, status_code: int, detail: str
-) -> HostedHarnessError:
-    lowered = detail.lower()
-    if step == "push" and ("403" in lowered or "permission to" in lowered):
-        return _no_write_access(repository)
-    if step == "push" and ("rejected" in lowered or "non-fast-forward" in lowered):
-        return HostedHarnessError(
-            "fix_github_branch_changed",
-            f"the branch {branch} changed on GitHub since the pull request was made",
-            status_code=409,
+def _tree_entries(
+    repository: str,
+    local: Callable[..., bytes],
+    commit: str,
+    tree: str,
+    token: str,
+) -> list[dict[str, Any]]:
+    """Each path the patch changes, as GitHub's tree takes it: its new content, uploaded,
+    with its mode; none for a path it removes."""
+    fields = local("diff-tree", "-r", "-z", "--no-renames", commit, tree).split(b"\0")
+    entries = []
+    for meta, path in zip(fields[0::2], fields[1::2], strict=False):
+        old_mode, new_mode, _, new_sha, status = meta.decode().lstrip(":").split(" ")
+        mode = old_mode if status == "D" else new_mode
+        kind = "commit" if mode == "160000" else "blob"
+        sha = None if status == "D" else new_sha
+        if sha is not None and kind == "blob":
+            content = base64.b64encode(local("cat-file", "blob", sha)).decode()
+            sha = _create(
+                repository, "blobs", token, content=content, encoding="base64"
+            )["sha"]
+        entries.append({"path": path.decode(), "mode": mode, "type": kind, "sha": sha})
+    return entries
+
+
+def _branch_holds(
+    repository: str, branch: str, tree: str, commit: str, token: str
+) -> bool:
+    """Whether ``branch`` already holds the change, as an earlier try made it: a commit of
+    ``tree`` on ``commit`` alone. A branch that holds anything else is refused."""
+    response = _api(
+        "GET",
+        f"/repos/{repository}/git/ref/heads/{quote(branch, safe='/')}",
+        token,
+        missing_ok=True,
+    )
+    if response.status_code == 404:
+        return False
+    head = response.json()["object"]["sha"]
+    made = _api("GET", f"/repos/{repository}/git/commits/{head}", token).json()
+    if made["tree"]["sha"] == tree and [one["sha"] for one in made["parents"]] == [
+        commit
+    ]:
+        return True
+    raise HostedHarnessError(
+        "fix_github_branch_changed",
+        f"the branch {branch} changed on GitHub since the pull request was made",
+        status_code=409,
+    )
+
+
+def _create(repository: str, kind: str, token: str, **payload: Any) -> dict[str, Any]:
+    """One Git object made on GitHub; refused as GitHub says why."""
+    response = _api("POST", f"/repos/{repository}/git/{kind}", token, json=payload)
+    if response.status_code == 201:
+        made: dict[str, Any] = response.json()
+        return made
+    raise _refused(repository, response)
+
+
+def _refused(repository: str, response: requests.Response) -> HostedHarnessError:
+    """A write GitHub refused, as the user can act on it: wait out a rate limit (a 403 says
+    so too), give the App write access, or read what GitHub said."""
+    status, headers = response.status_code, response.headers
+    if status == 429 or (
+        status == 403
+        and (
+            headers.get("x-ratelimit-remaining") == "0"
+            or "retry-after" in headers
+            or "rate limit" in response.text.lower()
         )
+    ):
+        return HostedHarnessError(
+            "fix_github_rate_limited",
+            "GitHub is limiting the Future AGI GitHub App's requests; try again in a few"
+            " minutes",
+            status_code=502,
+            retryable=True,
+        )
+    if status == 403:
+        return _no_write_access(repository)
     return HostedHarnessError(
-        f"fix_github_{step}_failed",
-        detail.strip()[:500],
-        status_code=status_code,
-        retryable=status_code >= 500,
+        "fix_github_push_failed",
+        f"GitHub refused the change: {response.text[:300]}",
+        status_code=502,
+        retryable=status >= 500,
     )
 
 
@@ -837,7 +957,11 @@ def _pull_request(
     )
 
 
-def _api(method: str, path: str, token: str, **kwargs) -> requests.Response:
+def _api(
+    method: str, path: str, token: str, *, missing_ok: bool = False, **kwargs
+) -> requests.Response:
+    """GitHub's REST API as the installation. A read that GitHub refuses raises, except a
+    404 when ``missing_ok``: the caller then reads it as nothing there."""
     try:
         response = requests.request(
             method,
@@ -857,7 +981,11 @@ def _api(method: str, path: str, token: str, **kwargs) -> requests.Response:
             status_code=502,
             retryable=True,
         ) from exc
-    if method == "GET" and response.status_code != 200:
+    if (
+        method == "GET"
+        and response.status_code != 200
+        and not (missing_ok and response.status_code == 404)
+    ):
         raise HostedHarnessError(
             "fix_github_pull_request_failed",
             f"GitHub refused {path}: {response.status_code}",
