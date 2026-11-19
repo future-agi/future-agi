@@ -494,14 +494,43 @@ def test_late_live_insert_acknowledged_during_erasure_is_scrubbed(
     ) == [(kept["org"], kept["project"], kept["version"], kept["attempt"])]
 
 
+def test_retry_redacts_newly_resolved_alias_from_completed_snapshot(
+    capture_case, live_writer, monkeypatch
+):
+    metric, run, _ = capture_case
+    store = live_writer.store
+    execute(run, store)
+    request = erasure.erase_metric_data(
+        organization_id=metric.organization_id,
+        project_id=metric.project_id,
+        scope_kind="users",
+        subject_ids=[ERASED],
+    )
+    # The snapshot child completes, then the live phase fails on the first claim.
+    with patch.object(retention, "purge_by_scope", side_effect=MetricStateConflict("retry")):
+        assert not erasure.process_erasure(request.id, store=store, writer=live_writer)
+    assert store.execute(
+        "SELECT DISTINCT user_id FROM derived_metric_inputs WHERE snapshot_id = %(id)s",
+        {"id": str(run.snapshot_id)},
+    ) == [("keep-me",)]
+    monkeypatch.setattr(erasure, "_frozen_subjects", lambda *_: [ERASED, "keep-me"])
+    assert erasure.process_erasure(request.id, store=store, writer=live_writer)
+    assert store.execute(
+        "SELECT count() FROM derived_metric_inputs WHERE snapshot_id = %(id)s",
+        {"id": str(run.snapshot_id)},
+    ) == [(0,)]
+
+
+@pytest.mark.parametrize("expand_aliases", [False, True])
 def test_subject_erasure_retries_physical_scrub_without_republishing(
-    live_writer, monkeypatch
+    live_writer, monkeypatch, expand_aliases
 ):
     writer = live_writer
     project = writer.lease.project_id
-    keep, _ = prepare_field(writer, unit_id="keep", user="keep")
+    original_user, other_user = str(uuid4()), str(uuid4())
+    keep, _ = prepare_field(writer, unit_id="keep", user=other_user)
     writer.stage_and_publish(keep)
-    erase, _ = prepare_field(writer, unit_id="private", user=ERASED)
+    erase, _ = prepare_field(writer, unit_id="private", user=original_user)
     writer.stage_and_publish(erase)
     # A done flag alone is not proof the sender finished on this shard.
     submission = MetricErasureRequest.objects.get(
@@ -513,7 +542,7 @@ def test_subject_erasure_retries_physical_scrub_without_republishing(
         organization_id=writer.org_id,
         project_id=project,
         scope_kind="users",
-        subject_ids=[ERASED],
+        subject_ids=[original_user],
     )
     assert not erasure.process_erasure(request.pk, store=writer.store, writer=writer)
     request.refresh_from_db()
@@ -530,7 +559,7 @@ def test_subject_erasure_retries_physical_scrub_without_republishing(
             "project": str(project),
             "attempt": str(erase.pk),
             "generation": erase.generation,
-            "user": ERASED,
+            "user": original_user,
         },
     )
     MetricErasureRequest.objects.filter(pk=submission.pk).update(
@@ -547,14 +576,19 @@ def test_subject_erasure_retries_physical_scrub_without_republishing(
         assert not erasure.process_erasure(request.pk, store=writer.store, writer=writer)
     request.refresh_from_db()
     assert not request.receipts and not request.completed_at
+    if expand_aliases:
+        writer.store.execute(
+            "INSERT INTO end_user_id_remap (old_id, new_id) VALUES (%(old)s, %(new)s)",
+            {"old": original_user, "new": other_user},
+        )
     assert erasure.process_erasure(request.pk, store=writer.store, writer=writer)
-    assert MetricProjectRefresh.for_project(project).head_manifest_id == head.pk
+    assert (MetricProjectRefresh.for_project(project).head_manifest_id != head.pk) == expand_aliases
     assert not writer.store.execute(
         "SELECT canonical_user_id FROM list_current_user_activity"
     )
     assert writer.store.execute(
         "SELECT unit_id FROM metric_field_values_checkpoint"
-    ) == [("keep",)]
+    ) == ([] if expand_aliases else [("keep",)])
 
 
 @pytest.mark.parametrize("scope", ["metric", "version"])

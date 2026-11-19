@@ -12,7 +12,7 @@ import hashlib
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 from django.db import connections, transaction
 from django.db.models import Q
@@ -427,7 +427,25 @@ def _redact_subjects(store, request):
         key = f"redact:{request.id}:{stale.id}"
         child = MetricErasureRequest.objects.filter(deletion_key=key).first()
         if child is not None and not stale.deleted_at:
-            continue
+            if request.scope_kind not in {"users", "sessions"}:
+                continue
+            if child.status != "done":
+                # Finish the original child before counting any additional rows.
+                if set(child.store_payload.get("subjects", [])) != set(request.subject_ids):
+                    reopened.append(stale.id)
+                continue
+            scrub = child.store_payload.get("subject_scrub") or {}
+            subjects = scrub.get("subjects") or {}
+            if scrub.get("salt") and subjects.get("sha256") == MetricErasureRequest._subject_digest(
+                request.subject_ids, scrub["salt"]
+            ):
+                continue
+            # The original child only certifies its old membership. Recount
+            # the remaining physical inputs, under a retry-stable child key.
+            digest = MetricErasureRequest._subject_digest(request.subject_ids, str(request.id))
+            key = f"redact:{request.id}:{uuid5(stale.id, digest)}"
+            if MetricErasureRequest.objects.filter(deletion_key=key).exists():
+                continue
         # Every fail/purge/count decision comes from the locked current row,
         # never from the cursor's possibly stale view of it.
         run = _settle_run(request, stale)
