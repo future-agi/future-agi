@@ -261,6 +261,8 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
     agent_version_id = serializers.UUIDField()
     version_number = serializers.IntegerField(source="agent_version.version_number")
     verdict = AgentFixVerdictSerializer(allow_null=True)
+    # Blank until a pull request is opened for it, so not always a URL.
+    pull_request_url = serializers.CharField(allow_blank=True)
     check_runs = serializers.SerializerMethodField()
     override = serializers.SerializerMethodField()
 

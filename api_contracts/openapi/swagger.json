@@ -140357,7 +140357,8 @@
                 "attempt",
                 "agent_version_id",
                 "version_number",
-                "verdict"
+                "verdict",
+                "pull_request_url"
             ],
             "type": "object",
             "properties": {
@@ -140411,9 +140412,7 @@
                 },
                 "pull_request_url": {
                     "title": "Pull request url",
-                    "type": "string",
-                    "format": "uri",
-                    "maxLength": 512
+                    "type": "string"
                 },
                 "created_at": {
                     "title": "Created at",

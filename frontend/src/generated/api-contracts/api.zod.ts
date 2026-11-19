@@ -36473,7 +36473,7 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
   issue: zod.union([
     zod.object({
       cluster_id: zod.string().min(1),
-      project_id: zod.string().uuid(),
+      project_id: zod.string().uuid().nullable(),
       title: zod.union([zod.string().min(1), zod.null()]),
     }),
     zod.null(),
@@ -36536,8 +36536,9 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
     dataset_id: zod
       .string()
       .uuid()
+      .nullable()
       .describe("A dataset import's dataset; null otherwise."),
-    agent_version_id: zod.string().uuid(),
+    agent_version_id: zod.string().uuid().nullable(),
     source_kind: zod.enum([
       "session",
       "call",
@@ -36607,6 +36608,7 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
           ),
         changed_since_import: zod
           .boolean()
+          .nullable()
           .describe(
             "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
           ),
@@ -36633,8 +36635,8 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
             "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
           ),
         trace_ids: zod.array(zod.string().min(1)),
-        started_at: zod.string().datetime({ offset: true }),
-        ended_at: zod.string().datetime({ offset: true }),
+        started_at: zod.string().datetime({ offset: true }).nullable(),
+        ended_at: zod.string().datetime({ offset: true }).nullable(),
         transcript: zod.object({
           status: zod.enum([
             "present",
@@ -36652,7 +36654,7 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
               trace_id: zod
                 .string()
                 .describe("Blank for a turn no trace recorded."),
-              at: zod.string().datetime({ offset: true }),
+              at: zod.string().datetime({ offset: true }).nullable(),
             }),
           ),
         }),
@@ -36729,10 +36731,7 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
             zod.object({
               name: zod.string().min(1),
               kind: zod.string().min(1),
-              value: zod
-                .object({})
-                .passthrough()
-                .describe("Any valid JSON value."),
+              value: jsonValueSchema.describe("Any valid JSON value."),
               notes: zod.string(),
               target: zod
                 .enum(["session", "trace", "span", "row"])
@@ -36936,7 +36935,7 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
   issue: zod.union([
     zod.object({
       cluster_id: zod.string().min(1),
-      project_id: zod.string().uuid(),
+      project_id: zod.string().uuid().nullable(),
       title: zod.union([zod.string().min(1), zod.null()]),
     }),
     zod.null(),
@@ -36999,8 +36998,9 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
     dataset_id: zod
       .string()
       .uuid()
+      .nullable()
       .describe("A dataset import's dataset; null otherwise."),
-    agent_version_id: zod.string().uuid(),
+    agent_version_id: zod.string().uuid().nullable(),
     source_kind: zod.enum([
       "session",
       "call",
@@ -37070,6 +37070,7 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
           ),
         changed_since_import: zod
           .boolean()
+          .nullable()
           .describe(
             "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
           ),
@@ -37096,8 +37097,8 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
             "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
           ),
         trace_ids: zod.array(zod.string().min(1)),
-        started_at: zod.string().datetime({ offset: true }),
-        ended_at: zod.string().datetime({ offset: true }),
+        started_at: zod.string().datetime({ offset: true }).nullable(),
+        ended_at: zod.string().datetime({ offset: true }).nullable(),
         transcript: zod.object({
           status: zod.enum([
             "present",
@@ -37115,7 +37116,7 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
               trace_id: zod
                 .string()
                 .describe("Blank for a turn no trace recorded."),
-              at: zod.string().datetime({ offset: true }),
+              at: zod.string().datetime({ offset: true }).nullable(),
             }),
           ),
         }),
@@ -37192,10 +37193,7 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
             zod.object({
               name: zod.string().min(1),
               kind: zod.string().min(1),
-              value: zod
-                .object({})
-                .passthrough()
-                .describe("Any valid JSON value."),
+              value: jsonValueSchema.describe("Any valid JSON value."),
               notes: zod.string(),
               target: zod
                 .enum(["session", "trace", "span", "row"])
@@ -37309,22 +37307,22 @@ export const SimulateApiAgentFixRunsListQueryParams = zod.object({
 
 export const simulateApiAgentFixRunsListResponseResultsItemStageMax = 32;
 
-export const simulateApiAgentFixRunsListResponseResultsItemPlanTargetMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneTargetMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemPlanHeldBackMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneHeldBackMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemPlanMustPassMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneMustPassMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemPlanProtectedDefault = 0;
-export const simulateApiAgentFixRunsListResponseResultsItemPlanProtectedMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneProtectedDefault = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneProtectedMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemPlanMaxCandidatesMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneMaxCandidatesMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemPlanRepeatsMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneRepeatsMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemPlanBaselineSpreadPtsMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemPlanOneBaselineSpreadPtsMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemDiagnosisCausesDefault =
+export const simulateApiAgentFixRunsListResponseResultsItemDiagnosisOneCausesDefault =
   [];
 
 export const simulateApiAgentFixRunsListResponseResultsItemRequestProtectedScenarioKeysDefault =
@@ -37345,26 +37343,24 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestObservesModels
 export const simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault =
   false;
 
-export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemPassedMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemReportOneFlakyProtectedItemPassedMin = 0;
 
-export const simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedDefault =
+export const simulateApiAgentFixRunsListResponseResultsItemReportOneFlakyProtectedDefault =
   [];
 
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax = 32767;
 
-export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault =
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneMustPassWithinNoiseDefault =
   [];
-export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault = ``;
-export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemPartsItemNameMax = 64;
 
-export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
-export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsDefault =
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemPartsDefault =
   [];
-export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersDefault =
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersDefault =
   [];
-
-export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemPullRequestUrlMax = 512;
 
 export const SimulateApiAgentFixRunsListResponse = zod.object({
   count: zod.number(),
@@ -37375,7 +37371,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
   results: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
-      number: zod.number(),
+      number: zod.union([zod.number(), zod.null()]),
       environment_id: zod.string().uuid(),
       environment: zod
         .object({
@@ -37384,8 +37380,8 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           default_agent_version_id: zod.string().uuid(),
         })
         .optional(),
-      source_run_id: zod.string().uuid(),
-      source_run_number: zod.number(),
+      source_run_id: zod.union([zod.string().uuid(), zod.null()]),
+      source_run_number: zod.union([zod.number(), zod.null()]),
       base_agent_version_id: zod.string().uuid(),
       agent: zod
         .object({
@@ -37415,46 +37411,66 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
         .max(simulateApiAgentFixRunsListResponseResultsItemStageMax)
         .optional(),
       step: zod
-        .enum(["variations", "reproduce", "search", "verify", "done"])
-        .optional()
-        .describe("A finished fix is done, whatever the engine last said."),
-      plan: zod.object({
-        target: zod
-          .number()
-          .min(simulateApiAgentFixRunsListResponseResultsItemPlanTargetMin),
-        held_back: zod
-          .number()
-          .min(simulateApiAgentFixRunsListResponseResultsItemPlanHeldBackMin),
-        must_pass: zod
-          .number()
-          .min(simulateApiAgentFixRunsListResponseResultsItemPlanMustPassMin),
-        protected: zod
-          .number()
-          .min(simulateApiAgentFixRunsListResponseResultsItemPlanProtectedMin)
-          .default(
-            simulateApiAgentFixRunsListResponseResultsItemPlanProtectedDefault,
-          ),
-        max_candidates: zod
-          .number()
-          .min(
-            simulateApiAgentFixRunsListResponseResultsItemPlanMaxCandidatesMin,
-          ),
-        repeats: zod
-          .number()
-          .min(simulateApiAgentFixRunsListResponseResultsItemPlanRepeatsMin),
-        baseline_spread_pts: zod
-          .number()
-          .min(
-            simulateApiAgentFixRunsListResponseResultsItemPlanBaselineSpreadPtsMin,
-          ),
-      }),
-      diagnosis: zod.object({
-        causes: zod
-          .array(zod.string().min(1))
-          .default(
-            simulateApiAgentFixRunsListResponseResultsItemDiagnosisCausesDefault,
-          ),
-      }),
+        .union([
+          zod
+            .enum(["variations", "reproduce", "search", "verify", "done"])
+            .describe("A finished fix is done, whatever the engine last said."),
+          zod.null(),
+        ])
+        .optional(),
+      plan: zod.union([
+        zod.object({
+          target: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneTargetMin,
+            ),
+          held_back: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneHeldBackMin,
+            ),
+          must_pass: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneMustPassMin,
+            ),
+          protected: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneProtectedMin,
+            )
+            .default(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneProtectedDefault,
+            ),
+          max_candidates: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneMaxCandidatesMin,
+            ),
+          repeats: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneRepeatsMin,
+            ),
+          baseline_spread_pts: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemPlanOneBaselineSpreadPtsMin,
+            ),
+        }),
+        zod.null(),
+      ]),
+      diagnosis: zod.union([
+        zod.object({
+          causes: zod
+            .array(zod.string().min(1))
+            .default(
+              simulateApiAgentFixRunsListResponseResultsItemDiagnosisOneCausesDefault,
+            ),
+        }),
+        zod.null(),
+      ]),
       request: zod.object({
         target_scenario_keys: zod.array(zod.string().min(1)),
         protected_scenario_keys: zod
@@ -37511,33 +37527,39 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       }),
       spent_credits: zod.number(),
       committed_credits: zod.number(),
-      report: zod.object({
-        ending: zod.string().min(1),
-        summary: zod.string(),
-        winner_candidate_id: zod.string().min(1),
-        flaky_protected: zod
-          .array(
-            zod.object({
-              key: zod.string().min(1),
-              name: zod.string().optional(),
-              sub_goal: zod.string().min(1),
-              passed: zod
-                .number()
-                .min(
-                  simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedItemPassedMin,
-                ),
-              runs: zod.number().min(1),
-            }),
-          )
-          .default(
-            simulateApiAgentFixRunsListResponseResultsItemReportFlakyProtectedDefault,
-          ),
-      }),
-      failure: zod.object({
-        code: zod.string().min(1),
-        message: zod.string().min(1),
-      }),
-      retried_from_id: zod.string().uuid(),
+      report: zod.union([
+        zod.object({
+          ending: zod.string().min(1),
+          summary: zod.string(),
+          winner_candidate_id: zod.string().min(1),
+          flaky_protected: zod
+            .array(
+              zod.object({
+                key: zod.string().min(1),
+                name: zod.string().optional(),
+                sub_goal: zod.string().min(1),
+                passed: zod
+                  .number()
+                  .min(
+                    simulateApiAgentFixRunsListResponseResultsItemReportOneFlakyProtectedItemPassedMin,
+                  ),
+                runs: zod.number().min(1),
+              }),
+            )
+            .default(
+              simulateApiAgentFixRunsListResponseResultsItemReportOneFlakyProtectedDefault,
+            ),
+        }),
+        zod.null(),
+      ]),
+      failure: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+      retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
       retryable: zod.boolean().optional(),
       limited_validation: zod.boolean().optional(),
       issue: zod
@@ -37578,69 +37600,77 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           outcome: zod
             .enum(["pending", "rejected", "finalist", "winner"])
             .optional(),
-          verdict: zod.object({
-            accepted: zod.boolean(),
-            reason: zod.string().min(1),
-            target_pass_rate: zod.array(zod.number()).optional(),
-            held_back_pass_rate: zod.array(zod.number()).optional(),
-            must_pass_regressions: zod.array(zod.string().min(1)),
-            must_pass_within_noise: zod
-              .array(zod.string().min(1))
-              .default(
-                simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault,
-              ),
-            tiers: zod
-              .array(
-                zod.object({
-                  name: zod.string().min(1),
-                  status: zod.enum(["passed", "failed", "pending", "skipped"]),
-                  detail: zod
-                    .string()
-                    .default(
-                      simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemDetailDefault,
-                    ),
-                  parts: zod
-                    .array(
-                      zod.object({
-                        name: zod
-                          .string()
-                          .min(1)
-                          .max(
-                            simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemNameMax,
-                          ),
-                        status: zod.enum(["passed", "failed", "skipped"]),
-                        detail: zod
-                          .string()
-                          .default(
-                            simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsItemDetailDefault,
-                          ),
-                      }),
-                    )
-                    .default(
-                      simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersItemPartsDefault,
-                    ),
-                  latency: zod
-                    .object({
-                      baseline: zod.number().optional(),
-                      candidate: zod.number().optional(),
-                      allowed: zod.number().optional(),
-                      limit: zod.number().optional(),
-                    })
-                    .optional(),
-                  cost: zod
-                    .object({
-                      baseline: zod.number().optional(),
-                      candidate: zod.number().optional(),
-                      allowed: zod.number().optional(),
-                      limit: zod.number().optional(),
-                    })
-                    .optional(),
-                }),
-              )
-              .default(
-                simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictTiersDefault,
-              ),
-          }),
+          verdict: zod.union([
+            zod.object({
+              accepted: zod.boolean(),
+              reason: zod.string().min(1),
+              target_pass_rate: zod.array(zod.number()).optional(),
+              held_back_pass_rate: zod.array(zod.number()).optional(),
+              must_pass_regressions: zod.array(zod.string().min(1)),
+              must_pass_within_noise: zod
+                .array(zod.string().min(1))
+                .default(
+                  simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneMustPassWithinNoiseDefault,
+                ),
+              tiers: zod
+                .array(
+                  zod.object({
+                    name: zod.string().min(1),
+                    status: zod.enum([
+                      "passed",
+                      "failed",
+                      "pending",
+                      "skipped",
+                    ]),
+                    detail: zod
+                      .string()
+                      .default(
+                        simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemDetailDefault,
+                      ),
+                    parts: zod
+                      .array(
+                        zod.object({
+                          name: zod
+                            .string()
+                            .min(1)
+                            .max(
+                              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemPartsItemNameMax,
+                            ),
+                          status: zod.enum(["passed", "failed", "skipped"]),
+                          detail: zod
+                            .string()
+                            .default(
+                              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemPartsItemDetailDefault,
+                            ),
+                        }),
+                      )
+                      .default(
+                        simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersItemPartsDefault,
+                      ),
+                    latency: zod
+                      .object({
+                        baseline: zod.number().optional(),
+                        candidate: zod.number().optional(),
+                        allowed: zod.number().optional(),
+                        limit: zod.number().optional(),
+                      })
+                      .optional(),
+                    cost: zod
+                      .object({
+                        baseline: zod.number().optional(),
+                        candidate: zod.number().optional(),
+                        allowed: zod.number().optional(),
+                        limit: zod.number().optional(),
+                      })
+                      .optional(),
+                  }),
+                )
+                .default(
+                  simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictOneTiersDefault,
+                ),
+            }),
+            zod.null(),
+          ]),
           check_runs: zod
             .array(
               zod.object({
@@ -37656,25 +37686,29 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
               allowed: zod.boolean(),
               regressions: zod.array(zod.string().min(1)),
               reason: zod.string(),
-              by: zod.object({
-                id: zod.string().min(1),
-                name: zod.string(),
-              }),
-              at: zod.string().datetime({ offset: true }),
+              by: zod.union([
+                zod.object({
+                  id: zod.string().min(1),
+                  name: zod.string(),
+                }),
+                zod.null(),
+              ]),
+              at: zod.union([
+                zod.string().datetime({ offset: true }),
+                zod.null(),
+              ]),
             })
             .optional(),
-          pull_request_url: zod
-            .string()
-            .url()
-            .max(
-              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemPullRequestUrlMax,
-            )
-            .optional(),
+          pull_request_url: zod.string(),
           created_at: zod.string().datetime({ offset: true }).optional(),
         }),
       ),
-      started_at: zod.string().datetime({ offset: true }).optional(),
-      finished_at: zod.string().datetime({ offset: true }).optional(),
+      started_at: zod
+        .union([zod.string().datetime({ offset: true }), zod.null()])
+        .optional(),
+      finished_at: zod
+        .union([zod.string().datetime({ offset: true }), zod.null()])
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
@@ -37862,22 +37896,22 @@ export const SimulateApiAgentFixRunsReadParams = zod.object({
 
 export const simulateApiAgentFixRunsReadResponseStageMax = 32;
 
-export const simulateApiAgentFixRunsReadResponsePlanTargetMin = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneTargetMin = 0;
 
-export const simulateApiAgentFixRunsReadResponsePlanHeldBackMin = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneHeldBackMin = 0;
 
-export const simulateApiAgentFixRunsReadResponsePlanMustPassMin = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneMustPassMin = 0;
 
-export const simulateApiAgentFixRunsReadResponsePlanProtectedDefault = 0;
-export const simulateApiAgentFixRunsReadResponsePlanProtectedMin = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneProtectedDefault = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneProtectedMin = 0;
 
-export const simulateApiAgentFixRunsReadResponsePlanMaxCandidatesMin = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneMaxCandidatesMin = 0;
 
-export const simulateApiAgentFixRunsReadResponsePlanRepeatsMin = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneRepeatsMin = 0;
 
-export const simulateApiAgentFixRunsReadResponsePlanBaselineSpreadPtsMin = 0;
+export const simulateApiAgentFixRunsReadResponsePlanOneBaselineSpreadPtsMin = 0;
 
-export const simulateApiAgentFixRunsReadResponseDiagnosisCausesDefault = [];
+export const simulateApiAgentFixRunsReadResponseDiagnosisOneCausesDefault = [];
 
 export const simulateApiAgentFixRunsReadResponseRequestProtectedScenarioKeysDefault =
   [];
@@ -37897,30 +37931,28 @@ export const simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault =
 export const simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault =
   false;
 
-export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemPassedMin = 0;
+export const simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedItemPassedMin = 0;
 
-export const simulateApiAgentFixRunsReadResponseReportFlakyProtectedDefault =
+export const simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedDefault =
   [];
 
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
 
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneMustPassWithinNoiseDefault =
   [];
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemNameMax = 64;
 
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault =
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsDefault =
   [];
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault =
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersDefault =
   [];
-
-export const simulateApiAgentFixRunsReadResponseCandidatesItemPullRequestUrlMax = 512;
 
 export const SimulateApiAgentFixRunsReadResponse = zod.object({
   id: zod.string().uuid().optional(),
-  number: zod.number(),
+  number: zod.union([zod.number(), zod.null()]),
   environment_id: zod.string().uuid(),
   environment: zod
     .object({
@@ -37929,8 +37961,8 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       default_agent_version_id: zod.string().uuid(),
     })
     .optional(),
-  source_run_id: zod.string().uuid(),
-  source_run_number: zod.number(),
+  source_run_id: zod.union([zod.string().uuid(), zod.null()]),
+  source_run_number: zod.union([zod.number(), zod.null()]),
   base_agent_version_id: zod.string().uuid(),
   agent: zod
     .object({
@@ -37960,36 +37992,48 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     .max(simulateApiAgentFixRunsReadResponseStageMax)
     .optional(),
   step: zod
-    .enum(["variations", "reproduce", "search", "verify", "done"])
-    .optional()
-    .describe("A finished fix is done, whatever the engine last said."),
-  plan: zod.object({
-    target: zod.number().min(simulateApiAgentFixRunsReadResponsePlanTargetMin),
-    held_back: zod
-      .number()
-      .min(simulateApiAgentFixRunsReadResponsePlanHeldBackMin),
-    must_pass: zod
-      .number()
-      .min(simulateApiAgentFixRunsReadResponsePlanMustPassMin),
-    protected: zod
-      .number()
-      .min(simulateApiAgentFixRunsReadResponsePlanProtectedMin)
-      .default(simulateApiAgentFixRunsReadResponsePlanProtectedDefault),
-    max_candidates: zod
-      .number()
-      .min(simulateApiAgentFixRunsReadResponsePlanMaxCandidatesMin),
-    repeats: zod
-      .number()
-      .min(simulateApiAgentFixRunsReadResponsePlanRepeatsMin),
-    baseline_spread_pts: zod
-      .number()
-      .min(simulateApiAgentFixRunsReadResponsePlanBaselineSpreadPtsMin),
-  }),
-  diagnosis: zod.object({
-    causes: zod
-      .array(zod.string().min(1))
-      .default(simulateApiAgentFixRunsReadResponseDiagnosisCausesDefault),
-  }),
+    .union([
+      zod
+        .enum(["variations", "reproduce", "search", "verify", "done"])
+        .describe("A finished fix is done, whatever the engine last said."),
+      zod.null(),
+    ])
+    .optional(),
+  plan: zod.union([
+    zod.object({
+      target: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponsePlanOneTargetMin),
+      held_back: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponsePlanOneHeldBackMin),
+      must_pass: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponsePlanOneMustPassMin),
+      protected: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponsePlanOneProtectedMin)
+        .default(simulateApiAgentFixRunsReadResponsePlanOneProtectedDefault),
+      max_candidates: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponsePlanOneMaxCandidatesMin),
+      repeats: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponsePlanOneRepeatsMin),
+      baseline_spread_pts: zod
+        .number()
+        .min(simulateApiAgentFixRunsReadResponsePlanOneBaselineSpreadPtsMin),
+    }),
+    zod.null(),
+  ]),
+  diagnosis: zod.union([
+    zod.object({
+      causes: zod
+        .array(zod.string().min(1))
+        .default(simulateApiAgentFixRunsReadResponseDiagnosisOneCausesDefault),
+    }),
+    zod.null(),
+  ]),
   request: zod.object({
     target_scenario_keys: zod.array(zod.string().min(1)),
     protected_scenario_keys: zod
@@ -38040,31 +38084,39 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
-  report: zod.object({
-    ending: zod.string().min(1),
-    summary: zod.string(),
-    winner_candidate_id: zod.string().min(1),
-    flaky_protected: zod
-      .array(
-        zod.object({
-          key: zod.string().min(1),
-          name: zod.string().optional(),
-          sub_goal: zod.string().min(1),
-          passed: zod
-            .number()
-            .min(
-              simulateApiAgentFixRunsReadResponseReportFlakyProtectedItemPassedMin,
-            ),
-          runs: zod.number().min(1),
-        }),
-      )
-      .default(simulateApiAgentFixRunsReadResponseReportFlakyProtectedDefault),
-  }),
-  failure: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
-  retried_from_id: zod.string().uuid(),
+  report: zod.union([
+    zod.object({
+      ending: zod.string().min(1),
+      summary: zod.string(),
+      winner_candidate_id: zod.string().min(1),
+      flaky_protected: zod
+        .array(
+          zod.object({
+            key: zod.string().min(1),
+            name: zod.string().optional(),
+            sub_goal: zod.string().min(1),
+            passed: zod
+              .number()
+              .min(
+                simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedItemPassedMin,
+              ),
+            runs: zod.number().min(1),
+          }),
+        )
+        .default(
+          simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedDefault,
+        ),
+    }),
+    zod.null(),
+  ]),
+  failure: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
+  retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
   retryable: zod.boolean().optional(),
   limited_validation: zod.boolean().optional(),
   issue: zod
@@ -38101,69 +38153,72 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       outcome: zod
         .enum(["pending", "rejected", "finalist", "winner"])
         .optional(),
-      verdict: zod.object({
-        accepted: zod.boolean(),
-        reason: zod.string().min(1),
-        target_pass_rate: zod.array(zod.number()).optional(),
-        held_back_pass_rate: zod.array(zod.number()).optional(),
-        must_pass_regressions: zod.array(zod.string().min(1)),
-        must_pass_within_noise: zod
-          .array(zod.string().min(1))
-          .default(
-            simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
-          ),
-        tiers: zod
-          .array(
-            zod.object({
-              name: zod.string().min(1),
-              status: zod.enum(["passed", "failed", "pending", "skipped"]),
-              detail: zod
-                .string()
-                .default(
-                  simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault,
-                ),
-              parts: zod
-                .array(
-                  zod.object({
-                    name: zod
-                      .string()
-                      .min(1)
-                      .max(
-                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax,
-                      ),
-                    status: zod.enum(["passed", "failed", "skipped"]),
-                    detail: zod
-                      .string()
-                      .default(
-                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault,
-                      ),
-                  }),
-                )
-                .default(
-                  simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault,
-                ),
-              latency: zod
-                .object({
-                  baseline: zod.number().optional(),
-                  candidate: zod.number().optional(),
-                  allowed: zod.number().optional(),
-                  limit: zod.number().optional(),
-                })
-                .optional(),
-              cost: zod
-                .object({
-                  baseline: zod.number().optional(),
-                  candidate: zod.number().optional(),
-                  allowed: zod.number().optional(),
-                  limit: zod.number().optional(),
-                })
-                .optional(),
-            }),
-          )
-          .default(
-            simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault,
-          ),
-      }),
+      verdict: zod.union([
+        zod.object({
+          accepted: zod.boolean(),
+          reason: zod.string().min(1),
+          target_pass_rate: zod.array(zod.number()).optional(),
+          held_back_pass_rate: zod.array(zod.number()).optional(),
+          must_pass_regressions: zod.array(zod.string().min(1)),
+          must_pass_within_noise: zod
+            .array(zod.string().min(1))
+            .default(
+              simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneMustPassWithinNoiseDefault,
+            ),
+          tiers: zod
+            .array(
+              zod.object({
+                name: zod.string().min(1),
+                status: zod.enum(["passed", "failed", "pending", "skipped"]),
+                detail: zod
+                  .string()
+                  .default(
+                    simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemDetailDefault,
+                  ),
+                parts: zod
+                  .array(
+                    zod.object({
+                      name: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemNameMax,
+                        ),
+                      status: zod.enum(["passed", "failed", "skipped"]),
+                      detail: zod
+                        .string()
+                        .default(
+                          simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemDetailDefault,
+                        ),
+                    }),
+                  )
+                  .default(
+                    simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsDefault,
+                  ),
+                latency: zod
+                  .object({
+                    baseline: zod.number().optional(),
+                    candidate: zod.number().optional(),
+                    allowed: zod.number().optional(),
+                    limit: zod.number().optional(),
+                  })
+                  .optional(),
+                cost: zod
+                  .object({
+                    baseline: zod.number().optional(),
+                    candidate: zod.number().optional(),
+                    allowed: zod.number().optional(),
+                    limit: zod.number().optional(),
+                  })
+                  .optional(),
+              }),
+            )
+            .default(
+              simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersDefault,
+            ),
+        }),
+        zod.null(),
+      ]),
       check_runs: zod
         .array(
           zod.object({
@@ -38179,23 +38234,26 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
           allowed: zod.boolean(),
           regressions: zod.array(zod.string().min(1)),
           reason: zod.string(),
-          by: zod.object({
-            id: zod.string().min(1),
-            name: zod.string(),
-          }),
-          at: zod.string().datetime({ offset: true }),
+          by: zod.union([
+            zod.object({
+              id: zod.string().min(1),
+              name: zod.string(),
+            }),
+            zod.null(),
+          ]),
+          at: zod.union([zod.string().datetime({ offset: true }), zod.null()]),
         })
         .optional(),
-      pull_request_url: zod
-        .string()
-        .url()
-        .max(simulateApiAgentFixRunsReadResponseCandidatesItemPullRequestUrlMax)
-        .optional(),
+      pull_request_url: zod.string(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
-  started_at: zod.string().datetime({ offset: true }).optional(),
-  finished_at: zod.string().datetime({ offset: true }).optional(),
+  started_at: zod
+    .union([zod.string().datetime({ offset: true }), zod.null()])
+    .optional(),
+  finished_at: zod
+    .union([zod.string().datetime({ offset: true }), zod.null()])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   eval_warnings: zod
     .array(
@@ -38296,22 +38354,22 @@ export const SimulateApiAgentFixRunsStopBody = zod.object({});
 
 export const simulateApiAgentFixRunsStopResponseStageMax = 32;
 
-export const simulateApiAgentFixRunsStopResponsePlanTargetMin = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneTargetMin = 0;
 
-export const simulateApiAgentFixRunsStopResponsePlanHeldBackMin = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneHeldBackMin = 0;
 
-export const simulateApiAgentFixRunsStopResponsePlanMustPassMin = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneMustPassMin = 0;
 
-export const simulateApiAgentFixRunsStopResponsePlanProtectedDefault = 0;
-export const simulateApiAgentFixRunsStopResponsePlanProtectedMin = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneProtectedDefault = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneProtectedMin = 0;
 
-export const simulateApiAgentFixRunsStopResponsePlanMaxCandidatesMin = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneMaxCandidatesMin = 0;
 
-export const simulateApiAgentFixRunsStopResponsePlanRepeatsMin = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneRepeatsMin = 0;
 
-export const simulateApiAgentFixRunsStopResponsePlanBaselineSpreadPtsMin = 0;
+export const simulateApiAgentFixRunsStopResponsePlanOneBaselineSpreadPtsMin = 0;
 
-export const simulateApiAgentFixRunsStopResponseDiagnosisCausesDefault = [];
+export const simulateApiAgentFixRunsStopResponseDiagnosisOneCausesDefault = [];
 
 export const simulateApiAgentFixRunsStopResponseRequestProtectedScenarioKeysDefault =
   [];
@@ -38331,30 +38389,28 @@ export const simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault =
 export const simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault =
   false;
 
-export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemPassedMin = 0;
+export const simulateApiAgentFixRunsStopResponseReportOneFlakyProtectedItemPassedMin = 0;
 
-export const simulateApiAgentFixRunsStopResponseReportFlakyProtectedDefault =
+export const simulateApiAgentFixRunsStopResponseReportOneFlakyProtectedDefault =
   [];
 
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767;
 
-export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneMustPassWithinNoiseDefault =
   [];
-export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
-export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemPartsItemNameMax = 64;
 
-export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
-export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsDefault =
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemPartsDefault =
   [];
-export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersDefault =
+export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersDefault =
   [];
-
-export const simulateApiAgentFixRunsStopResponseCandidatesItemPullRequestUrlMax = 512;
 
 export const SimulateApiAgentFixRunsStopResponse = zod.object({
   id: zod.string().uuid().optional(),
-  number: zod.number(),
+  number: zod.union([zod.number(), zod.null()]),
   environment_id: zod.string().uuid(),
   environment: zod
     .object({
@@ -38363,8 +38419,8 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       default_agent_version_id: zod.string().uuid(),
     })
     .optional(),
-  source_run_id: zod.string().uuid(),
-  source_run_number: zod.number(),
+  source_run_id: zod.union([zod.string().uuid(), zod.null()]),
+  source_run_number: zod.union([zod.number(), zod.null()]),
   base_agent_version_id: zod.string().uuid(),
   agent: zod
     .object({
@@ -38394,36 +38450,48 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     .max(simulateApiAgentFixRunsStopResponseStageMax)
     .optional(),
   step: zod
-    .enum(["variations", "reproduce", "search", "verify", "done"])
-    .optional()
-    .describe("A finished fix is done, whatever the engine last said."),
-  plan: zod.object({
-    target: zod.number().min(simulateApiAgentFixRunsStopResponsePlanTargetMin),
-    held_back: zod
-      .number()
-      .min(simulateApiAgentFixRunsStopResponsePlanHeldBackMin),
-    must_pass: zod
-      .number()
-      .min(simulateApiAgentFixRunsStopResponsePlanMustPassMin),
-    protected: zod
-      .number()
-      .min(simulateApiAgentFixRunsStopResponsePlanProtectedMin)
-      .default(simulateApiAgentFixRunsStopResponsePlanProtectedDefault),
-    max_candidates: zod
-      .number()
-      .min(simulateApiAgentFixRunsStopResponsePlanMaxCandidatesMin),
-    repeats: zod
-      .number()
-      .min(simulateApiAgentFixRunsStopResponsePlanRepeatsMin),
-    baseline_spread_pts: zod
-      .number()
-      .min(simulateApiAgentFixRunsStopResponsePlanBaselineSpreadPtsMin),
-  }),
-  diagnosis: zod.object({
-    causes: zod
-      .array(zod.string().min(1))
-      .default(simulateApiAgentFixRunsStopResponseDiagnosisCausesDefault),
-  }),
+    .union([
+      zod
+        .enum(["variations", "reproduce", "search", "verify", "done"])
+        .describe("A finished fix is done, whatever the engine last said."),
+      zod.null(),
+    ])
+    .optional(),
+  plan: zod.union([
+    zod.object({
+      target: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponsePlanOneTargetMin),
+      held_back: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponsePlanOneHeldBackMin),
+      must_pass: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponsePlanOneMustPassMin),
+      protected: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponsePlanOneProtectedMin)
+        .default(simulateApiAgentFixRunsStopResponsePlanOneProtectedDefault),
+      max_candidates: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponsePlanOneMaxCandidatesMin),
+      repeats: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponsePlanOneRepeatsMin),
+      baseline_spread_pts: zod
+        .number()
+        .min(simulateApiAgentFixRunsStopResponsePlanOneBaselineSpreadPtsMin),
+    }),
+    zod.null(),
+  ]),
+  diagnosis: zod.union([
+    zod.object({
+      causes: zod
+        .array(zod.string().min(1))
+        .default(simulateApiAgentFixRunsStopResponseDiagnosisOneCausesDefault),
+    }),
+    zod.null(),
+  ]),
   request: zod.object({
     target_scenario_keys: zod.array(zod.string().min(1)),
     protected_scenario_keys: zod
@@ -38474,31 +38542,39 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   }),
   spent_credits: zod.number(),
   committed_credits: zod.number(),
-  report: zod.object({
-    ending: zod.string().min(1),
-    summary: zod.string(),
-    winner_candidate_id: zod.string().min(1),
-    flaky_protected: zod
-      .array(
-        zod.object({
-          key: zod.string().min(1),
-          name: zod.string().optional(),
-          sub_goal: zod.string().min(1),
-          passed: zod
-            .number()
-            .min(
-              simulateApiAgentFixRunsStopResponseReportFlakyProtectedItemPassedMin,
-            ),
-          runs: zod.number().min(1),
-        }),
-      )
-      .default(simulateApiAgentFixRunsStopResponseReportFlakyProtectedDefault),
-  }),
-  failure: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
-  retried_from_id: zod.string().uuid(),
+  report: zod.union([
+    zod.object({
+      ending: zod.string().min(1),
+      summary: zod.string(),
+      winner_candidate_id: zod.string().min(1),
+      flaky_protected: zod
+        .array(
+          zod.object({
+            key: zod.string().min(1),
+            name: zod.string().optional(),
+            sub_goal: zod.string().min(1),
+            passed: zod
+              .number()
+              .min(
+                simulateApiAgentFixRunsStopResponseReportOneFlakyProtectedItemPassedMin,
+              ),
+            runs: zod.number().min(1),
+          }),
+        )
+        .default(
+          simulateApiAgentFixRunsStopResponseReportOneFlakyProtectedDefault,
+        ),
+    }),
+    zod.null(),
+  ]),
+  failure: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
+  retried_from_id: zod.union([zod.string().uuid(), zod.null()]),
   retryable: zod.boolean().optional(),
   limited_validation: zod.boolean().optional(),
   issue: zod
@@ -38535,69 +38611,72 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       outcome: zod
         .enum(["pending", "rejected", "finalist", "winner"])
         .optional(),
-      verdict: zod.object({
-        accepted: zod.boolean(),
-        reason: zod.string().min(1),
-        target_pass_rate: zod.array(zod.number()).optional(),
-        held_back_pass_rate: zod.array(zod.number()).optional(),
-        must_pass_regressions: zod.array(zod.string().min(1)),
-        must_pass_within_noise: zod
-          .array(zod.string().min(1))
-          .default(
-            simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
-          ),
-        tiers: zod
-          .array(
-            zod.object({
-              name: zod.string().min(1),
-              status: zod.enum(["passed", "failed", "pending", "skipped"]),
-              detail: zod
-                .string()
-                .default(
-                  simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemDetailDefault,
-                ),
-              parts: zod
-                .array(
-                  zod.object({
-                    name: zod
-                      .string()
-                      .min(1)
-                      .max(
-                        simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemNameMax,
-                      ),
-                    status: zod.enum(["passed", "failed", "skipped"]),
-                    detail: zod
-                      .string()
-                      .default(
-                        simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault,
-                      ),
-                  }),
-                )
-                .default(
-                  simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersItemPartsDefault,
-                ),
-              latency: zod
-                .object({
-                  baseline: zod.number().optional(),
-                  candidate: zod.number().optional(),
-                  allowed: zod.number().optional(),
-                  limit: zod.number().optional(),
-                })
-                .optional(),
-              cost: zod
-                .object({
-                  baseline: zod.number().optional(),
-                  candidate: zod.number().optional(),
-                  allowed: zod.number().optional(),
-                  limit: zod.number().optional(),
-                })
-                .optional(),
-            }),
-          )
-          .default(
-            simulateApiAgentFixRunsStopResponseCandidatesItemVerdictTiersDefault,
-          ),
-      }),
+      verdict: zod.union([
+        zod.object({
+          accepted: zod.boolean(),
+          reason: zod.string().min(1),
+          target_pass_rate: zod.array(zod.number()).optional(),
+          held_back_pass_rate: zod.array(zod.number()).optional(),
+          must_pass_regressions: zod.array(zod.string().min(1)),
+          must_pass_within_noise: zod
+            .array(zod.string().min(1))
+            .default(
+              simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneMustPassWithinNoiseDefault,
+            ),
+          tiers: zod
+            .array(
+              zod.object({
+                name: zod.string().min(1),
+                status: zod.enum(["passed", "failed", "pending", "skipped"]),
+                detail: zod
+                  .string()
+                  .default(
+                    simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemDetailDefault,
+                  ),
+                parts: zod
+                  .array(
+                    zod.object({
+                      name: zod
+                        .string()
+                        .min(1)
+                        .max(
+                          simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemPartsItemNameMax,
+                        ),
+                      status: zod.enum(["passed", "failed", "skipped"]),
+                      detail: zod
+                        .string()
+                        .default(
+                          simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemPartsItemDetailDefault,
+                        ),
+                    }),
+                  )
+                  .default(
+                    simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersItemPartsDefault,
+                  ),
+                latency: zod
+                  .object({
+                    baseline: zod.number().optional(),
+                    candidate: zod.number().optional(),
+                    allowed: zod.number().optional(),
+                    limit: zod.number().optional(),
+                  })
+                  .optional(),
+                cost: zod
+                  .object({
+                    baseline: zod.number().optional(),
+                    candidate: zod.number().optional(),
+                    allowed: zod.number().optional(),
+                    limit: zod.number().optional(),
+                  })
+                  .optional(),
+              }),
+            )
+            .default(
+              simulateApiAgentFixRunsStopResponseCandidatesItemVerdictOneTiersDefault,
+            ),
+        }),
+        zod.null(),
+      ]),
       check_runs: zod
         .array(
           zod.object({
@@ -38613,23 +38692,26 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
           allowed: zod.boolean(),
           regressions: zod.array(zod.string().min(1)),
           reason: zod.string(),
-          by: zod.object({
-            id: zod.string().min(1),
-            name: zod.string(),
-          }),
-          at: zod.string().datetime({ offset: true }),
+          by: zod.union([
+            zod.object({
+              id: zod.string().min(1),
+              name: zod.string(),
+            }),
+            zod.null(),
+          ]),
+          at: zod.union([zod.string().datetime({ offset: true }), zod.null()]),
         })
         .optional(),
-      pull_request_url: zod
-        .string()
-        .url()
-        .max(simulateApiAgentFixRunsStopResponseCandidatesItemPullRequestUrlMax)
-        .optional(),
+      pull_request_url: zod.string(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
-  started_at: zod.string().datetime({ offset: true }).optional(),
-  finished_at: zod.string().datetime({ offset: true }).optional(),
+  started_at: zod
+    .union([zod.string().datetime({ offset: true }), zod.null()])
+    .optional(),
+  finished_at: zod
+    .union([zod.string().datetime({ offset: true }), zod.null()])
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
 });
 
@@ -47165,6 +47247,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
   dataset_id: zod
     .string()
     .uuid()
+    .nullable()
     .describe("A dataset import's dataset; null otherwise."),
   agent_version_id: zod.string().uuid().nullable(),
   source_kind: zod.enum(["session", "call", "trace", "transcript", "dataset"]),
@@ -47528,6 +47611,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
       dataset_id: zod
         .string()
         .uuid()
+        .nullable()
         .describe("A dataset import's dataset; null otherwise."),
       agent_version_id: zod.string().uuid().nullable(),
       source_kind: zod.enum([
