@@ -28,10 +28,7 @@ from simulate.services.harness_versioning.read import (
     version_refs,
 )
 from simulate.services.harness_versioning.review_items import saved_changes
-from simulate.services.harness_versioning.versions import (
-    proof_passes,
-    versioning_enabled,
-)
+from simulate.services.harness_versioning.versions import versioning_enabled
 from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
@@ -80,8 +77,9 @@ def _names(names: list[str]) -> str:
 
 
 def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[str]:
-    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that hold
-    no proof against this environment version."""
+    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that no
+    validation reached on this pair since. A case validated again and held by its own checks says so on its own
+    reason; it is not asked to be proved again."""
     from simulate.models import HarnessSuiteMember
 
     reviewed = [
@@ -118,9 +116,17 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
         for key in members
         if scenario_token(key) in tokens
         and not any(
-            proof_passes(proof) and scenario_token(name) == scenario_token(key)
+            _reached(proof) and scenario_token(name) == scenario_token(key)
             for name, proof in proofs.items()
         )
+    )
+
+
+def _reached(proof: object) -> bool:
+    """Whether a validation reached the case, whatever it found."""
+    return (
+        isinstance(proof, dict)
+        and proof.get("blocked_reason") != "validation_incomplete"
     )
 
 
