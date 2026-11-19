@@ -339,7 +339,8 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     # The failed fix this one starts again, and whether this one may be started again.
     retried_from_id = serializers.UUIDField(allow_null=True)
     retryable = serializers.SerializerMethodField()
-    # Too few held-back cases to call the fix verified, whatever its verdict says.
+    # Some cases held back, but too few to call the fix verified, whatever its verdict
+    # says. With none held back it is proven on the targets only, and this is false.
     limited_validation = serializers.SerializerMethodField()
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
