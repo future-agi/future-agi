@@ -119,6 +119,54 @@ function normalizeHostStatusSchema(schema) {
   return nullable ? { anyOf: [result, { type: "null" }] } : result;
 }
 
+// Run Epoch from an Error Feed issue sends these nested objects as null. drf-yasg
+// writes x-nullable beside no $ref, so the nullable ones are named here.
+const AGENT_FIX_ISSUE_NULLABLE_REFS = {
+  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
+  AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
+  AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
+  AgentFixRun: ["issue"],
+  AgentFixRunDetail: ["issue"],
+};
+
+function isAgentFixIssueSchema(name) {
+  return (
+    name.startsWith("AgentFixIssue") ||
+    name === "AgentFixEpochIssue" ||
+    // The launch form's parts of an agent: a part it may change has no reason.
+    name === "AgentFixLaunchSurface"
+  );
+}
+
+// A scalar field's x-nullable becomes a null union. A definition's own x-nullable
+// only says how drf-yasg first met it, so it is dropped: the nested objects that are
+// sent as null are the ones AGENT_FIX_ISSUE_NULLABLE_REFS names.
+function withNullableFields(name, schema) {
+  const fields = AGENT_FIX_ISSUE_NULLABLE_REFS[name] || [];
+  if (!isAgentFixIssueSchema(name) && !fields.length) return schema;
+  const { "x-nullable": _definitionNullable, ...definition } = schema;
+  const properties = isAgentFixIssueSchema(name)
+    ? Object.fromEntries(
+        Object.entries(definition.properties || {}).map(([key, property]) => {
+          const { "x-nullable": nullable, ...rest } = property;
+          return [
+            key,
+            nullable === true ? { anyOf: [rest, { type: "null" }] } : rest,
+          ];
+        }),
+      )
+    : { ...definition.properties };
+  for (const field of fields) {
+    if (!properties[field]) {
+      throw new Error(
+        `${name}.${field} is not in the spec; update the nullable list`,
+      );
+    }
+    properties[field] = { anyOf: [properties[field], { type: "null" }] };
+  }
+  return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
+}
+
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
 // upgrade. Never insert native unions/null types into the Swagger 2 input, or
 // disable validation to make a nonconforming input pass.
@@ -136,7 +184,7 @@ function normalizeHostStatusSpec(spec) {
           // A log row sends explicit null for ids its source does not have.
           name === "EvalApiLogRowResponseResult"
             ? normalizeHostStatusSchema(schema)
-            : schema,
+            : withNullableFields(name, schema),
         ]),
       ),
     },

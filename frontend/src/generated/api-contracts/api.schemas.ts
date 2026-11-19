@@ -18177,8 +18177,7 @@ export interface AgentFixIssueApi {
   /** @minLength 1 */
   cluster_id: string;
   project_id: string;
-  /** @minLength 1 */
-  title: string;
+  title: string | null;
 }
 
 export interface AgentFixIssueEnvironmentApi {
@@ -18212,8 +18211,7 @@ export interface AgentFixIssueSamplePickApi {
   /** @minLength 1 */
   source_id: string;
   reason: AgentFixIssueSamplePickApiReason;
-  /** @minLength 1 */
-  started_at: string;
+  started_at: string | null;
 }
 
 export interface AgentFixFailureApi {
@@ -18232,41 +18230,28 @@ export interface AgentFixIssueBaselineApi {
   failed_count: number;
 }
 
-export type AgentFixIssueEpochApiStep =
-  (typeof AgentFixIssueEpochApiStep)[keyof typeof AgentFixIssueEpochApiStep];
-
-export const AgentFixIssueEpochApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
 export interface AgentFixIssueEpochApi {
   id: string;
-  number: number;
+  number: number | null;
   environment_id: string;
   /** @minLength 1 */
   state: string;
-  step: AgentFixIssueEpochApiStep;
-  /** @minLength 1 */
-  failure_code: string;
+  step: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  failure_code: string | null;
   retryable: boolean;
   limited_validation: boolean;
-  /** @minLength 1 */
-  pull_request_url: string;
+  pull_request_url: string | null;
 }
 
 export interface AgentFixIssueJobApi {
   id: string;
   phase: AgentFixIssueJobApiPhase;
-  issue: AgentFixIssueApi;
+  issue: AgentFixIssueApi | null;
   environment: AgentFixIssueEnvironmentApi;
   sample: AgentFixIssueSamplePickApi[];
-  ending: AgentFixFailureApi;
-  baseline: AgentFixIssueBaselineApi;
-  epoch: AgentFixIssueEpochApi;
+  ending: AgentFixFailureApi | null;
+  baseline: AgentFixIssueBaselineApi | null;
+  epoch: AgentFixIssueEpochApi | null;
   created_at: string;
 }
 
@@ -18640,8 +18625,7 @@ export interface AgentFixLaunchSurfaceApi {
   /** @minLength 1 */
   label: string;
   allowed: boolean;
-  /** @minLength 1 */
-  reason: string;
+  reason: string | null;
 }
 
 export interface AgentFixIssueDefaultsApi {
@@ -18656,28 +18640,19 @@ export interface AgentFixIssueDefaultsApi {
 export interface AgentFixIssueJobDetailApi {
   id: string;
   phase: AgentFixIssueJobDetailApiPhase;
-  issue: AgentFixIssueApi;
+  issue: AgentFixIssueApi | null;
   environment: AgentFixIssueEnvironmentApi;
   sample: AgentFixIssueSamplePickApi[];
-  ending: AgentFixFailureApi;
-  baseline: AgentFixIssueBaselineApi;
-  epoch: AgentFixIssueEpochApi;
+  ending: AgentFixFailureApi | null;
+  baseline: AgentFixIssueBaselineApi | null;
+  epoch: AgentFixIssueEpochApi | null;
   created_at: string;
   evidence_import: EvidenceImportApi;
   defaults: AgentFixIssueDefaultsApi;
 }
 
-export type AgentFixIssueSampleApiUnit =
-  (typeof AgentFixIssueSampleApiUnit)[keyof typeof AgentFixIssueSampleApiUnit];
-
-export const AgentFixIssueSampleApiUnit = {
-  call: "call",
-  session: "session",
-  trace: "trace",
-} as const;
-
 export interface AgentFixIssueSampleApi {
-  unit: AgentFixIssueSampleApiUnit;
+  unit: "call" | "session" | "trace" | null;
   picks: AgentFixIssueSamplePickApi[];
   alternates: AgentFixIssueSamplePickApi[];
 }
@@ -18689,11 +18664,11 @@ export interface AgentFixIssueScenariosApi {
 
 export interface AgentFixIssuePlanApi {
   issue: AgentFixIssueApi;
-  environment: AgentFixIssueEnvironmentApi;
-  blocked: AgentFixFailureApi;
+  environment: AgentFixIssueEnvironmentApi | null;
+  blocked: AgentFixFailureApi | null;
   sample: AgentFixIssueSampleApi;
-  open_job_id: string;
-  issue_scenarios: AgentFixIssueScenariosApi;
+  open_job_id: string | null;
+  issue_scenarios: AgentFixIssueScenariosApi | null;
   defaults: AgentFixIssueDefaultsApi;
 }
 
@@ -18733,7 +18708,7 @@ export interface AgentFixIssueRunApi {
    * @maximum 1000
    */
   cost_margin_pct?: number;
-  cost_limit_usd?: number;
+  cost_limit_usd?: number | null;
   /**
    * The import's cases to keep: drafted ones, and repeats of scenarios the suite already holds.
    * @minItems 1
@@ -18903,7 +18878,7 @@ export interface AgentFixRunApi {
   retried_from_id: string;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
-  issue?: AgentFixEpochIssueApi;
+  issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
@@ -19119,7 +19094,7 @@ export interface AgentFixRunDetailApi {
   retried_from_id: string;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
-  issue?: AgentFixEpochIssueApi;
+  issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
