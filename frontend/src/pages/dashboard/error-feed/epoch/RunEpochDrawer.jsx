@@ -57,6 +57,9 @@ const MODELS_NOTE =
   "Locked to the models the current version calls, read from its run before the epoch starts.";
 
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+// A refusal's body: its code, message and any fields it names, at the top level
+// (the app's axios spreads it onto the error; fixErrorOf reads the same).
+const refusalOf = (error) => error?.response?.data ?? error ?? {};
 const scenariosHref = (envId) =>
   paths.dashboard.simulate.environments.workspaceTab(envId, "scenarios");
 
@@ -253,7 +256,7 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
   const failure = create.error ? fixErrorOf(create.error) : null;
   const taken = new Set(
     failure?.code === "issue_epoch_picks_in_review"
-      ? create.error?.details?.member_ids ?? []
+      ? refusalOf(create.error).member_ids ?? []
       : [],
   );
   const swap = (index) => {
@@ -507,7 +510,7 @@ function runFailure(error, environmentId) {
       <Alert severity="error">{failure.message || "Could not start."}</Alert>
     );
   }
-  const { held, limit } = error?.details ?? {};
+  const { held, limit } = refusalOf(error);
   return (
     <Alert
       severity="warning"

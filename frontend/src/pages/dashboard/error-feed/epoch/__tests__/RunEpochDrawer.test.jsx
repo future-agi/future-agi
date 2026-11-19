@@ -265,7 +265,9 @@ describe("RunEpochDrawer: the review", () => {
       statusCode: 409,
       error: "issue_scenarios_limit",
       message: "raw",
-      details: { held: 36, limit: 36 },
+      retryable: false,
+      held: 36,
+      limit: 36,
     });
     const user = userEvent.setup();
     renderDrawer();
