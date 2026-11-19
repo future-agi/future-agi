@@ -851,7 +851,7 @@ def _create(repository: str, kind: str, token: str, **payload: Any) -> dict[str,
 def _refused(repository: str, response: requests.Response) -> HostedHarnessError:
     """A write GitHub refused, as the user can act on it: wait out a rate limit (a 403 says
     so too), give the App write access, or read what GitHub said."""
-    status, headers = response.status_code, response.headers or {}
+    status, headers = response.status_code, response.headers
     if status == 429 or (
         status == 403
         and (
