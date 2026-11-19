@@ -1,18 +1,10 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import {
-  Box,
-  Button,
-  Stack,
-  Typography,
-  Collapse,
-  Tooltip,
-} from "@mui/material";
+import { Box, Stack, Typography, Collapse, Tooltip } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
-import UiOnlyFlag from "../../components/UiOnlyFlag";
 import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import {
   TOOLS_CARD_COPY as T,
@@ -35,7 +27,6 @@ const COPY = {
       : "None yet. The agent's tools are read when it's connected.",
   // An environment without contract detail still names its tools.
   notRecorded: "Where it runs isn't recorded",
-  addFromMcp: "Add tools from an MCP server",
 };
 
 // A row's chevron points right and turns down as the row opens.
@@ -74,21 +65,6 @@ export default function WorldInternalsSection({ env, envState }) {
         <SectionCard
           title={COPY.toolsTitle(named.length)}
           subtitle={T.subtitle}
-          action={
-            <Stack direction="row" spacing={1} alignItems="center">
-              <UiOnlyFlag feature="mcpTools" />
-              <Button
-                size="small"
-                variant="outlined"
-                disabled
-                startIcon={
-                  <Iconify icon="solar:add-circle-linear" width={16} />
-                }
-              >
-                {COPY.addFromMcp}
-              </Button>
-            </Stack>
-          }
         >
           {named.length ? (
             <NamedTools tools={named} />
