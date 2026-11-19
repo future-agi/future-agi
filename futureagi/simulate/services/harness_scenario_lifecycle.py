@@ -28,7 +28,7 @@ from simulate.models import (
 from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_scenario_needs import case_needs
-from simulate.services.harness_scenario_sources import SourceView, file_path
+from simulate.services.harness_scenario_sources import SourceView, bare_ref, file_path
 from simulate.services.harness_versioning.versions import (
     control_ran,
     legacy_verdict,
@@ -684,7 +684,12 @@ def scenario_lifecycle(
                     "source_unresolved",
                     entry,
                     kind=bad["kind"],
-                    ref=bad["ref"] or bad["label"],
+                    # A rule by its words; any other source by what it names, never its prefix again.
+                    ref=(
+                        bad["label"]
+                        if bad["kind"] == "rule"
+                        else bare_ref(bad["kind"], bad["ref"]) or bad["label"]
+                    ),
                 ),
             )
         if view["state"] != "archived" and (proofs_lost or key in unread):

@@ -297,11 +297,25 @@ def _rule_match(quote: str, rules: list[str]) -> int | None:
     )
 
 
+# The prefix each kind's `ref` carries, as ALK writes it (`rule:<n>`, `file:<path>`, `chat:<id>`, `evidence:<id>`).
+REF_SCHEMES = {
+    "rule": "rule:",
+    "file": "file:",
+    "chat_message": "chat:",
+    "evidence_case": "evidence:",
+}
+
+
+def bare_ref(kind: str, ref: str) -> str:
+    """A source's ref without its kind's prefix, read once: what the source names."""
+    return ref.removeprefix(REF_SCHEMES.get(kind, "")).strip()
+
+
 def file_path(ref: str) -> str:
     """The attached file a file source cites, as its path in the environment; empty for a path that climbs out
     (a ``..`` part). ALK reads a cited file the same way (agent-learning-kit ``fi/alk/harness/grounding.py``
     ``_file``), pinned by ``tests/test_harness_source_rules_contract.py``."""
-    name = ref.removeprefix("file:").strip().lstrip("/")
+    name = bare_ref("file", ref).lstrip("/")
     return "" if ".." in name.split("/") else name
 
 
@@ -417,7 +431,7 @@ def _label(
         )
     if kind == "evidence_case":
         # Built from a real conversation or record, never a replay of it.
-        return f"Based on evidence case {ref.removeprefix('evidence:')}, not an exact replay"
+        return f"Based on evidence case {bare_ref(kind, ref)}, not an exact replay"
     if kind == "requirement":
         return "Stated by you"
     return "Assumption"
@@ -439,7 +453,7 @@ def resolve(
     rules = _rules(environment_version)
     digests = _file_digests(environment_version)
     chat_ids = {
-        str(one.get("ref") or "").removeprefix("chat:")
+        bare_ref("chat_message", str(one.get("ref") or ""))
         for sources in by_key.values()
         for one in sources
         if isinstance(one, Mapping) and one.get("kind") == "chat_message"
@@ -506,7 +520,7 @@ def resolve(
                         "" if resolved else "the file does not contain the quoted words"
                     )
             elif kind == "chat_message":
-                message_id = ref.removeprefix("chat:")
+                message_id = bare_ref(kind, ref)
                 created = messages.get(message_id)
                 resolved = created is not None
                 problem = (

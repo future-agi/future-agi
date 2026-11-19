@@ -955,6 +955,46 @@ def test_a_proof_blocked_on_a_source_names_that_source(user, workspace, storage)
     )
 
 
+def test_a_case_citing_the_agent_s_own_source_reads_by_the_harness_verdict(
+    user, workspace, storage
+):
+    """An agent's own source file is not among the environment's files: the harness, which has it, decides the
+    citation, and a citation nothing resolved names the file once, never `file file:`."""
+    environment = _environment(user, workspace, storage, "lc-agent-source")
+    _suite(environment, _ten())
+    _with_rules_and_files(environment.environment_version, [], {})
+    cited = {"kind": "file", "ref": "file:agent/app.py", "quote": "def issue_refund"}
+    _cite(environment, {key: [cited] for key in REFUND_KEYS[:2]})
+    read = {"kind": "file", "ref": "file:agent/app.py", "problem": ""}
+    _proofs(
+        environment,
+        {
+            **dict.fromkeys(KEYS, PROVED),
+            REFUND_KEYS[0]: {
+                **PROVED,
+                "sources": [
+                    {**read, "resolved": True, "matched_digest": "sha256:" + "a" * 64}
+                ],
+            },
+            REFUND_KEYS[1]: {
+                **PROVED,
+                "sources": [
+                    {**read, "resolved": None, "problem": "not in the authoring tree"}
+                ],
+            },
+        },
+    )
+
+    views = _views(environment)
+
+    assert views[REFUND_KEYS[0]]["state"] == "active"
+    assert views[REFUND_KEYS[0]]["sources"][0]["resolved"] is True
+    assert (views[REFUND_KEYS[1]]["reason"], views[REFUND_KEYS[1]]["reason_text"]) == (
+        "source_unresolved",
+        "A cited source is not in this environment: file agent/app.py.",
+    )
+
+
 @pytest.mark.parametrize(
     ("code", "why", "detail"),
     [
