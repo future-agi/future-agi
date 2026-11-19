@@ -1756,6 +1756,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
         ),
     },
+    "tracer.services.clickhouse.v2.query_builders.observe_runtime": {
+        "RuntimeLatencyQueryBuilderV2.build_runtime_latency_page": filed(
+            PROJECT_SET,
+            why=(
+                "runtime latency replay reads the finite cohort for the authorized "
+                "Observe project selected by the view; bounded cohort and page "
+                "parameters keep the physical-version read fail-closed"
+            ),
+        ),
+    },
     "tracer.services.clickhouse.v2.query_builders.session_detail": {
         "_LIVE_SESSION_SPANS": filed(BY_ID_ALONE, why="session detail by session id"),
     },

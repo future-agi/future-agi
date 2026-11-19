@@ -4883,22 +4883,30 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
 
         list_sort = validated_data.get("sort_params") or []
-        builder_type = (
-            RuntimeLatencyQueryBuilderV2
-            if list_sort == LATENCY_DESC
-            else ObserveTraceListQueryBuilderV2
-        )
-        builder = builder_type(
-            project_id=None if org_scope else str(project_id),
-            project_ids=[str(p) for p in org_project_ids] if org_scope else None,
-            filters=filters,
-            page_number=page_number,
-            page_size=page_size,
-            eval_config_ids=eval_config_ids,
-            annotation_label_ids=annotation_label_ids,
-            annotation_label_ids_by_project=annotation_label_ids_by_project,
-            eval_count_mode=True,
-        )
+        if list_sort == LATENCY_DESC:
+            builder = RuntimeLatencyQueryBuilderV2(
+                project_id=None if org_scope else str(project_id),
+                project_ids=[str(p) for p in org_project_ids] if org_scope else None,
+                filters=filters,
+                page_number=page_number,
+                page_size=page_size,
+                eval_config_ids=eval_config_ids,
+                annotation_label_ids=annotation_label_ids,
+                annotation_label_ids_by_project=annotation_label_ids_by_project,
+                eval_count_mode=True,
+            )
+        else:
+            builder = ObserveTraceListQueryBuilderV2(
+                project_id=None if org_scope else str(project_id),
+                project_ids=[str(p) for p in org_project_ids] if org_scope else None,
+                filters=filters,
+                page_number=page_number,
+                page_size=page_size,
+                eval_config_ids=eval_config_ids,
+                annotation_label_ids=annotation_label_ids,
+                annotation_label_ids_by_project=annotation_label_ids_by_project,
+                eval_count_mode=True,
+            )
         pin_filter_seed_witness_slack(builder, cursor_state)
         requires_cursor = (
             not list_sort and builder.requires_cursor_for_long_filtered_read()
