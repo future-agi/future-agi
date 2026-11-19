@@ -63,6 +63,8 @@ export const GAP_AREA_TO_TAB = {
 // Header, overflow-menu and empty-state copy for the workspace shell.
 export const WORKSPACE_COPY = {
   back: "All environments",
+  designSaved:
+    "Saved as v1. Nothing runs until you connect an agent and start a run.",
   live: "Ready",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",

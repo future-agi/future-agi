@@ -25,13 +25,14 @@ const CHECKS = [
   "Each scenario can start",
 ];
 
-export const FINAL_BUILD = ["saved", "needs_repair"];
+export const FINAL_BUILD = ["ready", "saved", "needs_repair"];
 
 /**
  * The build of a draft at `now`, or null before approval: { status:
- * building | validating | saved | needs_repair, stages: [{ id, label,
+ * building | validating | ready | saved | needs_repair, stages: [{ id, label,
  * status: queued | running | done }], validation: { checks: [{ label, ok,
- * detail, file? }] } once checked, release: { version } once saved }. A
+ * detail, file? }] } once checked, release: { version, name } once saved }.
+ * A clean build waits at ready until the user saves it (draft.release). A
  * records file with "broken" in its name fails the key check, naming the file.
  */
 export function designBuildOf(draft, now = Date.now()) {
@@ -61,12 +62,14 @@ export function designBuildOf(draft, now = Date.now()) {
   );
   return broken
     ? { status: "needs_repair", stages, validation: { checks } }
-    : {
-        status: "saved",
-        stages,
-        validation: { checks },
-        release: { version: 1 },
-      };
+    : draft.release
+      ? {
+          status: "saved",
+          stages,
+          validation: { checks },
+          release: draft.release,
+        }
+      : { status: "ready", stages, validation: { checks } };
 }
 
 const buildKey = (draftId, startedAt) => [
@@ -80,8 +83,9 @@ const buildKey = (draftId, startedAt) => [
 export function useDesignBuild(draftId) {
   const draft = useDesignDraftStore((s) => s.drafts[draftId]);
   const startedAt = draft?.build?.startedAt;
+  const saved = !!draft?.release;
   const { data } = useQuery({
-    queryKey: buildKey(draftId, startedAt),
+    queryKey: [...buildKey(draftId, startedAt), saved],
     queryFn: () =>
       designBuildOf(useDesignDraftStore.getState().drafts[draftId]),
     initialData: () => designBuildOf(draft),

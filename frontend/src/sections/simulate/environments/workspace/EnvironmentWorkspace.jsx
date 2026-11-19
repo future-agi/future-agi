@@ -22,7 +22,14 @@ import {
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
-import { environmentVersionsKey } from "src/api/simulate-environments/versions";
+import {
+  environmentVersionsKey,
+  refreshFollowers,
+} from "src/api/simulate-environments/versions";
+import {
+  isDesignEnvId,
+  saveDesignDrafts,
+} from "src/api/simulate-environments/designEnvironment";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -52,6 +59,7 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import useChatFiles from "./sources/useChatFiles";
+import DesignBuildStrip from "../design/DesignBuildStrip";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -289,6 +297,23 @@ export default function EnvironmentWorkspace() {
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
+
+  // A design's environment exists once its build is approved; before that, or
+  // after a failed check, the design page is where it's worked on.
+  const designBuild = isDesignEnvId(envId) ? env?.designBuild : undefined;
+  const backToDesign =
+    designBuild === null || designBuild?.status === "needs_repair";
+  useEffect(() => {
+    if (backToDesign)
+      navigate(paths.dashboard.simulate.environments.design(envId), {
+        replace: true,
+      });
+  }, [backToDesign, envId, navigate]);
+  const saveDesign = ({ name } = {}) => {
+    saveDesignDrafts(envId, name);
+    refreshFollowers(queryClient, envId);
+    enqueueSnackbar(WORKSPACE_COPY.designSaved, { variant: "success" });
+  };
 
   if (notFound) {
     return (
@@ -608,6 +633,9 @@ export default function EnvironmentWorkspace() {
       {refusalLine}
 
       <SystemBanners env={env} />
+      {designBuild && (
+        <DesignBuildStrip build={designBuild} tab={tab} onFollow={setTab} />
+      )}
       {!detailLoading && !detailFailed && (
         <VersionBar
           env={env}
@@ -710,7 +738,10 @@ export default function EnvironmentWorkspace() {
           env={env}
           canEdit={!locked}
           onClose={() => setReviewOpen(false)}
-          onSaved={() => setReviewOpen(false)}
+          onSaved={(saved) => {
+            setReviewOpen(false);
+            if (designBuild) saveDesign(saved);
+          }}
           onOpenTab={setTab}
         />
       )}

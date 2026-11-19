@@ -108,6 +108,46 @@ export const useDesignDraftStore = create(
             "startDesignBuild",
           ),
 
+        // Save in Review changes: the checked build becomes v1. Only a build
+        // that passed its checks can be saved, and only once.
+        saveDesignRelease: (draftId, name = "") =>
+          set(
+            (s) =>
+              s.drafts[draftId]?.build && !s.drafts[draftId].release
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        release: { version: 1, name, savedAt: Date.now() },
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "saveDesignRelease",
+          ),
+
+        // agent: { id, name, version } picked or connected after save. Kept
+        // apart from `agent`, which an agent-built design was read from.
+        connectDesignAgent: (draftId, agent) =>
+          set(
+            (s) =>
+              s.drafts[draftId]
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        connectedAgent: agent,
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "connectDesignAgent",
+          ),
+
         // A file left out to repair a failed build: the design is read again
         // without it and waits for approval again.
         leaveOutFile: (draftId, fileId) =>
