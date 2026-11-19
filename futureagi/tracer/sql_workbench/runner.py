@@ -85,7 +85,7 @@ class QueryControlLost(QueryUnavailable):
 
 class QueryBusy(QueryUnavailable):
     def __init__(self):
-        super().__init__("SQL service is busy. Retry in a few seconds.")
+        super().__init__("SQL service is busy. Try again shortly.")
 
 
 # The shared service principal runs at most max_concurrent_queries_for_user
