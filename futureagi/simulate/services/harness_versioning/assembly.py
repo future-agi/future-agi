@@ -1297,6 +1297,8 @@ def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
 
 
 SCENARIO_PROOFS_PATH = "/work/authoring/scenario-proofs.json"
+# How long before the check's window ends the prove command is stopped, so its proofs are read before the check is.
+PROVE_MARGIN_SECONDS = 300
 SCENARIO_PROOFS_MAX_KEYS = 5000
 
 
@@ -1332,12 +1334,18 @@ def prove_suite_command(
     runtime, the way a build proves them: ALK's ``--prove-only`` starts that runtime, its services included, so a
     step a running service serves is proved live, and proves the rest offline. Never fails the command; the outer
     timeout is the last resort, the deadline gives ALK its own margin first."""
+    from simulate.services.harness_versioning.validation import check_window
+
     named = [
         one for one in keys or [] if isinstance(one, str) and _KEY_SHAPE.fullmatch(one)
     ]
     keys_flag = f" --keys {','.join(named)}" if named else ""
+    # Inside the check's own window, so the outer stop never ends a check that still has time.
+    seconds = max(
+        int(check_window().total_seconds()) - PROVE_MARGIN_SECONDS, PROVE_MARGIN_SECONDS
+    )
     return (
-        "timeout 1500 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+        f"timeout {seconds} python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
         f"--source /work/source --output {PurePosixPath(SCENARIO_PROOFS_PATH).parent} "
         f"--prove-only{keys_flag}{_deadline_flag(deadline_at)}{AGENT_DOCUMENT_FLAG} || true; "
     )

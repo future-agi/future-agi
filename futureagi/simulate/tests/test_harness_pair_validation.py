@@ -2463,12 +2463,14 @@ class TestScenarioProving:
             "/work/authoring.tar.gz",
         } <= set(gateway.client.sandbox.fs.uploads)
 
-    def test_the_prove_command_names_its_keys_and_deadline(self):
+    def test_the_prove_command_names_its_keys_and_deadline(self, settings):
+        # Stopped inside the check's own window, never on a fixed clock shorter than it.
+        settings.HARNESS_VALIDATION_CHECK_SECONDS = 7200
         command = assembly.prove_suite_command(
             deadline_at=1_800_000_000.7, keys=["refund-1", "status_2", "bad key;rm"]
         )
         assert command == (
-            "timeout 1500 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+            "timeout 6900 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
             "--source /work/source --output /work/authoring --prove-only --keys refund-1,status_2 "
             f"--deadline-at 1800000000{assembly.AGENT_DOCUMENT_FLAG} || true; "
         )
