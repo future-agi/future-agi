@@ -1498,8 +1498,15 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
 
 
 @pytest.mark.unit
-def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatch):
-    from threading import Event
+@pytest.mark.parametrize(
+    "share_permit", [False, True], ids=["isolated", "shared-control"]
+)
+def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
+    monkeypatch, share_permit
+):
+    from concurrent.futures import Future
+    from contextlib import nullcontext
+    from threading import Event, Thread, current_thread
     from time import monotonic
 
     from tracer.services.clickhouse.client import ClickHouseClient
@@ -1513,10 +1520,11 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatc
         "retained_window_start",
         _REAL_RETAINED_WINDOW_START,
     )
-    request_deadlines = []
+    parent = None
 
     def read_projects(deadline, read):
-        request_deadlines.append(deadline)
+        nonlocal parent
+        parent = deadline
         return read()
 
     monkeypatch.setattr(dashboard_view, "_run_filter_value_pg_read", read_projects)
@@ -1524,69 +1532,88 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatc
     wall_ms = 2_750
     reserve_ms = 1_000
     monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", wall_ms)
-    entered, release, finished = Event(), Event(), Event()
-    page_started = Event()
-    metadata_calls = []
-    page_calls = []
+    metadata_entered, release_metadata, page_entered = Event(), Event(), Event()
+    metadata_threads = []
+    page_budgets = []
 
     class Driver:
         def execute(self, query, params, **_kwargs):
             if "system.parts" in query:
-                metadata_calls.append(1)
-                entered.set()
-                # If the page is stuck behind this call, let it through only
-                # once its reserve is already lost. It can then record the
-                # actual late start instead of failing an admission timeout.
-                left_ms = request_deadlines[0].remaining_ms()
-                if page_started.wait(timeout=max(0, left_ms - reserve_ms + 1) / 1000):
-                    release.wait()  # The page is running; its finally opens the gate.
-                finished.set()
+                metadata_threads.append(current_thread())
+                metadata_entered.set()
+                assert release_metadata.wait(timeout=10), "metadata gate was not released"
                 return [(None,)], [("retained_start", "Nullable(DateTime)")]
-            left_ms = request_deadlines[0].remaining_ms()
-            page_calls.append((left_ms, entered.is_set(), finished.is_set()))
-            page_started.set()
             assert "PREWHERE project_id IN %(project_ids)s" in query
             assert params["project_ids"] == (project,)
+            page_budgets.append(parent.remaining_ms())
+            page_entered.set()
             return [("scoped name",)], [("val", "String")]
 
     client = ClickHouseClient(server_enforced_readonly=False, pool_size=1)
+    if share_permit:
+        if not hasattr(client, "_retained_lookup_admission"):
+            pytest.skip("No separate retained-read permit to rewire on this revision")
+        monkeypatch.setattr(client, "_retained_lookup_admission", client._read_admission)
     monkeypatch.setattr(client, "_create_client", Driver)
     monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
     epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    response = Future()
 
-    def lookup(ms):
-        return dashboard_view._batched_span_system_retained_window_start(
-            [project], window_end=datetime.now(UTC), deadline=ReadDeadline.start(ms)
-        )
+    def request_page():
+        try:
+            result = _invoke({
+                "metric_name": "name",
+                "metric_type": "system_metric",
+                "source": "traces",
+                "project_ids": [],
+                "search": "",
+                "page_size": 1,
+            })
+        except Exception as exc:  # noqa: BLE001 - propagate request failures to the test
+            response.set_exception(exc)
+        else:
+            response.set_result(result)
 
-    assert lookup(1_024) == epoch
-    assert not metadata_calls
+    request_thread = Thread(target=request_page, daemon=True)
+    request_thread.start()
     try:
-        response = _invoke({
-            "metric_name": "name",
-            "metric_type": "system_metric",
-            "source": "traces",
-            "project_ids": [],
-            "search": "",
-            "page_size": 1,
-        })
-        [(remaining_at_start_ms, metadata_entered, metadata_finished)] = page_calls
-        assert remaining_at_start_ms >= reserve_ms
-        assert metadata_entered and not metadata_finished
-        page = _result(response)
-        assert datetime.fromisoformat(page["query_window_start"]) == epoch
-        assert page["values"] == [{"value": "scoped name", "label": "scoped name"}]
-        parent = request_deadlines[0]
+        assert metadata_entered.wait(timeout=5), "request did not reach metadata driver"
         parent_end = parent.started + parent.total_ms / 1000
-        assert lookup(wall_ms) == epoch
-        assert metadata_calls == [1]
-        assert not finished.wait(timeout=max(0, parent_end - monotonic()))
+        # Stop waiting just after the reserve boundary, while a blocked page
+        # still has time to complete normally once we release metadata.
+        wait_seconds = max(0, parent_end - reserve_ms / 1000 - monotonic()) + 0.01
+        missed_page = "page did not enter while metadata was held"
+        expected = (
+            pytest.raises(AssertionError, match=missed_page)
+            if share_permit
+            else nullcontext()
+        )
+        with expected:
+            assert page_entered.wait(wait_seconds), missed_page
+            assert page_budgets[0] >= reserve_ms
+
+        if not share_permit:
+            fallback = dashboard_view._batched_span_system_retained_window_start(
+                [project], window_end=datetime.now(UTC), deadline=ReadDeadline.start(wall_ms)
+            )
+            assert fallback == epoch
+            assert len(metadata_threads) == 1  # No second native lookup was queued.
+            metadata_threads[0].join(timeout=max(0, parent_end - monotonic()))
+            assert metadata_threads[0].is_alive()
     finally:
-        release.set()
-        # Wait for the worker's cleanup before restoring dependencies.
-        slot = dashboard_view._RETAINED_LOOKUP_SLOT
-        assert slot.acquire(timeout=5)
-        slot.release()
+        release_metadata.set()
+        request_thread.join(timeout=5)
+        for worker in metadata_threads:
+            worker.join(timeout=5)  # Also works when metadata ran inline on the old path.
+        assert not request_thread.is_alive()
+        assert not any(worker.is_alive() for worker in metadata_threads)
+
+    page = _result(response.result(timeout=0))
+    assert datetime.fromisoformat(page["query_window_start"]) == epoch
+    assert page["values"] == [{"value": "scoped name", "label": "scoped name"}]
+    if share_permit:
+        # The same page really did run after release; only the reserve was lost.
+        assert len(page_budgets) == 1 and page_budgets[0] < reserve_ms
 
 
 @pytest.mark.unit
