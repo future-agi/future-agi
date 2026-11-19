@@ -2919,6 +2919,7 @@ class MetricErasureRequest(models.Model):
                 id=request_id,
                 status=cls.Status.RUNNING,
                 claim_token=token,
+                claim_expires_at__gt=now,
                 receipts__has_keys=list(cls.Store.values),
             ).update(
                 status=cls.Status.DONE,

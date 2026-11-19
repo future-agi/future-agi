@@ -702,26 +702,27 @@ def _process_erasure(request_id, *, store=None, writer=None):
                 _purge_snapshots(connection, request)
                 from tracer.services.derived_metrics.retention import purge_by_scope
 
-                if "live_metric_rows" not in request.receipts:
-                    phase = "live_checkpoint"
-                    if request.scope_kind in {"users", "sessions"} and writer is None:
-                        from tracer.services.derived_metrics.lease import project_lease
-                        from tracer.services.derived_metrics.refresh import (
-                            RefreshWriter,
-                        )
+                # A previous claim may have recorded the live receipt before failing.
+                # Verify physical cleanup for this claim before recording DONE.
+                phase = "live_checkpoint"
+                if request.scope_kind in {"users", "sessions"} and writer is None:
+                    from tracer.services.derived_metrics.lease import project_lease
+                    from tracer.services.derived_metrics.refresh import (
+                        RefreshWriter,
+                    )
 
-                        with project_lease(
-                            request.project_key, holder="metric-erasure"
-                        ) as lease:
-                            purge_by_scope(
-                                connection,
-                                request,
-                                writer=RefreshWriter(
-                                    lease, connection, org_id=request.organization_key
-                                ),
-                            )
-                    else:
-                        purge_by_scope(connection, request, writer=writer)
+                    with project_lease(
+                        request.project_key, holder="metric-erasure"
+                    ) as lease:
+                        purge_by_scope(
+                            connection,
+                            request,
+                            writer=RefreshWriter(
+                                lease, connection, org_id=request.organization_key
+                            ),
+                        )
+                else:
+                    purge_by_scope(connection, request, writer=writer)
             phase = "scope_fence"
             if request.scope_kind in {"project", "organization", "metric", "version"}:
                 from tracer.models.derived_metric import MetricProjectRefresh

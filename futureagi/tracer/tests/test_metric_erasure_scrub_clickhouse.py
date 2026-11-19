@@ -254,6 +254,10 @@ def test_model_finish_scrubs_only_on_completion(workspace, observe_project):
         MetricErasureRequest.finish(request.id, token=uuid4())
     request.refresh_from_db()
     assert request.subject_ids == ids
+    with pytest.raises(MetricStateConflict):
+        MetricErasureRequest.finish(request.id, token=token, now=request.claim_expires_at)
+    request.refresh_from_db()
+    assert request.status == "running" and request.subject_ids == ids
     MetricErasureRequest.finish(request.id, token=token)
     request.refresh_from_db()
     assert request.receipts["live_metric_rows"] == {"rows": 4}
@@ -421,6 +425,12 @@ def test_late_live_insert_acknowledged_during_erasure_is_scrubbed(
         version_key=uuid4() if scope == "version" else None,
         store_payload={"attempts": [{"id": str(stale.pk)}], "version": 1},
     )
+    if scope == "version":
+        # A failed earlier claim recorded the live receipt before its remaining
+        # work failed. Its receipt cannot vouch for writes during the retry gap.
+        MetricErasureRequest.objects.filter(pk=request.pk).update(
+            status="failed", receipts={"live_metric_rows": {"remaining": 0}}
+        )
     # The in-flight sender lands and ACKs AFTER this table's first DELETE. A
     # status check at pass end would report success with its row still present.
     params = {
