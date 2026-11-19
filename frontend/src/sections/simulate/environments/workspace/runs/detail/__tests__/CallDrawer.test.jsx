@@ -742,9 +742,30 @@ describe("CallDrawer — the call's traces", () => {
     );
   });
 
-  it("gives a voice call a Traces tab beside the transcript, read for that call", () => {
+  it("gives a voice call no World state tab until the server says actors are on", () => {
     useCallExecutionV3Detail.mockReturnValue({
       data: { id: "voice-1", transcript: [] },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+  });
+
+  it("gives a voice call a Traces tab beside the transcript, read for that call", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
       isPending: false,
     });
     useCallTraces.mockReturnValue({
@@ -771,7 +792,7 @@ describe("CallDrawer — the call's traces", () => {
 
   it("keeps the tab when the read fails, so the panel can say so", () => {
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [] },
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
       isPending: false,
     });
     useCallTraces.mockReturnValue({
@@ -797,7 +818,7 @@ describe("CallDrawer — the call's traces", () => {
 
   it("gives a voice call a Traces tab even when the run has nothing to read", () => {
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [] },
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
       isPending: false,
     });
 

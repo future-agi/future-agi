@@ -637,7 +637,7 @@ export function mapCallDetail(raw) {
     persona: raw.persona ?? null,
     // Absent without actors or faults.
     trial_state: raw.trial_state ?? null,
-    // False hides the World state view: the deployment has actors off.
+    // The World state view shows only when the call detail says actors are on.
     actorsEnabled: raw.actors_enabled,
     // Who took part in the call, as the server says, and whether a customer did.
     participants: raw.participants,
