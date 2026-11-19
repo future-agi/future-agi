@@ -14,6 +14,7 @@ import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { defaultSamplingPolicy } from "../components/samplingPolicyForm";
 
+const axiosGetMock = vi.hoisted(() => vi.fn());
 const axiosPatchMock = vi.hoisted(() => vi.fn());
 const axiosPostMock = vi.hoisted(() => vi.fn());
 const confirmDialogMock = vi.hoisted(() => vi.fn());
@@ -23,6 +24,7 @@ vi.mock("src/utils/axios", async () => {
   const actual = await vi.importActual("src/utils/axios");
   return {
     default: {
+      get: axiosGetMock,
       patch: axiosPatchMock,
       post: axiosPostMock,
     },
@@ -35,6 +37,7 @@ vi.mock("src/utils/axios", async () => {
         // The real mapping, so the Resume assertions check the URL the backend
         // serves rather than a copy of it.
         resumeEvalTask: actual.endpoints.project.resumeEvalTask,
+        getEvalTaskLogs: actual.endpoints.project.getEvalTaskLogs,
         createEvalTask: () => "/tracer/eval-task/",
       },
     },
@@ -69,10 +72,6 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
       {rightPanel}
     </div>
   ),
-}));
-
-vi.mock("src/sections/common/EvalsTasks/TaskLogsView", () => ({
-  default: () => <div>logs</div>,
 }));
 
 vi.mock("../components/TaskHeader", () => ({
@@ -128,7 +127,7 @@ const renderTaskDetail = (taskId = "missing-task") => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[`/dashboard/tasks/${taskId}`]}>
         <Routes>
@@ -137,6 +136,7 @@ const renderTaskDetail = (taskId = "missing-task") => {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 };
 
 const loadedTask = (overrides = {}) => ({
@@ -154,8 +154,44 @@ const loadedTask = (overrides = {}) => ({
   ...overrides,
 });
 
+const taskLogs = (status, failureReason = null, overrides = {}) => ({
+  data: {
+    status: true,
+    result: {
+      status,
+      failure_reason: failureReason,
+      row_type: "spans",
+      success_count: 0,
+      errors_count: 0,
+      skipped_count: 0,
+      warnings_count: 0,
+      total_count: 0,
+      error_groups: [],
+      warning_groups: [],
+      error_groups_truncated: false,
+      warning_groups_truncated: false,
+      ...overrides,
+    },
+  },
+});
+
+const startFailureReason = "Start delivery was unsuccessful.";
+const failedStartLogs = () =>
+  taskLogs("failed", null, {
+    error_groups: [
+      {
+        normalized: startFailureReason,
+        sample: startFailureReason,
+        count: 1,
+        start_reason_code: "start_failed",
+      },
+    ],
+  });
+
 describe("TaskDetailPage", () => {
   beforeEach(() => {
+    axiosGetMock.mockReset();
+    axiosGetMock.mockResolvedValue(taskLogs("completed"));
     axiosPatchMock.mockReset();
     axiosPatchMock.mockResolvedValue({ data: { result: {} } });
     axiosPostMock.mockReset();
@@ -300,6 +336,124 @@ describe("TaskDetailPage", () => {
     });
   });
 
+  it.each([
+    ["Admin", "failed", true],
+    ["Viewer", "failed", false],
+    ["Admin", "pending", false],
+  ])("gates the Logs hint for %s on %s", async (role, status, allowed) => {
+    useAuthContextMock.mockReturnValue({ role });
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status }) });
+    // Logs can still report the previous failed run while details say pending.
+    axiosGetMock.mockResolvedValue(failedStartLogs());
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(startFailureReason);
+    const rerun = screen.getByRole("button", { name: /re-run/i });
+    if (allowed) {
+      expect(alert).toHaveTextContent(/choose re-run/i);
+      expect(rerun).toBeEnabled();
+    } else {
+      expect(alert).not.toHaveTextContent(/choose re-run/i);
+      expect(rerun).toBeDisabled();
+    }
+    if (status === "pending")
+      expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+  });
+
+  it("withholds the Logs Re-run hint while the cached Failed status is refreshing", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "failed" }),
+      isFetching: true,
+    });
+    axiosGetMock.mockResolvedValue(failedStartLogs());
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(startFailureReason);
+    expect(alert).not.toHaveTextContent(/choose re-run/i);
+  });
+
+  it("refreshes terminal Logs in place only after Resume succeeds", async () => {
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status: "failed" }) });
+    const reason = "Row selection exceeded its read budget.";
+    axiosGetMock
+      .mockResolvedValueOnce(taskLogs("failed", reason))
+      .mockResolvedValue(taskLogs("pending"));
+    axiosPostMock.mockRejectedValueOnce(new Error("Workflow did not start"));
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(await screen.findByText(reason)).toBeVisible();
+
+    const resume = screen.getByRole("button", { name: /resume/i });
+    fireEvent.click(resume);
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to resume"),
+        { variant: "error" },
+      ),
+    );
+    expect(screen.getByText(reason)).toBeVisible();
+    expect(axiosGetMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(resume);
+    expect(await screen.findByText("Pending")).toBeVisible();
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    expect(axiosGetMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers Re-run, not Resume, when the first start was confirmed failed", async () => {
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status: "failed" }) });
+    axiosGetMock.mockResolvedValue(failedStartLogs());
+    renderTaskDetail("task-1");
+    await waitFor(() =>
+      expect(axiosGetMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/get_eval_task_logs/",
+        expect.objectContaining({ params: { eval_task_id: "task-1" } }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /resume/i })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: /re-run/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /choose re-run/i,
+    );
+  });
+
+  it.each(["failed", "paused"])(
+    "keeps Resume for an ordinary %s task",
+    async (status) => {
+      useGetTaskData.mockReturnValue({ data: loadedTask({ status }) });
+      axiosGetMock.mockResolvedValue(
+        taskLogs(status, status === "failed" ? "Row selection failed." : null),
+      );
+      renderTaskDetail("task-1");
+      await waitFor(() =>
+        expect(axiosGetMock.mock.calls.length).toBe(
+          status === "failed" ? 1 : 0,
+        ),
+      );
+      expect(screen.getByRole("button", { name: /resume/i })).toBeVisible();
+    },
+  );
+
+  it("shows the server's reason when Resume is refused", async () => {
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status: "failed" }) });
+    const refusal = "No previous run could be confirmed for this task.";
+    axiosPostMock.mockRejectedValueOnce({
+      response: { status: 400, data: { status: false, message: refusal } },
+    });
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /resume/i }));
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(refusal, {
+        variant: "error",
+      }),
+    );
+  });
+
   it("offers no Resume for a completed task", () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({ status: "completed" }),
@@ -364,14 +518,19 @@ describe("TaskDetailPage", () => {
     );
   });
 
-  it("submits the same mutation Save uses when Re-run is confirmed", async () => {
+  it.each([true, false])("refreshes both reads (lost: %s)", async (lost) => {
+    if (lost) axiosPatchMock.mockRejectedValue(new Error("timeout"));
     useGetTaskData.mockReturnValue({
       data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
       isLoading: false,
       isError: false,
     });
 
-    renderTaskDetail("task-1");
+    const logsKey = ["eval-task-logs", "task-1"];
+    const { queryClient } = renderTaskDetail("task-1");
+    queryClient.setQueryData(logsKey, { status: "failed" });
+    const detailsKey = ["taskDetails", "task-1"];
+    queryClient.setQueryData(detailsKey, { status: "failed" });
     fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
 
     await screen.findByText("Re-run Task");
@@ -382,6 +541,8 @@ describe("TaskDetailPage", () => {
     });
 
     await waitFor(() => {
+      expect(queryClient.getQueryState(logsKey).isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(detailsKey).isInvalidated).toBe(true);
       expect(axiosPatchMock).toHaveBeenCalledWith(
         "/tracer/eval-task/update_eval_task/",
         expect.objectContaining({
@@ -417,7 +578,9 @@ describe("TaskDetailPage", () => {
 
     renderTaskDetail("task-1");
     fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
-    expect(screen.getByText("logs")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Completed — no evaluation runs in this log"),
+    ).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
 

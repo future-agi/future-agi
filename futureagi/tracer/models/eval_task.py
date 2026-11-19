@@ -1,6 +1,7 @@
 import uuid
 
-from django.db import models
+from django.db import models, transaction
+from django.db.models.functions import Now
 from django.utils.translation import gettext_lazy as _
 
 from tfc.utils.base_model import BaseModel
@@ -72,8 +73,16 @@ class EvalTask(BaseModel):
     status = models.CharField(
         max_length=255, choices=EvalTaskStatus.choices, blank=True, null=True
     )
+    # A control failure can precede every EvalLogger entry. Only a public
+    # selector reason (never an exception chain or a query) belongs here.
+    failure_reason = models.CharField(max_length=255, blank=True, null=True)
+    # Rotated by a replacement request; NULL denotes a pre-fence/initial run.
+    # Unlike a Temporal run_id this survives continue-as-new.
+    workflow_generation = models.UUIDField(null=True, editable=False)
     start_time = models.DateTimeField(blank=True, null=True)
     end_time = models.DateTimeField(blank=True, null=True)
+    # Set only at Instant Pause, cleared only by an explicit new submission.
+    instant_paused_before_start_at = models.DateTimeField(null=True, editable=False)
     # Forward watermark for continuous tasks: every in-scope row created at/before
     # this point has been materialized. The reconciler reads it as the lower
     # ``created_at`` bound (so a continuous task never backfills history that
@@ -100,12 +109,87 @@ class EvalTask(BaseModel):
         db_index=True,
     )
 
+    @transaction.atomic(using="default")
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        EvalTaskStartRequest.void_for_tasks([self.pk])
+
+    def prepare_workflow_replacement(self, *, status=EvalTaskStatus.PENDING):
+        """Rotate the worker's write fence on the locked task row."""
+        self.workflow_generation = uuid.uuid4()
+        self.status = status
+        self.failure_reason = None
+        self.save(update_fields=["workflow_generation", "status", "failure_reason"])
+
     def __str__(self):
         return f"Eval Task {self.id}"
 
     class Meta:
         db_table = "tracer_eval_task"
         ordering = ["-created_at"]
+
+
+class EvalTaskStartRequest(models.Model):
+    """Create's dispatch intent. Pending tasks without one are not startable."""
+
+    class State(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CLAIMED = "claimed", "Claimed"
+        ACCEPTED = "accepted", "Accepted"
+        EXHAUSTED = "exhausted", "Exhausted"
+        START_FAILED = "start_failed", "Start retry exhausted"
+        VOID = "void", "Void"
+
+    task = models.OneToOneField(
+        EvalTask, primary_key=True, on_delete=models.CASCADE, related_name="+"
+    )
+    # The task PK identifies its one create request; attempts only budgets sends.
+    attempts = models.PositiveSmallIntegerField(default=0)
+    first_reserved_at = models.DateTimeField(null=True)
+    admitted_run_id = models.UUIDField(null=True)
+    # A Re-run retires this create without rewriting its terminal outcome.
+    superseded_at = models.DateTimeField(null=True, editable=False)
+    state = models.CharField(
+        max_length=12, choices=State.choices, default=State.PENDING
+    )
+    lease_until = models.DateTimeField(null=True)
+    claim_token = models.UUIDField(null=True)
+    last_outcome = models.CharField(max_length=64, default="requested")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def live_condition(cls):
+        # ACCEPTED with a lease is still watching for the worker. Without a
+        # lease it is a final observation, like START_FAILED or EXHAUSTED.
+        return models.Q(state__in=(cls.State.PENDING, cls.State.CLAIMED)) | models.Q(
+            state=cls.State.ACCEPTED, lease_until__isnull=False
+        )
+
+    @classmethod
+    def void_for_tasks(cls, task_ids):
+        """Revoke only live creates in the transaction that wrote the task."""
+        live = cls.objects.using("default").filter(
+            cls.live_condition(), pk__in=task_ids
+        )
+        live.update(
+            state=cls.State.VOID,
+            last_outcome="superseded",
+            claim_token=None,
+            lease_until=None,
+            updated_at=Now(),
+        )
+
+    class Meta:
+        db_table = "tracer_eval_task_start_request"
+        indexes = [
+            models.Index(fields=["state", "lease_until"], name="eval_start_state_lease")
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(attempts__lte=2), name="eval_start_max_two_attempts"
+            )
+        ]
 
 
 class EvalTaskLogger(BaseModel):

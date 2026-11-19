@@ -41,6 +41,7 @@ class EvalTaskWorkflowInput:
     # Legacy hops honour these IDs; the recovery activity also caps retries
     # durably by the entry's attempts, including IDs omitted from this cache.
     lost_entry_ids: list[str] = field(default_factory=list)
+    workflow_generation: str | None = None
 
 
 @dataclass
@@ -73,6 +74,23 @@ class ContinuousDrainState:
     # or the pause signal when the deferred loop rolls its history over.
     pending_requeue_ids: list[str] = field(default_factory=list)
     pause_requested: bool = False
+    workflow_generation: str | None = None
+
+
+# Admission is an entry point, not part of the drain or its CAN checkpoints.
+@dataclass
+class RequestedHistoricalInput:
+    drain: EvalTaskWorkflowInput
+
+
+@dataclass
+class RequestedContinuousInput:
+    drain: ContinuousDrainState
+
+
+@dataclass
+class StartAdmissionInput:
+    task_id: str
 
 
 @dataclass
@@ -136,6 +154,7 @@ class ReapOutput:
 @dataclass
 class TaskStateInput:
     task_id: str
+    workflow_generation: str | None = None
 
 
 @dataclass
@@ -164,6 +183,8 @@ class SetStatusInput:
     # Optional atomic guard: only change the row if it is currently this status
     # (so a concurrent pause/delete is never clobbered). None = unconditional.
     expected_status: str | None = None
+    failure_reason: str | None = None
+    workflow_generation: str | None = None
 
 
 @dataclass
@@ -176,6 +197,7 @@ class SetStatusOutput:
 @dataclass
 class FinalizeInput:
     task_id: str
+    workflow_generation: str | None = None
 
 
 @dataclass

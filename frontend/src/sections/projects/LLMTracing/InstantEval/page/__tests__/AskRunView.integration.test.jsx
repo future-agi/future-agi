@@ -327,6 +327,37 @@ describe("the run's recovery and confidence headline", () => {
     await waitFor(() => expect(http.get).toHaveBeenCalled());
   });
 
+  it.each([
+    [
+      "r8-5 named trace", "traces",
+      "The run couldn't start after an automatic retry. Your task is saved.",
+      false, "Retry",
+    ],
+    [
+      "closed before evaluation", "sessions",
+      "The workflow ended before evaluation began. Your task is saved.",
+      true, "Recreate question",
+    ],
+  ])(
+    "%s: explains the failed start and offers a new question",
+    async (_, unit, message, needsEvaluator, action) => {
+      http.get.mockResolvedValue(response([], 0));
+      const onRunAgain = vi.fn();
+      const run = runOf({
+        unit, status: "failed", total: 1, pending: 1, answered: 0, failed: 0,
+        summary: { counts: {}, failure: { message, every: true, ai_providers: false } },
+      });
+      renderRun(run, { onRunAgain, needsEvaluator });
+      expect(screen.getByText(message)).toBeVisible();
+      expect(screen.queryByText(/check the evaluator|fix evaluator|re-run/i)).toBeNull();
+      expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(onRunAgain).toHaveBeenCalledOnce();
+      expect(run.control).not.toHaveBeenCalled();
+      await waitFor(() => expect(http.get).toHaveBeenCalled());
+    },
+  );
+
   it("keeps answers saved to one question when another question failed", async () => {
     http.get.mockResolvedValue(response([], 0));
     const run = runOf({

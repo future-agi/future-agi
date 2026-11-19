@@ -38,6 +38,13 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         queue="tasks_s",
         description="Recover eval tasks whose drain stopped",
     ),
+    ScheduleConfig(
+        schedule_id="reconcile-eval-task-starts",
+        activity_name="reconcile_eval_task_starts",
+        interval_seconds=60,
+        queue="tasks_s",
+        description="Reconcile committed eval task start requests",
+    ),
     # A Recalculate runs in the user's request; this finishes one whose
     # request died mid-eval, which would otherwise leave the result retired:
     # an eval-task result with its replacement running for ever, or a result

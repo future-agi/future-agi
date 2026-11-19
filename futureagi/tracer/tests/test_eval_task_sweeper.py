@@ -18,7 +18,13 @@ from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import EvalTemplate
 from tfc.temporal.eval_tasks import client as eval_task_client
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskStartRequest,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -28,10 +34,6 @@ from tracer.models.observation_span import (
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.tasks import eval_task_sweeper as sweeper
-
-# The real starter, bound at import: ``tracer/tests/conftest.py`` replaces it
-# with a stub for every test in this package before the test body runs.
-_REAL_STARTER = eval_task_client.start_eval_task_workflow_sync
 
 _UNDRAINED = (EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING)
 
@@ -91,6 +93,8 @@ def make_task(db, sweep_project, sweep_config):
             spans_limit=100,
             run_type=RunType.HISTORICAL,
             status=status,
+            # create() stamps this before attempting the initial dispatch.
+            last_run=timezone.now(),
             row_type=RowType.SPANS,
         )
         task.evals.add(sweep_config)
@@ -135,11 +139,6 @@ def client_progressing():
     return client.WF_PROGRESSING
 
 
-# How the sweep starts a workflow: coalescing, never terminating, and carrying
-# the answer of the describe it was gated on rather than describing again.
-_SWEEP_RESTART = {"replace_existing": False, "workflow_confirmed_stopped": True}
-
-
 @pytest.fixture
 def temporal(monkeypatch):
     """Stand in for the Temporal client: record describes and starts."""
@@ -154,17 +153,55 @@ def temporal(monkeypatch):
             raise verdict
         return verdict
 
-    def _start(task, **kwargs):
-        calls["started"].append((str(task.id), kwargs))
+    def _start(task):
+        calls["started"].append(str(task.id))
         return "wf"
 
     monkeypatch.setattr(client, "describe_eval_task_workflow_sync", _describe)
-    monkeypatch.setattr(client, "start_eval_task_workflow_sync", _start)
+    monkeypatch.setattr(client, "start_recovery_workflow_sync", _start)
     return calls
 
 
 @pytest.mark.django_db
 class TestFindStrandedTasks:
+    @pytest.mark.parametrize("run_type", [RunType.HISTORICAL, RunType.CONTINUOUS])
+    def test_saved_pending_without_entries_or_cursor_is_not_a_candidate(
+        self, make_task, run_type
+    ):
+        task = make_task(status=EvalTaskStatus.PENDING)
+        task.run_type = run_type
+        task.save(update_fields=["run_type"])
+        assert task.last_run is not None
+        assert task.start_time is None
+        assert task.continuous_cursor is None
+
+        assert task.id not in {item.id for item in sweeper.find_stranded_tasks()}
+
+    @pytest.mark.parametrize("evidence", ["entry", "cursor"])
+    @pytest.mark.parametrize("intent", ["none", "current", "superseded"])
+    def test_pending_recovery_candidates_require_a_current_intent_not_a_start_time(
+        self, make_task, make_entry, evidence, intent
+    ):
+        task = make_task(status=EvalTaskStatus.PENDING)
+        if intent != "none":
+            EvalTaskStartRequest.objects.create(
+                task=task,
+                state=EvalTaskStartRequest.State.ACCEPTED,
+                attempts=1,
+                admitted_run_id=uuid.uuid4(),
+                superseded_at=timezone.now() if intent == "superseded" else None,
+            )
+        if evidence == "entry":
+            make_entry(task)
+        else:
+            task.run_type = RunType.CONTINUOUS
+            task.continuous_cursor = timezone.now() - timedelta(hours=1)
+            task.save(update_fields=["run_type", "continuous_cursor"])
+        assert task.start_time is None
+
+        candidates = {item.id for item in sweeper.find_stranded_tasks()}
+        assert (task.id in candidates) == (intent == "current")
+
     def test_a_task_with_pending_work_is_a_candidate(self, make_task, make_entry):
         task = make_task()
         make_entry(task)
@@ -344,7 +381,7 @@ class TestStaleContinuousCursor:
 
         assert result["candidates"] == 1
         assert result["restarted"] == 1
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
 
     def test_a_frozen_cursor_with_a_live_workflow_is_left_alone(
         self, make_task, temporal
@@ -371,7 +408,38 @@ class TestRecoverTask:
         outcome = sweeper.recover_task(task, stale_running_seconds=7_200)
 
         assert outcome["restarted"] is True
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
+
+    def test_watched_create_refuses_exclusive_recovery_before_either_reap(
+        self, make_task, make_entry, temporal
+    ):
+        task = make_task(status=EvalTaskStatus.FAILED)
+        task.failure_reason = "old reason"
+        task.save(update_fields=["failure_reason"])
+        EvalTaskStartRequest.objects.create(
+            task=task,
+            state=EvalTaskStartRequest.State.ACCEPTED,
+            attempts=1,
+            admitted_run_id=uuid.uuid4(),
+            lease_until=timezone.now() + timedelta(seconds=60),
+        )
+        retryable = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10_000)
+        capped = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10_000)
+        EvalLogger.all_objects.filter(pk=capped.pk).update(attempts=3)
+
+        outcome = sweeper.recover_task(task, stale_running_seconds=7_200)
+
+        assert outcome["deferred"] and not outcome["restarted"]
+        assert outcome["requeued"] == outcome["failed"] == 0
+        assert temporal["started"] == []
+        retryable.refresh_from_db()
+        capped.refresh_from_db()
+        task.refresh_from_db()
+        assert (retryable.status, retryable.attempts) == (EvalEntryStatus.RUNNING, 0)
+        assert (capped.status, capped.attempts) == (EvalEntryStatus.RUNNING, 3)
+        assert task.workflow_generation is None
+        assert task.failure_reason == "old reason"
+        assert task.status == EvalTaskStatus.FAILED
 
     def test_a_progressing_workflow_is_never_restarted(
         self, make_task, make_entry, temporal
@@ -473,7 +541,7 @@ class TestSweepActivity:
         assert result["candidates"] == 1
         assert result["restarted"] == 1
         assert result["errors"] == 0
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
 
     def test_a_healthy_draining_task_is_a_candidate_and_is_reported_as_one(
         self, make_task, make_entry, temporal
@@ -562,7 +630,7 @@ class TestSweepActivity:
         def _start_refused(_task, **_kwargs):
             raise RuntimeError("temporal refused the start")
 
-        monkeypatch.setattr(client, "start_eval_task_workflow_sync", _start_refused)
+        monkeypatch.setattr(client, "start_recovery_workflow_sync", _start_refused)
 
         result = sweeper.sweep_stranded_eval_tasks._original_func()
 
@@ -571,6 +639,37 @@ class TestSweepActivity:
         assert result["entries_requeued"] == 1
         assert result["errors"] == 1
         assert result["restarted"] == 0
+
+    @pytest.mark.parametrize("conflict", [False, True])
+    def test_last_capped_claim_stays_sweepable_until_start_ack(
+        self, make_task, make_entry, temporal, monkeypatch, conflict
+    ):
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        task = make_task()
+        entry = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10_000)
+        EvalLogger.all_objects.filter(pk=entry.pk).update(attempts=3)
+
+        def rejected(_task):
+            if conflict:
+                raise WorkflowAlreadyStartedError(str(task.pk), "historical")
+            raise TimeoutError("acknowledgement lost")
+
+        tick = sweeper.sweep_stranded_eval_tasks._original_func
+        with monkeypatch.context() as patch:
+            patch.setattr(eval_task_client, "start_recovery_workflow_sync", rejected)
+            first = tick()
+        assert first["deferred" if conflict else "errors"] == 1
+        assert first["entries_poisoned"] == first["restarted"] == 0
+        second = tick()  # Must be found through the real candidate selector.
+        assert (
+            second["candidates"]
+            == second["entries_poisoned"]
+            == second["restarted"]
+            == 1
+        )
+        entry.refresh_from_db()
+        assert entry.status == EvalEntryStatus.ERRORED
 
     def test_the_sweep_can_be_turned_off_without_a_deploy_of_its_own(
         self, make_task, make_entry, temporal, settings
@@ -613,7 +712,7 @@ class TestSweepActivity:
 
         assert result["errors"] == 1
         assert result["restarted"] == 1
-        assert [started[0] for started in temporal["started"]] == [str(second.id)]
+        assert temporal["started"] == [str(second.id)]
 
 
 @pytest.mark.django_db
@@ -657,7 +756,7 @@ class TestFreshlyAbandonedClaims:
 
         assert not outcome.get("deferred")
         assert outcome["restarted"] is True
-        assert temporal["started"] == [(str(task.id), _SWEEP_RESTART)]
+        assert temporal["started"] == [str(task.id)]
 
     @pytest.mark.parametrize("age_seconds", [601, 1_000])
     def test_a_claim_the_restarted_workflow_can_reclaim_restarts_at_once(
@@ -770,7 +869,7 @@ class TestSweepFailureDiagnostics:
         def _start_refused(_task, **_kwargs):
             raise failure
 
-        monkeypatch.setattr(client, "start_eval_task_workflow_sync", _start_refused)
+        monkeypatch.setattr(client, "start_recovery_workflow_sync", _start_refused)
 
         with structlog.testing.capture_logs() as records:
             result = sweeper.sweep_stranded_eval_tasks._original_func()
@@ -799,7 +898,6 @@ class TestTheRestartRunsOnTheSweepsOwnDescribe:
             return SimpleNamespace(id=kwargs["workflow_id"])
 
         client = eval_task_client
-        monkeypatch.setattr(client, "start_eval_task_workflow_sync", _REAL_STARTER)
         monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
         monkeypatch.setattr(client, "start_workflow_sync", _start)
         return starts

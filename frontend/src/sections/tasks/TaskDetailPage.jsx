@@ -21,6 +21,11 @@ import TaskPanels from "./components/task_panels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { isResumableTaskStatus } from "src/sections/common/EvalsTasks/task_status";
+import {
+  resumeErrorMessage,
+  useResumeEvalTask,
+} from "src/sections/common/EvalsTasks/useResumeEvalTask";
+import { useConfirmedStartFailure } from "src/sections/common/EvalsTasks/evalTaskLogsQuery";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
@@ -106,6 +111,7 @@ const TaskDetailPage = () => {
     isError,
     error,
     isFetching,
+    isPaused,
     refetch,
   } = useGetTaskData(taskId, {
     enabled: !!taskId,
@@ -155,13 +161,19 @@ const TaskDetailPage = () => {
       // A fresh run archives/replaces the cohort. Do not leave its old audit
       // visible while the current cohort is being fetched or has not frozen.
       queryClient.resetQueries({ queryKey: ["samplingAudit", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar(
         mode === "rerun" ? "Re-run started" : "Task updated successfully",
         { variant: "success" },
       );
     },
+    // The server may have committed even when its reply was lost. Keep the
+    // mutation pending until both active reads have reconciled.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["eval-task-logs", taskId] }),
+        queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] }),
+      ]),
     onError: (err, { mode }) => {
       enqueueSnackbar(
         getSafeActionErrorMessage(
@@ -213,17 +225,20 @@ const TaskDetailPage = () => {
       enqueueSnackbar("Failed to pause task", { variant: "error" });
     },
     onSuccess: () => enqueueSnackbar("Task paused", { variant: "success" }),
-    onSettled: reconcileStatus,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["eval-task-logs", taskId] });
+      reconcileStatus();
+    },
   });
 
-  const { mutate: resumeTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId), {}),
-    meta: { errorHandled: true },
+  // The shared Resume hook already refreshes Logs on success. Don't refetch
+  // them a second time or replace the old summary after a rejected Resume.
+  const { mutate: resumeTask } = useResumeEvalTask({
     // pending (not running): resume re-queues, so the badge moves forward only.
     onMutate: () => optimisticStatus("pending"),
-    onError: (_e, _v, ctx) => {
+    onError: (error, _v, ctx) => {
       rollbackStatus(ctx);
-      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+      enqueueSnackbar(resumeErrorMessage(error), {
         variant: "error",
       });
     },
@@ -391,6 +406,13 @@ const TaskDetailPage = () => {
     [formValues, updateTask, confirmMode, taskDetails],
   );
 
+  // Hooks stay above the early returns. Resume is refused for a start that
+  // was confirmed failed after the automatic retry; Re-run is the way on.
+  const startFailureConfirmed = useConfirmedStartFailure(
+    taskId,
+    (taskDetails?.status || "").toLowerCase(),
+  );
+
   if (isLoading && !taskDetails) {
     return (
       <Box
@@ -462,7 +484,7 @@ const TaskDetailPage = () => {
 
   const status = (taskDetails.status || "").toLowerCase();
   const canPause = status === "running";
-  const canResume = isResumableTaskStatus(status);
+  const canResume = isResumableTaskStatus(status) && !startFailureConfirmed;
   const linkedTraceSource = getLinkedTraceSource(taskDetails);
 
   // A re-run mid-flight would race the live run.
@@ -499,7 +521,7 @@ const TaskDetailPage = () => {
         <Button
           variant="outlined"
           size="small"
-          onClick={() => resumeTask()}
+          onClick={() => resumeTask(taskId)}
           startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
         >
           Resume
@@ -661,6 +683,13 @@ const TaskDetailPage = () => {
               <TaskLogsView
                 evalTaskId={taskId}
                 taskStatus={taskDetails?.status}
+                canRerun={
+                  !rerunBlockedReason &&
+                  !isUpdating &&
+                  !isFetching &&
+                  !isPaused &&
+                  !isError
+                }
               />
             </Box>
           )}

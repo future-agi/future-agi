@@ -977,8 +977,16 @@ async def test_protocol_agent_scenario_and_simulation_handoff(
         assert read.structuredContent["status"] == "pending"
 
 
-async def test_protocol_online_eval_pause_edit_resume(protocol_client, user, workspace):
-    from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+async def test_protocol_online_eval_pause_edit_resume(
+    protocol_client, user, workspace, no_new_usage
+):
+    from tracer.models.eval_task import (
+        EvalTask,
+        EvalTaskLogger,
+        EvalTaskStatus,
+        RunType,
+    )
+    from tracer.models.observation_span import EvalLogger
     from tracer.models.project import Project
 
     project = await sync_to_async(Project.objects.create)(
@@ -995,10 +1003,23 @@ async def test_protocol_online_eval_pause_edit_resume(protocol_client, user, wor
         sampling_rate=100,
         spans_limit=100,
         run_type=RunType.HISTORICAL,
-        status=EvalTaskStatus.RUNNING,
+        status=EvalTaskStatus.PENDING,
     )
     args = {"eval_task_id": str(task.id)}
     async with protocol_client() as client:
+        with patch("tracer.views.eval_task.start_eval_task_workflow_sync") as start:
+            refused = await client.call_tool("resume_eval_task", args)
+        assert refused.isError
+        start.assert_not_called()
+        entries = EvalLogger.all_objects.filter(eval_task_id=str(task.pk))
+        assert not await entries.aexists()
+        assert not await EvalTaskLogger.all_objects.filter(eval_task=task).aexists()
+        await sync_to_async(task.refresh_from_db)()
+        assert task.status == EvalTaskStatus.PENDING
+        await sync_to_async(EvalTaskLogger.objects.create)(eval_task=task)
+        await sync_to_async(EvalTask.objects.filter(pk=task.pk).update)(
+            status=EvalTaskStatus.RUNNING
+        )
         with patch("tracer.views.eval_task.signal_pause_eval_task_workflow") as signal:
             paused = await client.call_tool("pause_eval_task", args)
         assert not paused.isError, paused

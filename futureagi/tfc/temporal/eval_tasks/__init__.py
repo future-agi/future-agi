@@ -12,15 +12,23 @@ from tfc.temporal.eval_tasks.types import (
 from tfc.temporal.eval_tasks.workflows import (
     ContinuousEvalTaskWorkflow,
     HistoricalEvalTaskWorkflow,
+    RequestedContinuousEvalTaskWorkflow,
+    RequestedHistoricalEvalTaskWorkflow,
 )
 
 
 def get_workflows():
-    return [HistoricalEvalTaskWorkflow, ContinuousEvalTaskWorkflow]
+    return [
+        HistoricalEvalTaskWorkflow,
+        ContinuousEvalTaskWorkflow,
+        RequestedHistoricalEvalTaskWorkflow,
+        RequestedContinuousEvalTaskWorkflow,
+    ]
 
 
 def get_activities():
     from tfc.temporal.eval_tasks.activities import (
+        admit_eval_task_start_activity,
         claim_eval_batch_activity,
         fail_eval_entry_activity,
         finalize_eval_task_activity,
@@ -35,6 +43,7 @@ def get_activities():
     )
 
     return [
+        admit_eval_task_start_activity,
         reconcile_eval_task_activity,
         claim_eval_batch_activity,
         run_eval_entry_activity,

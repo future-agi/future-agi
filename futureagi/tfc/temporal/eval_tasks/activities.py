@@ -36,6 +36,7 @@ from tfc.temporal.eval_tasks.types import (
     RunEntryOutput,
     SetStatusInput,
     SetStatusOutput,
+    StartAdmissionInput,
     TaskStateInput,
     TaskStateOutput,
     WorkflowLabelsInput,
@@ -389,7 +390,7 @@ def _reap_sync(
         close_old_connections()
 
 
-def _get_task_state_sync(task_id: str) -> dict:
+def _get_task_state_sync(task_id: str, workflow_generation: str | None = None) -> dict:
     """Read the control state the drain loop checks between batches.
 
     Returns ``active`` (False once the task is paused/deleted/failed — the
@@ -402,7 +403,19 @@ def _get_task_state_sync(task_id: str) -> dict:
         from tracer.models.eval_task import EvalTask, EvalTaskStatus
         from tracer.selectors.eval_tasks.progress import has_undrained_work
 
-        task = EvalTask.objects.get(id=task_id)
+        tasks = EvalTask.objects.using("default")
+        task = tasks.get(id=task_id)
+        if workflow_generation and str(task.workflow_generation) != workflow_generation:
+            # A fast worker can arrive before Resume commits its handoff. Lock
+            # by id (not generation): after waiting, PostgreSQL returns either
+            # the accepted row, or the old row if the dispatcher rolled back.
+            from django.db import transaction
+
+            with transaction.atomic():
+                task = tasks.select_for_update().get(id=task_id)
+        generation_matches = (
+            str(task.workflow_generation) if task.workflow_generation else None
+        ) == workflow_generation
         inactive = {
             EvalTaskStatus.PAUSED,
             EvalTaskStatus.DELETED,
@@ -411,7 +424,7 @@ def _get_task_state_sync(task_id: str) -> dict:
         return {
             "task_id": str(task_id),
             "status": task.status or "",
-            "active": task.status not in inactive,
+            "active": generation_matches and task.status not in inactive,
             "has_undrained_work": has_undrained_work(task),
         }
     finally:
@@ -474,7 +487,11 @@ def _requeue_entries_sync(task_id: str, entry_ids: list[str]) -> dict:
 
 
 def _set_task_status_sync(
-    task_id: str, status: str, expected_status: str | None = None
+    task_id: str,
+    status: str,
+    expected_status: str | None = None,
+    failure_reason: str | None = None,
+    workflow_generation: str | None = None,
 ) -> dict:
     """Set the task's DB ``status`` (the UI's source of truth), optionally only
     when it is currently ``expected_status``.
@@ -496,7 +513,12 @@ def _set_task_status_sync(
         from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
         now = timezone.now()
-        fields: dict = {"status": status}
+        fields: dict = {
+            "status": status,
+            "failure_reason": failure_reason
+            if status == EvalTaskStatus.FAILED
+            else None,
+        }
         if status == EvalTaskStatus.RUNNING:
             # Continuous start_time is its acceptance/activation floor, not
             # worker startup time. Creation falls back to created_at; a
@@ -525,7 +547,9 @@ def _set_task_status_sync(
         elif status in (EvalTaskStatus.COMPLETED, EvalTaskStatus.FAILED):
             fields["end_time"] = now
 
-        qs = EvalTask.objects.filter(id=task_id)
+        qs = EvalTask.objects.filter(
+            id=task_id, workflow_generation=workflow_generation
+        )
         if expected_status is not None:
             qs = qs.filter(status=expected_status)
         changed = qs.update(**fields)
@@ -545,7 +569,7 @@ def _set_task_status_sync(
         close_old_connections()
 
 
-def _finalize_task_sync(task_id: str) -> dict:
+def _finalize_task_sync(task_id: str, workflow_generation: str | None = None) -> dict:
     """Mark the task completed once the drain is fully done.
 
     Sets ``status=completed`` + ``end_time`` only when no entry is still
@@ -567,9 +591,19 @@ def _finalize_task_sync(task_id: str) -> dict:
                 "finalized": False,
                 "status": task.status or "",
             }
-        task.status = EvalTaskStatus.COMPLETED
-        task.end_time = timezone.now()
-        task.save(update_fields=["status", "end_time"])
+        changed = EvalTask.objects.filter(
+            id=task_id, workflow_generation=workflow_generation
+        ).update(
+            status=EvalTaskStatus.COMPLETED,
+            end_time=timezone.now(),
+            failure_reason=None,
+        )
+        if not changed:
+            return {
+                "task_id": str(task_id),
+                "finalized": False,
+                "status": task.status or "",
+            }
         _prewarm_instant_summary(task_id)
         return {
             "task_id": str(task_id),
@@ -748,12 +782,34 @@ async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     return ReapOutput(requeued=result["requeued"], failed=result["failed"])
 
 
+def _admit_start_sync(input: StartAdmissionInput, run_id: str) -> bool:
+    from tracer.services.eval_tasks.start_requests import admit_start
+
+    close_old_connections()
+    try:
+        return bool(admit_start(input.task_id, run_id))
+    finally:
+        close_old_connections()
+
+
+@activity.defn
+@database_control_activity()
+async def admit_eval_task_start_activity(input: StartAdmissionInput) -> bool:
+    async with Heartbeater():
+        admitted = await otel_sync_to_async(_admit_start_sync, thread_sensitive=False)(
+            input, activity.info().workflow_run_id
+        )
+    if not admitted:
+        logger.info("eval_task_start_fenced", task_id=input.task_id)
+    return bool(admitted)
+
+
 @activity.defn
 @database_control_activity()
 async def get_eval_task_state_activity(input: TaskStateInput) -> TaskStateOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_get_task_state_sync, thread_sensitive=False)(
-            input.task_id
+            input.task_id, input.workflow_generation
         )
     return TaskStateOutput(
         task_id=result["task_id"],
@@ -793,7 +849,13 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
     async with Heartbeater():
         result = await otel_sync_to_async(
             _set_task_status_sync, thread_sensitive=False
-        )(input.task_id, input.status, input.expected_status)
+        )(
+            input.task_id,
+            input.status,
+            input.expected_status,
+            input.failure_reason,
+            input.workflow_generation,
+        )
     if result["failed_continuous"]:
         info = activity.info()
         # Always set here: this activity only runs inside the eval-task workflow.
@@ -812,7 +874,7 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
 async def finalize_eval_task_activity(input: FinalizeInput) -> FinalizeOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_finalize_task_sync, thread_sensitive=False)(
-            input.task_id
+            input.task_id, input.workflow_generation
         )
     # Logged either way: a drain that ends without finalizing has entries
     # stranded RUNNING, and that is the line an operator needs to see.
@@ -830,6 +892,7 @@ async def finalize_eval_task_activity(input: FinalizeInput) -> FinalizeOutput:
 
 
 __all__ = [
+    "admit_eval_task_start_activity",
     "reconcile_eval_task_activity",
     "claim_eval_batch_activity",
     "run_eval_entry_activity",

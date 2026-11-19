@@ -13,6 +13,7 @@ import pytest
 from django.test import override_settings
 from rest_framework import status
 
+from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync as real_start
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
@@ -132,9 +133,18 @@ def fake_view(monkeypatch):
 
 @pytest.fixture
 def started(monkeypatch):
+    from tfc.temporal.eval_tasks import client
+
     calls = []
+    # The fake starter records submissions but creates no Temporal execution.
     monkeypatch.setattr(
-        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+        client,
+        "describe_eval_task_workflow_sync",
+        lambda task_id, **kw: client.WF_ABSENT,
+    )
+    monkeypatch.setattr(
+        client,
+        "start_eval_task_workflow_sync",
         lambda task, **kw: calls.append((str(task.id), kw)) or "wf",
     )
     monkeypatch.setattr(
@@ -488,6 +498,272 @@ def _summary(auth_client, project, task, tz="UTC"):
     )
     assert response.status_code == 200, response.content
     return response.json()["result"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("history", ["absent", TimeoutError()])
+def test_pause_does_not_turn_a_saved_instant_task_into_a_first_start(
+    auth_client, observe_project, yes_no, started, monkeypatch, no_new_usage, history
+):
+    from unittest.mock import Mock
+
+    task = EvalTask.objects.create(
+        project=observe_project,
+        run_type=RunType.HISTORICAL,
+        status=EvalTaskStatus.PENDING,
+        name="Saved instant task",
+        start_time=datetime.now(UTC),  # Not evidence of a run.
+    )
+    task.evals.add(yes_no)
+    _summary(auth_client, observe_project, task)
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        Mock(side_effect=[history, history]),
+    )
+    plain_start = Mock()
+    monkeypatch.setattr(
+        "tracer.views.eval_task.start_eval_task_workflow_sync", plain_start
+    )
+    assert _control(auth_client, observe_project, task, "pause").status_code == 200
+    refused = _control(auth_client, observe_project, task, "resume")
+    assert refused.status_code == 400, refused.content
+    plain = auth_client.post(
+        f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task.pk}"
+    )
+    assert plain.status_code == 400, plain.content
+    plain_start.assert_not_called()
+    assert not started
+    task.refresh_from_db()
+    assert task.status == EvalTaskStatus.PAUSED
+    assert not InstantEvalRun.objects.get(eval_task=task).hash_cursor
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_paused_reserved_create_completing_fenced_is_not_a_previous_run(
+    auth_client, observe_project, yes_no, started, monkeypatch, no_new_usage
+):
+    from asgiref.sync import async_to_sync, sync_to_async
+
+    from tfc.temporal.eval_tasks import client, workflows
+    from tracer.models.eval_task import EvalTaskStartRequest
+    from tracer.services.eval_tasks.start_requests import (
+        admit_start,
+        dispatch_start_request,
+    )
+
+    task = EvalTask.objects.create(
+        project=observe_project,
+        run_type=RunType.HISTORICAL,
+        status=EvalTaskStatus.PENDING,
+    )
+    task.evals.add(yes_no)
+    intent = EvalTaskStartRequest.objects.create(task=task)
+    run_id = str(uuid.uuid4())
+
+    async def gate(name, data, **kw):
+        assert name == "admit_eval_task_start_activity"
+        return await sync_to_async(admit_start)(data.task_id, run_id)
+
+    delivery = []
+
+    def delayed_send(**options):
+        intent.refresh_from_db()
+        assert (intent.attempts, intent.last_outcome) == (1, "send_reserved")
+        assert _control(auth_client, observe_project, task, "pause").status_code == 200
+        delivery.append((options["workflow_class"], options["workflow_input"]))
+        return SimpleNamespace(id=options["workflow_id"])
+
+    monkeypatch.setattr(
+        client, "describe_eval_task_workflow_sync", lambda *a, **kw: client.WF_ABSENT
+    )
+    monkeypatch.setattr(client, "start_workflow_sync", delayed_send)
+    monkeypatch.setattr(workflows.workflow, "execute_activity", gate)
+    dispatch_start_request(task.pk, initial_start=real_start)
+    [(kind, data)] = delivery
+    result = async_to_sync(kind().run)(data)
+    assert result.status == "start_fenced"
+    intent.refresh_from_db()
+    assert intent.state == intent.State.VOID and intent.admitted_run_id is None
+    monkeypatch.setattr(
+        client, "describe_eval_task_workflow_sync", lambda *a, **kw: client.WF_CLOSED
+    )
+    assert _control(auth_client, observe_project, task, "resume").status_code == 400
+    plain = auth_client.post(
+        f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task.pk}"
+    )
+    assert plain.status_code == 400
+    assert not started
+    # Even independent workflow history isn't a recorded explicit submission.
+    from tracer.services.eval_tasks.start_requests import start_refusal
+
+    monkeypatch.setattr(
+        client,
+        "describe_eval_task_workflow_sync",
+        lambda *a, **kw: client.WF_LEGACY_CLOSED,
+    )
+    task.refresh_from_db()
+    refusal = start_refusal(task)
+    assert refusal is not None and refusal.code == "revoked"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", ["plain", "instant"])
+def test_worker_picker_cursor_without_entries_is_resumable(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch, endpoint
+):
+    result = _start(auth_client, observe_project, [yes_no], sample_size=3)
+    task = EvalTask.objects.get(pk=result.json()["result"]["task_id"])
+    resolve_desired_rows(task)  # picker committed its cursor; no eval entries yet
+    assert InstantEvalRun.objects.get(eval_task=task).hash_cursor
+    assert not EvalLogger.objects.filter(eval_task_id=str(task.pk)).exists()
+    assert _control(auth_client, observe_project, task, "pause").status_code == 200
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        lambda *args, **kwargs: "absent",
+    )
+    run = InstantEvalRun.objects.get(eval_task=task)
+    before = run.answers_version
+    started.clear()
+    if endpoint == "plain":
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync",
+            lambda task, **kw: started.append((str(task.id), kw)),
+        )
+        response = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task.pk}"
+        )
+        message = "Eval task unpaused successfully"
+    else:
+        response = _control(auth_client, observe_project, task, "resume")
+        message = "Resumed."
+    assert response.status_code == 200, response.content
+    assert response.json()["result"]["message"] == message
+    assert started == [(str(task.pk), {"replace_existing": True})]
+    run.refresh_from_db()
+    assert run.answers_version == before + (endpoint == "instant")
+    task.refresh_from_db()
+    assert task.status == EvalTaskStatus.PENDING
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("history", ["closed", "absent", TimeoutError()])
+def test_pending_legacy_summary_is_not_a_request_to_resume(
+    auth_client, observe_project, yes_no, started, monkeypatch, no_new_usage, history
+):
+    from unittest.mock import Mock
+
+    from tracer.models.eval_task import EvalTaskStartRequest
+
+    task = EvalTask.objects.create(
+        project=observe_project,
+        run_type=RunType.HISTORICAL,
+        status=EvalTaskStatus.PENDING,
+    )
+    task.evals.add(yes_no)
+    _summary(auth_client, observe_project, task)
+    assert not InstantEvalRun.objects.get(eval_task=task).hash_cursor
+    assert not EvalTaskStartRequest.objects.filter(pk=task.pk).exists()
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
+    probe = Mock(side_effect=[history])
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync", probe
+    )
+
+    response = _control(auth_client, observe_project, task, "resume")
+
+    probe.assert_not_called()
+    assert response.status_code == 400, response.content
+    assert not started
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("state", "outcome"),
+    [
+        ("exhausted", "execution_closed_without_progress"),
+        ("start_failed", "not_started"),
+    ],
+)
+def test_failed_create_does_not_offer_a_standard_page_action_on_instant_resume(
+    auth_client,
+    observe_project,
+    yes_no,
+    started,
+    monkeypatch,
+    no_new_usage,
+    state,
+    outcome,
+):
+    from tracer.models.eval_task import EvalTaskStartRequest
+
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        lambda *args, **kwargs: "closed",  # gated create, not an independent drain
+    )
+    task = EvalTask.objects.create(
+        project=observe_project,
+        run_type=RunType.HISTORICAL,
+        status=EvalTaskStatus.FAILED,
+    )
+    task.evals.add(yes_no)
+    EvalTaskStartRequest.objects.create(
+        task=task, attempts=2, state=state, last_outcome=outcome
+    )
+    response = _control(auth_client, observe_project, task, "resume")
+    assert response.status_code == 400, response.content
+    assert "Your task is saved." in response.json()["result"]
+    assert "Re-run" not in response.json()["result"]
+    assert not started
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_summary_before_create_admission_does_not_take_over_its_start(
+    auth_client, observe_project, yes_no, monkeypatch
+):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client
+    from tracer.models.eval_task import EvalTaskStartRequest
+    from tracer.services.eval_tasks.start_requests import admit_start
+
+    start = Mock(return_value="workflow")
+    describe = Mock(return_value=client.WF_ABSENT)
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", start)
+    monkeypatch.setattr(client, "start_eval_task_workflow_sync", start)
+    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+    response = auth_client.post(
+        "/tracer/eval-task/",
+        {
+            "project": str(observe_project.pk),
+            "evals": [str(yes_no.pk)],
+            "name": "Plain create",
+            "run_type": "historical",
+            "spans_limit": 10,
+            "sampling_rate": 100,
+            "filters": {},
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    task = EvalTask.objects.get(pk=response.json()["result"]["id"])
+    assert not InstantEvalRun.objects.filter(eval_task=task).exists()
+    _summary(auth_client, observe_project, task)
+    assert InstantEvalRun.objects.filter(eval_task=task).exists()
+    # Pending plus a summary-created row must not unlock a replacing Resume.
+    denied = _control(auth_client, observe_project, task, "resume")
+    assert denied.status_code == 400, denied.content
+    assert admit_start(task.pk, str(uuid.uuid4()))
+    request = EvalTaskStartRequest.objects.get(pk=task.pk)
+    assert (request.attempts, request.last_outcome) == (1, "worker_admitted")
+    # The gate has admitted a run but it hasn't written work yet. A replacing
+    # Resume here would race it; the create reconciler still owns observation.
+    denied = _control(auth_client, observe_project, task, "resume")
+    assert denied.status_code == 400, denied.content
+    start.assert_called_once()
+    describe.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -1157,8 +1433,8 @@ def _no_rows_read(monkeypatch):
     [
         ("failed", EvalTaskStatus.FAILED, "instant_eval_paused"),
         ("paused", EvalTaskStatus.PAUSED, "instant_eval_paused"),
-        # It says pending, but its workflow is gone.
-        ("workflow-gone", EvalTaskStatus.PENDING, "instant_eval_still_answering"),
+        # The worker marked it Running but never picked its first row.
+        ("workflow-gone", EvalTaskStatus.RUNNING, "instant_eval_still_answering"),
     ],
     ids=["failed", "paused", "workflow-gone"],
 )
@@ -1188,6 +1464,8 @@ def test_a_run_stopped_before_its_first_step_is_priced_for_every_row_it_asked_fo
         result = _start(auth_client, observe_project, [yes_no], sample_size=6)
     assert result.status_code == status.HTTP_200_OK, result.json()
     task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    if stopped in ("paused", "workflow-gone"):
+        EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
     if stopped == "paused":
         paused = _control(auth_client, observe_project, task, "pause")
         assert paused.status_code == status.HTTP_200_OK, paused.json()
@@ -1535,8 +1813,9 @@ def test_a_run_whose_workflow_vanished_before_it_picked_its_rows_stalls(
     s = _summary(auth_client, observe_project, task)
     assert (s["status"], s["preparing"]) == ("pending", True)
 
-    # Its workflow is gone: stalled, with every row still to read.
-    workflow["state"] = "absent"
+    # A worker that reached Running before it vanished is still resumable.
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
+    workflow["state"] = "closed"
     cache.clear()
     s = _summary(auth_client, observe_project, task)
     assert (s["status"], s["preparing"]) == ("stalled", True)
@@ -3048,7 +3327,8 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     async def nothing(*args, **kwargs):
         return None
 
-    async def active(task_id):
+    async def active(task_id, generation):
+        assert generation == "accepted-generation"
         return {"active": True, "status": "running", "has_undrained_work": True}
 
     async def claim(task_id, n):
@@ -3084,18 +3364,26 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     monkeypatch.setattr(workflows.workflow, "continue_as_new", continue_as_new)
     if continuous:
         run = workflows.ContinuousEvalTaskWorkflow()._run(
-            ContinuousDrainState(task_id="t", lost_entry_ids=["e1"])
+            ContinuousDrainState(
+                task_id="t",
+                lost_entry_ids=["e1"],
+                workflow_generation="accepted-generation",
+            )
         )
     else:
         run = workflows.HistoricalEvalTaskWorkflow()._run(
             EvalTaskWorkflowInput(
-                task_id="t", already_reconciled=True, lost_entry_ids=["e1"]
+                task_id="t",
+                already_reconciled=True,
+                lost_entry_ids=["e1"],
+                workflow_generation="accepted-generation",
             )
         )
     with pytest.raises(Hop) as hop:
         asyncio.run(run)
     assert given == [{"e1"}]
     assert hop.value.args[0].lost_entry_ids == ["e1", "e2"]
+    assert hop.value.args[0].workflow_generation == "accepted-generation"
 
 
 def test_the_worker_counts_a_finished_run_without_the_views():
@@ -3116,7 +3404,8 @@ def test_a_run_stopped_before_it_picked_its_rows_counts_every_row_it_asked_for(
 ):
     """Paused 2 s after Start, while its first step still picked the rows,
     a run read "Paused · 0 of 0 read" with no Resume: it holds no rows yet,
-    so it counted none. It asked for 6, and resuming reads all 6."""
+    so it counted none. It asked for 6; keep that scope even when the
+    new-question path, not Resume, is the only way forward."""
     result = _start(auth_client, observe_project, [yes_no], sample_size=6)
     task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
     stopped = _control(auth_client, observe_project, task, action)
@@ -3125,7 +3414,9 @@ def test_a_run_stopped_before_it_picked_its_rows_counts_every_row_it_asked_for(
 
     s = _summary(auth_client, observe_project, task)
     if action == "pause":
-        assert (s["status"], s["preparing"]) == ("paused", True)
+        # The run is saved, not resumable: Ask offers the new-question path.
+        assert (s["status"], s["preparing"]) == ("failed", False)
+        assert "paused before it started" in s["failure"]["message"]
         assert (s["total"], s["pending"], s["not_read"]) == (6, 6, 0)
     else:
         assert (s["status"], s["preparing"]) == ("cancelled", False)
@@ -3223,3 +3514,73 @@ def test_a_run_with_an_answer_or_another_failure_names_no_key_problem(
         "every": False,
         "ai_providers": False,
     }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("endpoint", ["plain", "instant"])
+def test_failed_create_does_not_own_a_rerun_after_an_instant_resume_503(
+    auth_client, observe_project, yes_no, started, monkeypatch, endpoint
+):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client
+    from tracer.models.eval_task import EvalTaskStartRequest
+    from tracer.services.eval_tasks.start_requests import reconcile_start_requests
+
+    base = "/tracer/eval-task/"
+    send = Mock(side_effect=ConnectionError())
+    monkeypatch.setattr(client, "start_eval_task_workflow_sync", send)
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", send)
+    monkeypatch.setattr(
+        client, "describe_eval_task_workflow_sync", Mock(return_value=client.WF_ABSENT)
+    )
+    response = auth_client.post(
+        base,
+        {
+            "project": str(observe_project.pk),
+            "evals": [str(yes_no.pk)],
+            "name": "One question",
+            "run_type": "historical",
+            "row_type": "sessions",
+            "spans_limit": 10,
+            "sampling_rate": 100,
+            "filters": {},
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    task = EvalTask.objects.get(pk=response.json()["result"]["id"])
+    assert reconcile_start_requests() == {"candidates": 1}  # the single retry
+    assert reconcile_start_requests() == {"candidates": 1}  # confirmed absent
+    request = EvalTaskStartRequest.objects.get(pk=task.pk)
+    assert (request.state, request.attempts) == (request.State.START_FAILED, 2)
+    assert send.call_count == 2
+
+    send.side_effect = None
+    send.reset_mock()
+    rerun = auth_client.patch(
+        f"{base}update_eval_task/",
+        {"eval_task_id": str(task.pk), "edit_type": "fresh_run"},
+        format="json",
+    )
+    assert rerun.status_code == 200, rerun.content
+    send.assert_called_once_with(task, replace_existing=True)
+    entry = _answer(task, yes_no, str(uuid.uuid4()), pending=True)
+    EvalLogger.objects.bulk_create([entry])
+    assert _control(auth_client, observe_project, task, "pause").status_code == 200
+    send.side_effect = ConnectionError()
+    failed = _control(auth_client, observe_project, task, "resume")
+    assert failed.status_code == 503, failed.content
+    task.refresh_from_db()
+    assert task.status == EvalTaskStatus.FAILED and task.end_time is None
+
+    send.side_effect = None
+    send.reset_mock()
+    if endpoint == "plain":
+        resumed = auth_client.post(f"{base}unpause_eval_task/?eval_task_id={task.pk}")
+    else:
+        resumed = _control(auth_client, observe_project, task, "resume")
+    assert resumed.status_code == 200, resumed.content
+    send.assert_called_once_with(task, replace_existing=True)
+    request.refresh_from_db()
+    assert (request.state, request.attempts) == (request.State.START_FAILED, 2)

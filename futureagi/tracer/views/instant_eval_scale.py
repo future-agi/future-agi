@@ -50,6 +50,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     RESUMABLE_TASK_STATUSES,
     EvalTask,
+    EvalTaskStartRequest,
     EvalTaskStatus,
     RunType,
 )
@@ -60,6 +61,10 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services import instant_eval_users as users_service
+from tracer.services.eval_tasks.start_requests import (
+    record_pending_instant_pause,
+    start_refusal,
+)
 from tracer.services.instant_eval_run import (
     ACTIVE,
     DEFAULT_SAMPLE,
@@ -84,6 +89,7 @@ from tracer.services.instant_eval_run import (
     compute_summary,
     credits_per_answer,
     max_rows,
+    summary_with_start_decision,
     with_primary_evals,
 )
 from tracer.services.user_filter_capabilities import (
@@ -852,7 +858,7 @@ def _jev_key_missing(gm, project, configs):
     return None
 
 
-def _start_workflow_on_commit(task, *, replace: bool) -> None:
+def _start_workflow_on_commit(task, *, replace: bool, prior_reason=None) -> None:
     from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
 
     def start():
@@ -860,7 +866,11 @@ def _start_workflow_on_commit(task, *, replace: bool) -> None:
             start_eval_task_workflow_sync(task, replace_existing=replace)
         except Exception:
             logger.exception("instant_eval_workflow_start_failed", task_id=str(task.id))
-            EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.FAILED)
+            EvalTask.objects.filter(
+                id=task.id,
+                workflow_generation=task.workflow_generation,
+                status=EvalTaskStatus.PENDING,
+            ).update(status=EvalTaskStatus.FAILED, failure_reason=prior_reason)
 
     transaction.on_commit(start)
 
@@ -1324,6 +1334,13 @@ class InstantEvalSummaryView(InstantEvalLicenseRequired, APIView):
         if run.last_tz != view.tz.key:
             InstantEvalRun.objects.filter(id=run.id).update(last_tz=view.tz.key)
         status = _status(task, run)
+        refusal = start_refusal(task)
+
+        def respond(payload):
+            return self._etagged(
+                request, summary_with_start_decision(task, payload, refusal)
+            )
+
         live = status in ACTIVE
         # A finished run's summary never changes. A live run is counted again
         # at most every few seconds, shared by everyone watching it, so
@@ -1340,16 +1357,16 @@ class InstantEvalSummaryView(InstantEvalLicenseRequired, APIView):
             else:
                 fresh = not live or age < max_age
             if fresh:
-                return self._etagged(request, cached["payload"])
+                return respond(cached["payload"])
             stale = stale or cached
         # One request counts at a time (per run, time zone and questions);
         # the others show the last count rather than count it again.
         lock = "ie-summary-lock:" + _summary_key(task, run, status, view)
         counting = cache.add(lock, 1, 30)
         if not counting and stale is not None:
-            return self._etagged(request, stale["payload"])
+            return respond(stale["payload"])
         try:
-            payload = compute_summary(task, run, view, questions, price)
+            payload = compute_summary(task, run, view, questions, price, refusal)
         except summary_service.BadFilter as exc:
             return self._gm.bad_request(str(exc))
         except Exception:
@@ -1360,7 +1377,7 @@ class InstantEvalSummaryView(InstantEvalLicenseRequired, APIView):
         finally:
             if counting:
                 cache.delete(lock)
-        return self._etagged(request, payload)
+        return respond(payload)
 
     def _etagged(self, request, payload):
         body = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
@@ -1521,6 +1538,10 @@ class InstantEvalExportView(_InstantEvalSelectionView):
 
 
 # ─── Control ─────────────────────────────────────────────────────────────────
+class _RestartRefused(Exception):
+    """Unwind the entire control transaction, including writes before the restart."""
+
+
 class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -1542,6 +1563,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         handler = getattr(self, f"_{action}")
         try:
             return handler(request, task, run, data)
+        except _RestartRefused as refusal:
+            return self._gm.bad_request(str(refusal))
         except CreditCheckUnavailable:
             return credit_check_unavailable(self._gm)
 
@@ -1597,11 +1620,24 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(
                 f"The run is {task.status}; only a running run can be paused."
             )
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
-        if run is not None:
-            InstantEvalRun.objects.filter(id=run.id).update(
-                answers_version=F("answers_version") + 1
+        with transaction.atomic():
+            # Match cancel/resume's run -> task lock order.
+            if run is not None:
+                InstantEvalRun.objects.filter(id=run.id).update(
+                    answers_version=F("answers_version") + 1
+                )
+            # The initial read may be stale. Only pause a still-active writer row.
+            current = (
+                EvalTask.objects.select_for_update(of=("self",))
+                .filter(pk=task.pk, status__in=ACTIVE)
+                .first()
             )
+            if current is None:
+                transaction.set_rollback(True)
+                return self._gm.bad_request("Only a running run can be paused.")
+            record_pending_instant_pause(current)
+            EvalTask.objects.filter(pk=current.pk).update(status=EvalTaskStatus.PAUSED)
+            EvalTaskStartRequest.void_for_tasks([task.pk])
         try:
             signal_pause_eval_task_workflow(task.id)
         except Exception:
@@ -1609,21 +1645,36 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             logger.warning("instant_eval_pause_signal_failed", task_id=str(task.id))
         return self._ok(task, "Paused. Answers already being read will still land.")
 
+    @transaction.atomic(using="default")
     def _restart(self, task):
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
-        task.status = EvalTaskStatus.PENDING
-        _start_workflow_on_commit(task, replace=True)
+        # Use the writer snapshot for both durable refusal and the new input.
+        current = (
+            EvalTask.objects.using("default")
+            .select_for_update(of=("self",))
+            .filter(pk=task.pk)
+            .first()
+        )
+        if current is None:
+            raise _RestartRefused("Eval task not found")
+        if refusal := start_refusal(current):
+            raise _RestartRefused(refusal.instant)
+        prior_reason = current.failure_reason
+        current.prepare_workflow_replacement()
+        EvalTaskStartRequest.void_for_tasks([current.pk])
+        _start_workflow_on_commit(current, replace=True, prior_reason=prior_reason)
 
     def _resume(self, request, task, run, data):
         if run is not None and run.cancelled_at:
             return self._cancelled()
+        if refusal := start_refusal(task):
+            return self._gm.bad_request(refusal.instant)
         resumable = task.status in RESUMABLE_TASK_STATUSES
         if not resumable and run is not None:
             # A run that stopped before finishing: its workflow is gone while
             # the task says running, or it finished with rows unanswered.
             if task.status in ACTIVE:
                 cache.delete(f"ie-wf-gone:{task.id}")
-                resumable = _workflow_gone(task)
+                resumable = bool(_workflow_gone(task))
             elif task.status == EvalTaskStatus.COMPLETED:
                 resumable = _unanswered_rows(run) > 0
         if not resumable:
@@ -1671,6 +1722,7 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 cancelled_at=timezone.now(), answers_version=F("answers_version") + 1
             )
             EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+            EvalTaskStartRequest.void_for_tasks([task.pk])
         try:
             signal_pause_eval_task_workflow(task.id)
         except Exception:
@@ -1692,13 +1744,17 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         )
         if not failed.exists():
             return self._gm.bad_request("No rows failed.")
-        # A stalled run (it says running, but no workflow drains it) is
-        # restarted, or nothing would answer the requeued rows.
-        running = task.status in ACTIVE and not _workflow_gone(task)
-        if not running and (stopped := self._stopped_with_rows_left(task, run)):
-            return stopped
-        if not running and (busy := self._busy(request, task)):
-            return busy
+        # Even a completed task snapshot may have a live workflow draining it.
+        gone = _workflow_gone(task)
+        if gone is None:
+            return self._gm.custom_error_response(
+                503, "The run's status couldn't be checked. Try again shortly."
+            )
+        if gone:
+            if refused := self._replacement_refusal(task, run):
+                return refused
+            if busy := self._busy(request, task):
+                return busy
         # Checked again: the key may have gone since the run started.
         if missing := _jev_key_missing(self._gm, task.project, _questions(task)):
             return missing
@@ -1711,8 +1767,18 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         from tracer.services.instant_eval_answers import forget_answers
 
         with transaction.atomic():
-            if not running and (busy := self._busy_locked(request, task)):
+            if gone and (busy := self._busy_locked(request, task)):
                 return busy
+            if run is not None:
+                # Match sweep recovery's run -> task -> entry lock order.
+                (
+                    InstantEvalRun.objects.select_for_update(of=("self",))
+                    .filter(pk=run.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+            if gone:
+                self._restart(task)
             ids = list(failed.values_list("id", flat=True))
             retried = failed.update(
                 status=EvalEntryStatus.PENDING,
@@ -1722,24 +1788,24 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 attempts=0,
             )
             if not retried:
+                transaction.set_rollback(True)  # Discard the handoff and callback.
                 return self._gm.bad_request("No rows failed.")
-            # Their rows wait for an answer again.
+            # A run still draining claims the requeued rows itself.
             forget_answers(task.id, ids)
             if run is not None:
                 InstantEvalRun.objects.filter(id=run.id).update(
                     answers_version=F("answers_version") + 1
                 )
-            # A run still draining claims the requeued rows itself.
-            if not running:
-                self._restart(task)
-        return self._restarted(task, f"Retrying {retried:,} answers.", retried=retried)
+        respond = self._restarted if gone else self._ok
+        return respond(task, f"Retrying {retried:,} answers.", retried=retried)
 
-    def _stopped_with_rows_left(self, task, run):
-        """A 409 for a run that stopped with rows still to read (every row,
-        if it stopped before picking them): paused, or stalled (its task
-        ended, or its workflow is gone). Restarting it for a retry or "read
-        more" would read all of them, past what that action checked and
-        confirmed. Resuming is the way on: it checks them all."""
+    def _replacement_refusal(self, task, run):
+        """Retry failed and Read more replace the existing run. Only suggest
+        Resume for unread rows if a replacement is allowed in the first place."""
+        if refusal := start_refusal(task):
+            return self._gm.bad_request(refusal.instant)
+        # A replacement would also read the old unanswered rows, beyond the
+        # rows this action priced and confirmed. Resume checks them all.
         if run is None or not _rows_left(task, run):
             return None
         message = (
@@ -1771,8 +1837,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             )
         if run is None or run.rows_requested >= run.population:
             return self._gm.bad_request("This run already reads every row of its view.")
-        if stopped := self._stopped_with_rows_left(task, run):
-            return stopped
+        if refused := self._replacement_refusal(task, run):
+            return refused
         if busy := self._busy(request, task):
             return busy
         if missing := _jev_key_missing(self._gm, task.project, _questions(task)):

@@ -3,6 +3,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { enqueueSnackbar } from "src/components/snackbar";
 import RunningStatusRenderer from "./RunningStatusRenderer";
 
 const axiosPostMock = vi.hoisted(() => vi.fn());
@@ -46,7 +47,7 @@ const renderStatus = (status) => {
       <RunningStatusRenderer value={status} data={data} api={api} />
     </QueryClientProvider>,
   );
-  return { api, data };
+  return { api, data, queryClient };
 };
 
 const resumeButton = () =>
@@ -56,6 +57,7 @@ describe("RunningStatusRenderer resume action", () => {
   beforeEach(() => {
     axiosPostMock.mockReset();
     axiosPostMock.mockResolvedValue({ data: { status: true } });
+    enqueueSnackbar.mockReset();
   });
 
   it.each(["failed", "paused"])(
@@ -77,6 +79,44 @@ describe("RunningStatusRenderer resume action", () => {
       );
     },
   );
+
+  it("discards cached Logs when resuming from the grid", async () => {
+    const { data, queryClient } = renderStatus("failed");
+    const logs = ["eval-task-logs", data.id];
+    queryClient.setQueryData(logs, {
+      status: "failed",
+      failure_reason: "Selection failed",
+    });
+    fireEvent.click(resumeButton());
+    await waitFor(() => expect(queryClient.getQueryData(logs)).toBeUndefined());
+  });
+
+  it("shows the server's reason when Resume is refused", async () => {
+    const refusal =
+      "The run couldn't start after an automatic retry. Your task is saved.";
+    axiosPostMock.mockRejectedValueOnce({
+      response: { status: 400, data: { status: false, message: refusal } },
+    });
+    renderStatus("failed");
+    fireEvent.click(resumeButton());
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(refusal, {
+        variant: "error",
+      }),
+    );
+  });
+
+  it("keeps the generic text when a refusal carries no message", async () => {
+    axiosPostMock.mockRejectedValueOnce(new Error("network"));
+    renderStatus("failed");
+    fireEvent.click(resumeButton());
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Failed to resume task. It may have already finished.",
+        { variant: "error" },
+      ),
+    );
+  });
 
   it.each(["completed", "running", "pending"])(
     "offers no Resume on a %s task",

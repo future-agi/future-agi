@@ -7,6 +7,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+from tracer.tests.usage_guard import no_new_usage  # noqa: F401
 
 
 @pytest.fixture

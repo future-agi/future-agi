@@ -1,4 +1,4 @@
-"""Complete 62/67-pending-migration A9 intersection regression, without Django.
+"""Complete latest/floor pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -89,13 +89,22 @@ SAMPLING_ADDITIONS = (
     ('tracer','0132_merge_sampling_and_sql_workbench_dev_merge'),
     ('tracer','0133_merge_sampling_and_alert_webhook'),
 )
-LATEST += SQL_ADDITIONS + SAMPLING_ADDITIONS
+TASK_LIFECYCLE_ADDITIONS = (
+    ('tracer', '0136_evaltask_failure_reason'),
+    ('tracer', '0137_evaltask_workflow_generation'),
+    ('tracer', '0138_eval_task_start_request'),
+)
+LATEST += SQL_ADDITIONS + SAMPLING_ADDITIONS + TASK_LIFECYCLE_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
     ('simulate','0101_agent_fix_candidate_override'),
     ('tracer','0119_retire_deleted_eval_memberships'),
     ('tracer','0120_alert_issue_state_occurrences_high_water'),
 )
+
+LATEST_COUNT = 65
+INVENTORIES = ((REVISIONS[1], LATEST, LATEST_COUNT),
+               (REVISIONS[0], LATEST + FLOOR_ONLY, 70))
 
 
 def keywords(node): return {k.arg:k.value for k in node.keywords}
@@ -296,7 +305,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         self.assertEqual(len(SQL_ADDITIONS),8)
         self.assertEqual(len(SAMPLING_ADDITIONS),10)
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,62),(REVISIONS[0],LATEST+FLOOR_ONLY,67)):
+        for revision,identities,count in INVENTORIES:
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -304,13 +313,12 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 62),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 67)):
+        for revision, identities, count in INVENTORIES:
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
             self.assert_complete_inventory(revision, identities, count)
-            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS:
+            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS + TASK_LIFECYCLE_ADDITIONS:
                 missing = 'futureagi/' + app + '/migrations/' + name + '.py'
                 self.assertIn(missing, paths)
                 without = [path for path in paths if path != missing]
@@ -341,7 +349,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,62)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,LATEST_COUNT)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -391,7 +399,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,62),(REVISIONS[0],LATEST+FLOOR_ONLY,67)):
+        for revision,identities,count in INVENTORIES:
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 state=baseline_state(revision); env=scope_environment(state)
@@ -406,7 +414,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
                 expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
-                if count==67: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                if revision==REVISIONS[0]: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
                 self.assertTrue(all(row['database']=='postgres' for row in selected))
                 self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))
@@ -418,6 +426,14 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     names={item['table'] for item in scoped}
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
+                    elif (row['app_label'], row['name']) in TASK_LIFECYCLE_ADDITIONS:
+                        expected_tables = {('postgres', 'public.tracer_eval_task')}
+                        if row['name'] == '0138_eval_task_start_request':
+                            expected_tables.add(('postgres', 'public.tracer_eval_task_start_request'))
+                        self.assertEqual({(table['engine'], table['table']) for table in row['tables']},
+                                         expected_tables, row['name'])
+                        # The new intent table is not registered for reference-scale seeding.
+                        expected_row = {'tracer_eval_task'}
                     elif row['name'] in ('0118_instant_eval_answers','0117_cohort_sampling'): expected_row={'tracer_eval_task'}
                     elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}

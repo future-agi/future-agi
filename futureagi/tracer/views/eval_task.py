@@ -1,7 +1,7 @@
 import json
 import uuid as uuid_module
 from collections import Counter, defaultdict
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from itertools import islice
@@ -58,6 +58,7 @@ from tracer.models.eval_task import (
     RESUMABLE_TASK_STATUSES,
     EvalTask,
     EvalTaskLogger,
+    EvalTaskStartRequest,
     EvalTaskStatus,
     RowType,
     RunType,
@@ -96,6 +97,11 @@ from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
     normalize_policy_update,
     population_changed,
+)
+from tracer.services.eval_tasks.start_requests import (
+    dispatch_start_request,
+    record_rerun,
+    start_refusal,
 )
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
@@ -1916,9 +1922,18 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         kwargs["partial"] = True
         return super().update(request, *args, **kwargs)
 
+    @transaction.atomic(using="default")
     def perform_destroy(self, instance):
-        # Cascade soft-delete to the task's loggers and eval results so they
-        # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
+        # Match fresh Re-run and bulk delete: task first, then loggers/results.
+        # Recheck scope on the writer: if the task left it, skip the entire cascade.
+        instance = (
+            self._scope_eval_task_queryset(EvalTask.objects.using("default"))
+            .select_for_update(of=("self",))
+            .filter(pk=instance.pk)
+            .first()
+        )
+        if instance is None:
+            return
         now = timezone.now()
         EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
             deleted=True, deleted_at=now
@@ -1972,6 +1987,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # roll back together if any part of persistence fails.
                 with transaction.atomic(using="default"):
                     eval_task = serializer.save()
+                    EvalTaskStartRequest.objects.using("default").create(task=eval_task)
 
         except ValidationError as exc:
             return self._gm.bad_request(exc.detail)
@@ -1990,15 +2006,17 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 with _normalize_eval_task_create_failure(
                     preserve_validation_errors=False
                 ):
-                    # Initial, non-replacing start only. An uncertain acknowledgement
-                    # cannot justify a second start or any saved-state compensation.
-                    start_eval_task_workflow_sync(eval_task)
+                    dispatch_start_request(
+                        eval_task.pk, initial_start=start_eval_task_workflow_sync
+                    )
             except _EvalTaskCreateFailure as failure:
-                logger.warning(
-                    "eval_task.create_start_unconfirmed",
-                    error_type=failure.error_type,
-                    exc_info=False,
-                )
+                # Even a local bookkeeping failure leaves a durable request.
+                with suppress(Exception):
+                    logger.warning(
+                        "eval_task.create_start_unconfirmed",
+                        error_type=failure.error_type,
+                        exc_info=False,
+                    )
 
         # Outside the failed-create boundary: dispatch must see the actual
         # primary commit, including any outer transaction. An outer rollback
@@ -2134,9 +2152,12 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 .only(
                     "id",
                     "project_id",
+                    "instant_paused_before_start_at",
+                    "continuous_cursor",
                     "start_time",
                     "end_time",
                     "status",
+                    "failure_reason",
                     "run_type",
                     "row_type",
                 )
@@ -2220,6 +2241,20 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 }
                 for row in error_group_rows[: self._ERROR_GROUPS_LIMIT]
             ]
+            # A dispatch failure has no eval result. Use the existing Logs tab
+            # group shape for its reason; never fabricate an evaluation or add
+            # it to the per-evaluation counts/usage.
+            if not counts["total_count"]:
+                refusal = start_refusal(eval_task)
+                if refusal and (reason := refusal.log_message):
+                    error_groups.append(
+                        {
+                            "normalized": reason,
+                            "count": 1,
+                            "sample": reason,
+                            "start_reason_code": refusal.code,
+                        }
+                    )
             error_text_truncated = any(
                 (row["sample_length"] or 0) > _EVAL_TASK_ERROR_TEXT_MAX_CHARS
                 for row in error_group_rows[: self._ERROR_GROUPS_LIMIT]
@@ -2247,6 +2282,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # and the fetch that first sees "completed" already carries the
                 # final tallies — no off-by-one-tick stale count.
                 "status": eval_task.status,
+                "failure_reason": eval_task.failure_reason
+                if eval_task.status == EvalTaskStatus.FAILED
+                else None,
                 # Duration is only meaningful for historical runs (which finalize
                 # with an end_time). Continuous tasks never end, so the frontend
                 # hides the Duration card based on this.
@@ -2813,25 +2851,34 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             eval_tasks = self._scope_eval_task_queryset(EvalTask.objects).filter(
                 id__in=eval_task_ids,
             )
-            if not eval_tasks.exists():
-                return self._gm.bad_request("No eval tasks found for the provided IDs")
-
-            running_tasks = eval_tasks.filter(status=EvalTaskStatus.RUNNING)
-            if running_tasks.exists():
-                return self._gm.bad_request(
-                    "Cannot delete running eval tasks. Pause them first."
+            with transaction.atomic(using="default"):
+                # Check the locked writer rows; a replica can miss a running task.
+                locked = dict(
+                    eval_tasks.select_for_update(of=("self",))
+                    .order_by("pk")
+                    .values_list("pk", "status")
                 )
-
-            eval_tasks.update(
-                deleted=True, deleted_at=timezone.now(), status=EvalTaskStatus.DELETED
-            )
-
-            EvalTaskLogger.objects.filter(eval_task_id__in=eval_task_ids).update(
-                deleted=True, deleted_at=timezone.now()
-            )
-            soft_delete_eval_results(
-                EvalLogger.objects.filter(eval_task_id__in=eval_task_ids)
-            )
+                if not locked:
+                    return self._gm.bad_request(
+                        "No eval tasks found for the provided IDs"
+                    )
+                if EvalTaskStatus.RUNNING in locked.values():
+                    return self._gm.bad_request(
+                        "Cannot delete running eval tasks. Pause them first."
+                    )
+                eval_tasks.filter(pk__in=locked).update(
+                    deleted=True,
+                    deleted_at=timezone.now(),
+                    status=EvalTaskStatus.DELETED,
+                )
+                # Cascade only over the scoped IDs we locked, not every requested ID.
+                EvalTaskStartRequest.void_for_tasks(locked)
+                EvalTaskLogger.objects.filter(eval_task_id__in=locked).update(
+                    deleted=True, deleted_at=timezone.now()
+                )
+                soft_delete_eval_results(
+                    EvalLogger.objects.filter(eval_task_id__in=locked)
+                )
 
             return self._gm.success_response(
                 {"message": "Eval tasks marked as deleted successfully"}
@@ -2860,26 +2907,28 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("Eval task ID is required")
 
-            try:
-                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
-                    id=eval_task_id,
-                )
-            except EvalTask.DoesNotExist:
-                return self._gm.bad_request("Eval task not found")
+            with transaction.atomic(using="default"):
+                try:
+                    # Check the locked writer row; a replica may still say Running.
+                    eval_task = self._scope_eval_task_queryset(
+                        EvalTask.objects.select_for_update(of=("self",))
+                    ).get(id=eval_task_id)
+                except EvalTask.DoesNotExist:
+                    return self._gm.bad_request("Eval task not found")
+                if eval_task.status != EvalTaskStatus.RUNNING:
+                    return self._gm.bad_request(
+                        f"Cannot pause eval task with status '{eval_task.status}'. "
+                        "Only running tasks can be paused."
+                    )
+                eval_task.status = EvalTaskStatus.PAUSED
+                eval_task.save(update_fields=["status", "updated_at"])
+                EvalTaskStartRequest.void_for_tasks([eval_task.pk])
 
-            if eval_task.status != EvalTaskStatus.RUNNING:
-                return self._gm.bad_request(
-                    f"Cannot pause eval task with status '{eval_task.status}'. "
-                    "Only running tasks can be paused."
-                )
-
-            eval_task.status = EvalTaskStatus.PAUSED
-            eval_task.save(update_fields=["status", "updated_at"])
-
-            # Nudge the running workflow to stop launching new evals immediately.
-            # Best-effort: the paused status above is the durable signal the
-            # workflow also honours at its next batch boundary.
-            signal_pause_eval_task_workflow(eval_task.id)
+            # Signal only after the outermost commit; a rolled-back Pause must
+            # not stop the workflow. The saved status also stops its next batch.
+            transaction.on_commit(
+                lambda: signal_pause_eval_task_workflow(eval_task.id), using="default"
+            )
 
             return self._gm.success_response(
                 {"message": "Eval task paused successfully"}
@@ -2908,32 +2957,32 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("Eval task ID is required")
 
-            try:
-                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
-                    id=eval_task_id,
-                )
-            except EvalTask.DoesNotExist:
-                return self._gm.bad_request("Eval task not found")
-
-            # PAUSED and FAILED; ``RESUMABLE_TASK_STATUSES`` says why failed is
-            # in it. The AI tool and the task UIs accept the same set.
-            if eval_task.status not in RESUMABLE_TASK_STATUSES:
-                return self._gm.bad_request(
-                    f"Cannot unpause eval task with status '{eval_task.status}'. "
-                    "Only paused or failed tasks can be resumed."
-                )
-
-            recovered_from = eval_task.status
-            undrained = EvalLogger.objects.filter(
-                eval_task_id=str(eval_task.id),
-                status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
-            ).count()
-            eval_task.status = EvalTaskStatus.PENDING
-            eval_task.save(update_fields=["status"])
-
-            # Pause exits the workflow; resuming starts a fresh run that picks up
-            # the remaining pending/running entries.
-            start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            # The writer lock serializes intent checks and the generation handoff.
+            # A fast worker waits for commit; a rejected start rolls everything back.
+            with transaction.atomic(using="default"):
+                try:
+                    eval_task = self._scope_eval_task_queryset(
+                        EvalTask.objects.using("default").select_for_update(
+                            of=("self",)
+                        )
+                    ).get(id=eval_task_id)
+                except EvalTask.DoesNotExist:
+                    return self._gm.bad_request("Eval task not found")
+                if eval_task.status not in RESUMABLE_TASK_STATUSES:
+                    return self._gm.bad_request(
+                        f"Cannot unpause eval task with status '{eval_task.status}'. "
+                        "Only paused or failed tasks can be resumed."
+                    )
+                if refusal := start_refusal(eval_task):
+                    return self._gm.bad_request(refusal.standard)
+                recovered_from = eval_task.status
+                undrained = EvalLogger.objects.filter(
+                    eval_task_id=str(eval_task.id),
+                    status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
+                ).count()
+                eval_task.prepare_workflow_replacement()
+                EvalTaskStartRequest.void_for_tasks([eval_task.pk])
+                start_eval_task_workflow_sync(eval_task, replace_existing=True)
             # Counts and the previous status only — never an entry payload or
             # any tenant-identifying value.
             logger.info(
@@ -3207,7 +3256,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     eval_task, data=update_fields, partial=True
                 )
                 task_serializer.is_valid(raise_exception=True)
-                eval_task = task_serializer.save()
+                eval_task = task_serializer.save(
+                    workflow_generation=uuid_module.uuid4(), failure_reason=None
+                )
+                record_rerun(eval_task)
 
                 effective_run_type = update_fields.get("run_type", original_run_type)
                 if effective_run_type == RunType.CONTINUOUS and (
@@ -3247,7 +3299,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # against the old row and leave an active workflow stranded
                 # behind a PENDING task.  Keep callback failures non-robust so
                 # the existing API error contract still surfaces dispatch
-                # failures; the committed PENDING row is safe to retry.
+                # failures; another explicit rerun can retry the committed row.
                 transaction.on_commit(
                     lambda: start_eval_task_workflow_sync(
                         eval_task, replace_existing=True

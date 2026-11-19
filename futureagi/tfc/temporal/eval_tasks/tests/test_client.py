@@ -298,3 +298,143 @@ def test_a_replacing_start_cannot_be_handed_an_answer(monkeypatch):
 
     assert described == []
     assert started == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("existing_state", ["absent", "running", "closed"])
+def test_initial_start_retry_never_creates_a_second_execution(
+    monkeypatch, existing_state
+):
+    """Model the server's policy arbitration after a stale NOT_FOUND describe.
+
+    This is a transport double, not a real Temporal concurrency test.
+    """
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from tfc.temporal.eval_tasks import client
+
+    monkeypatch.setattr(
+        client, "describe_eval_task_workflow_sync", lambda _task_id: client.WF_ABSENT
+    )
+    executions = [] if existing_state == "absent" else [existing_state]
+
+    def start(**kwargs):
+        assert kwargs["workflow_id"] == "eval-task-task-id"
+        assert kwargs["workflow_input"].drain.task_id == "task-id"
+        assert kwargs["cancel_existing"] is False
+        assert kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
+        assert kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+        if executions == ["closed"]:
+            raise WorkflowAlreadyStartedError(
+                kwargs["workflow_id"], "HistoricalEvalTaskWorkflow"
+            )
+        if not executions:
+            executions.append("running")
+        return SimpleNamespace(id=kwargs["workflow_id"])
+
+    monkeypatch.setattr(client, "start_workflow_sync", start)
+    task = SimpleNamespace(id="task-id", run_type="historical")
+    if existing_state == "closed":
+        with pytest.raises(WorkflowAlreadyStartedError):
+            client.start_eval_task_workflow_sync(task, start_once=True)
+        assert executions == ["closed"]
+    else:
+        for _ in range(2):
+            started = client.start_eval_task_workflow_sync(task, start_once=True)
+            assert started == "eval-task-task-id"
+        assert executions == ["running"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("run_type", ["historical", "continuous"])
+def test_recorded_starts_only_route_to_new_registered_types(monkeypatch, run_type):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client, get_workflows, workflows
+
+    start = Mock(return_value=SimpleNamespace(id="wf"))
+    hop = Mock()
+    monkeypatch.setattr(client, "start_workflow_sync", start)
+    monkeypatch.setattr(workflows.workflow, "continue_as_new", hop)
+    task = SimpleNamespace(id="task-id", run_type=run_type)
+    for gated in (False, True):
+        client.start_eval_task_workflow_sync(
+            task, start_once=gated, workflow_confirmed_stopped=True
+        )
+        args = start.call_args.kwargs
+        expected = f"{run_type.title()}EvalTaskWorkflow"
+        kind = args["workflow_class"]
+        assert kind.__name__ == ("Requested" if gated else "") + expected
+        assert kind in get_workflows()
+        if gated:
+            checkpoint = args["workflow_input"].drain
+            kind()._continue_as_new(checkpoint)
+            hop.assert_called_once_with(
+                checkpoint, workflow=getattr(workflows, expected).run
+            )
+        else:
+            assert not hasattr(args["workflow_input"], "drain")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_start_probe_distinguishes_success_from_other_closed_runs(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from temporalio.client import WorkflowExecutionStatus
+
+    from tfc.temporal.eval_tasks import client
+
+    server = Mock()
+    describe = AsyncMock()
+    server.get_workflow_handle.return_value.describe = describe
+    monkeypatch.setattr(
+        "tfc.temporal.common.client.get_client", AsyncMock(return_value=server)
+    )
+    for status, expected in (
+        (WorkflowExecutionStatus.COMPLETED, client.WF_COMPLETED),
+        (WorkflowExecutionStatus.FAILED, client.WF_CLOSED),
+    ):
+        describe.return_value = SimpleNamespace(status=status)
+        probe = client.describe_eval_task_workflow_async
+        assert await probe("task") == client.WF_CLOSED
+        assert await probe("task", distinguish_completion=True) == expected
+
+    describe.return_value = SimpleNamespace(
+        status=WorkflowExecutionStatus.CONTINUED_AS_NEW
+    )
+    assert await probe("task") == client.WF_CLOSED
+    assert await probe("task", distinguish_completion=True) == client.WF_PROGRESSING
+    describe.return_value = SimpleNamespace(status=None)
+    assert await probe("task") == client.WF_CLOSED
+    with pytest.raises(RuntimeError, match="unconfirmed"):
+        await probe("task", distinguish_completion=True)
+
+    for workflow_type, expected in (
+        ("RequestedHistoricalEvalTaskWorkflow", client.WF_CLOSED),
+        ("HistoricalEvalTaskWorkflow", client.WF_LEGACY_CLOSED),
+    ):
+        describe.return_value = SimpleNamespace(
+            status=WorkflowExecutionStatus.COMPLETED, workflow_type=workflow_type
+        )
+        assert await probe("task", distinguish_legacy=True) == expected
+
+
+@pytest.mark.unit
+def test_initial_start_retry_cannot_replace_an_execution(monkeypatch):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client
+
+    start = Mock()
+    describe = Mock()
+    monkeypatch.setattr(client, "start_workflow_sync", start)
+    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+
+    with pytest.raises(ValueError, match="cannot replace"):
+        client.start_eval_task_workflow_sync(
+            SimpleNamespace(id="task-id"), start_once=True, replace_existing=True
+        )
+
+    start.assert_not_called()
+    describe.assert_not_called()

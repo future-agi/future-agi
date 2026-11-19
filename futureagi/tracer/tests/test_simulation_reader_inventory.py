@@ -2080,6 +2080,9 @@ TOKEN_FILES = {
     "tracer/models/project.py": "declares the column and the manager",
     "tracer/migrations/0115_project_simulation_agent.py": "adds the column",
     "tracer/services/simulation_project.py": "creates the project, opens it for a run",
+    "tracer/services/eval_tasks/start_requests.py": (
+        "checks only that the recorded task's own project still exists and is live"
+    ),
 }
 
 _DETAIL = "tracer.services.clickhouse.v2.trace_detail_reads"

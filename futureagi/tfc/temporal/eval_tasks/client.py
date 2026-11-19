@@ -5,6 +5,8 @@ task's ``run_type`` and starts it under the per-task id ``eval-task-{id}`` so at
 most one workflow runs per task. Wired into the views at cutover (PR 9).
 """
 
+import asyncio
+
 import structlog
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
@@ -21,30 +23,45 @@ def _workflow_id(task_id: str) -> str:
     return f"eval-task-{task_id}"
 
 
-def _select(task, task_queue, *, workflow_confirmed_stopped: bool = False):
+def _select(
+    task,
+    task_queue,
+    *,
+    workflow_confirmed_stopped: bool = False,
+    gated: bool = False,
+):
     """Return (workflow_class, workflow_input) for the task's run_type."""
     from tfc.temporal.eval_tasks.types import (
         ContinuousDrainState,
         EvalTaskWorkflowInput,
+        RequestedContinuousInput,
+        RequestedHistoricalInput,
     )
     from tfc.temporal.eval_tasks.workflows import (
         ContinuousEvalTaskWorkflow,
         HistoricalEvalTaskWorkflow,
+        RequestedContinuousEvalTaskWorkflow,
+        RequestedHistoricalEvalTaskWorkflow,
     )
     from tracer.models.eval_task import RunType
 
+    generation = getattr(task, "workflow_generation", None)
+    generation = str(generation) if generation is not None else None
+    args = {
+        "task_id": str(task.id),
+        "task_queue": task_queue,
+        "workflow_generation": generation,
+        "workflow_confirmed_stopped": workflow_confirmed_stopped,
+    }
     if task.run_type == RunType.CONTINUOUS:
-        return ContinuousEvalTaskWorkflow, ContinuousDrainState(
-            task_id=str(task.id),
-            task_queue=task_queue,
-            workflow_confirmed_stopped=workflow_confirmed_stopped,
-        )
-    return HistoricalEvalTaskWorkflow, EvalTaskWorkflowInput(
-        task_id=str(task.id),
-        task_queue=task_queue,
-        workflow_confirmed_stopped=workflow_confirmed_stopped,
-        **_instant_sizing(task),
-    )
+        state = ContinuousDrainState(**args)
+        if gated:
+            return RequestedContinuousEvalTaskWorkflow, RequestedContinuousInput(state)
+        return ContinuousEvalTaskWorkflow, state
+    data = EvalTaskWorkflowInput(**args, **_instant_sizing(task))
+    if gated:
+        return RequestedHistoricalEvalTaskWorkflow, RequestedHistoricalInput(data)
+    return HistoricalEvalTaskWorkflow, data
 
 
 # Instant eval: a person is watching the answers land, so a run drains in
@@ -86,47 +103,14 @@ def _instant_sizing(task) -> dict:
     return sizing
 
 
-def start_eval_task_workflow_sync(
-    task,
-    task_queue: str = "tasks_s",
-    *,
-    replace_existing: bool = False,
-    workflow_confirmed_stopped: bool | None = None,
+def _dispatch_sync(
+    task, task_queue, conflict_policy, *, workflow_confirmed_stopped, start_once=False
 ) -> str:
-    """Start the workflow for ``task`` from synchronous Django code.
-
-    New-task/legacy callers coalesce with an already-active workflow. A rerun
-    or resume passes ``replace_existing=True`` after its PENDING state commits,
-    so a stale or closing execution cannot absorb the start and strand the row.
-
-    Every start carries into the workflow input whether a describe of the
-    task's workflow id found nothing draining, because the first thing a fresh
-    run does is reap: see ``_describe_says_nothing_is_draining``. The starter
-    takes that describe itself unless the caller passes the answer of one it
-    has just taken — the sweep's restart does, so a restart costs one describe
-    and cannot lose the answer to a second call failing. Only a coalescing
-    start may bring its own answer. A coalescing start that finds a live
-    execution is absorbed by it, input and all, so the answer only ever
-    reaches a run that started with nothing draining. A replacing start
-    terminates whatever it finds, and whether that was a live drain is exactly
-    what the starter's own describe, taken just before, has to say.
-    """
-    if workflow_confirmed_stopped is None:
-        workflow_confirmed_stopped = _describe_says_nothing_is_draining(task.id)
-    elif replace_existing:
-        raise ValueError(
-            "a replacing start must describe the workflow itself; "
-            "workflow_confirmed_stopped is for coalescing starts only"
-        )
     workflow_class, workflow_input = _select(
         task,
         task_queue,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
-    )
-    conflict_policy = (
-        WorkflowIDConflictPolicy.TERMINATE_EXISTING
-        if replace_existing
-        else WorkflowIDConflictPolicy.USE_EXISTING
+        gated=start_once,
     )
     handle = start_workflow_sync(
         workflow_class=workflow_class,
@@ -134,20 +118,119 @@ def start_eval_task_workflow_sync(
         workflow_id=_workflow_id(str(task.id)),
         task_queue=task_queue,
         cancel_existing=False,
-        # Closed executions may be followed by a new run under the per-task ID.
-        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        # Initial starts and their retries must not re-run a closed execution.
+        id_reuse_policy=(
+            WorkflowIDReusePolicy.REJECT_DUPLICATE
+            if start_once
+            else WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        ),
         id_conflict_policy=conflict_policy,
     )
-    return handle.id
+    return str(handle.id)
+
+
+def start_recovery_workflow_sync(task) -> str:
+    """Start only a new run after the sweep's CLOSED/ABSENT describe.
+
+    A successful start must have consumed this generation's input. FAIL makes
+    a racing live owner a conflict, never a success and never a termination.
+    """
+    return _dispatch_sync(
+        task, "tasks_s", WorkflowIDConflictPolicy.FAIL, workflow_confirmed_stopped=True
+    )
+
+
+def start_eval_task_workflow_sync(
+    task,
+    task_queue: str = "tasks_s",
+    *,
+    replace_existing: bool = False,
+    workflow_confirmed_stopped: bool | None = None,
+    start_once: bool = False,
+) -> str:
+    """Start the workflow for ``task`` from synchronous Django code.
+
+    New-task/legacy callers coalesce with an already-active workflow. A rerun
+    or resume passes ``replace_existing=True`` with its new generation,
+    so a stale or closing execution cannot absorb the start and strand the row.
+
+    Every start carries into the workflow input whether a describe of the
+    task's workflow id found nothing draining, because the first thing a fresh
+    run does is reap: see ``_describe_says_nothing_is_draining``. The starter
+    takes that describe itself unless the caller passes the answer of one it
+    has just taken. Only a coalescing start may bring its own answer here.
+    A coalescing start that finds a live
+    execution is absorbed by it, input and all, so the answer only ever
+    reaches a run that started with nothing draining. A replacing start
+    terminates whatever it finds, and whether that was a live drain is exactly
+    what the starter's own describe, taken just before, has to say.
+
+    ``start_once`` fences both create's initial dispatch and retries of an
+    unconfirmed start: coalesce with a live execution, but reject a closed one
+    rather than run the task again. The server enforces this even if the
+    execution closes after our describe.
+    """
+    if start_once and replace_existing:
+        raise ValueError("an initial start retry cannot replace an execution")
+    if replace_existing and workflow_confirmed_stopped is not None:
+        raise ValueError(
+            "a replacing start must describe the workflow itself; "
+            "workflow_confirmed_stopped is for coalescing starts only"
+        )
+
+    def dispatch() -> str:
+        confirmed_stopped = workflow_confirmed_stopped
+        if confirmed_stopped is None:
+            confirmed_stopped = _describe_says_nothing_is_draining(task.id)
+        return _dispatch_sync(
+            task,
+            task_queue,
+            WorkflowIDConflictPolicy.TERMINATE_EXISTING
+            if replace_existing
+            else WorkflowIDConflictPolicy.USE_EXISTING,
+            workflow_confirmed_stopped=confirmed_stopped,
+            start_once=start_once,
+        )
+
+    if replace_existing and getattr(task, "workflow_generation", None):
+        from django.db import transaction
+
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus
+
+        # Edit and Instant dispatch on commit. Never describe or terminate a
+        # newer generation (or deliver after the pending task was paused/deleted).
+        # Keep the check, describe and replacing RPC under the same writer lock.
+        with transaction.atomic(using="default"):
+            current = (
+                EvalTask.objects.using("default")
+                .select_for_update(of=("self",))
+                .filter(pk=task.pk)
+                .values_list("workflow_generation", "status")
+                .first()
+            )
+            if current != (task.workflow_generation, EvalTaskStatus.PENDING):
+                return _workflow_id(str(task.id))
+            return dispatch()
+    return dispatch()
 
 
 # What a describe of the per-task workflow id told us about the task's drain.
 WF_PROGRESSING = "progressing"
 WF_ABSENT = "absent"
 WF_CLOSED = "closed"
+WF_COMPLETED = "completed"
+# Positive type evidence for a later, explicit legacy Re-run on a task whose
+# fenced create was voided. A generic CLOSED might just mean start_fenced.
+WF_LEGACY_CLOSED = "legacy_closed"
+WF_LEGACY_PROGRESSING = "legacy_progressing"
 
 
-async def describe_eval_task_workflow_async(task_id) -> str:
+async def describe_eval_task_workflow_async(
+    task_id,
+    *,
+    distinguish_completion: bool = False,
+    distinguish_legacy: bool = False,
+) -> str:
     """Classify the task's workflow: progressing, closed, or never/no longer there.
 
     ``WF_PROGRESSING`` means a RUNNING execution owns the task and must be left
@@ -155,7 +238,9 @@ async def describe_eval_task_workflow_async(task_id) -> str:
     started) and ``WF_CLOSED`` (completed / failed / terminated / timed out)
     both mean nothing is draining the task. Any other RPC failure is the
     Temporal service being unreachable, not an answer, so it propagates: the
-    caller must skip that task rather than restart it blind.
+    caller must skip that task rather than restart it blind. The create
+    reconciler distinguishes successful completion from other closed histories
+    so it never labels a successful empty execution as a failed start.
     """
     from temporalio.client import WorkflowExecutionStatus
     from temporalio.service import RPCError, RPCStatusCode
@@ -170,16 +255,50 @@ async def describe_eval_task_workflow_async(task_id) -> str:
         if exc.status == RPCStatusCode.NOT_FOUND:
             return WF_ABSENT
         raise
+    legacy = distinguish_legacy and description.workflow_type in (
+        "HistoricalEvalTaskWorkflow",
+        "ContinuousEvalTaskWorkflow",
+    )
     if description.status == WorkflowExecutionStatus.RUNNING:
-        return WF_PROGRESSING
-    return WF_CLOSED
+        return WF_LEGACY_PROGRESSING if legacy else WF_PROGRESSING
+    if not distinguish_completion:
+        # Preserve the drain/Instant contract for every other status.
+        return WF_LEGACY_CLOSED if legacy else WF_CLOSED
+    # Only the create observer requests this stricter classification. A chain
+    # that continued is not proof of closure, and an unknown status is no answer.
+    if description.status == WorkflowExecutionStatus.CONTINUED_AS_NEW:
+        return WF_LEGACY_PROGRESSING if legacy else WF_PROGRESSING
+    if description.status == WorkflowExecutionStatus.COMPLETED:
+        return WF_COMPLETED
+    if description.status in (
+        WorkflowExecutionStatus.FAILED,
+        WorkflowExecutionStatus.CANCELED,
+        WorkflowExecutionStatus.TERMINATED,
+        WorkflowExecutionStatus.TIMED_OUT,
+    ):
+        return WF_LEGACY_CLOSED if legacy else WF_CLOSED
+    # An absent/unknown status in a successful reply isn't a closed execution.
+    raise RuntimeError("unconfirmed eval task workflow status")
 
 
-def describe_eval_task_workflow_sync(task_id) -> str:
+def describe_eval_task_workflow_sync(
+    task_id,
+    *,
+    timeout: float | None = None,
+    distinguish_completion: bool = False,
+    distinguish_legacy: bool = False,
+) -> str:
     from tfc.temporal.common.client import _run_async_in_sync_context
 
     return _run_async_in_sync_context(
-        lambda: describe_eval_task_workflow_async(task_id)
+        lambda: asyncio.wait_for(
+            describe_eval_task_workflow_async(
+                task_id,
+                distinguish_completion=distinguish_completion,
+                distinguish_legacy=distinguish_legacy,
+            ),
+            timeout,
+        )
     )
 
 
@@ -247,6 +366,14 @@ async def start_eval_task_workflow_async(
     *,
     replace_existing: bool = False,
 ) -> str:
+    if replace_existing and getattr(task, "workflow_generation", None):
+        from asgiref.sync import sync_to_async
+
+        # The generation check and Temporal start must share the writer lock,
+        # even when the replacement was requested by an async caller.
+        return await sync_to_async(start_eval_task_workflow_sync)(
+            task, task_queue, replace_existing=True
+        )
     workflow_class, workflow_input = _select(
         task,
         task_queue,
@@ -274,10 +401,12 @@ async def start_eval_task_workflow_async(
 __all__ = [
     "WF_ABSENT",
     "WF_CLOSED",
+    "WF_COMPLETED",
     "WF_PROGRESSING",
     "describe_eval_task_workflow_async",
     "describe_eval_task_workflow_sync",
     "start_eval_task_workflow_sync",
+    "start_recovery_workflow_sync",
     "start_eval_task_workflow_async",
     "signal_pause_eval_task_workflow",
 ]

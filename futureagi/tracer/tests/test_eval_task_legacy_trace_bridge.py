@@ -8,10 +8,16 @@ from tracer.utils import eval as eval_module
 from tracer.utils.eval_tasks import process_eval_task, run_for_processed_spans
 
 
+@pytest.fixture(autouse=True)
+def in_flight_work(eval_task):
+    eval_task.status = EvalTaskStatus.RUNNING
+    eval_task.save(update_fields=["status"])
+
+
 @pytest.fixture
 def trace_eval_task(eval_task):
     eval_task.row_type = RowType.TRACES
-    eval_task.status = EvalTaskStatus.PENDING
+    eval_task.status = EvalTaskStatus.RUNNING
     eval_task.save(update_fields=["row_type", "status", "updated_at"])
     return eval_task
 
@@ -38,7 +44,7 @@ def test_legacy_trace_activity_bridges_before_status_query_or_dispatch(
 
     assert started == [str(trace_eval_task.id)]
     trace_eval_task.refresh_from_db()
-    assert trace_eval_task.status == EvalTaskStatus.PENDING
+    assert trace_eval_task.status == EvalTaskStatus.RUNNING
     assert not EvalTaskLogger.objects.filter(eval_task=trace_eval_task).exists()
 
 
@@ -64,7 +70,7 @@ def test_legacy_span_activity_also_uses_the_only_supported_workflow_engine(
 
     assert started == [str(eval_task.id)]
     eval_task.refresh_from_db()
-    assert eval_task.status == EvalTaskStatus.PENDING
+    assert eval_task.status == EvalTaskStatus.RUNNING
     assert not EvalTaskLogger.objects.filter(eval_task=eval_task).exists()
 
 
@@ -84,7 +90,7 @@ def test_already_enqueued_legacy_batch_is_redirected_without_direct_dispatch(
 
     assert started == [str(eval_task.id)]
     eval_task.refresh_from_db()
-    assert eval_task.status == EvalTaskStatus.PENDING
+    assert eval_task.status == EvalTaskStatus.RUNNING
     assert not EvalTaskLogger.objects.filter(eval_task=eval_task).exists()
 
 
@@ -126,7 +132,7 @@ def test_legacy_trace_activity_fails_closed_when_workflow_start_is_unavailable(
     process_eval_task._original_func(str(trace_eval_task.id))
 
     trace_eval_task.refresh_from_db()
-    assert trace_eval_task.status == EvalTaskStatus.PENDING
+    assert trace_eval_task.status == EvalTaskStatus.RUNNING
     assert not EvalTaskLogger.objects.filter(eval_task=trace_eval_task).exists()
 
 

@@ -27,6 +27,7 @@ const summary = (overrides = {}) => ({
   error_groups_truncated: false,
   warning_groups_truncated: false,
   status: "completed",
+  failure_reason: null,
   run_type: "historical",
   row_type: "spans",
   start_time: null,
@@ -34,13 +35,24 @@ const summary = (overrides = {}) => ({
   ...overrides,
 });
 
-function renderView(taskStatus = "completed") {
+const startGroup = (sample, code) => ({
+  normalized: sample,
+  sample,
+  count: 1,
+  start_reason_code: code,
+});
+
+function renderView(taskStatus = "completed", canRerun = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <TaskLogsView evalTaskId="task-1" taskStatus={taskStatus} />
+      <TaskLogsView
+        evalTaskId="task-1"
+        taskStatus={taskStatus}
+        canRerun={canRerun}
+      />
     </QueryClientProvider>,
   );
   return { ...view, queryClient };
@@ -54,6 +66,230 @@ describe("TaskLogsView totals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  it.each([true, false])("gates the Re-run hint (%s)", async (canRerun) => {
+    const reason =
+      "The run couldn't start after an automatic retry. Your task is saved.";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        total_count: 0,
+        error_groups: [startGroup(reason, "start_failed")],
+      }),
+    );
+    renderView("failed", canRerun);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      canRerun ? `${reason} Choose Re-run to try again.` : reason,
+    );
+    if (!canRerun)
+      expect(screen.queryByText(/choose re-run/i)).not.toBeInTheDocument();
+  });
+
+  const notStarted =
+    "The run couldn't start after an automatic retry. Your task is saved.";
+  const closed =
+    "The workflow ended before evaluation began. Your task is saved.";
+  it.each([
+    ["r8-1", "running", "start_failed", notStarted, false],
+    [
+      "paused-status-does-not-erase-closure",
+      "paused",
+      "exhausted",
+      closed,
+      true,
+    ],
+    [
+      "pending-status-cannot-reopen-exhaustion",
+      "pending",
+      "exhausted",
+      closed,
+      false,
+    ],
+  ])(
+    "%s: shows the recorded reason on a fresh %s response",
+    async (_, status, code, reason, canRerun) => {
+      mocks.readEvalTaskLogs.mockResolvedValue(
+        summary({
+          status,
+          total_count: 0,
+          success_count: 0,
+          error_groups: [startGroup(reason, code)],
+        }),
+      );
+      renderView(status, canRerun);
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(reason);
+      expect(alert.textContent.includes("Choose Re-run")).toBe(canRerun);
+      expect(screen.queryByText("Error Log")).not.toBeInTheDocument();
+    },
+  );
+
+  it("withdraws old Re-run advice while refreshing and clears the superseded reason", async () => {
+    const reason = "Start delivery was unsuccessful.";
+    mocks.readEvalTaskLogs.mockResolvedValueOnce(
+      summary({
+        status: "failed",
+        total_count: 0,
+        success_count: 0,
+        error_groups: [startGroup(reason, "start_failed")],
+      }),
+    );
+    const { queryClient } = renderView("failed", true);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      `${reason} Choose Re-run`,
+    );
+    let resolveRefresh;
+    mocks.readEvalTaskLogs.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    let refreshing;
+    act(() => {
+      refreshing = queryClient.refetchQueries({
+        queryKey: ["eval-task-logs", "task-1"],
+      });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).not.toHaveTextContent(/choose re-run/i),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(reason);
+    await act(async () => {
+      resolveRefresh(
+        summary({ status: "running", total_count: 0, success_count: 0 }),
+      );
+      await refreshing;
+    });
+    // The refetch promise settles before React Query's batched observer update.
+    expect(await screen.findByText("Running...")).toBeVisible();
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not infer a start outcome from evaluator copy", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        error_groups: [
+          { normalized: notStarted, sample: notStarted, count: 1 },
+        ],
+      }),
+    );
+    renderView("failed", true);
+    expect(await screen.findByText("Error Log")).toBeVisible();
+    expect(screen.queryByText(/choose re-run/i)).not.toBeInTheDocument();
+  });
+
+  it("offers Re-run, not Resume, when the create closed before evaluation", async () => {
+    const reason =
+      "The workflow ended before evaluation began. Your task is saved.";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        total_count: 0,
+        error_groups: [startGroup(reason, "exhausted")],
+      }),
+    );
+    renderView("failed", true);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(`${reason} Choose Re-run to try again.`);
+    expect(alert).not.toHaveTextContent(/resume/i);
+  });
+
+  it("does not suggest a replacement for an unconfirmed start", async () => {
+    const reason =
+      "We couldn't confirm this task started. We'll keep checking.";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "pending",
+        total_count: 0,
+        error_groups: [startGroup(reason, "watching")],
+      }),
+    );
+    renderView("pending", true);
+    expect(await screen.findByRole("alert")).toHaveTextContent(reason);
+    expect(screen.queryByText(/re-?run|resume/i)).not.toBeInTheDocument();
+  });
+
+  const selectionReason =
+    "Evaluation task row selection exceeded its read budget. Narrow the time range and retry.";
+
+  it("shows the selection failure reason for an empty failed run", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        failure_reason: selectionReason,
+        total_count: 0,
+        target_count: 0,
+        success_count: 0,
+      }),
+    );
+    renderView();
+    expect(await screen.findByRole("alert")).toHaveTextContent(selectionReason);
+    expect(screen.getByText("Failed")).toBeVisible();
+    expect(screen.queryByText("No data")).not.toBeInTheDocument();
+    expect(screen.queryByText(/reason is unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("distinguishes a completed empty run from selection failure", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "completed",
+        failure_reason: selectionReason,
+        total_count: 0,
+        target_count: 0,
+        success_count: 0,
+      }),
+    );
+    renderView("failed");
+    expect(
+      await screen.findByText("Completed — no evaluation runs in this log"),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(selectionReason)).not.toBeInTheDocument();
+  });
+
+  it("keeps existing run diagnostics alongside a task failure reason", async () => {
+    const runError = "Unknown entry failure";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        failure_reason: selectionReason,
+        success_count: 1,
+        errors_count: 1,
+        error_groups: [{ sample: runError, normalized: runError, count: 1 }],
+      }),
+    );
+    renderView();
+    expect(await screen.findByText("Error Log")).toBeVisible();
+    expect(await statCardText("Completed runs")).toBe("1Completed runs");
+    expect(screen.getByRole("alert")).toHaveTextContent(selectionReason);
+    expect(screen.getByText("Failed")).toBeVisible();
+  });
+
+  it.each([notStarted, selectionReason])(
+    "shows distinct task diagnostics once in a single alert (%s)",
+    async (startReason) => {
+      mocks.readEvalTaskLogs.mockResolvedValue(
+        summary({
+          status: "failed",
+          failure_reason: selectionReason,
+          total_count: 0,
+          target_count: 0,
+          success_count: 0,
+          error_groups: [startGroup(startReason, "start_failed")],
+        }),
+      );
+      renderView("failed", true);
+      const alert = await screen.findByRole("alert");
+      [selectionReason, startReason].forEach((reason) => {
+        expect(alert.textContent.split(reason)).toHaveLength(2);
+      });
+      expect(alert).toHaveTextContent(/choose re-run/i);
+      expect(screen.queryByText("Error Log")).not.toBeInTheDocument();
+    },
+  );
 
   it.each(["failed", undefined])(
     "honestly explains an empty failed task using response or parent status (%s)",
@@ -100,7 +336,7 @@ describe("TaskLogsView totals", () => {
     "round8 bounds failed-empty copy to visible logs (archived prior runs=%s)",
     async (archived) => {
       // fresh_run soft-deletes completed entries. The logs API aggregates only
-      // deleted=false; it exposes neither historical execution nor failure cause.
+      // deleted=false; empty counters alone don't establish history or cause.
       const history = archived ? [{ status: "completed", deleted: true }] : [];
       const visible = history.filter((entry) => !entry.deleted);
       mocks.readEvalTaskLogs.mockResolvedValue(

@@ -10,11 +10,16 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.conf import settings
-from django.db.models import Max, Q, Subquery, TextField
+from django.db.models import Exists, Max, OuterRef, Q, Subquery, TextField
 from django.db.models.functions import Cast
 from django.utils import timezone
 
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskStartRequest,
+    EvalTaskStatus,
+    RunType,
+)
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 
 # Statuses whose undrained work the sweep may re-enter without asking anyone.
@@ -51,8 +56,8 @@ def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
     else: ``recover_task`` asks before it writes, so a progressing workflow's
     entries are neither reaped nor restarted.
 
-    ``candidates`` therefore counts every task in a sweepable status holding
-    undrained entries — which, on a working fleet, is mostly tasks that are
+    ``candidates`` counts sweepable tasks, excluding Pending rows without a
+    current create intent. On a working fleet, most undrained entries are on tasks
     draining normally. It is the sweep's *working set*, not a count of stranded
     tasks: the describe is what tells the two apart, and it happens per
     candidate in ``recover_task``. ``candidates - progressing`` is what the
@@ -79,14 +84,22 @@ def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
     soft-deleted task cannot be swept.
     """
     limit = limit if limit is not None else int(settings.EVAL_TASK_SWEEP_MAX_TASKS)
+    # A Pending task with no current create intent always fails start_refusal,
+    # even with undrained entries or a frozen cursor. Filter before both caps.
+    current_intent = EvalTaskStartRequest.objects.filter(
+        pk=OuterRef("pk"), superseded_at__isnull=True
+    )
+    sweepable_tasks = EvalTask.no_workspace_objects.filter(
+        ~Q(status=EvalTaskStatus.PENDING) | Exists(current_intent),
+        status__in=sweepable_statuses(),
+    )
     # ``eval_task_id`` is a CharField holding the task uuid's text form (every
     # writer stamps ``str(task.id)``), so the sweepable set is cast to text to
     # join against it. As a subquery rather than a materialized id list: the
     # candidate read has to be narrowed to sweepable tasks *inside* the query
     # the cap slices, which is the whole point of the ordering above.
     sweepable_task_ids = (
-        EvalTask.no_workspace_objects.filter(status__in=sweepable_statuses())
-        .annotate(id_text=Cast("id", output_field=TextField()))
+        sweepable_tasks.annotate(id_text=Cast("id", output_field=TextField()))
         .values("id_text")
         # The model's Meta ordering would otherwise ride along inside the
         # semi-join, sorting a set nothing reads in order.
@@ -111,8 +124,7 @@ def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
     )
     cursor_rows = (
         (cursor, str(task_id))
-        for task_id, cursor in EvalTask.no_workspace_objects.filter(
-            status__in=sweepable_statuses(),
+        for task_id, cursor in sweepable_tasks.filter(
             run_type=RunType.CONTINUOUS,
             continuous_cursor__lt=timezone.now() - STALE_CONTINUOUS_CURSOR,
         )
@@ -125,14 +137,8 @@ def find_stranded_tasks(*, limit: int | None = None) -> list[EvalTask]:
     )[:limit]
     if not stranded_ids:
         return []
-    # Re-read as model instances. The status filter is repeated so a task
-    # paused or deleted between the two reads is dropped rather than swept.
-    by_id = {
-        str(task.id): task
-        for task in EvalTask.no_workspace_objects.filter(
-            id__in=stranded_ids, status__in=sweepable_statuses()
-        )
-    }
+    # Recheck eligibility so a task paused or deleted between reads is dropped.
+    by_id = {str(task.id): task for task in sweepable_tasks.filter(id__in=stranded_ids)}
     return [by_id[task_id] for task_id in stranded_ids if task_id in by_id]
 
 
