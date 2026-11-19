@@ -1345,6 +1345,35 @@ class TestUserApi:
         temporal.start.assert_called_once_with(retried["id"])
         assert auth_client.get(f"{BASE}/{failed.id}/").json()["retryable"] is False
 
+    def test_a_failed_retry_offers_and_takes_no_second_retry(
+        self, auth_client, source_run, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(
+            source_run,
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = auth_client.post(
+                f"{BASE}/{failed.id}/retry/", {}, format="json"
+            ).json()
+        AgentFixRun.no_workspace_objects.filter(id=retried["id"]).update(
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+
+        read = auth_client.get(f"{BASE}/{retried['id']}/").json()
+        again = auth_client.post(f"{BASE}/{retried['id']}/retry/", {}, format="json")
+
+        assert read["retryable"] is False
+        assert (again.status_code, again.json()["error"]) == (409, "fix_not_retryable")
+        assert (
+            AgentFixRun.no_workspace_objects.filter(
+                environment=failed.environment
+            ).count()
+            == 2
+        )
+
     def test_a_candidates_patch_downloads(self, auth_client, source_run, storage):
         fix_run = _fix_run(source_run)
         candidate = AgentFixCandidate.no_workspace_objects.create(
@@ -1637,6 +1666,9 @@ class TestUserApi:
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "held_back_scenario_keys": ["held-0", "held-1"]}
+        )
 
         response, [(_, _, sent)] = self._ship(
             auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
@@ -1648,7 +1680,35 @@ class TestUserApi:
         assert sent["json"]["body"].startswith("**Limited validation.**")
         assert "Verified by" not in sent["json"]["body"]
 
-    def test_a_verified_fix_ships_as_a_normal_pull_request(
+    def test_a_fix_with_nothing_held_back_ships_as_a_draft_proven_on_the_targets_only(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        # With nothing held back the verdict has only the targets' rate.
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            verdict={"reason": "passed every tier", "target_pass_rate": [0, 0.625]}
+        )
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["draft"] is True
+        assert "proven on the targets only" in sent["json"]["title"]
+        assert sent["json"]["body"].startswith(
+            "**Proven on the targets only.** No failing cases were held back from the"
+            " epoch to verify it; it takes 4 or more."
+        )
+        assert (
+            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            in (sent["json"]["body"])
+        )
+        assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
+        assert "limited validation" not in sent["json"]["body"].lower()
+        assert "Verified" not in sent["json"]["body"]
+
+    def test_a_normal_result_ships_as_a_ready_pull_request_with_no_label(
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
@@ -1673,10 +1733,12 @@ class TestUserApi:
 
         assert response.status_code == 200, response.content
         assert sent["json"]["draft"] is False
-        assert "limited validation" not in sent["json"]["title"].lower()
-        assert "limited validation" not in sent["json"]["body"].lower()
+        # A normal result carries no strength label, and never says Verified.
+        for label in ("limited validation", "proven on the targets only", "verified"):
+            assert label not in sent["json"]["title"].lower()
+            assert label not in sent["json"]["body"].lower()
         assert (
-            "Verified by Epoch: held-back pass rate 0% → 61%, target pass rate"
+            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
             " 0% → 63%, broke none\n" in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
@@ -1702,7 +1764,7 @@ class TestUserApi:
 
         assert response.status_code == 200, response.content
         assert [sent["json"]["draft"] for _, _, sent in calls] == [True, False]
-        assert "limited validation" in calls[1][2]["json"]["title"]
+        assert "proven on the targets only" in calls[1][2]["json"]["title"]
 
     def test_a_pull_request_github_already_has_is_found_not_duplicated(
         self, auth_client, source_run, github
@@ -2333,7 +2395,7 @@ def test_a_plan_refusal_names_the_feature_epoch():
 
 
 @pytest.mark.parametrize(
-    "held_back, limited", [(0, True), (3, True), (4, False), (6, False)]
+    "held_back, limited", [(0, False), (3, True), (4, False), (6, False)]
 )
 def test_too_few_held_back_cases_limit_a_fix_s_validation(
     auth_client, environment, source_run, held_back, limited
