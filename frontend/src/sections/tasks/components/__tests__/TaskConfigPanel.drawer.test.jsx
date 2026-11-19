@@ -4,11 +4,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   render,
+  renderHook,
   screen,
   userEvent,
   waitFor,
   within,
 } from "src/utils/test-utils";
+import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
 import { getDefaultTaskValues } from "../../schema";
 import TaskConfigPanel from "../TaskConfigPanel";
 import TaskPanels from "../task_panels";
@@ -469,6 +471,34 @@ describe("historical task composite mappings", () => {
     await user.click(choose);
     return drawer;
   }
+
+  it("keeps declared-key precedence and ignores code signatures without the task opt-in", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { staleTime: Infinity } },
+    });
+    const details = [
+      {
+        owner: "user",
+        eval_type: "code",
+        required_keys: [],
+        config: { required_keys: ["hidden"], code: "def evaluate(vote): return vote" },
+      },
+      { required_keys: ["top"], config: { required_keys: ["hidden"] } },
+      { config: { required_keys: ["snake"], requiredKeys: ["hidden"] } },
+      { config: { requiredKeys: ["camel"] } },
+    ];
+    const children = details.map((detail, i) => {
+      const id = `child-${i}`;
+      client.setQueryData(["evals", "detail", id], detail);
+      return { child_id: id };
+    });
+    const { result } = renderHook(() => useCompositeChildrenUnionKeys(children), {
+      wrapper: ({ children: content }) => (
+        <QueryClientProvider client={client}>{content}</QueryClientProvider>
+      ),
+    });
+    expect(result.current).toEqual(["top", "snake", "camel"]);
+  });
 
   it("saves both weighted child inputs and restores them from task detail on edit", async () => {
     let releaseChild;
