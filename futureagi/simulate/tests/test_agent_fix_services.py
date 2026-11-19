@@ -718,7 +718,8 @@ class TestRetry:
         assert (caught.value.code, caught.value.status_code, caught.value.message) == (
             "fix_not_retryable",
             409,
-            "This epoch was already retried once. Run a new epoch from its run instead.",
+            "This epoch was retried once already."
+            " Run a new epoch from the run's Debug failures.",
         )
         assert not retried.retries.exists()
 
@@ -736,7 +737,13 @@ class TestRetry:
         fix_run = _fix_run(source_run, state=state)
 
         assert not is_retryable(fix_run)
-        assert _refusal(retry_fix_run, fix_run, user=user) == ("fix_not_retryable", 409)
+        with pytest.raises(HostedHarnessError) as caught:
+            retry_fix_run(fix_run, user=user)
+        assert (caught.value.code, caught.value.status_code, caught.value.message) == (
+            "fix_not_retryable",
+            409,
+            "Only a failed epoch can be retried.",
+        )
 
     def test_a_retry_reads_what_the_failed_fix_finished_instead_of_paying_again(
         self, source_run, user, temporal, django_capture_on_commit_callbacks
@@ -3637,6 +3644,14 @@ class TestPullRequestDescription:
                 "limited validation, known regression",
                 "Epoch (limited validation, known regression): fix 2 causes in 3 files",
                 id="both-marks",
+            ),
+            # The longer mark leaves no room for the causes.
+            pytest.param(
+                2,
+                ["agent.py", "config.yaml", "prompts/booking.md"],
+                "proven on the targets only, known regression",
+                "Epoch (proven on the targets only, known regression): change 3 files",
+                id="both-marks-targets-only",
             ),
         ],
     )

@@ -1005,11 +1005,17 @@ def held_back_cases(fix_run: AgentFixRun) -> int:
     )
 
 
+def too_few_held_back(fix_run: AgentFixRun) -> bool:
+    """Whether too few cases were held back to call this fix verified, however it scored,
+    none included: they must come from HELD_BACK_VERIFIED_MIN different cases of the run.
+    Its pull request opens as a draft."""
+    return held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
+
+
 def limited_validation(fix_run: AgentFixRun) -> bool:
-    """Whether some cases were held back, but too few to call this fix verified, however it
-    scored: they must come from HELD_BACK_VERIFIED_MIN different cases of the run. A fix
-    with none held back is proven on the targets only instead."""
-    return 0 < held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
+    """Whether some cases were held back, but too few to call this fix verified. A fix with
+    none held back is proven on the targets only instead."""
+    return held_back_cases(fix_run) > 0 and too_few_held_back(fix_run)
 
 
 # The tiers the engine's final check records for a finalist, in order.

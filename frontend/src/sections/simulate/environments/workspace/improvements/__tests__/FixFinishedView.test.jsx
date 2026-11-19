@@ -125,6 +125,24 @@ describe("FixVerdict", () => {
     expect(screen.queryByText("Held back")).toBeNull();
     expect(screen.queryByText("Overfit gap")).toBeNull();
     expect(screen.queryByText("Limited validation")).toBeNull();
+    expect(listResult(fixOf("fix-ready-no-held")).note).toMatch(
+      /^Proven on the targets only · /,
+    );
+  });
+
+  it("does not say proven on the targets only when cases were held back but have no rate", () => {
+    renderUi(
+      <FixVerdict
+        fix={fixOf("fix-ready-no-held", {
+          request: {
+            ...fixOf("fix-ready-no-held").request,
+            held_back_scenario_keys: ["a", "b", "c", "d"],
+          },
+        })}
+      />,
+    );
+    expect(screen.queryByText("Proven on the targets only")).toBeNull();
+    expect(screen.queryByText("Limited validation")).toBeNull();
   });
 
   it("lists must-pass breaks, noting what was within noise", () => {

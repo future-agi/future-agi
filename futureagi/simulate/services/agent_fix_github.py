@@ -25,6 +25,7 @@ from simulate.selectors.agent_fix import (
     eval_review,
     held_back_cases,
     overridable_regressions,
+    too_few_held_back,
     verdict_tiers,
 )
 from simulate.services.agent_fix_engine import load_object
@@ -114,9 +115,7 @@ def open_pull_request(
             title,
             body,
             token,
-            # Too few held back to verify it, none included: a draft.
-            draft=held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
-            or bool(candidate.override_reason),
+            draft=too_few_held_back(fix_run) or bool(candidate.override_reason),
         )
     AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
         pull_request_url=url
@@ -267,10 +266,11 @@ def _title(
     else:
         fixes = _plural(causes, "diagnosed cause", "diagnosed causes")
         wordings = [f"{name}: fix {fixes} in {place}" for place in places]
-        # Both marks leave room only for the shorter word.
+        # Both marks leave room only for the shorter word, or for no causes at all.
         wordings.append(
             f"{name}: fix {_plural(causes, 'cause', 'causes')} in {counted}"
         )
+        wordings.append(f"{name}: change {counted}")
     return next((one for one in wordings if len(one) <= _TITLE_CHARS), wordings[-1])
 
 
@@ -656,7 +656,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     # Not the engine's own reason: the checks below say the same in the page's words.
     rates = _evidence(verdict)
     held = held_back_cases(candidate.fix_run)
-    limited = held < HELD_BACK_VERIFIED_MIN
+    limited = too_few_held_back(candidate.fix_run)
     overridden = bool(candidate.override_reason)
     # A normal result carries no label; only a weaker one says how strong it is.
     standing = "Known regression" if overridden else _strength(held) if limited else ""

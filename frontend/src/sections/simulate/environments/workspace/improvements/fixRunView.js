@@ -725,11 +725,19 @@ export function provenOnTargetsOnly(fix) {
   return !(fix.request?.held_back_scenario_keys || []).length;
 }
 
+// How strong a result is, when too few cases were held back to verify it. A normal
+// result has no label.
+export function strengthLabel(fix) {
+  if (provenOnTargetsOnly(fix)) return "Proven on the targets only";
+  return fix.limited_validation ? "Limited validation" : null;
+}
+
 // The list's Result cell: the held-back result first, as the design shows it.
 export function listResult(fix) {
   const result = verdictResult(fix);
-  if (!result || !fix.limited_validation) return result;
-  return { ...result, note: `Limited validation · ${result.note}` };
+  const strength = strengthLabel(fix);
+  if (!result || !strength) return result;
+  return { ...result, note: `${strength} · ${result.note}` };
 }
 
 function verdictResult(fix) {

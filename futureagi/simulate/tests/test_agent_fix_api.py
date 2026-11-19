@@ -1684,6 +1684,10 @@ class TestUserApi:
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
+        # With nothing held back the verdict has only the targets' rate.
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            verdict={"reason": "passed every tier", "target_pass_rate": [0, 0.625]}
+        )
 
         response, [(_, _, sent)] = self._ship(
             auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
@@ -1696,8 +1700,13 @@ class TestUserApi:
             "**Proven on the targets only.** No failing cases were held back from the"
             " epoch to verify it; it takes 4 or more."
         )
+        assert (
+            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            in (sent["json"]["body"])
+        )
+        assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
         assert "limited validation" not in sent["json"]["body"].lower()
-        assert "Verified by" not in sent["json"]["body"]
+        assert "Verified" not in sent["json"]["body"]
 
     def test_a_normal_result_ships_as_a_ready_pull_request_with_no_label(
         self, auth_client, source_run, github

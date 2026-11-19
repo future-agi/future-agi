@@ -6,7 +6,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { fetchCandidatePatch } from "src/api/simulate-environments/fixRuns";
 
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-import { provenOnTargetsOnly } from "./fixRunView";
+import { provenOnTargetsOnly, strengthLabel } from "./fixRunView";
 import { parseDiff } from "./parseDiff";
 
 const num = { fontVariantNumeric: "tabular-nums" };
@@ -94,12 +94,8 @@ export default function ShipConfirmDialog({
 }) {
   const github = fix.agent?.kind === "github";
   // Too few held back to verify it, none included: the result says how strong it is.
-  const targetsOnly = provenOnTargetsOnly(fix);
-  const unverified = targetsOnly || fix.limited_validation;
-  const strength = targetsOnly
-    ? "Proven on the targets only"
-    : "Limited validation";
-  const held = targetsOnly ? "nothing was" : "too few cases were";
+  const strength = strengthLabel(fix);
+  const held = provenOnTargetsOnly(fix) ? "nothing was" : "too few cases were";
   const strengthNote = github
     ? `${strength}: it opens as a draft pull request, marked ${strength} in its title and body.`
     : `${strength}: ${held} held back to prove this change.`;
@@ -142,7 +138,7 @@ export default function ShipConfirmDialog({
           <Row label="Change">
             {open && <ChangeSummary fix={fix} winner={winner} />}
           </Row>
-          {unverified && (
+          {strength && (
             <Typography sx={{ typography: "s2", color: BUILD_TONES.amber }}>
               {strengthNote}
             </Typography>
