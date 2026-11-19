@@ -940,6 +940,50 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization, monke
     store.assert_called_once_with(job, b"frozen-authoring", advance_lifecycle=False)
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("supports", "freezes"),
+    [({"cases": 2, "asked": 3, "written": 2}, True), (None, False)],
+)
+def test_a_build_the_agent_supports_fewer_cases_for_freezes_with_what_it_wrote(
+    organization, monkeypatch, supports, freezes
+):
+    """Asked for 3, the agent's plan holds about 2: the build is complete at 2, and only when its yield says so."""
+    payload = _payload()
+    payload["scenario_count"] = 3
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key=f"freeze-supported-{freezes}"
+    )
+    attempt = SimpleNamespace(id="attempt-1", job_id=job.id, attempt_number=1)
+    files = {
+        "/work/authoring/contract.json": b'{"modality":"voice"}',
+        "/work/authoring/environment-bundle/environment-plan.json": b'{"runtime":{}}',
+        "/work/authoring/scenarios.json": b'[{"scenario_key":"one"},{"scenario_key":"two"}]',
+        "/work/bundle/manifest.json": b'{"schema_version":"v2"}',
+        "/tmp/authoring-rerun.tar.gz": b"frozen-authoring",
+    }
+    if supports:
+        files["/work/authoring/generic-harness/yield.json"] = json.dumps(
+            {"supports": supports}
+        ).encode()
+    sandbox = SimpleNamespace(
+        fs=SimpleNamespace(download_file=lambda path, timeout=None: files[path]),
+        process=SimpleNamespace(
+            exec=lambda command, **kwargs: SimpleNamespace(exit_code=0, result="")
+        ),
+    )
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
+    with patch(
+        "simulate.services.hosted_harness_gateway.store_authoring_archive"
+    ) as store:
+        HostedHarnessGateway._sync_authoring_progress(attempt, sandbox)
+
+    assert store.called is freezes
+
+
 def test_voice_authoring_resolves_auto_connector_with_livekit_credentials(tmp_path):
     root = tmp_path / "authoring"
     scenario = root / "scenarios" / "one"
@@ -6115,6 +6159,12 @@ def test_a_build_yield_is_served_with_the_stage_outputs_from_the_build_and_its_a
         "held": {"not_solvable": 2},
         "line": "8 of 10 runnable; held: 2 because its expected handling does not pass its checks",
         "rounds": [{"round": 1, "handed_back": 2}],
+        "supports": {
+            "cases": 10,
+            "asked": 20,
+            "written": 10,
+            "line": "this agent supports about 10 distinct scenarios; wrote 10 of 20",
+        },
     }
     body = io.BytesIO()
     with tarfile.open(fileobj=body, mode="w:gz") as archive:
@@ -6135,4 +6185,8 @@ def test_a_build_yield_is_served_with_the_stage_outputs_from_the_build_and_its_a
     ]
 
     assert served == archived
-    assert (served["summary"], served["data"]) == (build_yield["line"], build_yield)
+    assert (served["summary"], served["data"]) == (
+        "8 of 10 runnable; held: 2 because its expected handling does not pass its checks; "
+        "this agent supports about 10 distinct scenarios; wrote 10 of 20",
+        build_yield,
+    )

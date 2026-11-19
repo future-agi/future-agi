@@ -4123,7 +4123,7 @@ class HostedHarnessGateway:
         authoring_complete = (
             isinstance(bundle, dict)
             and isinstance(scenarios, list)
-            and len(scenarios) == job.scenario_count
+            and len(scenarios) == scenarios_to_build(job, build_yield)
         )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
@@ -4201,7 +4201,9 @@ class HostedHarnessGateway:
         if isinstance(environment, dict):
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            written = len(scenarios) >= (job.scenario_count or len(scenarios))
+            written = len(scenarios) >= (
+                scenarios_to_build(job, build_yield) or len(scenarios)
+            )
             world_ir = _json("/work/authoring/generic-harness/world-ir.json")
             if certified is not None:
                 stage = "validating_scenarios"
@@ -5973,6 +5975,18 @@ def call_actors_summary(listing: dict[str, Any]) -> str:
     return f"{count} actor" + ("" if count == 1 else "s")
 
 
+def scenarios_to_build(job: HostedHarnessJob, build_yield: Any = None) -> int:
+    """What a build finishes with: the count it asked for, or fewer when its yield says the agent supports only that
+    many distinct cases."""
+    asked = int(job.scenario_count or 0)
+    supports = build_yield.get("supports") if isinstance(build_yield, dict) else None
+    try:
+        cases = int((supports or {}).get("cases") or 0)
+    except (AttributeError, TypeError, ValueError):
+        cases = 0
+    return min(asked, cases) if asked and cases > 0 else asked
+
+
 def authoring_stage_outputs(
     contract: Any,
     environment: Any,
@@ -6076,13 +6090,22 @@ def authoring_stage_outputs(
             }
         )
     if isinstance(build_yield, dict):
-        # ALK's `generic-harness/yield.json`: what the build was asked for, what runs, what is held and why.
+        # ALK's `generic-harness/yield.json`: what the build was asked for, what runs, what is held and why,
+        # and how many distinct cases the agent supports when that is fewer than were asked for.
+        supports = build_yield.get("supports")
         outputs.append(
             {
                 "id": "00000000-0000-0000-0000-000000000008",
                 "kind": "yield",
                 "title": "Runnable cases",
-                "summary": str(build_yield.get("line") or ""),
+                "summary": "; ".join(
+                    str(line)
+                    for line in (
+                        build_yield.get("line"),
+                        supports.get("line") if isinstance(supports, dict) else None,
+                    )
+                    if line
+                ),
                 "data": _secret_safe(
                     {
                         field: build_yield.get(field)
@@ -6093,6 +6116,7 @@ def authoring_stage_outputs(
                             "held",
                             "line",
                             "rounds",
+                            "supports",
                         )
                     }
                 ),
