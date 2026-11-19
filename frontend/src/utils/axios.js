@@ -1630,6 +1630,8 @@ export const endpoints = {
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/",
         { agent_id: agent, version_id: version },
       ),
+    observabilityProvider: (id) =>
+      apiPath("/tracer/observability-provider/{id}/", { id }),
     verifyApiKey: apiPath("/tracer/observability-provider/verify_api_key/"),
     verifyAssistantId: apiPath(
       "/tracer/observability-provider/verify_assistant_id/",
@@ -2078,6 +2080,12 @@ export const endpoints = {
     updateApiKey: (id) => apiPath("/agentcc/api-keys/{id}/", { id: id }),
     revokeApiKey: (id) => apiPath("/agentcc/api-keys/{id}/revoke/", { id: id }),
     syncApiKeys: apiPath("/agentcc/api-keys/sync/"),
+    guardrailPolicies: apiPath("/agentcc/guardrail-policies/"),
+    guardrailPolicyDetail: (id) =>
+      apiPath("/agentcc/guardrail-policies/{id}/", { id: id }),
+    applyGuardrailPolicy: (id) =>
+      apiPath("/agentcc/guardrail-policies/{id}/apply/", { id: id }),
+    syncGuardrailPolicies: apiPath("/agentcc/guardrail-policies/sync/"),
     requestLogs: apiPath("/agentcc/request-logs/"),
     requestLogDetail: (id) =>
       apiPath("/agentcc/request-logs/{id}/", { id: id }),

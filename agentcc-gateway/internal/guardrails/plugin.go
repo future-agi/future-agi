@@ -61,6 +61,9 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
 		return pipeline.ResultContinue()
 	}
+	ctx = p.withResolvedKeyPolicies(ctx, rc)
+	preserveSelectedProjection(rc, StagePre)
+	wasComplete := rc.Inspection.IsComplete(models.InspectionInput, inspectionPayload(rc, StagePre))
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -78,14 +81,30 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	}
 
 	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePre)
+	if result := p.runOrgGuardrails(ctx, rc, StagePre); result.Action != pipeline.Continue {
+		return result
+	}
+	refreshInspection(rc, StagePre, wasComplete)
+	if err := p.AdmitSelectedRequest(ctx, rc); err != nil {
+		return pipeline.ResultError(err)
+	}
+	return pipeline.ResultContinue()
 }
 
 // ProcessResponse runs post-stage guardrails.
 func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Declaration-only dispatch refusals already recorded their selected outcome.
+	// There is no response to inspect; the post seam is invoked only to finalize
+	// observers/accounting. Re-running checks here duplicates the refusal and can
+	// run unrelated legacy rules against a request that never reached a handler.
+	if rc.EndpointType == "inspection_admission" && rc.Flags.ShortCircuited && rc.Request == nil && rc.Response == nil {
+		return pipeline.ResultContinue()
+	}
 	if rc.EndpointType == "speech_relay" || rc.EndpointType == "transcription_relay" {
 		return pipeline.ResultContinue()
 	}
+	preserveSelectedProjection(rc, StagePost)
+	wasComplete := rc.Inspection.IsComplete(models.InspectionOutput, inspectionPayload(rc, StagePost))
 	// 1. Run static engine rules.
 	if p.engine != nil && p.engine.PostCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -109,7 +128,11 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 				rc.Metadata["guardrail_name"] = tg.Name
 				rc.Metadata["guardrail_action"] = "blocked"
 			}
-			storeGuardrailResults(rc, result)
+			// A stream the streaming checker stopped already stored these
+			// checks' results; this re-run on the captured text repeats them.
+			if !rc.Flags.StreamGuardrailBlocked {
+				storeGuardrailResults(rc, result)
+			}
 			if result.Unavailable {
 				return pipeline.ResultError(models.ErrGuardrailUnavailable(p.buildBlockMessage(result)))
 			}
@@ -123,7 +146,14 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 	}
 
 	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePost)
+	if result := p.runOrgGuardrails(ctx, rc, StagePost); result.Action != pipeline.Continue {
+		return result
+	}
+	refreshInspection(rc, StagePost, wasComplete)
+	if err := p.AdmitSelectedOutput(ctx, rc); err != nil {
+		return pipeline.ResultError(err)
+	}
+	return pipeline.ResultContinue()
 }
 
 // orgCheck is one enabled org check resolved to its implementation.
@@ -154,7 +184,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	}
 
 	orgCfg := p.tenantStore.Get(orgID)
-	if orgCfg == nil || orgCfg.Guardrails == nil || len(orgCfg.Guardrails.Checks) == 0 {
+	if orgCfg == nil || orgCfg.Guardrails == nil {
 		return pipeline.ResultContinue()
 	}
 	gcfg := orgCfg.Guardrails
@@ -185,13 +215,13 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	// The blocking check goes first so block metadata and the error message
 	// name the check that actually blocked.
 	if blockIdx >= 0 {
-		p.recordOrgOutcome(result, orgID, checks[blockIdx], outcomes[blockIdx])
+		p.recordOrgOutcome(result, orgID, rc, checks[blockIdx], outcomes[blockIdx])
 	}
 	for i, c := range checks {
 		if i == blockIdx {
 			continue
 		}
-		p.recordOrgOutcome(result, orgID, c, outcomes[i])
+		p.recordOrgOutcome(result, orgID, rc, c, outcomes[i])
 	}
 
 	if blockIdx >= 0 {
@@ -340,7 +370,7 @@ func (p *GuardrailPlugin) runOrgChecksParallel(ctx context.Context, checks []org
 
 // recordOrgOutcome applies a check's threshold and action to the aggregate
 // result. Block decisions are made by the caller.
-func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string, c orgCheck, cr *CheckResult) {
+func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string, rc *models.RequestContext, c orgCheck, cr *CheckResult) {
 	threshold := c.check.ConfidenceThreshold
 	if !shouldTrigger(cr, threshold) {
 		return
@@ -350,12 +380,11 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 	if cr.FailureAdmitted {
 		action = ActionLog
 	}
+	message, outcome := guardrailOutcome(rc, cr, action)
 	result.Triggered = append(result.Triggered, TriggeredGuardrail{
-		Name:      c.name,
-		Score:     cr.Score,
-		Threshold: threshold,
-		Action:    action,
-		Message:   cr.Message,
+		Name: c.name, Score: cr.Score, Threshold: threshold, Action: action,
+		Message: message, PolicyName: "Organization guardrails", PolicyScope: "org",
+		Mode: "enforce", Outcome: outcome,
 	})
 
 	switch action {
@@ -376,9 +405,8 @@ func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string,
 // own body, Request is nil and Response holds usage only; the handler puts the
 // text in GuardrailRequest and GuardrailResponse instead.
 //
-// A guardrail that rewrites content, as PII redaction does, rewrites Request,
-// which is what the gateway sends upstream. On those routes it rewrites a
-// copy, so it finds and reports what it would remove but cannot remove it.
+// Legacy org/static checks retain their mutable working view, including on
+// native routes. Selected checks use a separately owned original-wire view.
 func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
 	input := &CheckInput{Request: rc.Request, Metadata: rc.Metadata}
 	if input.Request == nil {
@@ -397,14 +425,20 @@ func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
 // Checks the static registry first, then the dynamic cache, and finally
 // tries to create a new dynamic guardrail from the check config.
 func (p *GuardrailPlugin) getGuardrail(orgID, name string, check *tenant.GuardrailCheck) Guardrail {
+	return p.getGuardrailScoped(orgID, name, name, check)
+}
+
+// getGuardrailScoped isolates per-policy dynamic configurations while retaining
+// the original registry lookup and factory name.
+func (p *GuardrailPlugin) getGuardrailScoped(orgID, name, cacheKey string, check *tenant.GuardrailCheck) Guardrail {
 	preferDynamic := check != nil && len(check.Config) > 0 && p.dynamicFactory != nil
 
 	if preferDynamic {
-		if g := p.getCachedDynamicGuardrail(orgID, name); g != nil {
+		if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
 			return g
 		}
 
-		if g := p.createDynamicGuardrail(orgID, name, check.Config); g != nil {
+		if g := p.createDynamicGuardrailScoped(orgID, name, cacheKey, check.Config); g != nil {
 			return g
 		}
 	}
@@ -417,7 +451,7 @@ func (p *GuardrailPlugin) getGuardrail(orgID, name string, check *tenant.Guardra
 	}
 
 	// 2. Try dynamic cache (previously created external guardrails).
-	if g := p.getCachedDynamicGuardrail(orgID, name); g != nil {
+	if g := p.getCachedDynamicGuardrail(orgID, cacheKey); g != nil {
 		return g
 	}
 
@@ -426,7 +460,7 @@ func (p *GuardrailPlugin) getGuardrail(orgID, name string, check *tenant.Guardra
 		return nil
 	}
 
-	g := p.createDynamicGuardrail(orgID, name, check.Config)
+	g := p.createDynamicGuardrailScoped(orgID, name, cacheKey, check.Config)
 	if g == nil {
 		return nil
 	}
@@ -448,6 +482,10 @@ func (p *GuardrailPlugin) getCachedDynamicGuardrail(orgID, name string) Guardrai
 }
 
 func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[string]interface{}) Guardrail {
+	return p.createDynamicGuardrailScoped(orgID, name, name, cfg)
+}
+
+func (p *GuardrailPlugin) createDynamicGuardrailScoped(orgID, name, cacheKey string, cfg map[string]interface{}) Guardrail {
 	if cfg == nil || p.dynamicFactory == nil {
 		return nil
 	}
@@ -462,7 +500,7 @@ func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[str
 	if _, ok := p.dynamicCache[orgID]; !ok {
 		p.dynamicCache[orgID] = make(map[string]Guardrail)
 	}
-	p.dynamicCache[orgID][name] = g
+	p.dynamicCache[orgID][cacheKey] = g
 	p.dynamicMu.Unlock()
 
 	slog.Info("created dynamic guardrail from org config",
@@ -665,7 +703,9 @@ func storeGuardrailResults(rc *models.RequestContext, result *PipelineResult) {
 			Score:     tg.Score,
 			Threshold: tg.Threshold,
 			Action:    actionString(tg.Action),
-			Message:   tg.Message,
+			Message:   tg.Message, PolicyID: tg.PolicyID, PolicyName: tg.PolicyName,
+			PolicyScope: tg.PolicyScope, Mode: tg.Mode, Outcome: tg.Outcome,
+			WouldAction: tg.WouldAction,
 		})
 	}
 }

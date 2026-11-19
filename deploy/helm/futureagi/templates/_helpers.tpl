@@ -414,7 +414,7 @@ app and api fall back to the ingress hosts, otlp to the API host. */}}
 {{- end -}}
 {{- end -}}
 
-{{/* FI_COLLECTOR_PUBLIC_URL: the OTLP/HTTP base URL SDKs get as FI_BASE_URL.
+{{/* FI_COLLECTOR_PUBLIC_URL: the OTLP/HTTP base URL SDKs get as FI_TRACES_URL.
 Without a public one, the port-forward to localhost:4318 the notes print. */}}
 {{- define "futureagi.url.collectorPublic" -}}
 {{- include "futureagi.url.otlp" . | default "http://localhost:4318" -}}

@@ -438,6 +438,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "failed_spans",
             "progress",
         ]
+        read_only_fields = ["start_time", "end_time"]
 
     def create(self, validated_data):
         # Lifecycle timestamps are server-owned. A new continuous task's
