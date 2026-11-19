@@ -217,6 +217,7 @@ const FAILED = [
       "orders.customer_id refers to customers.id, which isn't attached. Every row needs it.",
     source_id: "orders-q3-sample.csv",
     scenarios: [],
+    ui: { needs: "customers" },
   },
 ];
 
@@ -258,9 +259,14 @@ export const withSampleDecisions = (review, decisions) =>
     review.failed,
   );
 
-// Changes and failed changes from added files, replacing any with the same id.
-// With no review loaded yet, they start an empty one.
-export const withSampleEdits = (review, changes = [], failed = []) => {
+// Changes and failed changes from added files, replacing any with the same id;
+// `cleared` failed ids leave. With no review loaded yet, they join the sample.
+export const withSampleEdits = (
+  review,
+  changes = [],
+  failed = [],
+  cleared = [],
+) => {
   const upsert = (list, items) => {
     const byId = new Map(items.map((item) => [item.id, item]));
     const known = new Set(list.map((one) => one.id));
@@ -269,10 +275,12 @@ export const withSampleEdits = (review, changes = [], failed = []) => {
       ...items.filter((item) => !known.has(item.id)),
     ];
   };
-  const base = review || reviewOf([], []);
+  const base = review || sampleDraftReview();
   return reviewOf(
     upsert(base.changes, changes),
-    upsert(base.failed || [], failed),
+    upsert(base.failed || [], failed).filter(
+      (one) => !cleared.includes(one.id),
+    ),
   );
 };
 

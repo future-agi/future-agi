@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
 import {
   Box,
@@ -10,9 +9,9 @@ import {
   Typography,
 } from "@mui/material";
 import {
-  sourceSummaryKey,
   useAcceptSource,
   useEnvironmentSources,
+  useSetPersonalData,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
@@ -130,10 +129,12 @@ export function Proposals({
 }) {
   const drawer = layout === "drawer";
   const inset = drawer ? 2.5 : 1.5;
-  const queryClient = useQueryClient();
   const { data: summary } = useEnvironmentSources(envId);
   const { data: capabilities } = useSourceCapabilities(envId);
   const accept = useAcceptSource(envId);
+  const setPersonalData = useSetPersonalData(envId);
+  // Batches already accepted, so a retry after a failure part way sends only the rest.
+  const done = useRef(new Set());
   // Unchecked rather than checked, so a file read later arrives checked.
   const [unchecked, setUnchecked] = useState(() => new Set());
   const [edits, setEdits] = useState({});
@@ -141,9 +142,10 @@ export function Proposals({
   const [leftOut, setLeftOut] = useState(() => new Set());
   const [supplyAnchor, setSupplyAnchor] = useState(null);
 
-  const liveSources = summary?.sources || [];
-  const live = new Map(liveSources.map((source) => [source.source_id, source]));
-  const progress = readProgress(prepared, liveSources);
+  const live = new Map(
+    (summary?.sources || []).map((source) => [source.source_id, source]),
+  );
+  const progress = readProgress(prepared, summary?.sources);
   const items = progress.items
     .filter((item) => !leftOut.has(item.id))
     .map((item) => {
@@ -176,31 +178,20 @@ export function Proposals({
       return next;
     });
 
-  const choose = (sourceId, choice) =>
-    queryClient.setQueryData(sourceSummaryKey(envId), (current) =>
-      current
-        ? {
-            ...current,
-            sources: current.sources.map((source) =>
-              source.source_id === sourceId
-                ? {
-                    ...source,
-                    // The same column map the file's Personal data tab writes.
-                    ui: {
-                      ...source.ui,
-                      personal_choice: choice,
-                      privacy: Object.fromEntries(
-                        applyFileChoice(columnsOf(source), choice).map(
-                          (column) => [column.name, column.mode],
-                        ),
-                      ),
-                    },
-                  }
-                : source,
-            ),
-          }
-        : current,
-    );
+  const choose = (sourceId, choice) => {
+    const source = live.get(sourceId);
+    if (!source) return;
+    setPersonalData(sourceId, {
+      choice,
+      // The same column map the file's Personal data tab writes.
+      privacy: Object.fromEntries(
+        applyFileChoice(columnsOf(source), choice).map((column) => [
+          column.name,
+          column.mode,
+        ]),
+      ),
+    });
+  };
 
   const setLeft = (id, value) =>
     setLeftOut((current) => {
@@ -229,36 +220,55 @@ export function Proposals({
     });
   };
 
-  // One accept per prepare the review covers, in order.
+  // One accept per prepare the review covers, in order, each against the
+  // draft the one before it left.
   const add = async () => {
     const choices = Object.fromEntries(
       personal.map((item) => [item.sourceId, item.choice]),
     );
+    const privacy = Object.fromEntries(
+      personal
+        .filter((item) => item.choice === "custom")
+        .map((item) => [item.sourceId, live.get(item.sourceId)?.ui?.privacy]),
+    );
+    const batches = batchesOf(prepared);
+    let draft = capabilities?.draft ?? batches[0].capabilities.draft;
     try {
       // eslint-disable-next-line no-restricted-syntax -- sequential on purpose: accepts share one draft
-      for (const batch of batchesOf(prepared)) {
+      for (const batch of batches.filter(
+        (one) => !done.current.has(one.import_ref),
+      )) {
         const own = new Set(batch.ui.items.map((item) => item.id));
         const files = new Set(batch.ui.sources.map((one) => one.source_id));
         const mine = (list) => list.filter((item) => own.has(item.id));
+        const ofFiles = (map) =>
+          Object.fromEntries(
+            Object.entries(map).filter(([id]) => files.has(id)),
+          );
         // eslint-disable-next-line no-await-in-loop
-        await accept.mutateAsync({
+        const result = await accept.mutateAsync({
           import_ref: batch.import_ref,
           expected_environment_version_id:
             batch.capabilities.environment_version_id,
-          expected_draft: batch.capabilities.draft,
+          expected_draft: draft,
           expected_draft_digest: batch.draft_digest,
           review: buildSourceReview(
             batch.draft,
             reviewDecisions(
               batch.draft,
               mine(accepted),
-              Object.fromEntries(
-                Object.entries(choices).filter(([id]) => files.has(id)),
-              ),
+              ofFiles(choices),
+              privacy,
             ),
           ),
-          ui: { accepted: mine(accepted), failed: mine(failed) },
+          ui: {
+            accepted: mine(accepted),
+            failed: mine(failed),
+            privacy: ofFiles(privacy),
+          },
         });
+        done.current.add(batch.import_ref);
+        draft = result.draft ?? draft;
       }
     } catch {
       enqueueSnackbar(COPY.addFailed, { variant: "error" });

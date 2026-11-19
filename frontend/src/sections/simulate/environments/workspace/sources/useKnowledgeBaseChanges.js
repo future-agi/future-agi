@@ -1,12 +1,11 @@
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   KB_CHANGE_AFTER_MS,
   kbChangesOf,
 } from "src/api/simulate-environments/_fixtures/sources";
 import {
-  sourceSummaryKey,
   useEnvironmentSources,
+  useUpdateSource,
 } from "src/api/simulate-environments/sources";
 import { isSaved } from "./sources.constants";
 
@@ -16,8 +15,8 @@ import { isSaved } from "./sources.constants";
  * saved, once per copy (`ui.kb_changed`), so a fresh copy never shows it.
  */
 export default function useKnowledgeBaseChanges(envId) {
-  const queryClient = useQueryClient();
   const { data: summary } = useEnvironmentSources(envId);
+  const updateSource = useUpdateSource(envId);
   const due = (summary?.sources || [])
     .filter(
       (source) =>
@@ -31,30 +30,16 @@ export default function useKnowledgeBaseChanges(envId) {
 
   useEffect(() => {
     if (!due) return undefined;
-    const ids = due.split(",");
     const timer = setTimeout(
       () =>
-        queryClient.setQueryData(sourceSummaryKey(envId), (current) =>
-          current
-            ? {
-                ...current,
-                sources: current.sources.map((one) =>
-                  ids.includes(one.source_id)
-                    ? {
-                        ...one,
-                        ui: {
-                          ...one.ui,
-                          changed_upstream: true,
-                          kb_changed: true,
-                        },
-                      }
-                    : one,
-                ),
-              }
-            : current,
+        due.split(",").forEach((id) =>
+          updateSource(id, (one) => ({
+            ...one,
+            ui: { ...one.ui, changed_upstream: true, kb_changed: true },
+          })),
         ),
       KB_CHANGE_AFTER_MS,
     );
     return () => clearTimeout(timer);
-  }, [due, envId, queryClient]);
+  }, [due, updateSource]);
 }

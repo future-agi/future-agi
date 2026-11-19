@@ -84,7 +84,6 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
     );
 
   const nextLabel = nextVersion(versions?.defaults?.environment);
-  const live = summary?.sources || [];
 
   const turnsOf = (entry) => {
     const { id, prepared } = entry;
@@ -103,7 +102,7 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
       },
     ];
     // Added once every file is read, so the chat follows it down.
-    if (prepared && !readProgress(prepared, live).reading.length) {
+    if (prepared && !readProgress(prepared, summary?.sources).reading.length) {
       if (!prepared.ui.items.length) {
         steps.push({
           id: `${id}-none`,

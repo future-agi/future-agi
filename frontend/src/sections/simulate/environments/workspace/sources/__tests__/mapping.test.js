@@ -42,4 +42,19 @@ describe("approveIdMapping", () => {
     expect(next.ui.parsed.accepted).toBe(498);
     expect(next.ui.privacy.buyer_id).toBe("replace");
   });
+
+  it("sets the file's personal-data choice to custom once replacing IDs sets a column apart", () => {
+    const q3 = read("orders-q3-sample.csv");
+    const kept = {
+      ...q3,
+      ui: { ...q3.ui, personal_choice: "keep", privacy: { email: "retain" } },
+    };
+    const replace = (source) =>
+      approveIdMapping(source, "buyer_id", { replace: true }).ui
+        .personal_choice;
+
+    expect(replace(kept)).toBe("custom");
+    // Not chosen yet stays unchosen, so the file still asks.
+    expect(replace(q3)).toBeFalsy();
+  });
 });
