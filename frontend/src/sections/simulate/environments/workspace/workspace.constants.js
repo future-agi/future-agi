@@ -122,6 +122,16 @@ export const WORKSPACE_COPY = {
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
+  // The env-version pin: lists every version of the world, and makes an
+  // earlier one the default.
+  pin: {
+    prefix: "env",
+    heading: "Environment versions",
+    subtitle:
+      "Runs use the default version. You can roll back to an earlier one.",
+    default: "default",
+    rollBack: (label) => `Roll back to ${label}`,
+  },
   // Banner shown while the derivation is still in flight — the panels below are
   // loading and this explains why.
   building: {

@@ -17,13 +17,14 @@ import {
 } from "../myEnvironments.constants";
 import CancelBuildControl from "../buildEnvironment/building/CancelBuildControl";
 import LivePill from "./LivePill";
+import EnvVersionPin from "./EnvVersionPin";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
 // The environment workspace header: back to the list, the
-// name + status badge, the primary "Run simulation" action, and
+// name + status badge + env-version pin, the primary "Run simulation" action, and
 // (for a regular, unlocked env) the Fork overflow. Run simulation is the
 // product's own navigation — a built env opens its execution detail, otherwise
 // the product's run entry. `locked` = template-seeded until forked: the overflow
@@ -121,6 +122,8 @@ export default function WorkspaceHeader({
               </IconButton>
             </CustomTooltip>
           )}
+          {/* The default environment version; hidden while versioning is off. */}
+          <EnvVersionPin env={env} />
         </Stack>
         <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
           {env.tagline}
