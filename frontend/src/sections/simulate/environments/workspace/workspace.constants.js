@@ -271,6 +271,12 @@ export const VERSIONS_COPY = {
     name: "Name",
     useCase: "Use case",
   },
+  // Each History row's actions menu.
+  menu: {
+    label: "Version actions",
+    seeChanges: "See what changed",
+    hideChanges: "Hide what changed",
+  },
   // The History tab: every version as one timeline, newest first.
   history: {
     days: { today: "Today", yesterday: "Yesterday", earlier: "Earlier" },

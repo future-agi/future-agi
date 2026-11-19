@@ -1,362 +1,22 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-  Box,
-  Button,
-  CircularProgress,
-  List,
-  ListItem,
-  ListItemButton,
-  MenuItem,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Box, CircularProgress, Stack, Typography } from "@mui/material";
 import {
   VERSION_PIECES,
-  canMakeDefault,
   isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
-  useSuiteMembers,
-  useVersionDiff,
 } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY } from "../workspace.constants";
-import { refusalText } from "../evals/refusalText";
-import { ROW_HEIGHT } from "src/theme/sizes";
-import { PreflightReport } from "../agents/PreflightStatus";
-import { named } from "../agents/agentVersionStatus";
-import MakeDefaultConfirm from "./MakeDefaultConfirm";
-import VersionDiff from "./VersionDiff";
-import VersionHeader from "./VersionHeader";
-import { isEmptyDiff } from "./isEmptyDiff";
+import HistoryEntry from "./HistoryEntry";
+import { timelineEntries } from "./historyTimeline";
 
-const MONO = "ui-monospace, Menlo, monospace";
+// No row open, as opposed to null: nothing picked yet, so the default shows.
+const CLOSED = { closed: true };
 
-function VersionRow({ version, selected, onSelect }) {
-  return (
-    <ListItem disablePadding>
-      <ListItemButton
-        selected={selected}
-        onClick={onSelect}
-        aria-current={selected ? "true" : undefined}
-        sx={{
-          borderRadius: "4px",
-          alignItems: "flex-start",
-          display: "block",
-          py: 1,
-        }}
-      >
-        <VersionHeader version={version} />
-      </ListItemButton>
-    </ListItem>
-  );
-}
-VersionRow.propTypes = {
-  version: PropTypes.object.isRequired,
-  selected: PropTypes.bool,
-  onSelect: PropTypes.func.isRequired,
-};
-
-function VersionColumn({ piece, versions, selectedId, onSelect }) {
-  const headingId = `versions-${piece}-heading`;
-  return (
-    <Box
-      data-testid={`versions-${piece}`}
-      sx={{
-        flex: 1,
-        minWidth: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        p: 1,
-      }}
-    >
-      <Stack
-        direction="row"
-        alignItems="baseline"
-        spacing={1}
-        sx={{ px: 1, pb: 0.5 }}
-      >
-        <Typography
-          id={headingId}
-          sx={{ typography: "s1", fontWeight: 500 }}
-        >
-          {VERSIONS_COPY.pieces[piece]}
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {versions.length}
-        </Typography>
-      </Stack>
-      {versions.length ? (
-        <List dense disablePadding aria-labelledby={headingId}>
-          {versions.map((version) => (
-            <VersionRow
-              key={version.id}
-              version={version}
-              selected={version.id === selectedId}
-              onSelect={() => onSelect(piece, version.id)}
-            />
-          ))}
-        </List>
-      ) : (
-        <Typography
-          sx={{ typography: "s3", color: "text.subtitle", px: 1, py: 1 }}
-        >
-          {VERSIONS_COPY.noneInPiece}
-        </Typography>
-      )}
-    </Box>
-  );
-}
-VersionColumn.propTypes = {
-  piece: PropTypes.oneOf(VERSION_PIECES).isRequired,
-  versions: PropTypes.arrayOf(PropTypes.object).isRequired,
-  selectedId: PropTypes.string,
-  onSelect: PropTypes.func.isRequired,
-};
-
-function SuiteMembers({ envId, version }) {
-  const { data, isLoading } = useSuiteMembers(envId, version.id);
-  if (isLoading) return <CircularProgress size={18} />;
-  // A failed refresh keeps the members it already has.
-  if (!data) {
-    return (
-      <Typography sx={{ typography: "s2", color: "status.danger.fg" }}>
-        {VERSIONS_COPY.detail.membersError}
-      </Typography>
-    );
-  }
-  const members = data;
-  const { members: COLS } = VERSIONS_COPY;
-  return (
-    <Stack spacing={1}>
-      <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-        {VERSIONS_COPY.detail.scenarios(named(version), members.length)}
-      </Typography>
-      <Box sx={{ overflowX: "auto" }}>
-        <Table
-          size="small"
-          sx={{ "& td": { height: ROW_HEIGHT.default } }}
-          aria-label={VERSIONS_COPY.detail.scenarios(
-            named(version),
-            members.length,
-          )}
-        >
-          <TableHead>
-            <TableRow>
-              <TableCell>{COLS.key}</TableCell>
-              <TableCell>{COLS.name}</TableCell>
-              <TableCell>{COLS.useCase}</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {members.map((member) => (
-              <TableRow key={member.scenario_key}>
-                <TableCell sx={{ fontFamily: MONO }}>
-                  {member.scenario_key}
-                </TableCell>
-                <TableCell>{member.name || "—"}</TableCell>
-                <TableCell>{member.use_case || "—"}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Box>
-    </Stack>
-  );
-}
-SuiteMembers.propTypes = {
-  envId: PropTypes.string.isRequired,
-  version: PropTypes.object.isRequired,
-};
-
-// Siblings come newest first, so the oldest version of a piece is the last one.
-// A version with a parent is never first: its parent may simply be deleted, and
-// its stored diff still says what changed. Agent versions from before
-// versioning carry no parent, so for them position alone decides.
-const isFirst = (version, siblings) =>
-  !version.parentId &&
-  siblings.length > 0 &&
-  siblings[siblings.length - 1].id === version.id;
-
-function MakeDefault({ move, piece, version, defaultId }) {
-  const [confirming, setConfirming] = useState(false);
-  const { makeDefault } = VERSIONS_COPY;
-  const confirm = () =>
-    move.mutate(
-      { piece, versionId: version.id, expectedDefaultId: defaultId },
-      { onSettled: () => setConfirming(false) },
-    );
-  return (
-    <>
-      <Button
-        size="small"
-        variant="outlined"
-        color="inherit"
-        disabled={move.isPending}
-        onClick={() => setConfirming(true)}
-        sx={{ flexShrink: 0 }}
-      >
-        {makeDefault.action}
-      </Button>
-      <MakeDefaultConfirm
-        piece={piece}
-        version={confirming ? version : null}
-        pending={move.isPending}
-        onConfirm={confirm}
-        onClose={() => setConfirming(false)}
-      />
-    </>
-  );
-}
-MakeDefault.propTypes = {
-  move: PropTypes.object.isRequired,
-  piece: PropTypes.oneOf(VERSION_PIECES).isRequired,
-  version: PropTypes.object.isRequired,
-  defaultId: PropTypes.string,
-};
-
-function VersionDetail({ envId, move, piece, version, siblings, defaultId }) {
-  const [picked, setAgainst] = useState("");
-  const { detail } = VERSIONS_COPY;
-  const others = siblings.filter((one) => one.id !== version.id);
-  // A compared version that a refresh removed falls back to the previous one.
-  const against = others.some((one) => one.id === picked) ? picked : "";
-  const first = !against && isFirst(version, siblings);
-  const {
-    data,
-    isLoading,
-    isError: refreshFailed,
-  } = useVersionDiff(envId, piece, version.id, against || undefined, {
-    enabled: !first,
-  });
-  // A failed refresh keeps the diff it already has.
-  const isError = refreshFailed && !data;
-  const noRecord = !first && !isLoading && !isError && data?.diff == null;
-  const empty =
-    !first &&
-    !noRecord &&
-    !isLoading &&
-    !isError &&
-    isEmptyDiff(piece, data?.diff);
-
-  const note = (text) => (
-    <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-      {text}
-    </Typography>
-  );
-
-  const body = () => {
-    if (first) return note(detail.first);
-    if (noRecord && against) return note(detail.notComparable);
-    if (isLoading) return <CircularProgress size={18} />;
-    if (isError) {
-      return (
-        <Typography sx={{ typography: "s2", color: "status.danger.fg" }}>
-          {detail.loadError}
-        </Typography>
-      );
-    }
-    if (noRecord) return note(detail.noRecord);
-    if (empty) return note(detail.noChange);
-    return <VersionDiff piece={piece} diff={data.diff} />;
-  };
-
-  return (
-    <Stack
-      spacing={2}
-      data-testid="version-detail"
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        p: 2,
-      }}
-    >
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        spacing={2}
-        alignItems={{ sm: "center" }}
-        flexWrap="wrap"
-        useFlexGap
-      >
-        <Typography
-          sx={{ typography: "s1", fontWeight: 500, flex: 1 }}
-        >
-          {detail.changes(`${VERSIONS_COPY.pieces[piece]} ${named(version)}`)}
-        </Typography>
-        {others.length > 0 && (
-          <TextField
-            select
-            size="small"
-            label={detail.compareWith}
-            value={against}
-            onChange={(e) => setAgainst(e.target.value)}
-            sx={{ minWidth: 200 }}
-            // The empty value is "its previous version"; show it, not a blank box.
-            SelectProps={{ displayEmpty: true }}
-            InputLabelProps={{ shrink: true }}
-            inputProps={{ "data-testid": "compare-with" }}
-          >
-            <MenuItem value="">{detail.previous}</MenuItem>
-            {others.map((one) => (
-              <MenuItem key={one.id} value={one.id}>
-                {one.label || VERSIONS_COPY.unlabelled}
-              </MenuItem>
-            ))}
-          </TextField>
-        )}
-        {canMakeDefault(piece, version) && (
-          <MakeDefault
-            move={move}
-            piece={piece}
-            version={version}
-            defaultId={defaultId}
-          />
-        )}
-      </Stack>
-      {move.isError && (
-        <Typography role="alert" sx={{ typography: "s2", color: "status.danger.fg" }}>
-          {refusalText(move.error, VERSIONS_COPY.makeDefault.error)}
-        </Typography>
-      )}
-      {data?.summary && !first && !empty && (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {data.summary}
-        </Typography>
-      )}
-      {first && version.summary && (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {version.summary}
-        </Typography>
-      )}
-      {piece === "agent" && (
-        <PreflightReport report={version.preflightReport} />
-      )}
-      {body()}
-      {piece === "suite" && <SuiteMembers envId={envId} version={version} />}
-    </Stack>
-  );
-}
-VersionDetail.propTypes = {
-  envId: PropTypes.string.isRequired,
-  move: PropTypes.object.isRequired,
-  piece: PropTypes.oneOf(VERSION_PIECES).isRequired,
-  version: PropTypes.object.isRequired,
-  siblings: PropTypes.arrayOf(PropTypes.object).isRequired,
-  defaultId: PropTypes.string,
-};
-
-// The Versions tab: the agent, environment and scenario versions side by side,
-// and, for the version picked, what changed in it and a way to make it the
-// default.
+// The History tab: every agent, environment and scenario version as one
+// timeline, newest first. A row opens what changed in that version.
 export default function VersionsPanel({ env }) {
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, isLoading, error } = useEnvironmentVersions(env?.id, {
@@ -369,12 +29,12 @@ export default function VersionsPanel({ env }) {
   useEffect(() => {
     if (linkedId) setPicked({ piece: linkedPiece, id: linkedId });
   }, [linkedPiece, linkedId]);
-  // Held here so a refusal outlives the refresh that re-renders the detail.
+  // Held here so a refusal outlives the refresh that re-renders the row.
   const move = useMoveDefault(env?.id);
 
-  // Until the reader picks one, show the default environment version.
+  // Until the reader picks one, open the default environment version.
   const selection = useMemo(() => {
-    if (!data) return null;
+    if (!data || picked === CLOSED) return null;
     if (picked && data[picked.piece]?.some((v) => v.id === picked.id))
       return picked;
     const piece = data.defaults.environment
@@ -388,6 +48,7 @@ export default function VersionsPanel({ env }) {
       data[piece][0];
     return { piece, id: version.id };
   }, [data, picked]);
+  const entries = useMemo(() => timelineEntries(data), [data]);
 
   if (!enabled) return null;
 
@@ -441,47 +102,42 @@ export default function VersionsPanel({ env }) {
     );
   }
 
-  const selected =
-    selection && data[selection.piece].find((v) => v.id === selection.id);
+  const openKey = selection ? `${selection.piece}:${selection.id}` : null;
+  const pick = (entry, open) => {
+    move.reset();
+    setPicked(open ? { piece: entry.piece, id: entry.version.id } : CLOSED);
+    // So the next link to a version counts as a change.
+    if (params.has("version")) {
+      const q = new URLSearchParams(params);
+      q.delete("version");
+      setParams(q, { replace: true });
+    }
+  };
 
   return frame(
-    <>
-      <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-        {VERSION_PIECES.map((piece) => (
-          <VersionColumn
-            key={piece}
-            piece={piece}
-            versions={data[piece]}
-            selectedId={selection?.piece === piece ? selection.id : null}
-            onSelect={(p, id) => {
-              move.reset();
-              setPicked({ piece: p, id });
-              // So the next link to a version counts as a change.
-              if (params.has("version")) {
-                const q = new URLSearchParams(params);
-                q.delete("version");
-                setParams(q, { replace: true });
-              }
-            }}
-          />
-        ))}
-      </Stack>
-      {selected ? (
-        <VersionDetail
-          key={`${selection.piece}-${selected.id}`}
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
+        "& > :first-of-type": { borderTop: 0 },
+      }}
+    >
+      {entries.map((entry) => (
+        <HistoryEntry
+          key={entry.key}
+          entry={entry}
           envId={env.id}
           move={move}
-          piece={selection.piece}
-          version={selected}
-          siblings={data[selection.piece]}
-          defaultId={data.defaults[selection.piece]?.id ?? null}
+          siblings={data[entry.piece]}
+          defaultId={data.defaults[entry.piece]?.id ?? null}
+          expanded={entry.key === openKey}
+          onToggle={() => pick(entry, entry.key !== openKey)}
+          onOpen={() => entry.key !== openKey && pick(entry, true)}
         />
-      ) : (
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-          {VERSIONS_COPY.detail.pick}
-        </Typography>
-      )}
-    </>,
+      ))}
+    </Box>,
   );
 }
 

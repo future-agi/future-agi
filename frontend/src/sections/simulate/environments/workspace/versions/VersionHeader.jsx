@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
-import { VersionBadge } from "../EnvVersionPin";
+import { VersionBadge } from "./VersionBadge";
 import { VERSIONS_COPY } from "../workspace.constants";
 import { PreflightBadge } from "../agents/PreflightStatus";
 import { named } from "../agents/agentVersionStatus";
@@ -42,9 +42,7 @@ export default function VersionHeader({ version }) {
         >
           {named(version)}
         </Typography>
-        {version.isDefault && (
-          <VersionBadge label={VERSIONS_COPY.default} />
-        )}
+        {version.isDefault && <VersionBadge label={VERSIONS_COPY.default} />}
         {status && <VersionBadge label={status} />}
         <PreflightBadge status={version.preflightStatus} />
       </Stack>

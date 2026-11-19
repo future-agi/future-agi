@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { VersionBadge } from "../EnvVersionPin";
+import { VersionBadge } from "../versions/VersionBadge";
 import { agentDiffersTag } from "../workspace.constants";
 
 // Marks a run whose agent is not the one its environment version was built with.

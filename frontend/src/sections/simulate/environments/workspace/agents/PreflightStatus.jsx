@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
-import { VersionBadge } from "../EnvVersionPin";
+import { VersionBadge } from "../versions/VersionBadge";
 import { AGENT_VERSIONS_COPY as COPY } from "../workspace.constants";
 
 const PREFLIGHT_ROLES = {
@@ -33,7 +33,8 @@ export function PreflightReport({ report }) {
           key={check.id || check.label}
           sx={{
             typography: "s3",
-            color: check.status === "failed" ? "status.danger.fg" : "text.secondary",
+            color:
+              check.status === "failed" ? "status.danger.fg" : "text.secondary",
           }}
         >
           {`${check.label}: ${COPY.checks[check.status] || check.status}`}
