@@ -82,7 +82,7 @@ def _limit_codes():
         "TOO_DEEP_AST": "The query is too complex. Simplify the query.",
         "TOO_BIG_AST": "The query is too complex. Simplify the query.",
     }
-    codes = {}
+    codes: dict[int, str] = {}
     for name, message in messages.items():
         code = getattr(ErrorCodes, name, None)
         if isinstance(code, int) and code not in USER_ERRORS:
@@ -110,7 +110,7 @@ def server_exception(exc):
     """Walk ``__cause__``/``__context__`` safely to a ``ServerException``."""
     from clickhouse_driver.errors import ServerException
 
-    seen = set()
+    seen: set[int] = set()
     current = exc
     while current is not None and id(current) not in seen and len(seen) < MAX_CHAIN:
         seen.add(id(current))
