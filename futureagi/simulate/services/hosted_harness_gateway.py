@@ -5184,22 +5184,26 @@ def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str
     return resolved
 
 
+# The provider key each inspected target needs. Connect-only targets of these connectors are
+# inspected before authoring; keep in step with ALK's PROVIDER_MANAGED_CONNECTORS, whose builder
+# waits for the provider profile cache (held to a hand-kept copy of that list in
+# test_hosted_harness_gateway.py; a connector ALK adds is not caught there).
+_INSPECTION_KEYS = {
+    "vapi": "VAPI_API_KEY",
+    "retell": "RETELL_API_KEY",
+    "retell_chat": "RETELL_API_KEY",
+}
+
+
 def _provider_import_authoring_material(
     job: HostedHarnessJob, payload: dict[str, Any]
 ) -> tuple[dict[str, str], str]:
     """Resolve only the provider key needed for read-only imported-target inspection."""
     agent = payload.get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
-    mode = str(agent.get("mode") or "")
-    inspect_connect_only_chat = mode == "connect_only" and connector == "retell_chat"
-    if mode != "provider_import" and not inspect_connect_only_chat:
-        return {}, connector
-    secret_name = {
-        "vapi": "VAPI_API_KEY",
-        "retell": "RETELL_API_KEY",
-        "retell_chat": "RETELL_API_KEY",
-    }.get(connector)
-    if not secret_name:
+    mode = str(agent.get("mode") or "").strip().lower()
+    secret_name = _INSPECTION_KEYS.get(connector)
+    if mode not in ("provider_import", "connect_only") or not secret_name:
         return {}, connector
     resolved = PlatformSecretResolver().resolve(job)
     value = str(resolved.get(secret_name) or "")
