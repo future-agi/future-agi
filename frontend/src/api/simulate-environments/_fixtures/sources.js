@@ -625,7 +625,7 @@ export const readSource = ({ name, size, text, origin }) => {
   });
 };
 
-// What #4158's prepare returns in `draft` for the files that read.
+// What the sources API's prepare returns in `draft` for the files that read.
 export const draftOfSources = (sources, digest) => {
   const pinned = sources.filter(
     (source) =>

@@ -23,7 +23,7 @@ const CHECK_CONTRACT = import.meta.env.DEV || import.meta.env.MODE === "test";
 const IMPORT_PREFIX = "stub-import:";
 const STUB_DRAFT_ID = "9e3b1f4a-2c6d-4e8f-a0b1-c2d3e4f5a6b7";
 
-// Sample data shaped like PR #4158's sources API, until it ships. Nothing
+// Sample data shaped like the environment sources API, until it ships. Nothing
 // here calls the backend: reads come from fixtures, writes go to the cache.
 export const sourceSummaryKey = (envId) => ["harness-env-sources", envId];
 export const sourceCapabilitiesKey = (envId) => [
@@ -63,9 +63,10 @@ const settle = (source) =>
   source.status === "reading" ? { ...source, ...source.ui.settlesTo } : source;
 
 // Reads every file, skips ones the environment already has (same name and
-// size, or the same Knowledge base file), and returns #4158's prepare shape.
-// Each new file starts `reading` and settles to `ui.settlesTo` at `ui.readUntil`;
-// one the reader doesn't take by extension is refused at once, unread.
+// size, or the same Knowledge base file), and returns the sources API's
+// prepare shape. Each new file starts `reading` and settles to `ui.settlesTo`
+// at `ui.readUntil`; one the reader doesn't take by extension is refused at
+// once, unread.
 const prepare = (queryClient, envId, files, owner) => {
   const known = new Set(
     summaryOf(queryClient, envId).sources.map((source) => source.source_id),
@@ -285,8 +286,8 @@ const fileChange = ({
 const added = (value, path = "") => ({ op: "add", path, value });
 
 /**
- * Accepted proposals become accepted changes in Review changes, one per item;
- * blocked ones land in Couldn't apply. The same ids replace, so adding a
+ * Accepted proposals become accepted changes in Review changes, one per item
+ * (one per scenario for a scenarios item); blocked ones land in Couldn't apply. The same ids replace, so adding a
  * file's proposals again doesn't double them.
  */
 export const appendAcceptedEdits = (
@@ -380,24 +381,26 @@ export const appendAcceptedEdits = (
   const cleared = (review?.failed || [])
     .filter((row) => supplied.has(row.ui?.needs) || addedIds.has(row.id))
     .map((row) => row.id);
-  // Every proposed scenario from one add is one change, as the design has it.
-  const scenarios = accepted.filter((item) => item.kind === "scenario");
-  const proposed = scenarios.flatMap((item) => item.scenario || []);
+  // One change per proposed scenario, keyed by its name: adding the same
+  // scenario again, from any file or batch, updates its row.
+  const scenarios = new Map(
+    accepted
+      .filter((item) => item.kind === "scenario")
+      .flatMap((item) => (item.scenario || []).map((one) => [one.t, item])),
+  );
   addSampleEdits(queryClient, envId, {
     changes: [
       ...accepted.filter((item) => item.kind !== "scenario").map(changeOf),
-      ...(scenarios.length
-        ? [
-            fileChange({
-              kind: "scenario",
-              key: scenarios.map((item) => item.id).join("+"),
-              summary: `${proposed.length} proposed scenario${proposed.length === 1 ? "" : "s"} added`,
-              patch: proposed.map((one) => added(one.t)),
-              from: fromItem(scenarios[0]),
-              revalidate: proposed.map((one) => one.t),
-            }),
-          ]
-        : []),
+      ...[...scenarios].map(([name, item]) =>
+        fileChange({
+          kind: "scenario",
+          key: name,
+          summary: `Proposed scenario added: ${name}`,
+          patch: [added(name)],
+          from: fromItem(item),
+          revalidate: [name],
+        }),
+      ),
     ],
     failed: failed.map((item) => {
       const sourceId =
