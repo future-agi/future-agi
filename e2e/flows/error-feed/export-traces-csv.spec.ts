@@ -5,6 +5,9 @@ import { flowAnnotation } from "../../lib/flow-meta";
 import { POLL } from "../../lib/state-probe";
 
 // Pinned from frontend/src/pages/dashboard/error-feed/exportTracesCsv.js (COLUMNS).
+// The analysis headings and its 10-trace sample are pinned from
+// frontend/src/pages/dashboard/error-feed/issueAnalysis.js (analysisToMarkdown).
+const ANALYSIS_SAMPLE = 10;
 const CSV_HEADER =
   "trace_id,timestamp,model,score,latency_ms,turns,input_tokens," +
   "output_tokens,input,output,judge_reason,failure_evidence";
@@ -31,19 +34,22 @@ const fulfillJson = (route: Route, json: unknown) =>
 // Bodies follow FeedDetailCoreSerializer and OverviewResponseSerializer
 // (futureagi/tracer/serializers/feed.py).
 test(
-  "ERR-E2E-004: an issue's traces download as a dataset-ready CSV",
+  "ERR-E2E-004: an issue's traces download as a dataset-ready CSV and its analysis as Markdown",
   {
     tag: ["@flow"],
     annotation: flowAnnotation({
       id: "ERR-E2E-004",
       area: "error-feed",
       userGoal:
-        "A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)",
+        "A developer downloads an issue's traces and its stored analysis from the issue page, and uploads the traces file unchanged as a dataset (detail and overview responses stubbed)",
       steps: [
         "open the issue page",
         "click Export",
         "choose Traces",
         "save the downloaded CSV",
+        "click Export",
+        "choose Analysis",
+        "save the downloaded Markdown",
         "upload the downloaded CSV using the Add Dataset form",
       ],
       backendChecks: [
@@ -51,8 +57,9 @@ test(
         "each exported trace becomes one dataset row, with its quoted multiline input and leading-symbol output stored unchanged",
       ],
       browserChecks: [
-        "the export requests the issue overview once, with rep_limit=200",
+        "the traces export requests the issue overview once, with rep_limit=200, and the analysis export once more, with rep_limit=10",
         "the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns",
+        "the analysis is named error-feed-<issue>-analysis.md, holds the stubbed likely cause, suggested change and wrong-if under their headings, and samples exactly the two stubbed traces",
         "the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix",
         "the snackbar reports exactly the exported trace count",
         "the uploaded dataset's grid shows exactly the exported trace ids",
@@ -70,6 +77,9 @@ test(
     const traceB = `e2e-trace-b-${suffix}`;
     const inputA = `- book a table, "for two"\nthen confirm ${suffix}`;
     const outputA = `+1 555 0100 ${suffix}`;
+    const cause = `The agent confirms before the booking tool returns ${suffix}`;
+    const change = `Confirm only after the booking tool succeeds ${suffix}`;
+    const wrongIf = `Early confirmations continue after the tool returns ${suffix}`;
     await testInfo.attach("stubbed-issue", {
       body: JSON.stringify({ issueId, traceIds: [traceA, traceB] }),
       contentType: "application/json",
@@ -156,7 +166,9 @@ test(
         external_issue_url: null,
         external_issue_id: null,
       },
-      description: null,
+      description: cause,
+      fix_hypothesis: change,
+      falsifier: wrongIf,
       success_trace: null,
       representative_trace: null,
       rca: null,
@@ -227,6 +239,31 @@ test(
     await expect(
       page.getByText("Exported 2 traces", { exact: true }),
     ).toBeVisible({ timeout: UI_READY });
+
+    await exportButton.click();
+    const [analysis] = await Promise.all([
+      page.waitForEvent("download", { timeout: UI_READY }),
+      page.getByRole("menuitem", { name: /^Analysis/ }).click(),
+    ]);
+    expect(exportQueries).toEqual([
+      "?rep_limit=200",
+      `?rep_limit=${ANALYSIS_SAMPLE}`,
+    ]);
+    expect(analysis.suggestedFilename()).toBe(
+      `error-feed-${issueId}-analysis.md`,
+    );
+    const markdown = (await readFile(await analysis.path())).toString("utf8");
+    await testInfo.attach("analysis-markdown", {
+      body: markdown,
+      contentType: "text/markdown",
+    });
+    expect(markdown).toContain(
+      `## Likely cause\n\n${cause}\n\n## Suggested change\n\n${change}\n\n## Wrong if\n\n${wrongIf}\n\n`,
+    );
+    expect(markdown.match(/^### .+$/gm)).toEqual([
+      `### ${traceA}`,
+      `### ${traceB}`,
+    ]);
 
     // The dataset page needs the real entitlements, not the error_feed stub.
     await page.unroute("**/api/capabilities/");
