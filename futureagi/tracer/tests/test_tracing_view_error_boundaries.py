@@ -1017,3 +1017,38 @@ def test_session_eval_logs_returns_sanitized_500_for_query_defects(monkeypatch, 
     response, _analytics, _v2_factory = _session_eval_logs_call(monkeypatch, exc)
 
     _assert_sanitized_500(response)
+
+
+TRACE_NAME_TOO_BROAD = (
+    "This Trace Name filter matches more than 2,048 traces in the selected "
+    "time range. Narrow the time range or the trace name and retry."
+)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "call_boundary",
+    [_span_version_list_call, _span_list_call],
+    ids=["version-spans", "spans"],
+)
+def test_span_lists_refuse_a_too_broad_trace_name_root_set_with_400(
+    monkeypatch, call_boundary
+):
+    from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
+
+    response = call_boundary(monkeypatch, TraceNameFilterTooBroad())
+
+    assert response.status_code == 400
+    assert response.data["code"] == "trace_name_filter_too_broad"
+    assert _result(response) == TRACE_NAME_TOO_BROAD
+
+
+@pytest.mark.unit
+def test_span_graph_refuses_a_too_broad_trace_name_root_set_with_400(monkeypatch):
+    from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
+
+    response = _graph_call(monkeypatch, "span", TraceNameFilterTooBroad())
+
+    assert response.status_code == 400
+    assert response.data["code"] == "trace_name_filter_too_broad"
+    assert _result(response) == TRACE_NAME_TOO_BROAD

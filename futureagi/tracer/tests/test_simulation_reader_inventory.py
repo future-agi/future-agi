@@ -958,6 +958,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             table="usage_apicalllog",
         ),
     },
+    "tracer.management.commands.ch25_dictionary_health": {
+        "AUDIT_SQL": filed(
+            NOT_A_USER_READ,
+            why=(
+                "operator-only root-name audit, across all projects including hidden "
+                "ones; readonly bounded daily counts, not a user listing or deployment "
+                "telemetry. Covered by test_dictionary_audit_queries_one_day_at_a_time_readonly"
+            ),
+        ),
+    },
     "tracer.management.commands.recreate_clickhouse_mv": {
         "Command._run_backfill": filed(
             NO_SPAN_TABLE,
@@ -1099,6 +1109,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
         "_finite_survivor_map_ctes": _SESSION_OR_USER,
         "_latest_session_rows_sql": _SESSION_OR_USER,
+        "_matching_span_ids": filed(
+            PROJECT_SET,
+            why=(
+                "annotation graph membership within the view's project and finite "
+                "candidate span ids; root lookup candidates retain the same project. "
+                "Covered by test_annotation_span_graph_matching_reads_only_its_candidates_roots"
+            ),
+        ),
         "_session_aggregate_source_sql": _SESSION_OR_USER,
         "_session_numeric_absence_probe_sql": _SESSION_OR_USER,
         "_user_aggregate_source_sql": filed(
@@ -1289,6 +1307,22 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ClickHouseFilterBuilder._scope_span_attr_inner": _FILTER_LEAF,
         "ClickHouseFilterBuilder._scoped_spans_subquery": _FILTER_LEAF,
         "ClickHouseFilterBuilder._score_side_candidate_filter": _FILTER_LEAF,
+        "ClickHouseFilterBuilder._trace_name_root_range": filed(
+            PROJECT_SET,
+            why=(
+                "root lookup time bounds from the caller's already project-scoped "
+                "candidate relation, never an unscoped history scan. Covered by "
+                "test_full_state_classifier_bounds_its_root_lookup_by_its_candidates"
+            ),
+        ),
+        "ClickHouseFilterBuilder._trace_name_root_scope_sql": filed(
+            PROJECT_SET,
+            why=(
+                "window and candidate restriction inside the builder's project-scoped "
+                "root semi-join; not a standalone query or a new source of projects. "
+                "Covered by test_span_mode_resolves_root_without_accepting_child_name"
+            ),
+        ),
     },
     "tracer.services.clickhouse.query_builders.hourly_aggregate_states": {
         "hourly_aggregate_state_source": filed(
@@ -1465,6 +1499,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "tracer.services.clickhouse.query_builders.user_list": {
         "UserListQueryBuilder._build_candidate_first": _SESSION_OR_USER,
         "UserListQueryBuilder._candidate_page_ctes": _SESSION_OR_USER,
+        "UserListQueryBuilder._scope_walk_trace_name_roots": filed(
+            PROJECT_SET,
+            why=(
+                "Users walk root candidates from the authorized project set and the "
+                "current slice/probe range; resolved sets remain project/trace pairs. "
+                "Covered by test_users_walk_statements_read_only_their_ranges_roots"
+            ),
+        ),
         (
             "UserListQueryBuilder._finite_user_activity_ctes.<locals>.common_prefix"
         ): _SESSION_OR_USER,
@@ -1585,6 +1627,17 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "span_id_by_provider_log_id": _READS_THE_IDS_IT_IS_GIVEN,
         "spans_by_eval_attribute_call_execution_ids": _READS_THE_IDS_IT_IS_GIVEN,
         "trace_ids_with_simulator_call_execution_id": _READS_THE_IDS_IT_IS_GIVEN,
+    },
+    "tracer.services.clickhouse.trace_name_sql": {
+        "_LOOKUP_OPENING": filed(
+            PROJECT_SET,
+            why=(
+                "parser signature of a project-correlated root semi-join, not SQL "
+                "dispatched by itself; its caller preserves the scoped lookup or "
+                "binds the same project/trace pairs. Covered by "
+                "test_binding_replaces_the_lookup_with_the_resolved_pairs"
+            ),
+        ),
     },
     "tracer.services.clickhouse.trace_project_scope": {
         "latest_live_project_traces_sql": _TRACE_PROJECT_SCOPE,
@@ -2496,6 +2549,61 @@ def test_every_spans_reading_function_is_filed():
     )
     claims = _filing_problems(readers)
     assert not claims, "\n".join(claims)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("reader", "category", "test_module", "regression"),
+    [
+        (
+            "tracer.management.commands.ch25_dictionary_health:AUDIT_SQL",
+            NOT_A_USER_READ,
+            "test_ch25_trace_name_operations",
+            "test_dictionary_audit_queries_one_day_at_a_time_readonly",
+        ),
+        (
+            "tracer.services.clickhouse.exact_graph_reads:_matching_span_ids",
+            PROJECT_SET,
+            "test_trace_name_root_scope",
+            "test_annotation_span_graph_matching_reads_only_its_candidates_roots",
+        ),
+        (
+            "tracer.services.clickhouse.query_builders.filters:ClickHouseFilterBuilder._trace_name_root_range",
+            PROJECT_SET,
+            "test_trace_name_root_scope",
+            "test_full_state_classifier_bounds_its_root_lookup_by_its_candidates",
+        ),
+        (
+            "tracer.services.clickhouse.query_builders.filters:ClickHouseFilterBuilder._trace_name_root_scope_sql",
+            PROJECT_SET,
+            "test_trace_name_filter_compilers",
+            "test_span_mode_resolves_root_without_accepting_child_name",
+        ),
+        (
+            "tracer.services.clickhouse.query_builders.user_list:UserListQueryBuilder._scope_walk_trace_name_roots",
+            PROJECT_SET,
+            "test_trace_name_root_scope",
+            "test_users_walk_statements_read_only_their_ranges_roots",
+        ),
+        (
+            "tracer.services.clickhouse.trace_name_sql:_LOOKUP_OPENING",
+            PROJECT_SET,
+            "test_trace_name_root_sets",
+            "test_binding_replaces_the_lookup_with_the_resolved_pairs",
+        ),
+    ],
+)
+def test_trace_name_reader_filings_keep_their_scope_regression(
+    reader, category, test_module, regression
+):
+    assert FILED[reader].buckets == (category,)
+    assert regression in FILED[reader].why
+    path = FUTUREAGI / "tracer" / "tests" / f"{test_module}.py"
+    tree = ast.parse(path.read_text())
+    assert any(
+        isinstance(node, ast.FunctionDef) and node.name == regression
+        for node in tree.body
+    ), f"{reader} must retain its concrete scope regression {path}:{regression}"
 
 
 @pytest.mark.unit

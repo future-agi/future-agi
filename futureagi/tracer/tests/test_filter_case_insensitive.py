@@ -10,6 +10,7 @@ import pytest
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
 )
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 
 
 def _builder(mode: str = "span") -> ClickHouseFilterBuilder:
@@ -44,51 +45,55 @@ def _attr(key, op, value, ftype="text"):
 class TestSystemMetricTextCaseInsensitive:
     """trace_name / name / model / provider — TH-4993 ticket scope."""
 
+    @staticmethod
+    def _column(col):
+        return TRACE_NAME_SQL if col == "trace_name" else col
+
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_contains_uses_literal_utf8_search(self, col):
         where, params = _builder().translate([_sm(col, "contains", "FooBar")])
-        assert f"positionUTF8(lowerUTF8(toString({col}))" in where
+        assert f"positionUTF8(lowerUTF8(toString({self._column(col)}))" in where
         assert params["col_1"] == "FooBar"
 
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_not_contains_uses_literal_utf8_search(self, col):
         where, params = _builder().translate([_sm(col, "not_contains", "Foo")])
-        assert f"positionUTF8(lowerUTF8(toString({col}))" in where
+        assert f"positionUTF8(lowerUTF8(toString({self._column(col)}))" in where
         assert ") = 0" in where
         assert params["col_1"] == "Foo"
 
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_starts_with_uses_literal_utf8_search(self, col):
         where, _ = _builder().translate([_sm(col, "starts_with", "Foo")])
-        assert f"startsWith(lowerUTF8(toString({col}))" in where
+        assert f"startsWith(lowerUTF8(toString({self._column(col)}))" in where
 
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_ends_with_uses_literal_utf8_search(self, col):
         where, _ = _builder().translate([_sm(col, "ends_with", "Bar")])
-        assert f"endsWith(lowerUTF8(toString({col}))" in where
+        assert f"endsWith(lowerUTF8(toString({self._column(col)}))" in where
 
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_equals_lowers_both_sides(self, col):
         where, params = _builder().translate([_sm(col, "equals", "FooBar")])
-        assert f"lowerUTF8(toString({col})) =" in where
+        assert f"lowerUTF8(toString({self._column(col)})) =" in where
         assert params["col_1"] == "foobar"
 
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_not_equals_lowers_both_sides(self, col):
         where, params = _builder().translate([_sm(col, "not_equals", "FooBar")])
-        assert f"lowerUTF8(toString({col})) !=" in where
+        assert f"lowerUTF8(toString({self._column(col)})) !=" in where
         assert params["col_1"] == "foobar"
 
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_in_lowers_values(self, col):
         where, params = _builder().translate([_sm(col, "in", ["GPT-4", "Claude"])])
-        assert f"lowerUTF8(toString({col})) IN" in where
+        assert f"lowerUTF8(toString({self._column(col)})) IN" in where
         assert params["col_1"] == ("gpt-4", "claude")
 
     @pytest.mark.parametrize("col", ["trace_name", "name", "model", "provider"])
     def test_not_in_lowers_values(self, col):
         where, params = _builder().translate([_sm(col, "not_in", ["GPT-4", "Claude"])])
-        assert f"lowerUTF8(toString({col})) NOT IN" in where
+        assert f"lowerUTF8(toString({self._column(col)})) NOT IN" in where
         assert params["col_1"] == ("gpt-4", "claude")
 
     def test_status_remains_case_insensitive(self):
@@ -104,7 +109,7 @@ class TestSystemMetricTextCaseInsensitive:
         # Trace-list mode wraps the predicate in `trace_id IN (SELECT ...)`,
         # the literal UTF-8 predicate belongs inside that wrap.
         assert "trace_id IN (SELECT trace_id FROM spans" in where
-        assert "positionUTF8(lowerUTF8(toString(trace_name))" in where
+        assert f"positionUTF8(lowerUTF8(toString({TRACE_NAME_SQL}))" in where
 
     def test_span_id_not_case_folded(self):
         """UUID-shaped columns must not be lowercased."""

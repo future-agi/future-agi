@@ -440,6 +440,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         plans, residual = partition_span_filter_plans(
             ordinary,
             group_attribute_nulls=True,
+            # A session matches a trace name through its traces' live roots.
+            root_trace_name_plans=True,
         )
         for item in raw_session_keys:
             plans.append(

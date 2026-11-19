@@ -39,6 +39,7 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     supports_trace_filters,
     targets_trace_filter_domain,
 )
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.utils.filter_operators import normalize_span_attribute_filter_type
 
 # On the v2 schema (PARTITION BY toDate(start_time), PK on toStartOfHour(
@@ -194,8 +195,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         "latency_ms": "latency_ms",
         "cost": "cost",
         "total_tokens": "total_tokens",
-        "name": "trace_name",
-        "trace_name": "trace_name",
+        "name": TRACE_NAME_SQL,
+        "trace_name": TRACE_NAME_SQL,
         "status": "status",
     }
 
@@ -4685,8 +4686,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             public_select_fragment = ", ".join(
                 ["root_span_id", "trace_id", *[alias for _, alias in root_fields[1:]]]
             )
-            hydrate_root_aggregate_fragment = """,
-                    argMax(trace_name, _peerdb_version) AS latest_trace_name,
+            hydrate_root_aggregate_fragment = f""",
+                    argMax({TRACE_NAME_SQL}, _peerdb_version) AS latest_trace_name,
                     argMax(name, _peerdb_version) AS latest_name,
                     argMax(observation_type, _peerdb_version)
                         AS latest_observation_type,
@@ -4953,7 +4954,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 argMax(is_deleted, _peerdb_version) AS latest_is_deleted,
                 argMax(tuple(project_version_id), _peerdb_version).1
                     AS latest_project_version_id,
-                argMax(trace_name, _peerdb_version) AS latest_trace_name,
+                argMax({TRACE_NAME_SQL}, _peerdb_version) AS latest_trace_name,
                 argMax(name, _peerdb_version) AS latest_name,
                 argMax(observation_type, _peerdb_version)
                     AS latest_observation_type,
@@ -5145,7 +5146,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # Search filter on trace_name
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = f"AND {TRACE_NAME_SQL} ILIKE %(search)s"
             self.params["search"] = f"%{self.search}%"
 
         # Configurable columns — only SELECT requested columns.
@@ -5282,7 +5283,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = f"AND {TRACE_NAME_SQL} ILIKE %(search)s"
             self.params["search"] = f"%{self.search}%"
 
         query = f"""
@@ -5504,7 +5505,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # Search filter (reuse from build())
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = f"AND {TRACE_NAME_SQL} ILIKE %(search)s"
             params["search"] = f"%{self.search}%"
 
         count_identity = (

@@ -38,6 +38,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_SQL
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
@@ -193,7 +194,7 @@ _READ_COLUMNS: tuple[str, ...] = (
     "eval_status",
     "semconv_source",
     "is_deleted",
-    "trace_name",
+    f"{TRACE_NAME_SQL} AS trace_name",
     "created_at",
 )
 

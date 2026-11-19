@@ -231,6 +231,11 @@ from tracer.services.clickhouse.read_budget import (
     ReadDeadlineExceeded,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.trace_name_roots import (
+    resolve_trace_name_root_sets,
+    trace_name_leaf_count,
+)
+from tracer.services.clickhouse.trace_name_sql import TRACE_NAME_ROOT_SET_MAX_ROOTS
 from tracer.services.clickhouse.v2.id_remap_sql import NIL_UUID
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
@@ -1894,6 +1899,73 @@ def _bound_witness(
     )
 
 
+def _resolve_walk_trace_name_roots(state: _WalkState) -> None:
+    """Resolve the page's trace-name roots once, before its first statement.
+
+    A trace_name leaf used to look its roots up again in every slice,
+    instant, existence probe, estimate and certification, each reading the
+    request window's root hours under FINAL. One statement here resolves
+    each leaf's matching roots over the walk's frozen window, charged to the
+    walk's statement budget and wall; every later statement binds the set
+    (``UserListQueryBuilder.trace_name_root_sets``). Without room for it, or
+    when it runs out of time or read budget, the statements keep their own
+    lookups. ``TraceNameFilterTooBroad`` (above the root-set cap) propagates
+    to the HTTP boundary as a 400.
+    """
+
+    from tracer.services import users_list_manager as ulm
+
+    manager = state.manager
+    builder = state.builder
+    # One statement per distinct leaf, at most.
+    statements = trace_name_leaf_count(manager.filters)
+    if not statements or not state.budget.take(statements):
+        return
+
+    def execute(query: str, params: dict[str, Any]) -> Any:
+        # Admission only, not a server abort: a successful leaf may finish
+        # after the wall. Do not admit another optional full-window lookup.
+        # The outer handler discards all partially resolved sets on expiry.
+        timeout_ms = state.budget.deadline.remaining_ms()
+        return (
+            ulm.V2AnalyticsQueryService()
+            .execute_ch_query(
+                query,
+                params,
+                timeout_ms=timeout_ms,
+                settings=ulm._page_replay_read_settings(
+                    max_result_rows=TRACE_NAME_ROOT_SET_MAX_ROOTS + 1
+                ),
+            )
+            .data
+        )
+
+    try:
+        root_sets = resolve_trace_name_root_sets(
+            manager.filters,
+            start=state.window_start,
+            end=state.window_end,
+            execute=execute,
+            project_id=None if builder.project_ids is not None else builder.project_id,
+            project_ids=builder.project_ids,
+        )
+    except ReadDeadlineExceeded:
+        state.budget.exhausted_by = "wall"
+        return
+    except Exception as exc:
+        if not is_read_budget_error(exc):
+            raise
+        logger.info(
+            "users_matching_walk_trace_name_roots_unbounded",
+            error_type=type(exc).__name__,
+        )
+        return
+    builder.trace_name_root_sets = root_sets
+    manager.use_trace_name_root_sets(
+        root_sets, window=(state.window_start, state.window_end)
+    )
+
+
 def _slices_needed(width: timedelta) -> int:
     """Slices at the cap that ``width`` of window still needs."""
 
@@ -1986,6 +2058,8 @@ def walk_matching_activity_page(
         last_id=last_id,
         decided_from=decided_from,
     )
+    if not exhausted:
+        _resolve_walk_trace_name_roots(state)
     if witness_candidates:
         sent = _choose_witness(state, witness_candidates)
         # The chosen witness's own count (a typed raw witness certifies on

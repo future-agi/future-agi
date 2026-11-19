@@ -568,3 +568,30 @@ class TestUsersExportStreaming:
                 assert field in fields, f"export column not on serializer: {field_path}"
                 if index < len(field_path.split(".")) - 1:
                     fields = fields[field].fields
+
+
+@pytest.mark.django_db
+def test_users_list_refuses_a_too_broad_trace_name_root_set_with_400(
+    auth_client, organization, workspace, observe_project
+):
+    from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
+
+    for params in ({}, {"export": "true"}):
+        with patch.object(
+            UsersListManager,
+            "list_cursor_payload",
+            side_effect=TraceNameFilterTooBroad(),
+        ):
+            response = auth_client.get(
+                "/tracer/users/",
+                {
+                    "project_id": str(observe_project.id),
+                    "cursor_mode": "true",
+                    **params,
+                },
+            )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, params
+        assert response["Content-Type"].startswith("application/json")
+        body = response.json()
+        assert body["code"] == "trace_name_filter_too_broad"
+        assert "more than 2,048 traces" in str(body)

@@ -147,6 +147,7 @@ from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
 from tracer.services.clickhouse.v2.query_builders.agent_graph import (
     AgentGraphQueryBuilderV2,
 )
@@ -7516,6 +7517,12 @@ class UsersView(APIView):
             )
             return self._gm.success_response(payload)
 
+        except TraceNameFilterTooBroad:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST,
+                get_error_message("TRACE_NAME_FILTER_TOO_BROAD"),
+                code=ApiErrorCode.TRACE_NAME_FILTER_TOO_BROAD,
+            )
         except ListCursorError as exc:
             return self._gm.custom_error_response(
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code

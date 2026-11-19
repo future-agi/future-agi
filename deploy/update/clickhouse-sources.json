@@ -434,8 +434,8 @@
     },
     {
       "pattern": "futureagi/tfc/utils/error_codes.py",
-      "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the added Jev error mapping and API key expiry messages do not execute SQL. No removed ClickHouse operation.",
-      "sha256": "a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40"
+      "reason": "Inspected old and combined new blobs: CREATE USER occurs only in the user-evaluation-template display text at line 357 returned by get_error_message to the API response; the added TRACE_NAME_FILTER_TOO_BROAD message, Jev error mapping and API key expiry messages do not execute SQL. No removed ClickHouse operation; only this exact blob is excluded.",
+      "sha256": "7170b68d394442317f3e3ca2d01077b5930f32fe36795e1798c58c96dbf4b964"
     },
     {
       "pattern": "fi-collector/pkg/ingestbench/bench_test.go",

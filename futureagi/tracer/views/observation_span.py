@@ -57,6 +57,7 @@ from model_hub.views.scores import (
 )
 from tfc.routers import primary_required
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -159,6 +160,7 @@ from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
     is_read_budget_error,
 )
+from tracer.services.clickhouse.trace_name_roots import TraceNameFilterTooBroad
 from tracer.services.clickhouse.v2.physical_span_detail_reads import (
     PhysicalSpanDetailError,
     read_physical_span_detail,
@@ -1805,6 +1807,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         except ProjectVersion.DoesNotExist:
             return self._gm.bad_request("Project version not found")
+        except TraceNameFilterTooBroad:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST,
+                get_error_message("TRACE_NAME_FILTER_TOO_BROAD"),
+                code=ApiErrorCode.TRACE_NAME_FILTER_TOO_BROAD,
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Span filter configuration is invalid")
         except FilterPrincipalContextError as exc:
@@ -2233,6 +2241,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         except ListCursorError as exc:
             return self._gm.custom_error_response(
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
+            )
+        except TraceNameFilterTooBroad:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST,
+                get_error_message("TRACE_NAME_FILTER_TOO_BROAD"),
+                code=ApiErrorCode.TRACE_NAME_FILTER_TOO_BROAD,
             )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Span filter configuration is invalid")
@@ -3733,6 +3747,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Graph data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
+            )
+        except TraceNameFilterTooBroad:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST,
+                get_error_message("TRACE_NAME_FILTER_TOO_BROAD"),
+                code=ApiErrorCode.TRACE_NAME_FILTER_TOO_BROAD,
             )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Graph filter configuration is invalid")

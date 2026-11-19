@@ -1,5 +1,6 @@
 """Daemon-free developer-gate contract and bad/safe fixtures (stdlib only)."""
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -558,7 +559,7 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
         'fi-collector/pkg/ingestbench/integration_test.go':
             ('3cbb292f8fdadcd6fa35039c97953ebe204a40d1035a642c95405f1438058ae9', 'CREATE TABLE', 159),
         'futureagi/tfc/utils/error_codes.py':
-            ('a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40', 'CREATE USER', 353),
+            ('7170b68d394442317f3e3ca2d01077b5930f32fe36795e1798c58c96dbf4b964', 'CREATE USER', 357),
         'futureagi/tracer/services/instant_eval_answers.py':
             ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', 173),
     }
@@ -659,12 +660,16 @@ class StaticEntryPointTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name).resolve()
         for relative in ('deploy/update/high-volume-tables.json', 'deploy/update/automatic-layout.json',
-                         'deploy/update/clickhouse-sources.json', 'deploy/update/clickhouse-change-reviews.json',
+                         'deploy/update/clickhouse-sources.json',
                          'deploy/update/env-generators.json', 'deploy/update/migration-apps.json',
                          'deploy/env-reference.toml', 'docker-compose.yml', 'bin/lib/secrets.sh'):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
+        # These entrypoint fixtures describe their own changed blobs. Reviews for
+        # the real checkout must not mask the fixture's intended validation path.
+        (self.root / 'deploy/update/clickhouse-change-reviews.json').write_text(
+            json.dumps({'schema_version': 1, 'changes': []}))
         contract = gate.document(self.root / 'deploy/update/automatic-layout.json')
         self.model = self.root / 'model.json'
         self.model.write_text(json.dumps({'volumes': contract['volumes'], 'services': {
@@ -803,6 +808,25 @@ class StaticEntryPointTests(unittest.TestCase):
         code, stdout, err = self.run_changed_source('deploy/standalone/bin/bootstrap.py', '# documentation only')
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(stdout)['large_volume_rehearsal_required'], [])
+
+    def test_unsigned_clickhouse_review_still_fails_static_entrypoint(self):
+        path = 'scripts/schema.sql'
+        source = 'TRUNCATE spans SYNC;'
+        declaration = {
+            'schema_version': 1, 'risk_classes': ['clickhouse_change'],
+            'tables': ['clickhouse:spans'], 'mitigation': 'Fixture-only statement in a disposable test directory; never deployed.',
+            'review': '', 'reviewer': '', 'large_volume_rehearsal': True,
+        }
+        (self.root / 'deploy/update/clickhouse-change-reviews.json').write_text(json.dumps({
+            'schema_version': 1, 'changes': [{
+                'path': path, 'before_sha256': None,
+                'after_sha256': hashlib.sha256(source.encode()).hexdigest(),
+                'declaration': declaration,
+            }],
+        }))
+        code, _, err = self.run_changed_source(path, source, 'A')
+        self.assertEqual(code, 1, err)
+        self.assertIn('reviewer, review-comment URL', err)
 
     def test_unregistered_new_sql_shell_python_and_go_statement_sources_fail(self):
         for path, text in (('new/schema.py', 'client.execute("DELETE FROM spans WHERE 1")'),

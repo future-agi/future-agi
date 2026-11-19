@@ -907,6 +907,7 @@ def test_native_spans_final_overrides_remain_tied_to_packaged_definitions():
         "013_attributes_extra_as_string.sql",
         "014_peerdb_is_deleted_back_compat.sql",
         "015_traces_and_trace_dict.sql",
+        "039_trace_name_row_local.sql",
     ):
         statements.extend(apply_schema.split_statements((root / name).read_text()))
     # Independent source check: each final override declaration occurs in a
@@ -1108,6 +1109,7 @@ CAPTURED_DEFAULT_TRACE_NAME = (
 @pytest.mark.parametrize(
     "database,actual",
     [
+        ("default", ("String", "MATERIALIZED", "if(empty(parent_span_id), name, '')")),
         ("default", CAPTURED_DEFAULT_TRACE_NAME),
         (
             "offline_cdc",
