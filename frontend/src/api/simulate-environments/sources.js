@@ -323,6 +323,11 @@ export const appendAcceptedEdits = (
   let movesWorld = prior.find((change) =>
     change.patch.some((op) => op.path === "/world_data"),
   )?.id;
+  const actorRows = new Map(
+    prior
+      .filter((change) => change.kind === "actor")
+      .map((change) => [change.id, change]),
+  );
   const changeOf = (item) => {
     const kind = CHANGE_KINDS[item.kind] || "source";
     const base = { kind, key: item.id, from: fromItem(item) };
@@ -357,19 +362,33 @@ export const appendAcceptedEdits = (
         ],
       });
     }
+    if (item.kind === "actor") {
+      // One row per actor however many files propose it: the first proposer's
+      // citation stays, the latest edited approval scope wins.
+      const key = item.actor?.name || item.id;
+      const first = actorRows.get(`${kind}:${key}`);
+      const row =
+        first && !item.edited
+          ? first
+          : {
+              ...fileChange({
+                ...base,
+                key,
+                summary: item.edited
+                  ? `${item.title} · approval scope: ${item.edited}`
+                  : item.title,
+                patch: [added(item.actor || item.title)],
+              }),
+              ...(first && { sources: first.sources }),
+            };
+      actorRows.set(row.id, row);
+      return row;
+    }
     let value = item.title;
-    if (item.kind === "actor") value = item.actor || item.title;
     if (item.kind === "state")
       value = item.title.replace(/^Starting state: /, "");
     if (kind === "source") value = nameOf(item.cite?.sourceId);
-    return fileChange({
-      ...base,
-      summary:
-        item.kind === "actor" && item.edited
-          ? `${item.title} · approval scope: ${item.edited}`
-          : item.title,
-      patch: [added(value)],
-    });
+    return fileChange({ ...base, summary: item.title, patch: [added(value)] });
   };
   // A failed row clears once what it waited on is added: the table it
   // needed, or the same item added after all.
@@ -404,7 +423,13 @@ export const appendAcceptedEdits = (
   const names = [...proposed.keys()];
   addSampleEdits(queryClient, envId, {
     changes: [
-      ...accepted.filter((item) => item.kind !== "scenario").map(changeOf),
+      // Two files in one batch proposing one actor still make one row.
+      ...new Map(
+        accepted
+          .filter((item) => item.kind !== "scenario")
+          .map(changeOf)
+          .map((change) => [change.id, change]),
+      ).values(),
       ...(scenarioItems.length
         ? [
             {
@@ -565,6 +590,10 @@ const editSource = (queryClient, envId, sourceId, change) => {
     upsertPersonalDataEdit(queryClient, envId, after);
 };
 
+// The open Review proposed changes, kept per environment outside the tab so
+// leaving World & tools doesn't drop it. UI state, never sent.
+const pendingReviewKey = (envId) => ["harness-env-sources-review", envId];
+
 // (sourceId, change): `change` maps the file to its edited copy.
 export const useUpdateSource = (envId) => {
   const queryClient = useQueryClient();
@@ -588,6 +617,15 @@ export const useRemoveSource = (envId) => {
         updateSources(queryClient, envId, (sources) =>
           sources.filter((one) => one.source_id !== source.source_id),
         );
+      // A review whose files are all gone has nothing left to add, so it ends.
+      const left = new Set(
+        summaryOf(queryClient, envId).sources.map((one) => one.source_id),
+      );
+      queryClient.setQueryData(pendingReviewKey(envId), (review) =>
+        review?.ui.sources.some((one) => left.has(one.source_id))
+          ? review
+          : null,
+      );
     },
     [queryClient, envId],
   );
@@ -630,10 +668,6 @@ export const useSetPersonalData = (envId) => {
     [queryClient, envId],
   );
 };
-
-// The open Review proposed changes, kept per environment outside the tab so
-// leaving World & tools doesn't drop it. UI state, never sent.
-const pendingReviewKey = (envId) => ["harness-env-sources-review", envId];
 
 export const usePendingSourceReview = (envId) => {
   const queryClient = useQueryClient();
