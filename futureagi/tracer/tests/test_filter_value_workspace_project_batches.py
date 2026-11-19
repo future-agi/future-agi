@@ -1520,9 +1520,12 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatc
         return read()
 
     monkeypatch.setattr(dashboard_view, "_run_filter_value_pg_read", read_projects)
-    wall_ms = 1_750
+    # Allow for request work in addition to the 750 ms metadata wait and the reserve.
+    wall_ms = 2_750
+    reserve_ms = 1_000
     monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", wall_ms)
     entered, release, finished = Event(), Event(), Event()
+    page_started = Event()
     metadata_calls = []
     page_calls = []
 
@@ -1531,10 +1534,17 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatc
             if "system.parts" in query:
                 metadata_calls.append(1)
                 entered.set()
-                release.wait(timeout=5)  # Bound failure on the old shared-permit path.
+                # If the page is stuck behind this call, let it through only
+                # once its reserve is already lost. It can then record the
+                # actual late start instead of failing an admission timeout.
+                left_ms = request_deadlines[0].remaining_ms()
+                if page_started.wait(timeout=max(0, left_ms - reserve_ms + 1) / 1000):
+                    release.wait()  # The page is running; its finally opens the gate.
                 finished.set()
                 return [(None,)], [("retained_start", "Nullable(DateTime)")]
-            page_calls.append((monotonic(), entered.is_set(), finished.is_set()))
+            left_ms = request_deadlines[0].remaining_ms()
+            page_calls.append((left_ms, entered.is_set(), finished.is_set()))
+            page_started.set()
             assert "PREWHERE project_id IN %(project_ids)s" in query
             assert params["project_ids"] == (project,)
             return [("scoped name",)], [("val", "String")]
@@ -1552,23 +1562,22 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatc
     assert lookup(1_024) == epoch
     assert not metadata_calls
     try:
-        page = _result(
-            _invoke({
-                "metric_name": "name",
-                "metric_type": "system_metric",
-                "source": "traces",
-                "project_ids": [],
-                "search": "",
-                "page_size": 1,
-            })
-        )
+        response = _invoke({
+            "metric_name": "name",
+            "metric_type": "system_metric",
+            "source": "traces",
+            "project_ids": [],
+            "search": "",
+            "page_size": 1,
+        })
+        [(remaining_at_start_ms, metadata_entered, metadata_finished)] = page_calls
+        assert remaining_at_start_ms >= reserve_ms
+        assert metadata_entered and not metadata_finished
+        page = _result(response)
         assert datetime.fromisoformat(page["query_window_start"]) == epoch
         assert page["values"] == [{"value": "scoped name", "label": "scoped name"}]
-        [(started, metadata_entered, metadata_finished)] = page_calls
-        assert metadata_entered and not metadata_finished
         parent = request_deadlines[0]
         parent_end = parent.started + parent.total_ms / 1000
-        assert started < parent_end
         assert lookup(wall_ms) == epoch
         assert metadata_calls == [1]
         assert not finished.wait(timeout=max(0, parent_end - monotonic()))
