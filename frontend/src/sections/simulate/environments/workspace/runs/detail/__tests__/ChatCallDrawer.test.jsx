@@ -1,7 +1,6 @@
 /* eslint-disable react/prop-types */
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
-import { TRIAL_CHANGES_COPY } from "../trialChanges.constants";
 
 const mocks = vi.hoisted(() => ({
   runTraces: vi.fn(() => ({ projectId: null, traces: [], isError: false })),
@@ -139,6 +138,7 @@ describe("ChatCallDrawer World state", () => {
 
   it("shows World state on a trial with no actors", async () => {
     mocks.callDetail = {
+      actorsEnabled: true,
       trial_state: {
         state_changes: [
           {
@@ -175,6 +175,7 @@ describe("ChatCallDrawer World state", () => {
 
   it("says why World state were not recorded for an in-process agent", async () => {
     mocks.callDetail = {
+      actorsEnabled: true,
       trial_state: {
         recorded: false,
         why: "in_process_tools",
@@ -198,7 +199,7 @@ describe("ChatCallDrawer World state", () => {
   });
 
   it("says World state were not recorded for an older trial with no record", async () => {
-    mocks.callDetail = { trial_state: null };
+    mocks.callDetail = { actorsEnabled: true, trial_state: null };
     render(
       <ChatCallDrawer
         task={{ id: "call-execution-11", status: "completed" }}
@@ -212,7 +213,7 @@ describe("ChatCallDrawer World state", () => {
     mocks.callDetail = null;
   });
 
-  it("says the call's World state could not be loaded when its detail fails, never that it was not recorded", async () => {
+  it("shows no World state tab until the call's detail says actors are on", () => {
     mocks.callDetail = null;
     mocks.detailError = new Error("Request failed with status code 500");
     render(
@@ -221,18 +222,13 @@ describe("ChatCallDrawer World state", () => {
         onClose={vi.fn()}
       />,
     );
-    await userEvent.click(screen.getByRole("tab", { name: "World state" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      TRIAL_CHANGES_COPY.loadFailed,
-    );
-    expect(screen.queryByText(TRIAL_CHANGES_COPY.notRecorded)).toBeNull();
-    // Never the raw error.
-    expect(screen.queryByText(/status code 500/)).toBeNull();
+    expect(screen.queryByRole("tab", { name: "World state" })).toBeNull();
     mocks.detailError = null;
   });
 
   it("says nothing about World state while the call is still loading", async () => {
     mocks.loading = true;
+    mocks.callDetail = { actorsEnabled: true };
     render(
       <ChatCallDrawer
         task={{ id: "call-execution-12", status: "completed" }}
@@ -245,5 +241,6 @@ describe("ChatCallDrawer World state", () => {
     ).toBeNull();
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
     mocks.loading = false;
+    mocks.callDetail = null;
   });
 });
