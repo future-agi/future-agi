@@ -1568,7 +1568,7 @@ def test_result_reuse_answers_without_a_scan_and_only_for_the_same_person(
 def test_user_sql_mistakes_get_specific_safe_messages(scoped_clickhouse, monkeypatch):
     """End to end on real PostgreSQL and ClickHouse: a plain SQL mistake is
     reported as that mistake, not as a resource limit, and the stored error
-    carries none of the compiled query's physical names or tenant literals."""
+    carries none of the compiled query's physical names or organization/project values."""
     import threading
 
     from django.test import override_settings
