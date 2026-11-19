@@ -73,13 +73,13 @@ def _allow_native_log(_record: logging.LogRecord) -> bool:
 
 @contextmanager
 def _quiet_retained_driver_logs():
-    # send_query logs SQL after parameter substitution; server log packets
-    # can also contain query details. Filter at the emitters (ancestor logger
-    # filters don't see propagated records), without muting other requests.
+    # The driver logs substituted SQL, server messages and result-column names.
+    # Filter at the emitters: ancestor logger filters don't see propagated records.
     for name in (
         "clickhouse_driver.connection",
         "clickhouse_driver.client",
         "clickhouse_driver.log",
+        "clickhouse_driver.streams.native",
     ):
         logging.getLogger(name).addFilter(_allow_native_log)  # idempotent
     token = _quiet_retained_read.set(True)

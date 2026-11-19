@@ -55,13 +55,14 @@ def test_only_retained_driver_call_omits_query_logs(monkeypatch, caplog, server_
             # Same calling context after the retained read unwinds.
             assert owner.execute_read("SELECT 31 AS subsequent_read")[0] == [(31,)]
 
-        native_messages = [
+        query_messages = [
             record.getMessage()
             for record in caplog.records
-            if record.name.startswith("clickhouse_driver.")
+            if record.name == "clickhouse_driver.connection"
+            and record.getMessage().startswith("Query:")
         ]
         for marker in ("concurrent_read", "subsequent_read"):
-            assert any(marker in message for message in native_messages)
+            assert any(marker in message for message in query_messages), marker
         for marker in (
             "system.parts", "retained_start", "fromUnixTimestamp64Micro", str(bound)
         ):
