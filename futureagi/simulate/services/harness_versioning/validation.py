@@ -53,10 +53,19 @@ Purpose = Literal["agent_move", "recheck", "save", "prove"]
 Proving = Literal["with_certify", "only"]
 Caller = Literal["activation", "hand", "no_change", "land"]
 
-# A check still running this long after it was asked for is stopped. A slow worker or
-# sandbox is ours, not the agent's: the check reads as unavailable and runs go ahead;
-# the next check starts a fresh job.
-CHECK_DEADLINE = timedelta(minutes=45)
+# A check still running this long after it was asked for is stopped (`HARNESS_VALIDATION_CHECK_SECONDS`, two hours by
+# default, so a suite of a thousand cases is proved). A slow worker or sandbox is ours, not the agent's: the check reads
+# as unavailable and runs go ahead; the next check starts a fresh job.
+
+
+def check_window() -> timedelta:
+    from django.conf import settings
+
+    return timedelta(
+        seconds=int(getattr(settings, "HARNESS_VALIDATION_CHECK_SECONDS", 7200) or 7200)
+    )
+
+
 CHECK_TIMED_OUT = CHECK_TIMED_OUT_CANCEL_REASON
 # The endings that are a check's verdict on the pairing; any other one is retried.
 CHECK_FAILURES = frozenset({"authoring_runtime_validation_failed"})
@@ -858,14 +867,14 @@ def on_terminal(job: HostedHarnessJob) -> None:
 
 
 def check_deadline(job: HostedHarnessJob) -> Any:
-    """When a validation job is stopped: ``CHECK_DEADLINE`` after its latest sandbox
+    """When a validation job is stopped: ``check_window()`` after its latest sandbox
     launched, so time queued for a runner never counts; from its creation before one."""
     launched = (
         job.attempts.order_by("-attempt_number")
         .values_list("created_at", flat=True)
         .first()
     )
-    return (launched or job.created_at) + CHECK_DEADLINE
+    return (launched or job.created_at) + check_window()
 
 
 def overdue(job: HostedHarnessJob) -> bool:
