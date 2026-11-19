@@ -220,3 +220,25 @@ def test_a_run_needing_a_production_only_tool_is_refused_only_while_actors_are_o
     )
 
     assert response.status_code == status, response.content
+
+
+@pytest.mark.parametrize(("enabled", "fails"), [(False, False), (True, True)])
+def test_a_bad_share_stops_startup_only_while_actors_are_on(
+    monkeypatch, enabled, fails
+):
+    import importlib
+
+    import tfc.settings.settings as module
+
+    monkeypatch.setenv("HARNESS_ACTORS_ENABLED", "true" if enabled else "")
+    monkeypatch.setenv("HARNESS_ACTORS_SHARE", "0.3-0.2")
+    try:
+        if fails:
+            with pytest.raises(ImproperlyConfigured):
+                importlib.reload(module)
+        else:
+            assert importlib.reload(module).HARNESS_ACTORS_SHARE == (0.15, 0.25)
+    finally:
+        monkeypatch.delenv("HARNESS_ACTORS_SHARE")
+        monkeypatch.delenv("HARNESS_ACTORS_ENABLED")
+        importlib.reload(module)

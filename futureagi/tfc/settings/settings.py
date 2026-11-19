@@ -1228,8 +1228,13 @@ def _actors_share(text: str) -> tuple[float, float]:
     return share
 
 
-# The default share of scenarios that include an actor, sent to the harness while actors are on.
-HARNESS_ACTORS_SHARE = _actors_share(os.getenv("HARNESS_ACTORS_SHARE", "0.15-0.25"))
+# The default share of scenarios that include an actor, sent to the harness while actors are on; read and checked only
+# then, so a bad value never stops a deployment that has actors off.
+HARNESS_ACTORS_SHARE = (
+    _actors_share(os.getenv("HARNESS_ACTORS_SHARE", "0.15-0.25"))
+    if HARNESS_ACTORS_ENABLED
+    else (0.15, 0.25)
+)
 # Raising agent-change nudges; only takes effect while versioning is enabled.
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
