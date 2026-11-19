@@ -1014,10 +1014,17 @@ def held_back_cases(fix_run: AgentFixRun) -> int:
     )
 
 
-def limited_validation(fix_run: AgentFixRun) -> bool:
-    """Whether too few cases were held back to call this fix verified, however it scored:
-    they must come from HELD_BACK_VERIFIED_MIN different cases of the run."""
+def too_few_held_back(fix_run: AgentFixRun) -> bool:
+    """Whether too few cases were held back to call this fix verified, however it scored,
+    none included: they must come from HELD_BACK_VERIFIED_MIN different cases of the run.
+    Its pull request opens as a draft."""
     return held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
+
+
+def limited_validation(fix_run: AgentFixRun) -> bool:
+    """Whether some cases were held back, but too few to call this fix verified. A fix with
+    none held back is proven on the targets only instead."""
+    return held_back_cases(fix_run) > 0 and too_few_held_back(fix_run)
 
 
 # The tiers the engine's final check records for a finalist, in order.
@@ -1117,9 +1124,10 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
 
 
 def is_retryable(fix_run: AgentFixRun) -> bool:
-    """A failed fix not started again yet. Whatever failed it, the user may try once more;
-    a fix that came through fix_runs_for_read answers without a query."""
-    if fix_run.state != AgentFixRun.State.FAILED:
+    """A failed fix not started again yet, and not itself a retry. Whatever failed it, the
+    user may try once more, and only once: a retry that fails is not retried again. A fix
+    that came through fix_runs_for_read answers without a query."""
+    if fix_run.state != AgentFixRun.State.FAILED or fix_run.retried_from_id is not None:
         return False
     retried = getattr(fix_run, "retried", None)
     return not (fix_run.retries.exists() if retried is None else retried)
