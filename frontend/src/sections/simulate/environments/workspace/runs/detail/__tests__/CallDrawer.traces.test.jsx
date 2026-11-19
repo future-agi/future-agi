@@ -25,7 +25,10 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     // A call not read yet is pending, as the next call is while its detail loads.
     useCallExecutionV3Detail: (id) =>
       id === "voice-1"
-        ? { data: { id: "voice-1", transcript: [] }, isPending: false }
+        ? {
+            data: { id: "voice-1", transcript: [], actors_enabled: true },
+            isPending: false,
+          }
         : { data: undefined, isPending: true },
     useCallTraces: () => mocks.traces,
   };

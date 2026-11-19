@@ -296,6 +296,23 @@ class HarnessAgentSerializer(serializers.Serializer):
                     )
                 }
             )
+        if "phone_number" in config and connector == "livekit":
+            if mode != "connect_only":
+                raise serializers.ValidationError(
+                    {"mode": "LiveKit targets support connect_only only"}
+                )
+            needs_only = (
+                "a LiveKit agent reached by phone needs only phone_number and "
+                "target_system_prompt"
+            )
+            if str(config.get("agent_name") or "").strip():
+                raise serializers.ValidationError({"config": needs_only})
+            if attrs.get("secret_refs") and not getattr(
+                self.root, "checks_phone_routing", False
+            ):
+                raise serializers.ValidationError({"secret_refs": needs_only})
+            attrs["secret_refs"] = {}
+            attrs["connector"] = connector = provider_connector = "phone"
         if "phone_number" in config and connector != "phone":
             if connector not in {"vapi", "retell"} or mode != "connect_only":
                 raise serializers.ValidationError(
@@ -892,6 +909,7 @@ class HarnessRunCreateResponseSerializer(serializers.Serializer):
 
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):
     reject_missing_credentials = False
+    checks_phone_routing = True
     # Raw target-provider values the form holds before Run stores them. Preflight exercises
     # them against the provider and discards them; they are never persisted or echoed.
     credential_values = serializers.DictField(

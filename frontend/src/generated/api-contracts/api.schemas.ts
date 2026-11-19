@@ -28481,6 +28481,8 @@ export interface CallExecutionV3DetailResponseApi {
   earlier_attempts: EarlierAttemptApi[];
   /** Which attempt this call is, counted from 1: one more than its earlier attempts. */
   attempt_number: number;
+  /** Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view. */
+  actors_enabled: boolean;
   /** False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons. */
   comparable: boolean;
   /** @minLength 1 */

@@ -207,12 +207,18 @@ function platformPayload(draft, name) {
   } else if (connector === PREFLIGHT_CONNECTOR.LIVEKIT) {
     const prompt = String(draft.prompt || "").trim();
     if (!prompt) return { skipped: "LiveKit needs the agent's system prompt" };
-    config = {
-      agent_name: draft.agentId,
-      livekit_url: String(draft.livekitUrl || "").trim(),
-      target_system_prompt: prompt,
-      ...callBehaviour(contact),
-    };
+    config = phoneNumber
+      ? {
+          phone_number: phoneNumber,
+          target_system_prompt: prompt,
+          ...(contact ? { inbound: true, target_speaks_first: Boolean(contact.agentSpeaksFirst) } : {}),
+        }
+      : {
+          agent_name: draft.agentId,
+          livekit_url: String(draft.livekitUrl || "").trim(),
+          target_system_prompt: prompt,
+          ...callBehaviour(contact),
+        };
   } else {
     const idKey = connector === PREFLIGHT_CONNECTOR.VAPI ? "assistant_id" : "agent_id";
     config = {
@@ -221,10 +227,12 @@ function platformPayload(draft, name) {
       ...callBehaviour(contact),
     };
   }
-  // Others is always inbound (the platform dials the number), so it sends that
-  // direction rather than whatever the toggle last held.
+  // Others and LiveKit by phone are always inbound (the platform dials the
+  // number), so they send that direction rather than whatever the toggle last held.
   const callDirection =
-    connector === PREFLIGHT_CONNECTOR.PHONE ? "inbound" : draft.callDirection;
+    connector === PREFLIGHT_CONNECTOR.PHONE || (connector === PREFLIGHT_CONNECTOR.LIVEKIT && phoneNumber)
+      ? "inbound"
+      : draft.callDirection;
   const base = envelope(draft, name);
   // The provider's own name for the agent (read back by preflight) labels the
   // environment; `name`/`authoring_key` keep the ID as the stable identity.
