@@ -14,7 +14,10 @@ from simulate.services.harness_versioning.hashing import (
 _CONTRACT_ITEM_FIELDS = frozenset(
     {"tools", "hard_constraints", "real_use_cases", "use_cases"}
 )
-_CONTRACT_IGNORED_FIELDS = frozenset({"chosen_evals", "amendments"})
+# Contract fields the harness keeps for itself, never a person's change: its amendment log, as lines and as records.
+_CONTRACT_IGNORED_FIELDS = frozenset(
+    {"chosen_evals", "amendments", "amendment_records"}
+)
 _SCENARIO_IGNORED_FIELDS = frozenset({"scenario_key", "scenario_id"})
 
 
