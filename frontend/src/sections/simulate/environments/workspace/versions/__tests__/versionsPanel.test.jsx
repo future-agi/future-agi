@@ -229,7 +229,11 @@ describe("VersionsPanel", () => {
     expect(row("environment", "v2")).toHaveTextContent("runs use this");
     expect(row("environment", "v1")).not.toHaveTextContent("runs use this");
     expect(row("suite", "v1")).toHaveTextContent("discarded");
-    expect(screen.getAllByText(/runs use this/)).toHaveLength(2);
+    expect(
+      screen
+        .getAllByTestId(/^history-entry-/)
+        .filter((entry) => /runs use this/.test(entry.textContent)),
+    ).toHaveLength(2);
   });
 
   it("shows an agent version's check and its report", async () => {
@@ -282,8 +286,11 @@ describe("VersionsPanel", () => {
     );
   });
 
-  it("opens on the default environment version and shows what changed", () => {
+  it("opens nothing until a row is picked, then shows what changed in it", async () => {
+    const user = userEvent.setup();
     render(<VersionsPanel env={ENV} />);
+    expect(screen.queryByTestId("version-detail")).toBeNull();
+    await user.click(row("environment", "v2"));
     const detail = screen.getByTestId("version-detail");
 
     expect(
@@ -305,6 +312,7 @@ describe("VersionsPanel", () => {
       diff: { ...ENV_DIFF.diff, files: null },
     };
     render(<VersionsPanel env={ENV} />);
+    await userEvent.setup().click(row("environment", "v2"));
     expect(
       screen.getByText(/World files of the earlier version aren't known/),
     ).toBeInTheDocument();
@@ -371,6 +379,7 @@ describe("VersionsPanel", () => {
       },
     };
     render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
 
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
     await user.click(screen.getByRole("option", { name: "v1" }));
@@ -461,6 +470,7 @@ describe("VersionsPanel", () => {
       },
     };
     render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
 
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
     await user.click(screen.getByRole("option", { name: "v1" }));
@@ -490,6 +500,7 @@ describe("VersionsPanel", () => {
       },
     };
     render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
 
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
     await user.click(screen.getByRole("option", { name: "v1" }));
@@ -512,6 +523,7 @@ describe("VersionsPanel", () => {
       },
     };
     render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
 
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
     await user.click(screen.getByRole("option", { name: "v1" }));
@@ -524,8 +536,10 @@ describe("VersionsPanel", () => {
   });
 
   it("shows a spinner while the changes load and an error if they fail", async () => {
+    const user = userEvent.setup();
     state.diffLoading = true;
     const { unmount } = render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
     expect(
       within(screen.getByTestId("version-detail")).getByRole("progressbar"),
     ).toBeInTheDocument();
@@ -534,6 +548,7 @@ describe("VersionsPanel", () => {
     state.diffLoading = false;
     state.diffs = { error: true };
     render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
     expect(screen.getByText("Couldn't load the changes.")).toBeInTheDocument();
   });
 
@@ -554,6 +569,8 @@ describe("VersionsPanel", () => {
   it("opens one row at a time and marks it expanded", async () => {
     const user = userEvent.setup();
     render(<VersionsPanel env={ENV} />);
+    expect(row("environment", "v2")).toHaveAttribute("aria-expanded", "false");
+    await user.click(row("environment", "v2"));
     expect(row("environment", "v2")).toHaveAttribute("aria-expanded", "true");
     expect(row("environment", "v1")).toHaveAttribute("aria-expanded", "false");
 
@@ -678,6 +695,7 @@ describe("VersionsPanel", () => {
     const user = userEvent.setup();
     state.diffs["e2:e1"] = ENV_DIFF;
     const { rerender } = render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
     await user.click(screen.getByRole("option", { name: "v1" }));
     expect(diffCalls.at(-1)).toMatchObject({ id: "e2", against: "e1" });
@@ -758,19 +776,6 @@ describe("VersionsPanel", () => {
     }
   });
 
-  it("opens on the newest version that is not a draft when a piece has no default", () => {
-    state.versions = {
-      agent: [
-        item({ id: "a9", label: null, status: "draft" }),
-        item({ id: "a8", label: "v3" }),
-      ],
-      environment: [],
-      suite: [],
-    };
-    render(<VersionsPanel env={ENV} />);
-    expect(screen.getByText("What changed in Agent v3")).toBeInTheDocument();
-  });
-
   it("keeps the oldest version's stored summary next to the first-version note", async () => {
     const user = userEvent.setup();
     state.versions = {
@@ -816,6 +821,77 @@ describe("VersionsPanel", () => {
       screen.getByText("1 scenario in Unnumbered version"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/null/)).toBeNull();
+  });
+
+  it("filters the timeline to scenario versions", async () => {
+    const user = userEvent.setup();
+    render(<VersionsPanel env={ENV} />);
+    await user.click(screen.getByRole("button", { name: "Scenarios" }));
+    expect(screen.queryAllByTestId(/^history-entry-agent:/)).toHaveLength(0);
+    expect(screen.getAllByTestId(/^history-entry-suite:/)).toHaveLength(2);
+  });
+
+  it("says a filter is empty instead of showing a blank card", async () => {
+    const user = userEvent.setup();
+    state.versions = { ...VERSIONS, suite: [] };
+    render(<VersionsPanel env={ENV} />);
+    await user.click(screen.getByRole("button", { name: "Scenarios" }));
+    expect(screen.getByText("No scenario versions yet.")).toBeInTheDocument();
+  });
+
+  it("scrolls to the row a link names", () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    window.history.pushState({}, "", "/?tab=versions&version=suite:s1");
+    try {
+      render(<VersionsPanel env={ENV} />);
+      expect(
+        within(screen.getByTestId("history-entry-suite:s1")).getByTestId(
+          "version-detail",
+        ),
+      ).toBeInTheDocument();
+      expect(scrolled).toHaveBeenCalled();
+    } finally {
+      window.history.pushState({}, "", "/");
+      delete Element.prototype.scrollIntoView;
+    }
+  });
+
+  it("ignores a link to a version that is no longer listed", () => {
+    window.history.pushState({}, "", "/?tab=versions&version=suite:gone");
+    try {
+      render(<VersionsPanel env={ENV} />);
+      expect(screen.queryByTestId("version-detail")).toBeNull();
+      expect(row("suite", "v2")).toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("says when a newer environment version exists than the one runs use", () => {
+    state.versions = {
+      ...VERSIONS,
+      environment: [
+        { ...VERSIONS.environment[0], is_default: false },
+        { ...VERSIONS.environment[1], is_default: true },
+      ],
+    };
+    render(<VersionsPanel env={ENV} />);
+    expect(screen.getByTestId("history-tile-environment")).toHaveTextContent(
+      "v1runs use this · a newer one exists",
+    );
+    expect(screen.getByTestId("history-tile-versions")).toHaveTextContent(
+      "52 environment · 2 scenario · 1 agent",
+    );
+  });
+
+  it("states what runs use now from each piece's default", () => {
+    render(<VersionsPanel env={{ ...ENV, counts: { evaluations: 5 } }} />);
+    const now = screen.getByTestId("history-now");
+    expect(now).toHaveTextContent("Environmentv2");
+    expect(now).toHaveTextContent("Scenariosv2 · 2 scenarios");
+    expect(now).toHaveTextContent("Evaluations5 evaluations");
+    expect(now).toHaveTextContent("Agentv4");
   });
 
   describe("making a version the default", () => {

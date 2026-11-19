@@ -42,7 +42,7 @@ export const WORKSPACE_TABS = [
     badge: "improvements",
   },
   // Shown only when the environment has versioning switched on.
-  { id: "versions", label: "Versions", icon: "solar:history-linear" },
+  { id: "versions", label: "History", icon: "solar:history-linear" },
   {
     id: "settings",
     label: "Settings",
@@ -177,18 +177,14 @@ export const WORKSPACE_COPY = {
   },
 };
 
-// The Versions tab: the agent, environment and scenario versions of this
+// The History tab: the agent, environment and scenario versions of this
 // environment, what changed in each, and which scenarios a suite version holds.
 export const VERSIONS_COPY = {
-  title: "Versions",
-  subtitle:
-    "Every change to the agent, the environment or its scenarios is kept as a version. Runs replay the default environment and scenario versions.",
   pieces: {
     agent: "Agent",
     environment: "Environment",
     suite: "Scenarios",
   },
-  noneInPiece: "No versions yet",
   empty: {
     title: "This environment has no versions yet",
     body: "A version is recorded the next time the environment is built or saved.",
@@ -230,7 +226,6 @@ export const VERSIONS_COPY = {
     error: "Couldn't change the default. Try again in a moment.",
   },
   detail: {
-    pick: "Pick a version to see what changed in it.",
     changes: (label) => `What changed in ${label}`,
     compareWith: "Compared with",
     previous: "Its previous version",
@@ -279,6 +274,44 @@ export const VERSIONS_COPY = {
   },
   // The History tab: every version as one timeline, newest first.
   history: {
+    title: "Timeline",
+    subtitle:
+      "A world, tool or rule change makes the next environment version. A scenario-only edit makes the next scenario version. Agent versions are kept on their own.",
+    filterLabel: "Show versions of",
+    filters: {
+      all: "All",
+      environment: "Environment",
+      suite: "Scenarios",
+      agent: "Agent",
+    },
+    emptyKind: {
+      environment: "No environment versions yet.",
+      suite: "No scenario versions yet.",
+      agent: "No agent versions yet.",
+    },
+    none: "None yet",
+    tiles: {
+      environment: "Environment",
+      inUse: "runs use this",
+      newer: "runs use this · a newer one exists",
+      agent: "Agent being tested",
+      agentSub: "default agent version",
+      versions: "Versions",
+      counts: (environment, suite, agent) =>
+        `${environment} environment · ${suite} scenario · ${agent} agent`,
+    },
+    now: {
+      title: "What runs use now",
+      environment: "Environment",
+      scenarios: "Scenarios",
+      scenariosValue: (label, n) =>
+        n == null ? label : `${label} · ${n} scenario${n === 1 ? "" : "s"}`,
+      evaluations: "Evaluations",
+      evaluationsValue: (n) => `${n} evaluation${n === 1 ? "" : "s"}`,
+      agent: "Agent",
+      footer:
+        "Making an older version the default deletes nothing. Every run keeps the versions it ran on.",
+    },
     days: { today: "Today", yesterday: "Yesterday", earlier: "Earlier" },
     badges: {
       inUse: "runs use this",

@@ -2,6 +2,9 @@ import { VERSION_PIECES } from "src/api/simulate-environments/versions";
 import { fDate } from "src/utils/format-time";
 import { VERSIONS_COPY } from "../workspace.constants";
 
+// The DOM id of a version's row, so a link can scroll to it.
+export const historyEntryId = (key) => `history-entry-${key}`;
+
 // The History tab's filter values: every version, or one piece's.
 export const HISTORY_KINDS = ["all", "environment", "suite", "agent"];
 

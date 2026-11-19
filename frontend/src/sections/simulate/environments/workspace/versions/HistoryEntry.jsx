@@ -17,6 +17,7 @@ import { PreflightBadge } from "../agents/PreflightStatus";
 import { named } from "../agents/agentVersionStatus";
 import MakeDefaultConfirm from "./MakeDefaultConfirm";
 import VersionDetail from "./VersionDetail";
+import { historyEntryId } from "./historyTimeline";
 
 const KIND_ICON = {
   environment: "solar:layers-minimalistic-linear",
@@ -59,7 +60,8 @@ export default function HistoryEntry({
 
   return (
     <Box
-      data-testid={`history-entry-${entry.key}`}
+      id={historyEntryId(entry.key)}
+      data-testid={historyEntryId(entry.key)}
       sx={{ borderTop: "1px solid", borderColor: "divider" }}
     >
       <Stack direction="row" alignItems="flex-start" sx={{ pr: 1.5 }}>
