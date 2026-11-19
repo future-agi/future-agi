@@ -98,6 +98,7 @@ describe("a job that ended before its epoch", () => {
     ["fix_variations_source_moved", "Failed"],
     ["scenario_unavailable", "Failed"],
     ["issue_epoch_baseline_failed", "Failed"],
+    ["issue_epoch_timed_out", "Failed"],
     ["issue_epoch_measuring", "Failed"],
     ["fix_run_active", "Failed"],
   ])("%s reads as %s, with Run Epoch again", (code, label) => {
@@ -116,6 +117,16 @@ describe("a job that ended before its epoch", () => {
     expect(epochLabelLong(status)).toBe("Failed: couldn't start");
     expect(epochSentence(status)).toMatch(
       /changed after the drafts were reviewed.*Nothing changed/,
+    );
+  });
+
+  it("says a job past its 12-hour clock couldn't start, and that nothing changed", () => {
+    const status = {
+      ending: { code: "issue_epoch_timed_out", message: "raw" },
+    };
+    expect(epochLabelLong(status)).toBe("Failed: couldn't start");
+    expect(epochSentence(status)).toMatch(
+      /did not start within 12 hours.*Nothing changed/,
     );
   });
 

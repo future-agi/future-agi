@@ -78,6 +78,11 @@ const JOB_ENDINGS = {
     reason: "couldn't start",
     text: "The run on the current version did not finish, so the epoch could not start. Nothing changed. Run Epoch again.",
   },
+  issue_epoch_timed_out: {
+    as: "failed",
+    reason: "couldn't start",
+    text: "The epoch did not start within 12 hours of Run Epoch, so it was stopped. Nothing changed. Run Epoch again.",
+  },
 };
 
 // Failed splits four ways (#77). Failures that are ours come from the epoch page's own
