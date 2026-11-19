@@ -779,15 +779,18 @@ def _legacy_validated(entry: object, certified: bool) -> bool:
     return legacy_verdict(entry, certified) in ("entry", "certified")
 
 
-# On a proof entry: each other agent version's latest entry of the case, by agent version id.
+# On a proof entry: each other agent version's latest entry of the case, by agent version id, oldest first.
 OTHER_AGENTS = "other_agents"
+# How many other agent versions' entries a case keeps beside the default's; the oldest go first.
+OTHER_AGENTS_KEPT = 3
 
 
 def other_agents(
-    previous: object, made_with: Mapping[str, str]
+    previous: object, made_with: Mapping[str, str], *, default: object = None
 ) -> dict[str, dict[str, Any]]:
     """The case's entries made with other agent versions, the one being replaced included, so moving the default
-    back to a version that proved the case reads that version's own proof."""
+    back to a version that proved the case reads that version's own proof. The ``default`` agent version's entry is
+    always kept, and at most the newest `OTHER_AGENTS_KEPT` others."""
     if not isinstance(previous, dict) or not made_with:
         return {}
     agent = made_with["agent_version_id"]
@@ -798,9 +801,13 @@ def other_agents(
     }
     earlier = previous.get("agent_version_id")
     if earlier and str(earlier) != agent:
+        kept.pop(str(earlier), None)
         kept[str(earlier)] = {
             key: one for key, one in previous.items() if key != OTHER_AGENTS
         }
+    others = [key for key in kept if key != str(default)]
+    for key in others[: max(len(others) - OTHER_AGENTS_KEPT, 0)]:
+        del kept[key]
     return {OTHER_AGENTS: kept} if kept else {}
 
 
@@ -861,12 +868,24 @@ def record_proofs(
             if job is not None and job.agent_version_id
             else {}
         )
+        # A validation job's environment holds the default; a save records on the environment itself.
+        default_agent = (
+            HostedHarnessJob.no_workspace_objects.filter(id=job.environment_id)
+            .values_list("agent_version_id", flat=True)
+            .first()
+            if job is not None and job.environment_id
+            else getattr(job, "agent_version_id", None)
+        )
         for key, entry in incoming.items():
             if entry.get("blocked_reason") == "validation_incomplete" and key in merged:
                 continue
             # Each entry keeps the agent version it was proved with: a partial validation by
             # another agent version replaces only its own keys, and keeps the entry it replaces.
-            entry = {**entry, **made_with, **other_agents(merged.get(key), made_with)}
+            entry = {
+                **entry,
+                **made_with,
+                **other_agents(merged.get(key), made_with, default=default_agent),
+            }
             if (
                 suite_version.lifecycle_legacy
                 and entry.get("blocked_reason") == "validation_incomplete"
@@ -970,7 +989,12 @@ def _carried_proofs(
         }
         for key in open_keys:
             proof = previous.proofs[key]
-            if isinstance(proof, dict) and contents.get(key) == wanted[key]:
+            # A case a validation never reached keeps looking for an older proof that did.
+            reached = isinstance(proof, dict) and (
+                proof.get("blocked_reason") != "validation_incomplete"
+                or proof.get("legacy_validated") is True
+            )
+            if reached and contents.get(key) == wanted[key]:
                 carried[key] = proof
         if len(carried) == len(wanted):
             break

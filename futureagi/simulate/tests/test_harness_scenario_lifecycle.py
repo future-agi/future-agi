@@ -107,6 +107,59 @@ def test_a_save_after_a_candidate_validation_keeps_every_unchanged_cases_proof(
     assert sorted(carried) == sorted(KEYS)
 
 
+def test_a_case_keeps_the_default_agents_proof_and_only_the_last_three_others():
+    from simulate.services.harness_versioning.versions import OTHER_AGENTS, other_agents
+
+    previous = {
+        "proved": True,
+        "agent_version_id": "a5",
+        OTHER_AGENTS: {
+            one: {"agent_version_id": one} for one in ("a1", "a2", "a3", "a4")
+        },
+    }
+
+    kept = other_agents(previous, {"agent_version_id": "a6"}, default="a1")[
+        OTHER_AGENTS
+    ]
+
+    assert list(kept) == ["a1", "a3", "a4", "a5"]
+
+
+def test_an_older_complete_proof_is_carried_past_a_newer_unreached_one(
+    user, workspace, storage
+):
+    from datetime import timedelta
+
+    from simulate.services.harness_versioning.versions import _carried_proofs
+
+    environment = _environment(user, workspace, storage, "lc-carry-unreached")
+    _suite(environment, _ten())
+    _proofs(environment, dict.fromkeys(KEYS, PROVED))
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version
+    ).update(proved_at=timezone.now() - timedelta(minutes=5))
+    candidate = _copy(
+        environment.suite_version, HarnessSuiteVersion, status="candidate"
+    )
+    _members_of(environment.suite_version, candidate)
+    unreached = {
+        "format": 2,
+        "proved": False,
+        "blocked_reason": "validation_incomplete",
+    }
+    _proofs(environment, dict.fromkeys(KEYS, unreached), suite=candidate)
+    paired = [
+        (member.scenario, member.content)
+        for member in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=candidate
+        ).select_related("scenario")
+    ]
+
+    carried = _carried_proofs(environment.environment_version, paired)
+
+    assert carried == dict.fromkeys(KEYS, PROVED)
+
+
 def test_states_in_order(user, workspace, storage):
     environment = _environment(user, workspace, storage, "lc-order")
     _suite(environment, _ten())
