@@ -2,6 +2,7 @@ package clickhouse25exporter
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -222,9 +223,17 @@ func TestConvertFailedSkillAttributes(t *testing.T) {
 	}
 }
 
+type skillCHFixture struct {
+	writer            *chwriter.Writer
+	sql               func(string) string
+	database, receipt string
+	views             map[string]string
+}
+
 // Opt-in on the cloud standalone stack. Use an owned database, never an
 // existing database, and an explicitly ported loopback endpoint only.
-func TestConvertSkillAttributesClickHouse(t *testing.T) {
+func newSkillCHFixture(t *testing.T) skillCHFixture {
+	t.Helper()
 	origin := os.Getenv("SKILL_TEST_CH_URL")
 	if origin == "" {
 		t.Skip("set SKILL_TEST_CH_URL on the cloud test host for collector writer integration")
@@ -261,10 +270,15 @@ func TestConvertSkillAttributesClickHouse(t *testing.T) {
 	}
 	sql("default", "CREATE DATABASE "+database)
 	t.Cleanup(func() { sql("default", "DROP DATABASE IF EXISTS "+database+" SYNC") })
+	var receipt string
+	views := map[string]string{}
 	for _, filename := range []string{"002_spans_v2.sql", "013_attributes_extra_as_string.sql", "028_skill_attribution.sql"} {
 		contents, err := os.ReadFile(filepath.Join("..", "..", "..", "futureagi", "tracer", "services", "clickhouse", "v2", "schema", filename))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if filename == "028_skill_attribution.sql" {
+			receipt = fmt.Sprintf("%x", sha256.Sum256(contents))
 		}
 		// These three fixed migrations contain no semicolons or comment
 		// markers inside SQL literals. Strip comments before splitting DDL.
@@ -276,10 +290,28 @@ func TestConvertSkillAttributesClickHouse(t *testing.T) {
 		for _, statement := range strings.Split(strings.Join(code, "\n"), ";") {
 			if strings.TrimSpace(statement) != "" {
 				sql(database, statement)
+				for _, table := range []string{"skill_trace_links", "skill_load_failures"} {
+					if strings.HasPrefix(strings.TrimSpace(statement), "CREATE MATERIALIZED VIEW IF NOT EXISTS "+table+"_mv ") {
+						views[table] = statement
+					}
+				}
 			}
 		}
 	}
 	sql(database, "ALTER TABLE spans REMOVE TTL")
+	writer, err := chwriter.New(chwriter.Config{
+		URL: origin, Username: user, Password: password, Database: database, Table: "spans",
+		DeadLetterFile: filepath.Join(t.TempDir(), "dead_letter.jsonl"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writer.Close() })
+	return skillCHFixture{writer: writer, sql: func(q string) string { return sql(database, q) }, database: database, receipt: receipt, views: views}
+}
+
+func TestConvertSkillAttributesClickHouse(t *testing.T) {
+	f := newSkillCHFixture(t)
 	traces := buildOTLPSpan()
 	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
 	loaded := spans.At(0)
@@ -305,26 +337,68 @@ func TestConvertSkillAttributesClickHouse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer, err := chwriter.New(chwriter.Config{
-		URL: origin, Username: user, Password: password, Database: database, Table: "spans",
-		DeadLetterFile: filepath.Join(t.TempDir(), "dead_letter.jsonl"),
-	})
-	if err != nil {
+	if err := f.writer.Insert(context.Background(), rows); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = writer.Close() })
-	if err := writer.Insert(context.Background(), rows); err != nil {
-		t.Fatal(err)
-	}
-	if got := sql(database, "SELECT count() FROM skill_trace_links FINAL WHERE skill_version = 3 AND requested_version = 3 AND cached = 1 AND root_file = 1 AND is_deleted = 0"); got != "1" {
+	if got := f.sql("SELECT count() FROM skill_trace_links FINAL WHERE skill_version = 3 AND requested_version = 3 AND cached = 1 AND root_file = 1 AND is_deleted = 0"); got != "1" {
 		t.Fatalf("collector load view count = %s, want 1", got)
 	}
-	if got := sql(database, "SELECT count() FROM skill_load_failures FINAL WHERE error_type = 'integrity' AND agent_name = 'reviewer' AND is_deleted = 0"); got != "1" {
+	if got := f.sql("SELECT count() FROM skill_load_failures FINAL WHERE error_type = 'integrity' AND agent_name = 'reviewer' AND is_deleted = 0"); got != "1" {
 		t.Fatalf("collector failure view count = %s, want 1", got)
 	}
-	if got := sql(database, "SELECT count() FROM spans WHERE has(skill_version_ids, '11111111-1111-4111-8111-111111111111')"); got != "1" {
+	if got := f.sql("SELECT count() FROM spans WHERE has(skill_version_ids, '11111111-1111-4111-8111-111111111111')"); got != "1" {
 		t.Fatalf("collector dotted-array membership count = %s, want 1", got)
 	}
+}
+
+func TestCollectorRetainedSkillViews(t *testing.T) {
+	f := newSkillCHFixture(t)
+	exec := func(statement string) { f.sql(statement) }
+	exec("CREATE TABLE schema_versions (filename String, sha256 FixedString(64), applied_at DateTime DEFAULT now(), notes String) ENGINE = MergeTree ORDER BY filename")
+	exec("INSERT INTO schema_versions (filename, sha256, notes) VALUES ('028_skill_attribution.sql', '" + f.receipt + "', 'schema-topology/v1/local')")
+	exec("CREATE TABLE other_spans AS spans")
+	exec("CREATE TABLE other_links AS skill_trace_links")
+	exec("ALTER TABLE spans ADD COLUMN `na me` String")
+	ready := func(t *testing.T, want bool) {
+		t.Helper()
+		if got := f.writer.SkillSchemaReady(context.Background()); got != want {
+			t.Fatalf("SkillSchemaReady = %t, want %t", got, want)
+		}
+	}
+	ready(t, true)
+	for _, tc := range []struct {
+		name, table, before, after string
+		want                       bool
+	}{
+		{"wrong source", "skill_trace_links", "FROM spans", "FROM other_spans", false},
+		{"wrong destination", "skill_trace_links", "TO skill_trace_links AS", "TO other_links AS", false},
+		{"extra filter", "skill_trace_links", "version_id'] != ''", "version_id'] != '' AND 0", false},
+		{"wrong projection", "skill_trace_links", "['fi.skill.digest']", "['fi.skill.name']", false},
+		{"quoted identifier", "skill_trace_links", "WHERE name", "WHERE `na me`", false},
+		{"different literal", "skill_load_failures", "'ERROR'", "'E RROR'", false},
+		{"literal case", "skill_load_failures", "'ERROR'", "'error'", false},
+		{"missing filter", "skill_load_failures", "status = 'ERROR' AND ", "", false},
+		{"server normalized", "skill_load_failures", "FROM spans\nWHERE name", "from  `" + f.database + "`.`spans`\nwhere  (`name`)", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ddl := f.views[tc.table]
+			if strings.Count(ddl, tc.before) != 1 {
+				t.Fatal("fixture must vary exactly one part of packaged view")
+			}
+			drop := "DROP TABLE " + tc.table + "_mv SYNC"
+			exec(drop)
+			ready(t, false)
+			exec(strings.Replace(ddl, tc.before, tc.after, 1))
+			ready(t, tc.want)
+			exec(drop)
+			exec(ddl)
+			ready(t, true)
+		})
+	}
+	exec("DETACH TABLE skill_load_failures_mv SYNC")
+	ready(t, false)
+	exec("ATTACH TABLE skill_load_failures_mv")
+	ready(t, true)
 }
 
 func TestConvertHandlesMissingProjectID(t *testing.T) {
