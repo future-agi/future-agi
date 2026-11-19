@@ -2626,16 +2626,19 @@ class TestLaunchConstraints:
         ) == (["m1"], True, True, 25, 25, None)
 
     @pytest.mark.parametrize(
-        ("instrumentation", "measured"), [("none", True), ("traceai", False)]
+        ("instrumentation", "spans", "measured"),
+        [("none", True, True), ("none", False, False), ("traceai", True, False)],
     )
     def test_a_fix_from_a_run_the_sandbox_measured_says_so(
-        self, source_run, user, instrumentation, measured
+        self, source_run, user, instrumentation, spans, measured
     ):
         # An agent that names no tracing was seen only by the sandbox's own measuring, so
-        # the fix page and the pull request say so. A self-traced agent's never do.
+        # the fix page and the pull request say so, once that measuring exported spans.
+        # A self-traced agent's never do.
         _measured_by_the_sandbox(source_run, instrumentation)
         usage = self._source_usage(
-            source_run, [CallUsage(models=["gpt-5"], llm_spans=1, cost_usd=0.01)]
+            source_run,
+            [CallUsage(models=["gpt-5"], llm_spans=1, cost_usd=0.01)] if spans else [],
         )
         with patch(TRACED, _usage(usage)):
             fix_run = _launch(source_run, user)

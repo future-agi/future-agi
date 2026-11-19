@@ -50,6 +50,7 @@ from simulate.services.run_results_v3_queries import (
     build_run_comparison,
     run_calls_queryset,
 )
+from simulate.services.run_traces_v3 import CallUsage
 from simulate.tests.test_agent_fix_services import (
     BASE_AGENT,
     KEYS,
@@ -1093,7 +1094,13 @@ class TestUserApi:
     ):
         # The epoch page shows its "Measured automatically" notice from this field.
         _measured_by_the_sandbox(source_run)
-        with patch(TRACED, _usage({})):
+        measured = {
+            str(one.call_execution_id): CallUsage(
+                models=["gpt-5"], llm_spans=1, cost_usd=0.01
+            )
+            for one in _executions(source_run)
+        }
+        with patch(TRACED, _usage(measured)):
             launched = auth_client.post(
                 f"{BASE}/", _launch_body(source_run), format="json"
             )
