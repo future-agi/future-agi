@@ -595,7 +595,14 @@ def _prepared(environment: HostedHarnessJob, files: Mapping[str, bytes]):
         )
     pair_body = archives.pack_archive(archives.compose(split.environment, split.suite))
     prepared = prepare_pieces(
-        environment, split, outputs=_stage_outputs(pair_body), authoring_revision=""
+        environment,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision="",
+        # A bundle the chat sealed from this tree runs the contract it sealed.
+        built=SEALED_MANIFEST in split.sealed and _stamped(split),
+        # A chat's save reseals its tree; it is no full build.
+        full_build=False,
     )
     # A draft stands for no authoring revision until it is saved.
     prepared.environment_documents["authoring_revisions"] = []
@@ -619,15 +626,17 @@ def _discard(draft: Any, *, user: Any = None, **documents: Any) -> None:
 def _targets_before(environment: HostedHarnessJob) -> list[Any] | None:
     """The fault targets of the environment's files before this write; None when they cannot be read or the contract
     says nothing about the door, so every scenario's faults are checked."""
+    from simulate.selectors.environment_documents import version_contract
     from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_tool_reach import door_targets
 
     try:
         files = edit_sides(environment)["environment"]
-        contract = json.loads(files.get("contract.json") or b"{}")
     except (S3Error, HTTPError, HostedHarnessError, ValueError):
         # Unreadable earlier files: every fault is checked, never one waved through.
         return None
+    # The contract those files run with, as a build sealed it.
+    contract = version_contract(environment, fresh_draft(environment, "environment"))
     return door_targets(contract, actor_rules(files), cast_records(files))
 
 
@@ -653,6 +662,7 @@ def record_draft(
     checked = wanted | set(checked or ())
     split, prepared = _prepared(environment, archives.read_archive(body))
     require_checkpoint_scenarios(prepared.scenarios)
+    from simulate.selectors.environment_documents import recorded_contract
     from simulate.selectors.stage_outputs import stage_output
     from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_tool_reach import door_targets
@@ -666,7 +676,12 @@ def record_draft(
     cast = cast_records(split.environment)
     require_valid_faults(
         prepared.scenarios,
-        targets=door_targets(prepared.contract, actor_rules(split.environment), cast),
+        # Judged on the contract the draft runs with, as its build reaches each tool, not the authored one.
+        targets=door_targets(
+            recorded_contract(prepared.environment_documents),
+            actor_rules(split.environment),
+            cast,
+        ),
         cast=cast,
         before=before
         if isinstance(before, list)

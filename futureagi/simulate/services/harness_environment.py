@@ -18,13 +18,18 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
 from django.db.models import (
+    Case,
     Count,
+    JSONField,
     OuterRef,
     Prefetch,
     Q,
     QuerySet,
     Subquery,
+    When,
 )
+from django.db.models.fields.json import KeyTransform
+from django.db.models.functions import Coalesce
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
@@ -47,9 +52,11 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.selectors.environment_documents import (
+    RUN_CONTRACT_VERSION,
     contract_data,
     registration_key,
     row_stage_output,
+    version_contract,
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.selectors.stage_outputs import stage_output
@@ -149,9 +156,36 @@ def annotate_for_list(
     )
 
 
-def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
-    """One list row. Safe to call on a job that has never finished building."""
-    contract = contract_data(job)
+def with_version_contract(
+    queryset: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """The list's jobs with the contract each default version records it runs with, read in the same query. Only
+    the list reads it: every other read of a job never touches a version's documents."""
+    return queryset.annotate(
+        version_contract=Case(
+            # A run contract only this revision of the reading recorded, as every other reader takes it.
+            When(
+                environment_version__documents__run_contract_version=RUN_CONTRACT_VERSION,
+                then=Coalesce(
+                    KeyTransform("run_contract", "environment_version__documents"),
+                    KeyTransform("contract", "environment_version__documents"),
+                    output_field=JSONField(),
+                ),
+            ),
+            default=KeyTransform("contract", "environment_version__documents"),
+            output_field=JSONField(),
+        )
+    )
+
+
+def environment_row(
+    job: HostedHarnessJob, contract: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """One list row. Safe to call on a job that has never finished building. ``contract``: the one the default
+    version runs with, when the caller has it; a listed row reads the one its version records."""
+    if contract is None:
+        listed = getattr(job, "version_contract", None)
+        contract = listed if isinstance(listed, dict) and listed else contract_data(job)
     runs_count = getattr(job, "simulation_run_count", None)
     if runs_count is None:
         runs_count = user_environment_runs(job).count()
@@ -434,7 +468,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
     caller can tell "not built yet" from "built with nothing in it". Nothing is
     computed that ALK did not write; the contract is passed through whole.
     """
-    contract = contract_data(job)
+    contract, from_draft = working_contract(job)
     environment = stage_output(job, "environment")
     scenario_docs = stage_output(job, "scenarios")
     catalogue = stage_output(job, "sub_goals")
@@ -468,7 +502,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
     )
     personas = _personas(scenarios)
     selected = _selected_evals(job)
-    overview = environment_row(job)
+    overview = environment_row(job, version_contract(job))
     overview.update(
         {
             # The detail read already has the verified catalogue in hand, so the
@@ -493,6 +527,9 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
         rules=rules,
         cast=actor_cast,
     )
+    if contract_section is not None:
+        # An open draft's contract: shown here, used by no run until it is saved.
+        contract_section["from_draft"] = from_draft
     return {
         "id": str(job.id),
         "overview": overview,
@@ -505,6 +542,15 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
         "settings": _settings(job),
         "actors_tab": _actors_tab(contract_section),
     }
+
+
+def working_contract(job: HostedHarnessJob) -> tuple[dict[str, Any], bool]:
+    """The working copy's contract, and whether it is an open draft's: the draft's, which runs do not use until it
+    is saved, else the default version's, as its build sealed it."""
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    draft = fresh_draft(job, "environment")
+    return version_contract(job, draft), draft is not None
 
 
 def environment_actor_side(
@@ -537,25 +583,20 @@ def edit_fault_side(
 
     Unreadable files fall back to the environment's contract and no cast, logged; the targets are None when the
     contract says nothing of the door."""
-    from simulate.services.harness_actor_rules import (
-        actor_rules,
-        cast_records,
-        read_json,
-    )
+    from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_tool_reach import door_targets
     from simulate.services.harness_versioning import drafts
     from simulate.services.hosted_harness import HostedHarnessError
 
     try:
         files, _ = drafts.edit_side(job, "environment")
-        contract = read_json(files, "contract.json") or contract_data(job)
         cast = cast_records(files)
-        return door_targets(contract, actor_rules(files), cast), cast
+        return door_targets(working_contract(job)[0], actor_rules(files), cast), cast
     except (S3Error, HTTPError, HostedHarnessError):
         logger.exception(
             "fault_targets_environment_files_unreadable", job_id=str(job.id)
         )
-        return door_targets(contract_data(job), actor_rules({}), []), []
+        return door_targets(working_contract(job)[0], actor_rules({}), []), []
 
 
 def _names_actors(call_actors: object, scenario_docs: object) -> bool:

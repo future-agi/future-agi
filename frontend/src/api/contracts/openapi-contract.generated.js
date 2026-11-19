@@ -107361,6 +107361,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessEnvironmentToolStatus",
           },
         },
+        from_draft: {
+          title: "From draft",
+          description:
+            "Whether this is an open draft's contract, which no run uses until the draft is saved.",
+          type: "boolean",
+        },
         fault_targets: {
           type: "array",
           items: {

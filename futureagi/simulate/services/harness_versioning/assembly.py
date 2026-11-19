@@ -12,6 +12,8 @@ from __future__ import annotations
 import copy
 import json
 import re
+import tarfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -19,6 +21,7 @@ from typing import Any
 
 import structlog
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
@@ -40,6 +43,8 @@ logger = structlog.get_logger(__name__)
 
 CERTIFICATE = "runtime-validation.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
+# What a build stamps as its manifest's `sealed_from`; a chat's reseal stamps the digest of the tree it sealed.
+BUILD_SEAL = "build"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
 CERTIFY_REPORT_PATH = "/work/authoring/certify-report.json"
@@ -256,6 +261,125 @@ def sealed_certificate(sealed: Mapping[str, bytes]) -> dict[str, Any] | None:
     if source_digest:
         safe["source_digest"] = source_digest
     return safe
+
+
+# A bundle's object never changes once ready, so what is read from it is kept by its key; a bundle that could not
+# be read is tried again only after a short while.
+_SEAL_CACHE = "harness_bundle_seal:v2:"
+_SEAL_SECONDS = 7 * 24 * 60 * 60
+_SEAL_RETRY_SECONDS = 5 * 60
+_SEAL_MAX_BYTES = 8 * 1024 * 1024
+_UNREADABLE = {"unreadable": True}
+
+
+@dataclass(frozen=True)
+class Seal:
+    """What a ready bundle was sealed with: its contract, whether a chat's save resealed it from its tree
+    (``resealed``) rather than a build sealing it, and whether it says which (``stamped``): a bundle sealed before
+    builds stamped theirs says nothing. ``seeded``: its row holds the bundle a full build cached as it recorded the
+    version, not one a run cached. ``sha256``: the digest its row records for the bundle."""
+
+    contract: dict[str, Any]
+    resealed: bool
+    stamped: bool = True
+    seeded: bool = False
+    sha256: str = ""
+
+
+def pins_bundle_key(pins: Any) -> str | None:
+    """The assembly key of the bundle a run of ``pins`` replays, as launch picks it: the key a rerun keeps, else
+    the one its agent, environment and suite versions make."""
+    kept = getattr(pins, "assembly_key", None) or getattr(
+        getattr(pins, "assembly", None), "key", None
+    )
+    if kept:
+        return str(kept)
+    runtime = getattr(pins, "runtime", None)
+    environment_version = getattr(pins, "environment_version", None)
+    suite_version = getattr(pins, "suite_version", None)
+    if runtime is None or environment_version is None or suite_version is None:
+        return None
+    return bundle_key(runtime, environment_version, suite_version)
+
+
+def run_seal(job_id: Any, key: str) -> Seal | None:
+    """The seal of the ready bundle a run under ``key`` replays; None when there is none or it cannot be read."""
+    return _seal_at(
+        HarnessAssembledBundle._base_manager.filter(job_id=job_id, assembly_key=key)
+    )
+
+
+def latest_seal(environment_version: Any) -> Seal | None:
+    """The seal of this version's latest ready bundle, for any agent and suite: how a build of it reached its
+    tools, when no run names a pair."""
+    return _seal_at(
+        HarnessAssembledBundle._base_manager.filter(
+            environment_version_id=environment_version.id
+        )
+    )
+
+
+def _seal_at(rows: Any) -> Seal | None:
+    row = (
+        rows.filter(state=HarnessAssembledBundle.State.READY, deleted=False)
+        .exclude(object_key__isnull=True)
+        .exclude(object_key="")
+        .order_by("-updated_at")
+        .values_list("object_key", "sha256")
+        .first()
+    )
+    if not row:
+        return None
+    key, sha256 = row[0], row[1] or ""
+    seeded = key.startswith(archives.SEALED_PREFIX)
+    cached = cache.get(_SEAL_CACHE + key)
+    if cached is not None:
+        return _seal(cached, seeded, sha256)
+    try:
+        found = archives.read_members(
+            archives.get_archive(key),
+            {archives.SEALED_CONTRACT, SEALED_MANIFEST},
+            _SEAL_MAX_BYTES,
+        )
+        contract = json.loads(found.get(archives.SEALED_CONTRACT) or b"{}")
+        manifest = json.loads(found.get(SEALED_MANIFEST) or b"{}")
+    except (
+        S3Error,
+        HTTPError,
+        HostedHarnessError,
+        ValueError,
+        OSError,
+        EOFError,
+        tarfile.TarError,
+        zlib.error,
+    ):
+        # Unreadable: the version's own documents stand in until it is tried again.
+        logger.warning("harness_bundle_seal_unreadable", object_key=key, exc_info=True)
+        cache.set(_SEAL_CACHE + key, _UNREADABLE, _SEAL_RETRY_SECONDS)
+        return None
+    metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
+    read = {
+        "contract": contract if isinstance(contract, dict) else {},
+        # A chat's reseal stamps the tree it sealed from, a build stamps that it is one, an older bundle neither.
+        "stamp": str(metadata.get("sealed_from") or "")
+        if isinstance(metadata, dict)
+        else "",
+    }
+    cache.set(_SEAL_CACHE + key, read, _SEAL_SECONDS)
+    return _seal(read, seeded, sha256)
+
+
+def _seal(read: Any, seeded: bool, sha256: str) -> Seal | None:
+    if not isinstance(read, dict) or read == _UNREADABLE or not read.get("contract"):
+        return None
+    stamp = str(read.get("stamp") or "")
+    return Seal(
+        contract=read["contract"],
+        resealed=bool(stamp) and stamp != BUILD_SEAL,
+        stamped=bool(stamp),
+        seeded=seeded,
+        sha256=sha256,
+    )
 
 
 def seed_ready_bundle(

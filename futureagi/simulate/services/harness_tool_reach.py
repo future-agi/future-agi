@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 import structlog
 
 from simulate.models import HostedHarnessJob
-from simulate.selectors.environment_documents import contract_data
+from simulate.selectors.environment_documents import version_contract
 from simulate.selectors.stage_outputs import stage_output
 from simulate.services.harness_actor_rules import (
     ActorRecord,
@@ -161,23 +161,28 @@ class BlockedTool(TypedDict):
 
 
 class PinnedEnvironment(Protocol):
-    """A run's pins as far as the production-only rule reads them: the environment version, if any."""
+    """A run's pins as far as the production-only rule reads them: the environment and suite versions, if any.
+    The bundle the run replays is read from the rest of the pins as launch reads it (``pins_bundle_key``)."""
 
     @property
     def environment_version(self) -> HarnessEnvironmentVersion | None: ...
+
+    @property
+    def suite_version(self) -> Any: ...
 
 
 def _version_documents(
     environment: HostedHarnessJob, pins: PinnedEnvironment | None
 ) -> dict[str, Any]:
-    version = pins.environment_version if pins is not None else None
+    """The documents of the suite version the run is pinned to, where its scenarios are; else the default's."""
+    version = pins.suite_version if pins is not None else environment.suite_version
     return (version.documents if version is not None else None) or {}
 
 
 def _version_scenarios(
     environment: HostedHarnessJob, documents: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """The scenarios of the run's version, else the environment's own."""
+    """The scenarios of the run's suite version, else the environment's own."""
     scenarios = documents.get("scenarios")
     if not isinstance(scenarios, list):
         scenarios = stage_output(environment, "scenarios")
@@ -189,7 +194,16 @@ def blocked_tools(
 ) -> list[BlockedTool]:
     """Each production-only tool of the run's environment version, with the scenarios that need it."""
     documents = _version_documents(environment, pins)
-    contract = documents.get("contract") or contract_data(environment)
+    # The run's version's contract, the one its bundle is sealed with; a run with no pin runs the default version.
+    from simulate.services.harness_versioning.assembly import pins_bundle_key
+
+    contract = (
+        version_contract(
+            environment, pins.environment_version, key=pins_bundle_key(pins)
+        )
+        if pins is not None and pins.environment_version is not None
+        else version_contract(environment)
+    )
     blocked = production_only(contract)
     if not blocked:
         return []
