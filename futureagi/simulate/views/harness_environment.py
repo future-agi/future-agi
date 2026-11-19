@@ -512,9 +512,11 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         locked = set_environment_policy(
             job, user=request.user, **request.validated_data
         )
-        version = AgentVersion.no_workspace_objects.filter(
-            id=locked.agent_version_id
-        ).first()
+        version = (
+            AgentVersion.no_workspace_objects.filter(id=locked.agent_version_id).first()
+            if locked.agent_version_id is not None
+            else None
+        )
         return Response(
             HarnessAgentPolicyResponseSerializer(
                 {

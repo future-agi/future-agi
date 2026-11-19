@@ -422,6 +422,10 @@ class TestPush:
         self, user, workspace, storage, gh, scheduled
     ):
         environment = _environment(user, workspace, "push-private", storage)
+        _edit_payload(
+            environment,
+            lambda p: p["source"].update(visibility="private", installation_id="42"),
+        )
         a1 = HarnessAgentVersionRuntime.no_workspace_objects.get(
             agent_version_id=_a1(environment).id
         )

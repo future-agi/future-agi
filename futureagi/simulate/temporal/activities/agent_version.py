@@ -42,7 +42,7 @@ def _step(outcome) -> AgentVersionStep:
 async def supersede_agent_versions(input: AgentVersionInput) -> list[str]:
     from simulate.services.agent_version_steps import supersede
 
-    superseded = await _run_db(supersede, input.version_id)
+    superseded: list[str] = await _run_db(supersede, input.version_id)
     for version_id in superseded:
         from simulate.temporal.client import cancel_agent_version_workflow
 
@@ -74,7 +74,8 @@ async def check_agent_version(input: AgentVersionInput) -> str:
     from simulate.services.agent_version_steps import check
 
     async with Heartbeater():
-        return await _run_db(check, input.version_id)
+        outcome: str = await _run_db(check, input.version_id)
+        return outcome
 
 
 @activity.defn(name="fail_agent_version")

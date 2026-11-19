@@ -433,7 +433,7 @@ def _fill_version_prompt(version: AgentVersion, agent: dict) -> None:
             "description": prompt,
         },
     )
-    if carried:
+    if carried and runtime is not None:
         payload = dict(runtime.agent_payload)
         payload.pop("prompt_from_parent", None)
         HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(

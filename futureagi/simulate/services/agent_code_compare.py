@@ -143,7 +143,7 @@ def _pairs(
     by_content: dict[str, list[str]] = {}
     for path in sorted(removed):
         by_content.setdefault(removed[path].sha256, []).append(path)
-    pairs = []
+    pairs: list[tuple[str, str | None, str, Entry | None, Entry | None]] = []
     for path in sorted(added):
         moved_from = by_content.get(added[path].sha256)
         if moved_from:
@@ -260,6 +260,7 @@ def compare(version: AgentVersion, against: AgentVersion | None) -> dict[str, An
     missing = _unavailable(version, against)
     if missing is not None:
         return _empty_summary(missing["against"], missing["unavailable"])
+    assert against is not None
     code, base, before, after = _sides(version, against)
     pair = f"{base.identity}:{code.identity}:{code.subfolder}"
     key = f"agent-code:compare:{hashlib.sha256(pair.encode()).hexdigest()}"
@@ -369,6 +370,6 @@ def patches(
             "path": path,
             "kind": KIND_TEXT if shown else KIND_TOO_LARGE,
             "unchanged": False,
-            "hunks": patch["hunks"] if shown else [],
+            "hunks": patch["hunks"] if shown and patch is not None else [],
         }
     return {"against": str(against.id), "files": [found[path] for path in paths]}

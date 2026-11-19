@@ -117,7 +117,7 @@ def installation_repository_id(installation_id: str, repository: str) -> int:
     from integrations.services.github_app import GitHubAppError, list_repositories
 
     wanted = repository.lower()
-    page = 1
+    page: int | None = 1
     try:
         while page is not None:
             listed = list_repositories(installation_id, query=repository, page=page)

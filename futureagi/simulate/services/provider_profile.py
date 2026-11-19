@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
@@ -223,15 +223,11 @@ def read_profile(
             "end_call_phrases": assistant.get("endCallPhrases"),
             "reusable_tools": reusable,
         }
-        return _safe(profile)
+        return cast(dict[str, Any], _safe(profile))
     path = "get-chat-agent" if modality == "chat" else "get-agent"
     agent = _get(f"{base}/{path}/{assistant_id}", api_key)
-    engine = agent.get("response_engine")
-    engine_type = (
-        str((engine or {}).get("type") or "").strip()
-        if isinstance(engine, Mapping)
-        else ""
-    )
+    engine = _mapping(agent.get("response_engine"))
+    engine_type = str(engine.get("type") or "").strip()
     profile = {
         "provider": RETELL,
         "modality": modality,
@@ -270,7 +266,7 @@ def read_profile(
             f"a {engine_type or 'missing'} response engine can't be read; "
             "retell-llm and conversation-flow can"
         )
-    return _safe(profile)
+    return cast(dict[str, Any], _safe(profile))
 
 
 CONNECTOR_PROVIDERS = {"vapi": VAPI, "retell": RETELL, "retell_chat": RETELL}
@@ -369,6 +365,10 @@ def compute_setup_hash(agent: Mapping[str, Any]) -> str:
     return SETUP_HASH_PREFIX + hashlib.sha256(body).hexdigest()
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
 def _text(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
@@ -385,15 +385,13 @@ def _tool(name: str, description: Any, kind: str, parameters: Any, url: Any):
 
 
 def _vapi_tools(profile: Mapping[str, Any]) -> list[dict[str, Any]]:
-    model = profile.get("model") if isinstance(profile.get("model"), Mapping) else {}
+    model = _mapping(profile.get("model"))
     found: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw in [*(model.get("tools") or []), *(profile.get("reusable_tools") or [])]:
         if not isinstance(raw, Mapping):
             continue
-        function = (
-            raw.get("function") if isinstance(raw.get("function"), Mapping) else {}
-        )
+        function = _mapping(raw.get("function"))
         name = _text(function.get("name")) or _text(raw.get("name"))
         kind = str(raw.get("type") or "")
         if not name:
@@ -401,7 +399,7 @@ def _vapi_tools(profile: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not name or name in seen:
             continue
         seen.add(name)
-        server = raw.get("server") if isinstance(raw.get("server"), Mapping) else {}
+        server = _mapping(raw.get("server"))
         url = server.get("url")
         found.append(
             _tool(
@@ -416,7 +414,7 @@ def _vapi_tools(profile: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _vapi_prompt(profile: Mapping[str, Any]) -> str | None:
-    model = profile.get("model") if isinstance(profile.get("model"), Mapping) else {}
+    model = _mapping(profile.get("model"))
     parts = [
         str(message.get("content") or "")
         for message in model.get("messages") or []
@@ -464,18 +462,10 @@ def profile_document(
     if provider == VAPI:
         tools = _vapi_tools(profile)
         prompt = _vapi_prompt(profile)
-        model = (
-            profile.get("model") if isinstance(profile.get("model"), Mapping) else {}
-        )
-        voice = (
-            profile.get("voice") if isinstance(profile.get("voice"), Mapping) else {}
-        )
-        transcriber = (
-            profile.get("transcriber")
-            if isinstance(profile.get("transcriber"), Mapping)
-            else {}
-        )
-        units = [
+        model = _mapping(profile.get("model"))
+        voice = _mapping(profile.get("voice"))
+        transcriber = _mapping(profile.get("transcriber"))
+        units: list[dict[str, Any]] = [
             {
                 "id": MAIN_UNIT,
                 "shape": "single_prompt",
@@ -540,11 +530,7 @@ def profile_document(
             )
         if engine == "conversation-flow":
             gaps.append("flow_not_described")
-            flow = (
-                profile.get("conversation_flow")
-                if isinstance(profile.get("conversation_flow"), Mapping)
-                else {}
-            )
+            flow = _mapping(profile.get("conversation_flow"))
             units[0]["instructions"] = _text(flow.get("global_prompt"))
             tools = _retell_tools(flow.get("tools"))
             units[0]["tools"] = [tool["name"] for tool in tools]
@@ -569,7 +555,12 @@ def profile_document(
             else None
         )
     seen: set[str] = set()
-    units = [unit for unit in units if not (unit["id"] in seen or seen.add(unit["id"]))]
+    unique_units: list[dict[str, Any]] = []
+    for unit in units:
+        if unit["id"] not in seen:
+            seen.add(unit["id"])
+            unique_units.append(unit)
+    units = unique_units
     agent = {
         "schema_version": "1.0",
         "type": agent_type,
@@ -599,12 +590,12 @@ def _unit_id(name: str) -> str:
 
 
 def _number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return value
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return value
+    return None
 
 
 def _integer(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None

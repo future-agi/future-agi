@@ -1332,7 +1332,7 @@ def _builds_connected_agent(organization, workspace, payload) -> bool:
         AgentDefinition.no_workspace_objects.filter(
             id=definition_id,
             organization=organization,
-            workspace_id=getattr(workspace, "id", None),
+            workspace=getattr(workspace, "id", None),
             deleted=False,
         )
         .only("id", "agent_type")
