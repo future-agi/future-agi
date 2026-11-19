@@ -69,6 +69,10 @@ export const extractCodeEvaluateParams = (code, language) => {
 // can't describe. Mask comments and string contents before reading syntax;
 // neither a docstring nor a commented example is an executable definition.
 const pythonTrivia = /'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|#[^\n]*/g;
+const nonCallableInitializers = new Set([
+  "ObjectExpression", "ArrayExpression", "Literal", "TemplateLiteral",
+]);
+
 // Both JS runners pass one object to the top-level evaluate (or main).
 // Read the program's declarations, never nested declarations or source text.
 function javascriptTaskInputs(code) {
@@ -83,7 +87,12 @@ function javascriptTaskInputs(code) {
     if (node.type === "FunctionDeclaration") entries.set(node.id.name, node);
     if (node.type === "VariableDeclaration") {
       for (const { id, init } of node.declarations) {
-        if (id.type === "Identifier" && init) entries.set(id.name, init);
+        if (id.type !== "Identifier" || !init) continue;
+        // The runners test typeof evaluate before trying main. A constant
+        // literal cannot become callable; a factory, alias or mutable
+        // binding is not proof of that, so keep its unknown AST node.
+        const nonCallable = node.kind === "const" && nonCallableInitializers.has(init.type);
+        entries.set(id.name, nonCallable ? null : init);
       }
     }
   }
