@@ -43,7 +43,7 @@ import {
   subGoalsOfScenario,
   isConnectOnly,
 } from "./envModel";
-import { snapshotOfRun, snapshotLabelOf } from "./envSnapshot";
+import { snapshotOfRun, snapshotLabelOf, snapshotName } from "./envSnapshot";
 import { toolFaultsOf } from "./toolEnv";
 import {
   environmentVersions,
@@ -174,6 +174,8 @@ export const pairKeyOf = (run, env, envState) => {
        fixed, one number. Whether two runs can be compared is decided on this,
        never on the world label underneath. */
     snapshot: run ? snapshotLabelOf(run, env, envState) : null,
+    /* …and how it reads: "env v2 · scenarios v3". */
+    snapshotName: run ? snapshotName(snapshotOfRun(run, env, envState)) : null,
     eval: run?.evalVersion || evalVersionOf(envState),
     catalog: run?.catalogVersion || catalogVersionOf(envState),
     simulator: sim?.model || sim?.label || null,
@@ -248,10 +250,10 @@ const ranIn = (run, id) => {
 const envOfRun = (run, env) => run?._env || env;
 const stateOfRun = (run, envState) => run?._envState || envState;
 
-/* "Environment v5 → v6" — the versions people see, never the world label. */
+/* "env v2 · scenarios v3 → env v2 · scenarios v4" — the versions people see, never the world label. */
 const versionSpan = (ka, kb) =>
   ka.snapshot && kb.snapshot && ka.snapshot !== kb.snapshot
-    ? `Environment ${ka.snapshot} → ${kb.snapshot}`
+    ? `${ka.snapshotName || ka.snapshot} → ${kb.snapshotName || kb.snapshot}`
     : "The environment";
 
 /**
@@ -796,7 +798,7 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
             note:
               a._key.envId !== b._key.envId
                 ? "Different environments — runs are compared only on the same environment version, so these sit side by side with no verdict."
-                : `Environment ${a._key.snapshot || "—"} and ${b._key.snapshot || "—"} — runs are comparable only on the same environment version. Re-run one agent on the other's version to compare them.`,
+                : `${a._key.snapshotName || a._key.snapshot || "—"} and ${b._key.snapshotName || b._key.snapshot || "—"} — runs are comparable only on the same environment and scenario versions. Re-run one agent on the other's versions to compare them.`,
           }
         : verdictLabelOf(iv, band?.points);
   /* A change counts only when it beats the noise measured for the

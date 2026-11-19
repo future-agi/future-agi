@@ -76,7 +76,11 @@ import {
 } from "./ImprovementPanels";
 import { improvementIdentityOf } from "../../improvements/improvementRows";
 import { proofDisplay } from "./proofBlock";
-import { snapshotOfImprovement } from "../../_mock/envSnapshot";
+import {
+  snapshotOfImprovement,
+  snapshotName,
+  snapshotByLabel,
+} from "../../_mock/envSnapshot";
 import { envLabelOf } from "../../_mock/envVersionKinds";
 import {
   briefEvidenceOf,
@@ -307,16 +311,26 @@ export default function OptimizationRunView({
      frozen on, and the one the approval minted. */
   const frozenOn =
     env && envState
-      ? snapshotOfImprovement(record, env, envState)?.label || null
+      ? snapshotName(snapshotOfImprovement(record, env, envState), true) ||
+        null
       : null;
   const ca = record.contractApproval;
   const shownApproval = ca
     ? {
         ...ca,
+        /* "Approved environment v3" — the environment half of the
+           version it minted; stored keys never read on screen. */
         to:
-          ca.toSnapshot ||
+          (ca.toSnapshot && env && envState
+            ? snapshotByLabel(env, envState, ca.toSnapshot)?.envLabel
+            : null) ||
           (env && envState ? envLabelOf(env, envState, ca.to) : ca.to),
-        from: ca.fromSnapshot || frozenOn || ca.from,
+        from:
+          (ca.fromSnapshot && env && envState
+            ? snapshotName(snapshotByLabel(env, envState, ca.fromSnapshot), true)
+            : null) ||
+          frozenOn ||
+          ca.from,
       }
     : ca;
 

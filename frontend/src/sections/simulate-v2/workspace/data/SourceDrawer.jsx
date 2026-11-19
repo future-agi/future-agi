@@ -47,7 +47,7 @@ import {
   supplyRecordsPatch,
 } from "../../_mock/dataMapping";
 import { kbRefreshOf } from "../../_mock/kbCatalog";
-import { nextSnapshotLabel } from "../../_mock/envSnapshot";
+import { nextEnvLabel } from "../../_mock/envSnapshot";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -208,7 +208,7 @@ export default function SourceDrawer({
   const pd = personalDataOf(source);
   const refresh = kbRefreshOf(source);
   const toReview = mappingToReview(source);
-  const nextLabel = nextSnapshotLabel(env, envState);
+  const nextLabel = nextEnvLabel(env, envState);
   /* The sample row is the one a change cited (its key value). */
   const focusRow =
     !!focusAt &&
@@ -899,7 +899,7 @@ export default function SourceDrawer({
                         setPlan(null);
                       }}
                     >
-                      {`Move to the new version and save as ${nextLabel}`}
+                      {`Move to the new version and save as environment ${nextLabel}`}
                     </Button>
                     <Button
                       size="small"

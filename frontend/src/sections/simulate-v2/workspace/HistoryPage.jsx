@@ -10,7 +10,9 @@ import {
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import {
   agentVersions,
   currentAgentVersion,
@@ -45,10 +47,20 @@ const PART_NAME = {
   creds: "Credentials",
 };
 const KIND_ICON = {
-  env: "solar:layers-minimalistic-linear",
+  env: "solar:globe-linear",
+  scenarios: "solar:layers-minimalistic-linear",
   agent: "solar:cpu-bolt-linear",
   default: "solar:flag-linear",
 };
+/* A version entry is the environment's, the scenarios', or both (one action
+   that moved the two). */
+const isSnap = (e) => e?.kind === "env" || e?.kind === "scenarios";
+const snapTitle = (v) =>
+  v.envChanged && v.scenChanged
+    ? `Environment ${v.envLabel} · scenarios ${v.scenLabel}`
+    : v.scenChanged
+      ? `Scenarios ${v.scenLabel}`
+      : `Environment ${v.envLabel}`;
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const dayOf = (iso) => {
   if (!iso) return "Earlier";
@@ -86,6 +98,7 @@ export default function HistoryPage({
   const [menu, setMenu] = useState(null);
   const [rollbackTo, setRollbackTo] = useState(null);
   const { viewAs, setViewAs } = useEnvViewAs(env, envState);
+  const navigate = useNavigate();
   const canSwitch = !readOnly && !!patch && !viewAs;
 
   const snapshots = useMemo(
@@ -125,7 +138,7 @@ export default function HistoryPage({
 
   const events = useMemo(() => {
     const envEvents = snapshots.map((v) => ({
-      kind: "env",
+      kind: v.scenChanged && !v.envChanged ? "scenarios" : "env",
       key: `env-${v.label}`,
       at: v.at,
       v,
@@ -153,7 +166,11 @@ export default function HistoryPage({
   const shown = events.filter(
     (e) =>
       filter === "all" ||
-      (filter === "env" ? e.kind === "env" : e.kind !== "env"),
+      (filter === "env"
+        ? e.kind === "env"
+        : filter === "scenarios"
+          ? isSnap(e) && e.v.scenChanged
+          : !isSnap(e)),
   );
   const days = [];
   shown.forEach((e) => {
@@ -163,20 +180,17 @@ export default function HistoryPage({
     else days.push({ day: d, items: [e] });
   });
 
-  const nowRate = rateOf(
-    (r) =>
-      snapshotLabelOf(r, env, envState) === current?.label &&
-      (r.agentVersion || "v1") === activeAgent,
-  );
-  const agentCount = versionHistoryOf(env, envState).agent.length;
-
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
       {/* What runs use now, in one strip. */}
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
+          gridTemplateColumns: {
+            xs: "repeat(2, 1fr)",
+            sm: "repeat(3, 1fr)",
+            lg: "repeat(6, 1fr)",
+          },
           border: "1px solid",
           borderColor: "divider",
           borderRadius: "8px",
@@ -187,7 +201,7 @@ export default function HistoryPage({
         {[
           {
             label: "Environment",
-            value: current?.label || "—",
+            value: current?.envLabel || "—",
             sub: current?.latest
               ? "latest · runs use this"
               : "runs use this · a newer one exists",
@@ -201,16 +215,29 @@ export default function HistoryPage({
                 : `pinned · ${nm(production)} is in production`,
           },
           {
-            label: "Versions",
-            value: snapshots.length + agentCount,
-            sub: `${plural(snapshots.length, "environment version")} · ${plural(agentCount, "agent version")}`,
+            label: "World and contract",
+            value: current?.parts?.env ? `world ${current.parts.env}` : "—",
+            sub: "tools, records and rules",
           },
           {
-            label: "This setup's latest run",
-            value: nowRate?.rate != null ? `${nowRate.rate}%` : "—",
-            sub: nowRate
-              ? `${nowRate.passed} of ${nowRate.of} passed · ${plural(nowRate.runs, "run")}`
-              : "not run on this setup yet",
+            label: "Scenarios",
+            value: current?.scenLabel || "—",
+            sub: `${plural(
+              (envState?.scenarios || []).filter(
+                (x) => !x.archived && !x.retired && !x.proposed,
+              ).length,
+              "scenario",
+            )} in this version`,
+          },
+          {
+            label: "Evaluations",
+            value: (envState?.evals || []).length,
+            sub: "score each run",
+          },
+          {
+            label: "Simulated caller",
+            value: simulatorOf(env, envState)?.model || "—",
+            sub: "plays the customer",
           },
         ].map((m, i) => (
           <Box
@@ -255,10 +282,7 @@ export default function HistoryPage({
         sx={{
           display: "grid",
           gap: 2,
-          gridTemplateColumns: {
-            xs: "1fr",
-            lg: "minmax(0, 2fr) minmax(0, 1fr)",
-          },
+          gridTemplateColumns: "1fr",
           alignItems: "start",
         }}
       >
@@ -287,9 +311,8 @@ export default function HistoryPage({
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
               >
-                Any change to the world, scenarios, evaluations, caller or
-                credentials is the next environment version. An agent change
-                never is.
+                Scenario edits make a scenario version; any other change makes
+                an environment version. Nothing is deleted.
               </Typography>
             </Box>
             <ToggleButtonGroup
@@ -301,6 +324,7 @@ export default function HistoryPage({
             >
               <ToggleButton value="all">All</ToggleButton>
               <ToggleButton value="env">Environment</ToggleButton>
+              <ToggleButton value="scenarios">Scenarios</ToggleButton>
               <ToggleButton value="agent">Agent</ToggleButton>
             </ToggleButtonGroup>
           </Stack>
@@ -344,108 +368,11 @@ export default function HistoryPage({
             </Typography>
           )}
         </Box>
-
-        {/* ── what's tested now ── */}
-        <Box
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            bgcolor: "background.paper",
-            overflow: "hidden",
-          }}
-        >
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: 600,
-              fontSize: 13,
-              px: 2.5,
-              pt: 2,
-              pb: 1,
-            }}
-          >
-            What runs use now
-          </Typography>
-          {[
-            [
-              "Environment",
-              `${current?.label || "—"}${current?.latest ? " · latest" : ""}`,
-            ],
-            [
-              "World and contract",
-              current?.parts?.env ? `world ${current.parts.env}` : "—",
-            ],
-            [
-              "Scenarios",
-              plural(
-                (envState?.scenarios || []).filter(
-                  (s) => !s.archived && !s.retired && !s.proposed,
-                ).length,
-                "scenario",
-              ),
-            ],
-            [
-              "Evaluations",
-              plural((envState?.evals || []).length, "evaluation"),
-            ],
-            ["Simulated caller", simulatorOf(env, envState)?.model || "—"],
-            [
-              "Agent",
-              activeAgent
-                ? `${nm(activeAgent)}${def === "production" ? " · follows production" : " · pinned"}`
-                : "None connected",
-            ],
-          ].map(([k, v]) => (
-            <Stack
-              key={k}
-              direction="row"
-              spacing={1.5}
-              sx={{
-                px: 2.5,
-                py: 0.875,
-                borderTop: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  width: 128,
-                  flexShrink: 0,
-                }}
-              >
-                {k}
-              </Typography>
-              <Typography
-                sx={{ typography: "s2", minWidth: 0 }}
-                noWrap
-                title={v}
-              >
-                {v}
-              </Typography>
-            </Stack>
-          ))}
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.tertiary",
-              px: 2.5,
-              py: 1.25,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            Roll back makes the next version from an older one. Nothing is
-            deleted, and every run keeps the version it ran on.
-          </Typography>
-        </Box>
       </Box>
 
       {/* An entry's actions. */}
       <Menu anchorEl={menu?.el} open={!!menu} onClose={() => setMenu(null)}>
-        {menu?.e.kind === "env" &&
+        {isSnap(menu?.e) &&
           menu.e.v.worldHead &&
           !menu.e.v.current &&
           menu.e.v.parts.env !== viewAs && (
@@ -458,27 +385,40 @@ export default function HistoryPage({
               View it, read-only
             </MenuItem>
           )}
-        {menu?.e.kind === "env" && !menu.e.v.current && canSwitch && (
+        {/* A scenario version reads as the suite as of it, on Scenarios. */}
+        {isSnap(menu?.e) && menu.e.v.scenChanged && !menu.e.v.latest && (
+          <MenuItem
+            onClick={() => {
+              navigate(
+                `${paths.dashboard.simulate.environmentStep(env.id, "scenarios")}?asOf=${encodeURIComponent(menu.e.v.label)}`,
+              );
+              setMenu(null);
+            }}
+          >
+            {`View scenarios as of ${menu.e.v.scenLabel}`}
+          </MenuItem>
+        )}
+        {isSnap(menu?.e) && !menu.e.v.current && canSwitch && (
           <MenuItem
             onClick={() => {
               setRollbackTo(menu.e.v.label);
               setMenu(null);
             }}
           >
-            {`Roll back to ${menu.e.v.label}`}
+            {`Roll back to ${snapTitle(menu.e.v).replace(/^E/, "e").replace(/^S/, "s")}`}
           </MenuItem>
         )}
-        {menu?.e.kind === "env" && onCopy && (
+        {isSnap(menu?.e) && onCopy && (
           <MenuItem
             onClick={() => {
               onCopy(menu.e.v.label);
               setMenu(null);
             }}
           >
-            {`Make a copy from ${menu.e.v.label}`}
+            {`Make a copy from ${menu.e.v.name}`}
           </MenuItem>
         )}
-        {menu?.e.kind === "env" && (
+        {isSnap(menu?.e) && (
           <MenuItem
             onClick={() => {
               setOpen(menu.e.key);
@@ -523,13 +463,12 @@ function Entry({
   env,
   envState,
 }) {
-  const isEnv = e.kind === "env";
-  const title =
-    e.kind === "env"
-      ? `Environment ${e.v.label}`
-      : e.kind === "agent"
-        ? `Agent ${nm(e.row.label)}`
-        : "Default agent changed";
+  const isEnv = isSnap(e);
+  const title = isEnv
+    ? snapTitle(e.v)
+    : e.kind === "agent"
+      ? `Agent ${nm(e.row.label)}`
+      : "Default agent changed";
   const badges = [
     isEnv && e.v.current && "runs use this",
     isEnv && e.v.latest && !e.v.current && "latest",
@@ -537,12 +476,11 @@ function Entry({
     e.kind === "agent" && e.row.label === activeAgent && "being tested",
     e.kind === "agent" && e.record?.status === "draft" && "draft",
   ].filter(Boolean);
-  const summary =
-    e.kind === "env"
-      ? e.v.summary
-      : e.kind === "agent"
-        ? plainNote(e.row.summary)
-        : `From ${nm(e.c.from === "production" ? "production" : e.c.from)} to ${nm(e.c.to === "production" ? "production" : e.c.to)}`;
+  const summary = isEnv
+    ? e.v.summary
+    : e.kind === "agent"
+      ? plainNote(e.row.summary)
+      : `From ${nm(e.c.from === "production" ? "production" : e.c.from)} to ${nm(e.c.to === "production" ? "production" : e.c.to)}`;
   const parts = isEnv
     ? e.v.kinds.map((k) => SNAPSHOT_KIND_LABEL[k]).filter(Boolean)
     : [];

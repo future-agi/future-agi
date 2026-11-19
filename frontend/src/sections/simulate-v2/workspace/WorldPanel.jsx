@@ -402,7 +402,7 @@ export default function WorldPanel({
                   <Box>
                     {answered ? (
                       <VersionTag
-                        label={`environment ${firstSnapshotOfWorld(env, envState, since[tool.name] || fit.envVersion)?.label || envLabelOf(env, envState, since[tool.name] || fit.envVersion)}`}
+                        label={`environment ${firstSnapshotOfWorld(env, envState, since[tool.name] || fit.envVersion)?.envLabel || envLabelOf(env, envState, since[tool.name] || fit.envVersion)}`}
                       />
                     ) : (
                       <Typography sx={{ typography: "s3", fontWeight: 600 }}>

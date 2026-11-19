@@ -253,20 +253,28 @@ export default function DesignReview({
     setEditing(null);
   };
   /* Removing a simulation's stand-in is leaving that behavior out. */
-  const removing = (label, patch) => {
+  const removing = (label, patch, note = null) => {
     setUndo({
       label,
+      note,
       restore: { tools, rules, actors, depChoices: env?.depChoices || {} },
     });
     onChange(patch);
   };
   const removeTool = (t) => {
     const dep = deps.find((d) => d.alt.name === t.name);
+    /* A tool read from the agent's code is one the agent will still call:
+       left out, the world won't answer it, so say what that does. */
+    const fromAgent =
+      (t.designSrc || t.source || origin) === "From the agent's code";
     removing(
       t.name,
       dep
         ? leaveOutDepPatch(env, dep)
         : { tools: tools.filter((x) => x.name !== t.name) },
+      fromAgent
+        ? "Your agent still calls it, so the world won't answer and those calls fail. Keep it unless you're testing that."
+        : null,
     );
   };
   /* Framed: the full-width card above every tab, so the one thing to do
@@ -642,6 +650,11 @@ export default function DesignReview({
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1.5 }}>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             {`${undo.label} removed from the plan.`}
+            {undo.note && (
+              <Box component="span" sx={{ color: "warning.dark" }}>
+                {` ${undo.note}`}
+              </Box>
+            )}
           </Typography>
           <Button
             size="small"

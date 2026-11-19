@@ -4,7 +4,7 @@ import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { latestEnvVersion, scenariosCalling, toolFit } from "../_mock/toolFit";
 import { useRebuildForAgent } from "../workspace/useRebuildForAgent";
-import { nextSnapshotLabel } from "../_mock/envSnapshot";
+import { nextEnvLabel } from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { addAndSaveMcpToolsPatch, mcpRunGapOf } from "../_mock/worldTools";
 import { reviewCountsOf } from "../_mock/editReview";
@@ -36,7 +36,7 @@ export default function ToolFitRow({ env, envState, patch, agent, locked }) {
   const absent = fit.missing.filter((t) => !t.changed);
   const changedOnly = !gapOnly && !absent.length;
   const fitShown = envLabelOf(env, envState, fit.envVersion);
-  const nextLabel = nextSnapshotLabel(env, envState);
+  const nextLabel = nextEnvLabel(env, envState);
   const latest = latestEnvVersion(env, envState);
   const latestFits =
     !gapOnly &&

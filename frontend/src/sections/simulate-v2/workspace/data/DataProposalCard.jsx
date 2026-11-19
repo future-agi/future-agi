@@ -27,7 +27,7 @@ import {
   supplyRecordsPatch,
 } from "../../_mock/dataMapping";
 import { openReviewChanges } from "../reviewChangesBus";
-import { nextSnapshotLabel } from "../../_mock/envSnapshot";
+import { nextEnvLabel, currentEnvSnapshot } from "../../_mock/envSnapshot";
 import { currentEnvVersion, editsLandInPlace } from "../../_mock/versions";
 import { personaFor } from "../../_mock/scenarios";
 import { stampNewBatch } from "../../_mock/addScenarios";
@@ -115,12 +115,14 @@ export default function DataProposalCard({
   const [conflictPick, setConflictPick] = useState(null);
   const [saved, setSaved] = useState(null);
   const [rejected, setRejected] = useState(false);
-  const next = nextSnapshotLabel(env, envState);
+  const next = nextEnvLabel(env, envState);
   /* No run has used the current version yet: accepted changes land on it
      now, so there's no next version to save (versions.js envChangePatch). */
   const inPlace = editsLandInPlace(envState);
   const current =
-    currentEnvVersion(env, envState)?.label || "the current version";
+    currentEnvSnapshot(env, envState)?.envLabel ||
+    currentEnvVersion(env, envState)?.label ||
+    "the current version";
   /* A single pickable change needs no checkbox beside Add / Reject. */
   const onlyOne =
     proposal.items.filter(
@@ -690,7 +692,7 @@ export default function DataProposalCard({
               ? "Blocked items stay out"
               : inPlace
                 ? `Applies to ${current} now — no run uses it yet`
-                : `Saved as ${next} from Review changes`}
+                : `Saved as environment ${next} from Review changes`}
         </Typography>
         <Button
           variant="outlined"

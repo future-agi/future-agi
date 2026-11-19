@@ -44,8 +44,10 @@ import {
 import {
   currentEnvSnapshot,
   envSnapshotsOf,
-  nextSnapshotLabel,
   SAME_ACTION_MS,
+  nextEnvLabel,
+  nextVersionName,
+  snapshotName,
 } from "./envSnapshot";
 import { callerChangePatch, simulatorOf } from "./envModel";
 import { suiteLogPatch, largerBump } from "./suiteLog";
@@ -778,7 +780,7 @@ export const contractEditPlan = (env, envState, edit) => {
   const fail = (error) => ({ ok: false, error });
   /* Named as the environment version it mints (a snapshot — envSnapshot.js);
      the world version underneath is minted in `patch`. */
-  const next = nextSnapshotLabel(env, envState);
+  const next = nextEnvLabel(env, envState);
   let kind;
   let detail;
   let subject;
@@ -1175,7 +1177,7 @@ export const rollbackPlan = (
     ok: true,
     target,
     targetName: name(target),
-    next: nextSnapshotLabel(env, envState),
+    next: nextEnvLabel(env, envState),
     changes,
     discards,
     recheck,
@@ -1206,6 +1208,13 @@ export const rollbackPlan = (
   { ok, error?, snap, next, changes, keeps, recheck, sitOut, discards, patch(latest) }
 */
 const msOf = (iso) => Date.parse(iso || "") || 0;
+/* Which version a rollback moves: the scenario set alone, the environment
+   alone (world, sub-goals, evaluations, caller, credentials), or both. */
+const rollbackPiece = (snap, current) => {
+  const scen = snap?.parts?.set !== current?.parts?.set;
+  const envMoves = ["env", "catalog", "eval", "caller", "creds"].some((k) => snap?.parts?.[k] !== current?.parts?.[k]);
+  return scen && envMoves ? "both" : scen ? "scenarios" : "env";
+};
 const rowName = (r) => r.title || r.name || "scenario";
 const evalName = (e) =>
   typeof e === "string"
@@ -1238,7 +1247,7 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
   const current = currentEnvSnapshot(env, envState);
   if (!snap || !current || snap.label === current.label)
     return { ok: false, error: "That's the version in use." };
-  const name = `environment ${snap.label}`;
+  const name = snapshotName(snap, true);
   /* Everything made after this snapshot's own changes is newer than it —
      half the gap the snapshot folding leaves between two actions. */
   const until = (snap.endMs || 0) + SAME_ACTION_MS / 2;
@@ -1426,7 +1435,8 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
   return {
     ok: true,
     snap,
-    next: nextSnapshotLabel(env, envState),
+    /* Named by what moves: scenarios only, the environment only, or both. */
+    next: nextVersionName(env, envState, rollbackPiece(snap, current), true),
     changes,
     keeps,
     recheck: worldOk?.recheck || 0,

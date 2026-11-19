@@ -186,7 +186,11 @@ import { DESIGN_PARK_MS } from "../_mock/builder";
 import { getBuilderMode } from "../_mock/builderModeBus";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { isConnectOnly, rulesOf } from "../_mock/envModel";
-import { currentEnvSnapshot } from "../_mock/envSnapshot";
+import {
+  currentEnvSnapshot,
+  snapshotNameOf,
+  currentVersionName,
+} from "../_mock/envSnapshot";
 import { EmptyState } from "../components/primitives";
 import { ProvisioningPanel } from "../components/loading";
 import AssistantConsole from "../assistant/AssistantConsole";
@@ -1968,7 +1972,7 @@ export default function EnvironmentWorkspace() {
             id: `${forkedId}-v1`,
             label: "v1",
             createdAt: now,
-            note: `${opts.kind === "duplicate" ? "Duplicated" : "Forked"} from ${env.name} at environment ${opts.version || currentEnvSnapshot(env, envState)?.label || currentEnvVersion(env, envState).label}${keep ? ` — ${keep.size} of ${(envState.scenarios || []).length} scenarios` : ""}.`,
+            note: `${opts.kind === "duplicate" ? "Duplicated" : "Forked"} from ${env.name} at ${opts.version ? snapshotNameOf(env, envState, opts.version) : currentVersionName(env, envState) || `environment ${currentEnvVersion(env, envState).label}`}${keep ? ` — ${keep.size} of ${(envState.scenarios || []).length} scenarios` : ""}.`,
             scenarios: (envState.scenarios || []).length,
             changed: [],
             tools: worldToolsFor(env, envState),
@@ -3679,7 +3683,7 @@ export default function EnvironmentWorkspace() {
           const pending = pendingEnvChanges(envState);
           const cost = pendingCostOf(env, envState);
           const savedLabel =
-            currentEnvSnapshot(env, envState)?.label ||
+            currentEnvSnapshot(env, envState)?.envLabel ||
             currentEnvVersion(env, envState)?.label;
           const choose = (saveFirst) => {
             const req = draftAsk;
@@ -4324,6 +4328,7 @@ export default function EnvironmentWorkspace() {
           envState={envState}
           patch={patch}
           locked={readOnlyEnv}
+          onHistory={() => go("history")}
           thenRun={!!runAfterSave}
           onReviewClose={() => setRunAfterSave(null)}
           onSave={(note) => {

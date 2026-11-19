@@ -11,18 +11,19 @@
  */
 import { environmentVersions, pendingEnvChanges, nextEnvVersion } from "./versions";
 import { displayEnvLabel, subGoalsOfScenario, rulesOf, ruleOfScenario } from "./envModel";
-import { snapshotOfWorld, nextSnapshotLabel } from "./envSnapshot";
+import { snapshotOfWorld, nextEnvLabel } from "./envSnapshot";
 
 /* The change kinds that are the world version. */
 export const WORLD_KINDS = ["contract", "rules", "seed", "toolbehaviour", "actors", "tools-added", "tools-removed", "network"];
 
 /**
- * A stored world label as it reads on the surface: the environment snapshot
- * (envSnapshot.js) that is newest on that world — "E v3" reads "v7" while v7
- * is the newest snapshot holding world v3. Unknown labels pass through.
+ * A stored world label as it reads on the surface: the environment version
+ * (envSnapshot.js envLabel) of the newest snapshot on that world — "E v3"
+ * reads "v2" while environment v2 holds world v3. Scenario versions never
+ * move it. Unknown labels pass through.
  */
 export const envLabelOf = (env, envState, label) => (label
-  ? snapshotOfWorld(env, envState, label)?.label || displayEnvLabel(label, environmentVersions(env, envState))
+  ? snapshotOfWorld(env, envState, label)?.envLabel || displayEnvLabel(label, environmentVersions(env, envState))
   : label);
 
 /* Whether a scenario uses a tool: its text, the tools it records needing,
@@ -55,7 +56,7 @@ export const pendingCostOf = (env, envState) => {
   const next = nextEnvVersion(env, envState);
   /* Saved, the edits mint the next environment snapshot — that's the number
      people see; the world version underneath (E vN) moves with it. */
-  const label = nextSnapshotLabel(env, envState);
+  const label = nextEnvLabel(env, envState);
   const rows = (envState?.scenarios || []).filter((r) => !r.retired && !r.archived);
   const tools = (env?.tools || []).map((t) => t.name);
   const named = tools.filter((n) => pending.some((c) => String(c.detail || "").includes(n)));

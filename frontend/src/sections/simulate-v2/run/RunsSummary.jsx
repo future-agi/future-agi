@@ -46,7 +46,7 @@ import {
   isCandidateRun,
   runIdentityOf,
 } from "../_mock/runIdentity";
-import { currentEnvSnapshot } from "../_mock/envSnapshot";
+import { currentVersionName } from "../_mock/envSnapshot";
 import { staleScenarios } from "../_mock/proofs";
 import WinnerDrawer from "./WinnerDrawer";
 import FromImprovement from "./FromImprovement";
@@ -1103,7 +1103,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           {r.toolGap?.length > 0 && (
                             <Tooltip
                               arrow
-                              title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that call ${r.toolGap.length === 1 ? "it" : "them"} are not measured.`}
+                              title={`Run anyway on ${identityOf(r).envName || `environment ${r.envVersion}`}, which can't answer ${r.toolGap.join(", ")}. Scenarios that call ${r.toolGap.length === 1 ? "it" : "them"} are not measured.`}
                             >
                               <Box
                                 sx={{
@@ -1386,7 +1386,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           {r.toolGap?.length > 0 && (
                             <Tooltip
                               arrow
-                              title={`Run anyway on environment ${identityOf(r).env || r.envVersion}, which can't answer ${r.toolGap.join(", ")}. Scenarios that call ${r.toolGap.length === 1 ? "it" : "them"} are not measured.`}
+                              title={`Run anyway on ${identityOf(r).envName || `environment ${r.envVersion}`}, which can't answer ${r.toolGap.join(", ")}. Scenarios that call ${r.toolGap.length === 1 ? "it" : "them"} are not measured.`}
                             >
                               <Box
                                 sx={{
@@ -1667,7 +1667,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       agentVersion: currentAgentVersion(envState).label,
                       envVersion: currentEnvVersion(env, envState)?.label,
                     }).label
-                  : `no agent connected × environment ${currentEnvSnapshot(env, envState)?.label || "—"}`
+                  : `no agent connected × ${currentVersionName(env, envState) || "environment —"}`
               }
             />
             <Line

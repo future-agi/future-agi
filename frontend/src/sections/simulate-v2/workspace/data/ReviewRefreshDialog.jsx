@@ -22,7 +22,7 @@ import {
   kbRefreshPlanOf,
   validateKbRefresh,
 } from "../../_mock/kbRefresh";
-import { nextSnapshotLabel } from "../../_mock/envSnapshot";
+import { nextEnvLabel } from "../../_mock/envSnapshot";
 import AddSourceMenu from "./AddSourceMenu";
 
 const LINE = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
@@ -67,7 +67,7 @@ export default function ReviewRefreshDialog({
         .map((s) => [s.id, s]),
     ).values(),
   ];
-  const next = nextSnapshotLabel(env, envState);
+  const next = nextEnvLabel(env, envState);
   const decide = (id, v) => {
     if (!v) return;
     setDecisions((d) => ({ ...d, [id]: v }));
@@ -156,7 +156,7 @@ export default function ReviewRefreshDialog({
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {/* Why it's open and what to do (#100): a new revision in the
                   Knowledge base; every change is in unless rejected. */}
-              {`Changed in the Knowledge base since you added it · your copy vs the current file · ${plan.changes.length} ${plan.changes.length === 1 ? "change" : "changes"}, each accepted unless you reject it · then Save as ${next}`}
+              {`Changed in the Knowledge base since you added it · your copy vs the current file · ${plan.changes.length} ${plan.changes.length === 1 ? "change" : "changes"}, each accepted unless you reject it · then Save as environment ${next}`}
             </Typography>
           </Box>
           <IconButton size="small" onClick={close} aria-label="Close">
@@ -365,7 +365,7 @@ export default function ReviewRefreshDialog({
             disabled={checking}
             onClick={validate}
           >
-            {checking ? "Validating…" : `Save as ${next}`}
+            {checking ? "Validating…" : `Save as environment ${next}`}
           </Button>
         </Stack>
         <AddSourceMenu

@@ -1,7 +1,7 @@
 import { paths } from "src/routes/paths";
 import { improvementRunName } from "./optimizer";
 import { runEnvVersion } from "./toolFit";
-import { snapshotOfRun } from "./envSnapshot";
+import { snapshotOfRun, snapshotName } from "./envSnapshot";
 import { envVersionNameOf } from "./codeRefs";
 
 /**
@@ -44,15 +44,16 @@ export const improvementOf = (run, envState) => {
  *
  *   agent        "v3", or "v3 + change" / "v3 + winner" when an
  *                improvement ran its change on top of v3.
- *   env          "v7" — the environment snapshot the run was taken on
- *                (envSnapshot.js): one number for the world, scenario set,
- *                sub-goals, evals and caller it pinned. Null when there is
- *                neither a stamp nor an environment to read it against, and
- *                the label drops it rather than reading "env unknown".
+ *   env          "v7" — the key of the environment snapshot the run was
+ *                taken on (envSnapshot.js). For matching, never for display.
+ *                Null when there is neither a stamp nor an environment to
+ *                read it against, and the label drops it.
+ *   envName      "env v2 · scenarios v3" — the environment and scenario
+ *                versions the run pinned, as every screen shows them.
  *   envStored    the world version as stored ("v3") — for matching, never
  *                for display.
  *   snapshot     the snapshot itself ({ label, parts, summary }), or null.
- *   label        "agent v3 × env v7". A run of an agent the environment has
+ *   label        "agent v3 × env v2 · scenarios v3". A run of an agent the environment has
  *                since swapped out keeps that agent's name in place of "agent".
  *   agentLabel   "agent v3" — the first half, for a screen that sets the env
  *                half in a quieter tone.
@@ -72,6 +73,8 @@ export const runIdentityOf = (run, envState, env) => {
      number — not the world version underneath it. */
   const snapshot = (envStored || run?.envSnapshot) && run ? snapshotOfRun(run, env, envState) : null;
   const envLabel = snapshot?.label || run?.envSnapshot || null;
+  /* People read the two versions the run pinned — "env v2 · scenarios v3". */
+  const envName = snapshotName(snapshot) || envLabel;
   const who = run?.agentName || "agent";
   /* A code agent's version carries its commit — "agent v5 · main @ 3f9a2c1".
      Only for the agent the environment tests now: a run of one it has
@@ -80,7 +83,7 @@ export const runIdentityOf = (run, envState, env) => {
   /* No version stamped (a queued row before an agent is connected) reads as
      a dash, the way an empty cell does — never as a bare "agent". */
   const agentLabel = `${who} ${shown || "—"}`;
-  const label = [agentLabel, envLabel && `environment ${envLabel}`].filter(Boolean).join(" × ");
+  const label = [agentLabel, envName].filter(Boolean).join(" × ");
 
   const record = from?.record;
   const envId = env?.id || run?.envId;
@@ -92,7 +95,7 @@ export const runIdentityOf = (run, envState, env) => {
     role: from.role,
   } : null;
 
-  return { agent, env: envLabel || null, envStored: envStored || null, snapshot, label, agentLabel, improvement };
+  return { agent, env: envLabel || null, envName: envName || null, envStored: envStored || null, snapshot, label, agentLabel, improvement };
 };
 
 /**

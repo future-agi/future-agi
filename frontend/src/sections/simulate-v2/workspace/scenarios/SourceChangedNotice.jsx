@@ -9,7 +9,7 @@ import {
   keepCaseOnSourcePatch,
   sourceChangeOf,
 } from "../../_mock/sourceChange";
-import { nextSnapshotLabel } from "../../_mock/envSnapshot";
+import { nextEnvLabel } from "../../_mock/envSnapshot";
 import { kbRefreshOf } from "../../_mock/kbCatalog";
 import ReviewRefreshDialog from "../data/ReviewRefreshDialog";
 
@@ -100,7 +100,7 @@ export default function SourceChangedNotice({ row, env, locked }) {
   if (!change) return null;
   const { source, pending } = change;
   const plan = refreshPlanOf(env, envState, source, { name: pending.name });
-  const next = nextSnapshotLabel(env, envState);
+  const next = nextEnvLabel(env, envState);
 
   return (
     <Box

@@ -107,7 +107,11 @@ import {
 import { scenarioStatus } from "../_mock/scenarioStatus";
 import { isConnectOnly } from "../_mock/envModel";
 import { envLabelOf } from "../_mock/envVersionKinds";
-import { firstSnapshotOfWorld } from "../_mock/envSnapshot";
+import {
+  firstSnapshotOfWorld,
+  snapshotByLabel,
+  scenarioVersionAt,
+} from "../_mock/envSnapshot";
 import { suiteGateOf, recordSpotCheck } from "../_mock/suiteGate";
 import QualityReviewPanel, {
   QualityReviewChip,
@@ -367,6 +371,31 @@ export default function ScenariosStep({
     () => envState?.scenarios || [],
     [envState?.scenarios],
   );
+  /* The scenario version a batch made ("v3"), read from the times its rows
+     were stored with — a seeded row with none was in the first set. The
+     times a batch header shows for those are display-only. */
+  const scenarioVersionOfRows = (rows) => {
+    const stored = new Map(selected.map((r) => [r.id, r.addedAt]));
+    const times = (rows || [])
+      .map((r) => Date.parse(stored.get(r.id) || ""))
+      .filter(Boolean);
+    const at = times.length ? new Date(Math.min(...times)).toISOString() : null;
+    return scenarioVersionAt(env, envState, at)?.scenLabel || null;
+  };
+  /* `?asOf=<version>` (History's "View scenarios as of …") opens the suite as
+     of the last batch in that scenario version. */
+  const asOfParam = searchParams.get("asOf");
+  useEffect(() => {
+    if (!asOfParam) return;
+    const snap = snapshotByLabel(env, envState, asOfParam);
+    if (!snap) return;
+    const n = (l) => Number(String(l || "").replace(/\D/g, "")) || 0;
+    const batch = groupByBatch(selected).find(
+      (b) => n(scenarioVersionOfRows(b.scenarios)) <= n(snap.scenLabel),
+    );
+    if (batch) setAsOf(batch.batchId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asOfParam]);
   /* A new version writing scenarios from a file: rows appear as they're
      written (display only — the stored list is untouched). */
   const scenarioChange = useVersionChange(envState, "scenarios");
@@ -2209,6 +2238,11 @@ export default function ScenariosStep({
                   batches={batches}
                   flashId={flashId}
                   latestId={history[0]?.batchId}
+                  versionOf={(b) =>
+                    b.rows.length && b.rows.every((r) => r.proposed)
+                      ? null
+                      : scenarioVersionOfRows(b.rows)
+                  }
                   view={view}
                   tableProps={{
                     env,
@@ -2354,7 +2388,7 @@ export default function ScenariosStep({
                       versions={environmentVersions(env, envState).map((v) => ({
                         ...v,
                         shownAs: firstSnapshotOfWorld(env, envState, v.label)
-                          ?.label,
+                          ?.envLabel,
                       }))}
                       total={live.filter((r) => !r.proposed).length}
                       asOf={asOfBatch ? asOf : null}

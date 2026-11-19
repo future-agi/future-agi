@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useSnackbar } from "notistack";
 import { rebuildForAgent, toolFit } from "../_mock/toolFit";
-import { nextSnapshotLabel } from "../_mock/envSnapshot";
+import { nextEnvLabel } from "../_mock/envSnapshot";
 import { rebuildEnvironmentPatch, versionCardOf } from "../_mock/versionCard";
 import { resolveNudgePatch } from "../_mock/decoupled";
 import { pendingEnvChanges } from "../_mock/versions";
@@ -35,7 +35,7 @@ export function useRebuildForAgent(env, envState, patch) {
         );
         return null;
       }
-      const shown = nextSnapshotLabel(env, envState);
+      const shown = nextEnvLabel(env, envState);
       const card = versionCardOf(envState);
       const fitNow = toolFit(env, envState, { agent: agentLabel });
       const missing = fitNow.missing.map((t) => t.name);

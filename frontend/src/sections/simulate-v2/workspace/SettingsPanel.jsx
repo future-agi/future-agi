@@ -67,6 +67,7 @@ import {
   currentEnvSnapshot,
   envSnapshotsOf,
   SNAPSHOT_KIND_LABEL,
+  snapshotName,
 } from "../_mock/envSnapshot";
 import {
   REPLAY_HEADER,
@@ -224,7 +225,7 @@ export default function SettingsPanel({
                 title={
                   pending.length
                     ? ""
-                    : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)}.`
+                    : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.envLabel || shown(pinned.label)}.`
                 }
               >
                 <span>
@@ -266,7 +267,7 @@ export default function SettingsPanel({
               }}
             >
               <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                {`Changes since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} · ${pendingCostOf(env, envState)?.text}`}
+                {`Changes since environment ${currentEnvSnapshot(env, envState)?.envLabel || shown(pinned.label)} · ${pendingCostOf(env, envState)?.text}`}
               </Typography>
               <Stack spacing={0.25} sx={{ mt: 0.5 }}>
                 {pending.map((c) => (
@@ -300,11 +301,12 @@ export default function SettingsPanel({
                       typography: "s2",
                       fontWeight: 600,
                       fontFamily: "ui-monospace, Menlo, monospace",
-                      width: 44,
+                      minWidth: 168,
+                      whiteSpace: "nowrap",
                       flexShrink: 0,
                     }}
                   >
-                    {v.label}
+                    {snapshotName(v)}
                   </Typography>
                   <Box flex={1} minWidth={0}>
                     <Stack direction="row" alignItems="center" spacing={0.75}>
@@ -1639,7 +1641,7 @@ function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
         x.kinds.includes("caller") &&
         x.parts.caller === c.to &&
         Date.parse(x.at || 0) >= Date.parse(c.at || 0) - 2000,
-    )?.label;
+    )?.envLabel;
   const callerRows = [
     ...[...changes].reverse().map((c, i) => ({
       key: `${c.label}-${c.at}`,

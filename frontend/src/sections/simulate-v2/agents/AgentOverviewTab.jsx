@@ -444,7 +444,7 @@ export function PassRateCard({
         ) : (
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
             {scopeEnv
-              ? `In ${scopeEnv.envName}${scopeEnvVersion ? ` · environment ${scopeEnvVersion}` : ""}`
+              ? `In ${scopeEnv.envName}${scopeEnvVersion ? ` · ${scopeEnvVersion}` : ""}`
               : "Runs of every scenario"}
           </Typography>
         )

@@ -18,7 +18,7 @@ import ReviewChangesDrawer from "./ReviewChangesDrawer";
 import { onOpenReviewChanges } from "./reviewChangesBus";
 import { reviewCountsOf } from "../_mock/editReview";
 import { envVersionNameOf } from "../_mock/codeRefs";
-import { currentEnvSnapshot } from "../_mock/envSnapshot";
+import { currentEnvSnapshot, snapshotOfWorld } from "../_mock/envSnapshot";
 import useEnvViewAs from "./useEnvViewAs";
 
 /**
@@ -42,7 +42,8 @@ export default function VersionBar({
   envState,
   patch,
   locked = false,
-  /* Opens the environment's History tab; without it, History is a menu. */
+  /* Opens the environment's History tab (from "environment vN"). */
+  onHistory,
   /* Saves the edits — the workspace checks for a teammate's save first. */
   onSave,
   thenRun = false,
@@ -60,9 +61,14 @@ export default function VersionBar({
   const pending = pendingEnvChanges(envState);
   const snap = viewAs ? null : currentEnvSnapshot(env, envState);
   const cost = pendingCostOf(env, envState);
+  /* The environment and scenario versions runs use — "environment v2 ·
+     scenarios v3" (dev VERSIONS_COPY: Agent · Environment · Scenarios). */
   const shownLabel = viewAs
     ? envLabelOf(env, envState, viewAs)
-    : snap?.label || envLabelOf(env, envState, envV.label);
+    : snap?.envLabel || envLabelOf(env, envState, envV.label);
+  const scenLabel = viewAs
+    ? snapshotOfWorld(env, envState, viewAs)?.scenLabel
+    : snap?.scenLabel;
   /* Before the first run nothing is a version yet: edits land in place. */
   const draft = !viewAs && isEnvDraft(envState);
   /* The unsaved edits, in Review changes; Discard asks first. */
@@ -110,9 +116,11 @@ export default function VersionBar({
               <Typography
                 sx={{ typography: "s3", color: "text.primary", mb: 0.5 }}
               >
-                An agent change moves only the agent. The environment version
-                moves when the world, scenarios, sub-goals, evaluations or
-                simulated caller change.
+                An agent change moves only the agent. Adding, editing or
+                retiring scenarios makes a new scenario version. The
+                environment version moves when the world, tools, rules,
+                sub-goals, evaluations, simulated caller or credentials
+                change.
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.primary" }}>
                 <b>{agentV ? `Agent ${agentName}` : "No agent"}</b>
@@ -120,12 +128,12 @@ export default function VersionBar({
               </Typography>
               {draft ? (
                 <Typography sx={{ typography: "s3", color: "text.primary" }}>
-                  <b>{`Environment ${shownLabel}`}</b> — not run yet. Edits land
+                  <b>{`Environment ${shownLabel}${scenLabel ? ` · scenarios ${scenLabel}` : ""}`}</b> — not run yet. Edits land
                   in place until its first run fixes it.
                 </Typography>
               ) : (
                 <Typography sx={{ typography: "s3", color: "text.primary" }}>
-                  <b>{`Environment ${shownLabel}`}</b>
+                  <b>{`Environment ${shownLabel}${scenLabel ? ` · scenarios ${scenLabel}` : ""}`}</b>
                   {snap?.summary ? ` — ${snap.summary}` : ""}
                 </Typography>
               )}
@@ -138,6 +146,14 @@ export default function VersionBar({
                     mt: 0.25,
                   }}
                 >{`Simulated caller: ${snap.parts.caller}`}</Typography>
+              )}
+              {onHistory && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
+                >
+                  Click the environment version for its history: roll back or
+                  view an older version.
+                </Typography>
               )}
             </Box>
           }
@@ -164,7 +180,33 @@ export default function VersionBar({
             >
               ×
             </Typography>
-            environment {strong(shownLabel)}
+            <Box
+              component="span"
+              {...(onHistory && {
+                role: "button",
+                tabIndex: 0,
+                onClick: onHistory,
+                onKeyDown: (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onHistory();
+                  }
+                },
+              })}
+              sx={
+                onHistory
+                  ? {
+                      cursor: "pointer",
+                      textDecoration: "underline dotted",
+                      textUnderlineOffset: "3px",
+                      "&:hover": { color: "text.primary" },
+                    }
+                  : undefined
+              }
+            >
+              environment {strong(shownLabel)}
+              {scenLabel && <> · scenarios {strong(scenLabel)}</>}
+            </Box>
             {draft && (
               <Box
                 component="span"
@@ -332,6 +374,7 @@ VersionBar.propTypes = {
   envState: PropTypes.object,
   patch: PropTypes.func,
   locked: PropTypes.bool,
+  onHistory: PropTypes.func,
   onSave: PropTypes.func,
   /* A run waits on the review's save. */
   thenRun: PropTypes.bool,

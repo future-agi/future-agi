@@ -56,7 +56,7 @@ import { agentToolsFor } from "../_mock/toolFit";
 import { credentialsVersionRecord, currentEnvVersion } from "../_mock/versions";
 import { isGitAgent, versionNameOf, tracingCommitOf } from "../_mock/codeRefs";
 import CommitPicker from "./CommitPicker";
-import { currentEnvSnapshot } from "../_mock/envSnapshot";
+import { currentVersionName } from "../_mock/envSnapshot";
 import { runResultOf } from "../_mock/runResult";
 import { ObserveProjectCard } from "./AgentObserveProjects";
 import { useAgentObserveProject } from "./observeProject";
@@ -351,8 +351,7 @@ export default function AgentViewPage() {
     : null;
   /* …named as its environment version (a snapshot of world, scenarios, evals). */
   const scopeEnvShown = scopeEnvObj
-    ? currentEnvSnapshot(scopeEnvObj, state.byEnv[scopeEnv.envId])?.label ||
-      null
+    ? currentVersionName(scopeEnvObj, state.byEnv[scopeEnv.envId]) || null
     : null;
   const scopedRuns = useMemo(
     () =>

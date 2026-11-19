@@ -19,17 +19,15 @@ import { SectionCard } from "../components/primitives";
 import {
   episodeContract,
   contractToolsOf,
-  isArgLimit,
   contractUseCasesOf,
   contractEditPlan,
 } from "../_mock/rlContract";
 import { rulesOf, subGoalCatalogOf, displayEnvLabel } from "../_mock/envModel";
 import { environmentVersions } from "../_mock/versions";
 import { ruleCoverageOf } from "../_mock/subGoalCatalog";
-import { firstSnapshotOfWorld, nextSnapshotLabel } from "../_mock/envSnapshot";
+import { firstSnapshotOfWorld, nextEnvLabel } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
 import useVersionChange from "./useVersionChange";
-import ToolArgsGrid from "./ToolArgsGrid";
 import { goalLabel } from "../_mock/scenarios";
 import ClosableDialog from "../components/ClosableDialog";
 
@@ -45,8 +43,9 @@ const MONO = "ui-monospace, Menlo, monospace";
  * results group by the id. Then, concrete over formal: when a run ends, who
  * else acts in it, and what scores it (the evaluations, which live on their
  * own tab). The world it runs in —
- * data and tools, with every tool's arguments — is the World tab; only the
- * argument limits, which decide what counts as the agent's mistake, are here. The five-part RL-textbook
+ * data and tools, with every tool's arguments and their allowed values — is
+ * the World tab (an Argument limits list here only repeated it; limits that
+ * matter for grading are rules). The five-part RL-textbook
  * framing that used to live here — modality adapter, obs/action spaces,
  * transition dynamics, reward spec — mostly duplicated other tabs in
  * RL notation. Removed so the tab reads as "what this env is made of"
@@ -84,7 +83,7 @@ export default function RlContractPanel({
   );
   /* A world version as the environment version that introduced it ("E v3" → "v6"). */
   const worldShown = (id) =>
-    firstSnapshotOfWorld(env, envState, id)?.label ||
+    firstSnapshotOfWorld(env, envState, id)?.envLabel ||
     displayEnvLabel(id, envVersions);
   /* Use cases and tool arguments, with the corrections made since the build. */
   const useCases = useMemo(
@@ -99,9 +98,6 @@ export default function RlContractPanel({
      as their signatures land, then rules; the rest once reading is done. */
   const inBuild = Array.isArray(buildDone) && !buildDone.includes("understand");
   const canEdit = !!patch && !locked && !inBuild;
-  const shownTools = inBuild
-    ? tools.slice(0, buildProgress?.tools || 0)
-    : tools;
   /* A new version adding rules from a file: they appear one by one. */
   const ruleChange = useVersionChange(envState, "rules");
   const liveRules = ruleChange.live;
@@ -113,10 +109,6 @@ export default function RlContractPanel({
     : pendingRules
       ? rules.filter((r) => !pendingRules.has(r.id))
       : rules;
-  /* The limits only — each tool's full arguments are on World → Tools. */
-  const limits = shownTools.flatMap((t) =>
-    t.args.filter(isArgLimit).map((a) => ({ ...a, tool: t.name })),
-  );
 
   return (
     <Box sx={{ p: 2 }}>
@@ -220,50 +212,6 @@ export default function RlContractPanel({
               </Box>
             ))}
           </Stack>
-        </SectionCard>
-      )}
-
-      {/* ── argument limits — the values a call has to stay inside ─────── */}
-      {limits.length > 0 && (
-        <SectionCard
-          title={`Argument limits (${limits.length})`}
-          subtitle="Values a tool call must stay inside"
-          action={
-            onGo &&
-            !inBuild && (
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() => onGo("world")}
-                sx={{
-                  flexShrink: 0,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                View tools
-              </Button>
-            )
-          }
-          sx={{ mb: 2 }}
-        >
-          <Box sx={{ px: 2.5, py: 1.5 }}>
-            <ToolArgsGrid
-              args={limits}
-              rowGap={1}
-              changedIn={worldShown}
-              onEdit={
-                canEdit
-                  ? (a) =>
-                      setEditing({
-                        target: "toolArg",
-                        tool: a.tool,
-                        arg: a.name,
-                        argDef: a,
-                      })
-                  : null
-              }
-            />
-          </Box>
         </SectionCard>
       )}
 
@@ -860,7 +808,7 @@ ContractEditDialog.propTypes = {
   onApply: PropTypes.func,
 };
 
-const contractNextLabel = (env, envState) => nextSnapshotLabel(env, envState);
+const contractNextLabel = (env, envState) => nextEnvLabel(env, envState);
 
 function Label({ children }) {
   return (

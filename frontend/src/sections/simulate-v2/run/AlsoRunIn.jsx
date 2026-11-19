@@ -244,7 +244,7 @@ function EnvChip({ candidate, on, onToggle }) {
         <Typography
           sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
         >
-          environment {candidate.envShown || candidate.envVersion}
+          {candidate.envShown || `environment ${candidate.envVersion}`}
         </Typography>
       )}
     </ButtonBase>

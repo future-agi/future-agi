@@ -20,7 +20,7 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { agentDefinitionOf } from "../_mock/agentRegistry";
 import { agentVersions, currentAgentVersion } from "../_mock/versions";
-import { currentEnvSnapshot } from "../_mock/envSnapshot";
+import { currentVersionName } from "../_mock/envSnapshot";
 import { DEFAULT_LIMITS, limitRows } from "../_mock/optimizationRuns";
 import { useAgentImprovementFlag } from "../_mock/featureFlags";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
@@ -424,8 +424,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
      fix improves. */
   const pairOf = (e) => {
     const es = state.byEnv[e.id];
-    const envLabel = currentEnvSnapshot(e, es)?.label;
-    return `agent ${production.label || currentAgentVersion(es)?.label || "—"} × environment ${envLabel || "—"}`;
+    const envLabel = currentVersionName(e, es);
+    return `agent ${production.label || currentAgentVersion(es)?.label || "—"} × ${envLabel || "environment —"}`;
   };
 
   const gateNote = hardGate && (

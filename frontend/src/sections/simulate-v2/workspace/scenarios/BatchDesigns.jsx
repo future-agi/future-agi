@@ -63,7 +63,8 @@ const headline = (b) =>
   b.meta.source === "derived"
     ? `${who(b)} built the environment`
     : `${who(b)} ${b.rows.length && b.rows.every((r) => r.proposed) ? "proposed" : "added"} ${plural(b.rows.length)}`;
-const howAndWhen = (b) =>
+/* "→ scenarios v3" — the scenario version this batch made. */
+const howAndWhen = (b, version) =>
   [
     b.meta.source === "derived"
       ? b.rows.some((r) => r.fromDescription)
@@ -72,6 +73,7 @@ const howAndWhen = (b) =>
       : HOW[b.meta.source],
     b.meta.note,
     relativeTime(b.meta.addedAt),
+    version && `→ scenarios ${version}`,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -149,6 +151,7 @@ Tag.propTypes = { children: PropTypes.node };
  */
 function BatchContainer({
   batch,
+  version,
   latest,
   view,
   tableProps,
@@ -225,7 +228,7 @@ function BatchContainer({
                 sx={{ flexShrink: 0 }}
               />
               <Typography noWrap sx={{ typography: "s3", color: "inherit" }}>
-                {cap(howAndWhen(batch))}
+                {cap(howAndWhen(batch, version))}
               </Typography>
             </Stack>
           </Tooltip>
@@ -306,6 +309,7 @@ function BatchContainer({
 }
 BatchContainer.propTypes = {
   batch: PropTypes.object,
+  version: PropTypes.string,
   latest: PropTypes.bool,
   view: PropTypes.string,
   tableProps: PropTypes.object,
@@ -320,6 +324,7 @@ export function BatchContainers({
   renderList,
   flashId,
   latestId,
+  versionOf,
 }) {
   return (
     <Stack spacing={2}>
@@ -327,6 +332,7 @@ export function BatchContainers({
         <BatchContainer
           key={b.meta.batchId}
           batch={b}
+          version={versionOf ? versionOf(b) : null}
           latest={
             latestId
               ? b.meta.batchId === latestId
@@ -348,6 +354,7 @@ BatchContainers.propTypes = {
   renderList: PropTypes.func,
   flashId: PropTypes.string,
   latestId: PropTypes.string,
+  versionOf: PropTypes.func,
 };
 
 /* ── v9 · history panel ─────────────────────────────────────────────────── */

@@ -22,7 +22,11 @@ import {
   resolveNudgePatch,
 } from "../_mock/decoupled";
 import { contractEditPlan } from "../_mock/rlContract";
-import { currentEnvSnapshot, nextSnapshotLabel } from "../_mock/envSnapshot";
+import {
+  currentEnvSnapshot,
+  nextEnvLabel,
+  nextScenarioLabel,
+} from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import {
   ANSWERS,
@@ -411,8 +415,8 @@ function RuleQuestion({ nudge, env, envState, patch, onNavigate }) {
   const callers = new Set(nudge.callerIds || []);
   const sgNext =
     `${draft0.id} ${String(draft0.version || "").replace("@", "v")}`.trim();
-  const E = currentEnvSnapshot(env, envState)?.label;
-  const nextE = nextSnapshotLabel(env, envState);
+  const E = currentEnvSnapshot(env, envState)?.envLabel;
+  const nextE = nextEnvLabel(env, envState);
   const body = ANSWER_BODY(nudge, sgNext, nextE);
 
   const record = () => {
@@ -632,8 +636,8 @@ function NewRuleQuestion({ nudge, env, envState, patch }) {
   const [choice, setChoice] = useState(
     ANSWERS[nudge.answer] ? nudge.answer : null,
   );
-  const E = currentEnvSnapshot(env, envState)?.label;
-  const next = nextSnapshotLabel(env, envState);
+  const E = currentEnvSnapshot(env, envState)?.envLabel;
+  const next = nextEnvLabel(env, envState);
   const body = NEW_RULE_BODY(nudge, next, E);
 
   const record = () => {
@@ -991,8 +995,8 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
     `${env.name} · ${channelLabel(nudge.channel?.to)}`,
   );
   const isOpen = nudge.status === "open";
-  const E = currentEnvSnapshot(env, envState)?.label;
-  const nextE = nextSnapshotLabel(env, envState);
+  const E = currentEnvSnapshot(env, envState)?.envLabel;
+  const nextE = nextEnvLabel(env, envState);
   const rows = (nudge.scenarioIds || [])
     .map((id) => (envState.scenarios || []).find((s) => s.id === id))
     .filter(Boolean);
@@ -1009,7 +1013,7 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
       });
       patch(p);
       enqueueSnackbar(
-        `Environment ${nextE} has a ${nudge.capability} handler · ${plural(ids.length, "new scenario")} added`,
+        `Environment ${nextE} has a ${nudge.capability} handler · ${plural(ids.length, "new scenario")} added${ids.length ? ` as scenarios ${nextScenarioLabel(env, envState)}` : ""}`,
         { variant: "success" },
       );
     } else if (nudge.kind === "remove") {
@@ -1080,7 +1084,7 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
           "Environment",
           `${E} → ${nextE} · adds a ${nudge.capability} handler and ${plural(count, "new scenario")}`,
         ],
-        ["Scenario set", `+${plural(count, "new scenario")} in a New band`],
+        ["Scenario set", `+${plural(count, "new scenario")} in a New band · scenarios ${currentEnvSnapshot(env, envState)?.scenLabel || "v1"} → ${nextScenarioLabel(env, envState)}`],
         [
           "Price",
           `Generating ${count} · ${generationPrice(count).line}. Backfill is offered after, priced`,

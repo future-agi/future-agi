@@ -804,7 +804,7 @@ export const coreNudgeOf = (
     .filter((r) => requiredCapsOf(r, env, envState).every((c) => tools.has(c)))
     .map((r) => r.id);
   const e = currentEnvVersion(env, envState)?.label || "v1";
-  const shown = currentEnvSnapshot(env, envState)?.label || e;
+  const shown = currentEnvSnapshot(env, envState)?.envLabel || e;
   return {
     id: `ndg-core-${newLabel}-${toSurface}`,
     kind: "core",
@@ -880,7 +880,7 @@ export const forkFromNudge = (env, envState, nudge) => {
         id: `${forkedId}-v1`,
         label: "v1",
         createdAt: at,
-        note: `Forked from ${env.name} at environment ${snapshotOfWorld(env, envState, nudge.envVersion)?.label || nudge.envVersion} for ${channelLabel(nudge.channel.to).toLowerCase()} — ${scenarios.length} of ${nudge.total} scenarios carried, ids kept.`,
+        note: `Forked from ${env.name} at environment ${snapshotOfWorld(env, envState, nudge.envVersion)?.envLabel || nudge.envVersion} for ${channelLabel(nudge.channel.to).toLowerCase()} — ${scenarios.length} of ${nudge.total} scenarios carried, ids kept.`,
         scenarios: scenarios.length,
         changed: ["contract"],
         tools: worldToolsFor(env, envState),

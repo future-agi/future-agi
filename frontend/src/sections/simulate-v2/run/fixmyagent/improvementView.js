@@ -7,7 +7,11 @@
 */
 import { hashSeed } from "../../_mock/runStream";
 import { environmentVersions, nextEnvVersion } from "../../_mock/versions";
-import { currentEnvSnapshot, nextSnapshotLabel } from "../../_mock/envSnapshot";
+import {
+  currentEnvSnapshot,
+  nextSnapshotLabel,
+  nextEnvLabel,
+} from "../../_mock/envSnapshot";
 import { passShareOf } from "../../_mock/optimize";
 import { improvementTotalSpend } from "../../_mock/optimizationRuns";
 import { issueFixRecord } from "../../errorFeed/issueFixModel";
@@ -80,7 +84,7 @@ export const briefEvidenceOf = ({ record, result, winner, tasks = [] }) => {
 /* ── a contract change ──────────────────────────────────────────────────── */
 
 /** The environment version a contract approval would mint, as people read it ("v8"). */
-export const nextContractVersion = (env, envState) => nextSnapshotLabel(env, envState);
+export const nextContractVersion = (env, envState) => nextEnvLabel(env, envState);
 
 const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
 

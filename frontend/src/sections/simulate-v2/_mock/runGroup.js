@@ -21,7 +21,7 @@ import {
   currentAgentVersion,
   currentEnvVersion,
 } from "./versions";
-import { currentEnvSnapshot } from "./envSnapshot";
+import { currentVersionName } from "./envSnapshot";
 import { runReadiness } from "./setupGaps";
 import { protoRunId } from "./executionAdapter";
 import { runPlan } from "./proofs";
@@ -68,7 +68,7 @@ export const groupCandidates = (state, envId) => {
         envName: u.envName,
         envVersion: currentEnvVersion(env, other)?.label || null,
         /* Named as that environment's version (a snapshot — envSnapshot.js). */
-        envShown: currentEnvSnapshot(env, other)?.label || null,
+        envShown: currentVersionName(env, other) || null,
         ready: readiness.ready && knows,
         reason: !knows
           ? `Agent ${version} isn't in this environment yet`

@@ -11,7 +11,7 @@ import {
   ButtonBase,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { currentEnvSnapshot, nextSnapshotLabel } from "../_mock/envSnapshot";
+import { currentEnvSnapshot, nextEnvLabel } from "../_mock/envSnapshot";
 import {
   agentVersions,
   isPendingDraft,
@@ -311,8 +311,8 @@ export default function AgentVersionCard({
     card.status === "open" &&
     active > 0 &&
     lost / active >= DIFFERENT_AGENT_SHARE;
-  const nextLabel = nextSnapshotLabel(env, envState);
-  const currentLabel = currentEnvSnapshot(env, envState)?.label;
+  const nextLabel = nextEnvLabel(env, envState);
+  const currentLabel = currentEnvSnapshot(env, envState)?.envLabel;
   const waiting = pendingEnvChanges(envState).length;
   const since = card.from ? ` since ${card.from}` : "";
 

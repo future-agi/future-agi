@@ -166,7 +166,7 @@ import ImprovementRunStrip from "./ImprovementRunStrip";
 import { SHOW_INSIGHTS } from "../_mock/featureFlags";
 import EvaluateTab from "./evaluate/EvaluateTab";
 import RunInsightsTab from "./runInsights/RunInsightsTab";
-import { nextSnapshotLabel } from "../_mock/envSnapshot";
+import { nextEnvLabel, versionName } from "../_mock/envSnapshot";
 import logger from "src/utils/logger";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { proofKindOf } from "../_mock/rsiModel";
@@ -1678,9 +1678,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               /* runs §2: agent, environment and suite versions together —
                  the environment and agent in the line, the rest on hover. */
               const pins = runPinsOf(identity || sourceRun, env, envState);
-              const envV = pins.env
-                ? envLabelOf(env, envState, pins.env)
-                : null;
+              /* "env v2 · scenarios v3" — the two versions the run pinned. */
+              const pinned = runIdentityOf(identity || sourceRun, envState, env)
+                .snapshot;
+              const envV = pinned?.envLabel
+                ? versionName(pinned.envLabel, pinned.scenLabel)
+                : pins.env
+                  ? `environment ${envLabelOf(env, envState, pins.env)}`
+                  : null;
               const skills = runSkillsLineOf(
                 simState?.workspaceSettings,
                 envState.agent,
@@ -1693,10 +1698,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   title={
                     <Box sx={{ whiteSpace: "pre-line" }}>
                       {[
-                        envV && `Environment ${envV}`,
+                        pinned?.envLabel
+                          ? `Environment ${pinned.envLabel}`
+                          : envV && `${envV.charAt(0).toUpperCase()}${envV.slice(1)}`,
                         identity?.agentVersion &&
                           `Agent ${identity.agentVersion}`,
-                        `Suite ${pins.suite}`,
+                        pinned?.scenLabel
+                          ? `Scenarios ${pinned.scenLabel}`
+                          : `Suite ${pins.suite}`,
                         `${stats.total} scenario${stats.total === 1 ? "" : "s"}${identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}`,
                         skills,
                       ]
@@ -3090,7 +3099,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
              run on screen wasn't graded on it — a re-run is offered, never
              started for the user. */
           const nextLabel = (envState.runs || []).length
-            ? nextSnapshotLabel(env, envState)
+            ? nextEnvLabel(env, envState)
             : null;
           const { added: n, dropped } = addAppliedEvals(added);
           setAddingEvals(false);
@@ -3287,7 +3296,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           run={sourceRun}
           canSnapshot={canSnapshot}
           envLabel={
-            sourceRun ? runIdentityOf(sourceRun, envState, env).env : null
+            sourceRun ? runIdentityOf(sourceRun, envState, env).envName : null
           }
           agents={agentVersions(envState).map((v) => v.label)}
           onRun={(mode, agent) => {
@@ -3384,7 +3393,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           run={sourceRun}
           canSnapshot={canSnapshot}
           envLabel={
-            sourceRun ? runIdentityOf(sourceRun, envState, env).env : null
+            sourceRun ? runIdentityOf(sourceRun, envState, env).envName : null
           }
           agents={agentVersions(envState).map((v) => v.label)}
           onRun={(mode, agent) => {
@@ -4199,7 +4208,7 @@ function RerunModes({ run, canSnapshot, envLabel, agents = [], onRun }) {
                   </Box>
                 </>
               }
-              secondary={`Same scenario versions, environment ${envLabel || "version"}, pins and seed${run?.repeats ? `, ${run.repeats} repeats` : ""}. Only the agent version can change.`}
+              secondary={`Same versions (${envLabel || "environment and scenarios"}), pins and seed${run?.repeats ? `, ${run.repeats} repeats` : ""}. Only the agent version can change.`}
               {...textProps}
             />
           </MenuItem>

@@ -22,7 +22,7 @@ import useRunGroup from "../run/useRunGroup";
 import AlsoRunIn from "../run/AlsoRunIn";
 import { useEnvState } from "../store";
 import { runEnvVersion } from "../_mock/toolFit";
-import { snapshotLabelOf } from "../_mock/envSnapshot";
+import { snapshotLabelOf, snapshotNameOf } from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import useEnvViewAs from "./useEnvViewAs";
 import { runDefaultsOf } from "../_mock/rsiModel";
@@ -332,14 +332,14 @@ function RunsScopeBar({
           sx={{ ...selectSx, ml: "16px !important" }}
         >
           <MenuItem value="all" sx={{ typography: "s2" }}>
-            All environment versions
+            All versions
           </MenuItem>
           {envs.map((v) => (
             <MenuItem
               key={v}
               value={v}
               sx={{ typography: "s2" }}
-            >{`Environment ${v}`}</MenuItem>
+            >{snapshotNameOf(env, envState, v)}</MenuItem>
           ))}
         </TextField>
       )}

@@ -8,10 +8,14 @@
  * evaluations (eN) and the simulated caller. Those stay exactly as they are:
  * runs pin them, Compare pairs scenarios by them.
  *
- * On the surface there is one number. A snapshot is the state of all those
- * parts at once, and any change to any of them mints the next one — like a
- * lockfile. People only ever see "environment v7" and, in words, what changed
- * in it — never the part numbers underneath.
+ * A snapshot is the state of all those parts at once, and any change to any
+ * of them mints the next one — its key ("v7") is what runs, improvements and
+ * rollbacks store. On the surface it reads as two versions, the way the plan
+ * (builder.md step 6, feat-runs.md run setup) and dev keep them: the
+ * environment version and the scenario version — "env v2 · scenarios v3".
+ * A scenario-only change moves only the scenario version; world, tools,
+ * rules, sub-goals, evaluations, simulated caller and credentials move only
+ * the environment version.
  *
  * Derived from the logs each part already keeps, oldest first; nothing is
  * stored or migrated:
@@ -166,9 +170,25 @@ const summarise = (pieces) => KIND_ORDER
 
 const memo = new WeakMap();
 
+/* Kinds that are the scenario version; every other kind is the environment's. */
+export const SCENARIO_KINDS = ["scenarios"];
+
+/** "env v2 · scenarios v3" — how a snapshot reads on every screen ("environment v2 · …" in a sentence). */
+export const versionName = (envLabel, scenLabel, long = false) => [
+  envLabel && `${long ? "environment" : "env"} ${envLabel}`,
+  scenLabel && `scenarios ${scenLabel}`,
+].filter(Boolean).join(" · ");
+
+/** A snapshot's shown name, or its key when it is a stored stub. */
+export const snapshotName = (snap, long = false) => (snap?.envLabel
+  ? versionName(snap.envLabel, snap.scenLabel, long)
+  : snap?.name || snap?.label || null);
+
 /**
  * Every snapshot of one environment, oldest first:
- *   { label: "v7", n: 7, at, parts: { env, set, catalog, eval, caller },
+ *   { label: "v7" (stable key), envLabel: "v2", scenLabel: "v3",
+ *     name: "env v2 · scenarios v3", envChanged, scenChanged, n: 7, at,
+ *     parts: { env, set, catalog, eval, caller },
  *     kind, kinds, summary, details: [{ part, label, text }] }
  */
 export const envSnapshotsOf = (env, envState) => {
@@ -230,16 +250,42 @@ export const envSnapshotsOf = (env, envState) => {
     });
   }
 
-  /* A version that only moved credentials is a minor of the one before it. */
+  /* A version that only moved credentials is a minor of the one before it.
+     `label` is the snapshot's stable key (runs, improvements and rollbacks
+     store it); people see the two numbers below instead. */
   let major = 0;
   let minor = 0;
+  /* The two versions people see (builder.md step 6; dev VERSIONS_COPY):
+     scenario-only edits make a new scenario version, everything else — world,
+     tools, rules, sub-goals, evaluations, simulated caller, credentials —
+     makes a new environment version. */
+  let envMajor = 0;
+  let envMinor = 0;
+  let scen = 0;
   const list = groups.map((g, i) => {
     const kinds = KIND_ORDER.filter((k) => g.pieces.some((p) => p.kind === k));
     const credentialsOnly = i > 0 && kinds.length === 1 && kinds[0] === "credentials";
     if (credentialsOnly) minor += 1;
     else { major += 1; minor = 0; }
+    const envKinds = kinds.filter((k) => !SCENARIO_KINDS.includes(k));
+    const scenChanged = i === 0 || kinds.some((k) => SCENARIO_KINDS.includes(k));
+    const envChanged = i === 0 || envKinds.length > 0 || !scenChanged;
+    if (i === 0) { envMajor = 1; scen = 1; } else {
+      if (envChanged) {
+        if (envKinds.length && envKinds.every((k) => k === "credentials")) envMinor += 1;
+        else { envMajor += 1; envMinor = 0; }
+      }
+      if (scenChanged) scen += 1;
+    }
+    const envLabel = envMinor ? `v${envMajor}.${envMinor}` : `v${envMajor}`;
+    const scenLabel = `v${scen}`;
     return {
       label: minor ? `v${major}.${minor}` : `v${major}`,
+      envLabel,
+      scenLabel,
+      name: versionName(envLabel, scenLabel),
+      envChanged,
+      scenChanged,
       n: i + 1,
       credentialsOnly,
       at: g.at,
@@ -262,8 +308,13 @@ export const envSnapshotsOf = (env, envState) => {
   return list;
 };
 
-/** "v7" → the snapshot, or null. */
-export const snapshotByLabel = (env, envState, label) => envSnapshotsOf(env, envState).find((s) => s.label === label) || null;
+/** "v7" (key) or "env v2 · scenarios v3" (name) → the snapshot, or null. */
+export const snapshotByLabel = (env, envState, label) => (label
+  ? envSnapshotsOf(env, envState).find((s) => s.label === label || s.name === label) || null
+  : null);
+
+/** A snapshot key ("v7") as people read it — "env v2 · scenarios v3". Unknown keys pass through. */
+export const snapshotNameOf = (env, envState, key) => snapshotName(snapshotByLabel(env, envState, key)) || key || null;
 
 /**
  * The newest snapshot holding one world version — how an E label reads on
@@ -296,8 +347,54 @@ export const currentEnvSnapshot = (env, envState) => {
   return snapshotOfWorld(env, envState, active) || newest;
 };
 
-/** The label the next change will mint — "v8". */
+/** The key the next change will mint — "v8". Stored, never shown. */
 export const nextSnapshotLabel = (env, envState) => `v${Math.max(0, ...envSnapshotsOf(env, envState).map((s) => num(s.label.split(".")[0]))) + 1}`;
+
+/**
+ * What the next change will be called. A scenario-only change makes the next
+ * scenario version ("scenarios v4"); anything else the next environment
+ * version ("env v3", "env v2.1" for credentials only); "both" when one action
+ * moves the two ("env v3 · scenarios v4").
+ */
+export const nextVersionName = (env, envState, piece = "env", long = false) => {
+  const list = envSnapshotsOf(env, envState);
+  const last = list[list.length - 1];
+  const envMajor = Math.max(0, ...list.map((s) => num(String(s.envLabel || "").split(".")[0])));
+  const scen = Math.max(0, ...list.map((s) => num(s.scenLabel)));
+  const nextEnv = piece === "credentials" && last?.envLabel
+    ? `v${num(last.envLabel.split(".")[0])}.${(num(last.envLabel.split(".")[1]) || 0) + 1}`
+    : `v${envMajor + 1}`;
+  if (piece === "scenarios") return versionName(null, `v${scen + 1}`, long);
+  if (piece === "both") return versionName(nextEnv, `v${scen + 1}`, long);
+  return versionName(nextEnv, null, long);
+};
+
+/** The next environment version alone — "v3", for "environment v3" copy. */
+export const nextEnvLabel = (env, envState) => `v${Math.max(0, ...envSnapshotsOf(env, envState).map((s) => num(String(s.envLabel || "").split(".")[0]))) + 1}`;
+
+/** The next scenario version alone — "v4". */
+export const nextScenarioLabel = (env, envState) => `v${Math.max(0, ...envSnapshotsOf(env, envState).map((s) => num(s.scenLabel))) + 1}`;
+
+/** What new runs use, named — "env v2 · scenarios v3"; `piece` "env" / "scenarios" for one half. */
+export const currentVersionName = (env, envState, piece = "both", long = false) => {
+  const s = currentEnvSnapshot(env, envState);
+  if (!s) return null;
+  return versionName(piece !== "scenarios" ? s.envLabel : null, piece !== "env" ? s.scenLabel : null, long);
+};
+
+/**
+ * The scenario version a change at `iso` made or landed in — what a batch on
+ * the Scenarios tab says it made ("→ scenarios v3"). The newest snapshot that
+ * moved the scenarios at or just after that moment.
+ */
+export const scenarioVersionAt = (env, envState, iso) => {
+  const t = ms(iso);
+  const list = envSnapshotsOf(env, envState).filter((s) => s.scenChanged);
+  if (!list.length) return null;
+  const hit = list.find((s) => (s.endMs || 0) + SAME_ACTION_MS >= t && (s.startMs || 0) - SAME_ACTION_MS <= t)
+    || [...list].reverse().find((s) => (s.startMs || 0) <= t + SAME_ACTION_MS);
+  return hit || list[0];
+};
 
 /* The parts a run pinned — only those it actually recorded. */
 const runParts = (run, env, envState) => ({
@@ -352,7 +449,7 @@ export const snapshotOfImprovement = (record, env, envState) => {
   const frozen = record.frozen || {};
   const stored = frozen.snapshot?.label ? snapshotByLabel(env, envState, frozen.snapshot.label) : null;
   if (stored) return stored;
-  if (frozen.snapshot?.label) return { label: frozen.snapshot.label, parts: frozen.snapshot.parts || {}, summary: "", details: [] };
+  if (frozen.snapshot?.label) return { label: frozen.snapshot.label, name: frozen.snapshot.name || null, parts: frozen.snapshot.parts || {}, summary: "", details: [] };
   const fromRun = (envState?.runs || []).find((r) => r.id === record.fromRunId) || null;
   return snapshotOfRun({
     envVersion: fromRun?.envVersion || frozen.compat?.envVersion || null,
@@ -367,7 +464,7 @@ export const snapshotOfImprovement = (record, env, envState) => {
 /** What an improvement freezes: `{ label, parts }` of the snapshot it starts on. */
 export const frozenSnapshotOf = (env, envState) => {
   const s = currentEnvSnapshot(env, envState);
-  return s ? { label: s.label, parts: { ...s.parts } } : null;
+  return s ? { label: s.label, name: s.name, parts: { ...s.parts } } : null;
 };
 
 /* What one part's move reads as — in words, never its internal number. */
@@ -419,7 +516,7 @@ export const snapshotHistoryOf = (env, envState) => {
  */
 export const compareEnvHeadline = (a, b, counts, total) => {
   if (!a?.label || !b?.label || !counts) return null;
-  if (a.label === b.label) return { same: true, from: a.label, to: b.label, text: `Same environment (${a.label})`, diff: [] };
+  if (a.label === b.label) return { same: true, from: snapshotName(a), to: snapshotName(b), text: `Same versions (${snapshotName(a)})`, diff: [] };
   const compared = (counts.exact || 0) + (counts.regraded || 0) + (counts.rechecked || 0);
   const moved = (counts.regraded || 0) + (counts.rechecked || 0);
   /* Changed between the versions vs simply not in both runs — said apart. */
@@ -428,10 +525,13 @@ export const compareEnvHeadline = (a, b, counts, total) => {
   const apart = Math.max(0, (total || 0) - compared - changed - notInBoth);
   return {
     same: false,
-    from: a.label,
-    to: b.label,
+    from: snapshotName(a),
+    to: snapshotName(b),
     text: [
-      `Environment ${a.label} → ${b.label}`,
+      [
+        a.envLabel !== b.envLabel ? `Environment ${a.envLabel || a.label} → ${b.envLabel || b.label}` : `Environment ${b.envLabel || b.label}`,
+        a.scenLabel !== b.scenLabel ? `scenarios ${a.scenLabel} → ${b.scenLabel}` : b.scenLabel && `scenarios ${b.scenLabel}`,
+      ].filter(Boolean).join(" · "),
       moved
         ? `${compared} of ${total} scenarios compared (${counts.exact || 0} unchanged, ${moved} re-graded or rechecked)`
         : `${compared} of ${total} scenarios unchanged, compared`,

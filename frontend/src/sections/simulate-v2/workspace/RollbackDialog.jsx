@@ -3,6 +3,7 @@ import { useSnackbar } from "notistack";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { snapshotRollbackPlan } from "../_mock/rlContract";
+import { snapshotNameOf } from "../_mock/envSnapshot";
 import { plural } from "../_mock/nudgeEffects";
 import { envRollbackCli } from "../_mock/envCopy";
 import CopyCommandButton from "../components/CopyCommandButton";
@@ -27,11 +28,15 @@ export default function RollbackDialog({
   const { enqueueSnackbar } = useSnackbar();
   if (!open || !targetLabel) return null;
   const plan = snapshotRollbackPlan(env, envState, targetLabel);
+  /* "environment v2 · scenarios v3" — the stored key is never shown. */
+  const targetName = snapshotNameOf(env, envState, targetLabel);
+  const longName = targetName.replace(/^env /, "environment ");
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
   const confirm = () => {
     patch(plan.patch(envState));
     enqueueSnackbar(
-      `Environment ${plan.next} — everything as in environment ${plan.snap.label}. Roll forward the same way from History.`,
+      `${cap(plan.next)} — everything as in ${longName}. Roll forward the same way from History.`,
       { variant: "success" },
     );
     onClose();
@@ -67,12 +72,12 @@ export default function RollbackDialog({
     >
       <Typography
         sx={{ typography: "m3", fontWeight: 600 }}
-      >{`Roll back to environment ${targetLabel}?`}</Typography>
+      >{`Roll back to ${longName}?`}</Typography>
       {plan.ok && (
         <Typography
           sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
         >
-          {`This makes environment ${plan.next} as it was in ${targetLabel}. Nothing is deleted.`}
+          {`This makes ${plan.next} as it was in ${longName}. Nothing is deleted.`}
         </Typography>
       )}
       <Stack
@@ -118,7 +123,7 @@ export default function RollbackDialog({
           disabled={!plan.ok}
           startIcon={<Iconify icon="solar:history-linear" width={14} />}
         >
-          {`Roll back to ${targetLabel}`}
+          {`Roll back to ${targetName}`}
         </Button>
       </Stack>
     </ClosableDialog>

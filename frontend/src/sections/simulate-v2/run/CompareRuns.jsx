@@ -256,6 +256,7 @@ export default function CompareRuns() {
     return {
       ...id,
       env: `${id.env || ""} · ${r.envName}`.replace(/^ · /, ""),
+      envName: `${id.envName || ""} · ${r.envName}`.replace(/^ · /, ""),
       label: `${id.label} · ${r.envName}`,
     };
   };
@@ -762,7 +763,7 @@ export default function CompareRuns() {
                     sx={{ color: "text.tertiary", fontWeight: 500 }}
                   >
                     {" "}
-                    × environment {identityOf(r).env}
+                    × {identityOf(r).envName}
                   </Box>
                 )}
                 {/* When the runs covered different scenarios, the pill reads the
@@ -903,7 +904,7 @@ export default function CompareRuns() {
                 {identityOf(r).env && (
                   <Box component="span" sx={{ color: "text.tertiary" }}>
                     {" "}
-                    × environment {identityOf(r).env}
+                    × {identityOf(r).envName}
                   </Box>
                 )}
               </Box>
@@ -1177,7 +1178,7 @@ export default function CompareRuns() {
                               sx={{ color: "text.tertiary" }}
                             >
                               {" "}
-                              × environment {identityOf(r).env}
+                              × {identityOf(r).envName}
                             </Box>
                           )}
                         </Typography>
