@@ -65,3 +65,90 @@ describe("run-detail KPI alias integration", () => {
     },
   );
 });
+
+const id = (n: number) => `00000000-0000-0000-0000-00000000000${n}`;
+const projectionCases = {
+  projection: {
+    bars: {
+      tier_1: [
+        { name: "Warm", value: 67 },
+        { name: "Cold", value: 33 },
+      ],
+      [`tier1__${id(2)}`]: [
+        { name: "Calm", value: 50 },
+        { name: "Rough", value: 50 },
+      ],
+    },
+    scores: {},
+  },
+  cross_type: {
+    bars: { [`avg1__${id(2)}`]: [{ name: "Yes", value: 100 }] },
+    scores: { avg_1: 50 },
+  },
+  mixed: {
+    bars: {
+      tier_1: [
+        { name: "Warm", value: 67 },
+        { name: "Cold", value: 33 },
+      ],
+      [`tier_1__${id(2)}`]: [
+        { name: "Calm", value: 50 },
+        { name: "Rough", value: 50 },
+      ],
+      [`tier1__${id(3)}`]: [
+        { name: "Fine", value: 75 },
+        { name: "Flat", value: 25 },
+      ],
+    },
+    scores: { [`avg_score__${id(4)}`]: 20 },
+  },
+  chain: {
+    bars: {
+      a__1: [{ name: "One", value: 100 }],
+      [`a_1__${id(2)}`]: [{ name: "Three", value: 100 }],
+      [`a1__${id(3)}`]: [
+        { name: "Four", value: 50 },
+        { name: "Five", value: 50 },
+      ],
+    },
+    scores: {},
+  },
+} as const;
+type ProjectionCase = keyof typeof projectionCases;
+
+describe("run-detail KPI projection collisions", () => {
+  it.each(Object.keys(projectionCases) as ProjectionCase[])(
+    "shows every evaluation result (%s)",
+    (name) => {
+      const expected: Record<string, unknown> = payloads.projection[name];
+      const { agent_type, avg_score, avg_response, avg_agent_latency } =
+        payloads.system;
+      const data: Record<string, unknown> = payloadDir
+        ? JSON.parse(readFileSync(join(payloadDir, `${name}.json`), "utf8"))
+        : {
+            agent_type,
+            avg_score,
+            avg_response,
+            avg_agent_latency,
+            ...expected,
+          };
+      const { deterministicEvals, evalMetrics, systemMetrics } = extractKpis(
+        data,
+        agent_type,
+      );
+      expect(
+        Object.fromEntries(
+          deterministicEvals.map(({ id: key, data: bars }) => [key, bars]),
+        ),
+      ).toEqual(projectionCases[name].bars);
+      for (const key of Object.keys(projectionCases[name].bars)) {
+        expect(data[key], key).toEqual(expected[key]);
+      }
+      expect(evalMetrics).toEqual(projectionCases[name].scores);
+      expect(systemMetrics).toMatchObject({
+        avg_score: 85,
+        avg_agent_latency: 310,
+      });
+    },
+  );
+});

@@ -1876,13 +1876,16 @@ def _flat_kpi_evals(
     values: dict[tuple[str, str, str], object], system_keys: set[str]
 ) -> dict[str, object]:
     """Keep each binding's preferred key unless a system KPI or another eval owns it."""
-    natural = {name for name, _, _ in values}
-    if len(natural) == len(values) and natural.isdisjoint(system_keys):
-        return {name: value for (name, _, _), value in values.items()}
 
     def project(key: str) -> str:
         # Run detail's canonicalKeys hides the underscore-to-camel projection of each key.
         return re.sub(r"_([a-z0-9])", lambda match: match[1].upper(), key)
+
+    natural = {name for name, _, _ in values}
+    # A name equal to another name's projection (tier1 for tier_1) would be hidden.
+    hidden = {project(key) for key in natural if project(key) != key} & natural
+    if len(natural) == len(values) and natural.isdisjoint(system_keys) and not hidden:
+        return {name: value for (name, _, _), value in values.items()}
 
     reserved = natural | system_keys
     reserved_projections = {project(key) for key in reserved}
@@ -1892,7 +1895,7 @@ def _flat_kpi_evals(
     for metric in sorted(values, key=lambda m: (priority[m[2]], m[1], m[0])):
         name, binding_id, _ = metric
         key = name
-        if key in used:
+        if key in used or key in hidden:
             key = f"{name}__{binding_id}"
             while (
                 key in reserved
