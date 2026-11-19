@@ -75,6 +75,38 @@ def _members_of(source, target, *, changed=None):
         )
 
 
+def test_a_save_after_a_candidate_validation_keeps_every_unchanged_cases_proof(
+    user, workspace, storage
+):
+    """A validated candidate proves only its changed case, and later than the default suite's validation: every other
+    case still carries its proof into the saved suite, so none reads not validated after the save."""
+    from datetime import timedelta
+
+    from simulate.services.harness_versioning.versions import _carried_proofs
+
+    environment = _environment(user, workspace, storage, "lc-carry-candidate")
+    _suite(environment, _ten())
+    _proofs(environment, dict.fromkeys(KEYS, PROVED))
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version
+    ).update(proved_at=timezone.now() - timedelta(minutes=5))
+    candidate = _copy(
+        environment.suite_version, HarnessSuiteVersion, status="candidate"
+    )
+    _members_of(environment.suite_version, candidate, changed=REFUND_KEYS[0])
+    _proofs(environment, {REFUND_KEYS[0]: PROVED}, suite=candidate)
+    paired = [
+        (member.scenario, member.content)
+        for member in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=candidate
+        ).select_related("scenario")
+    ]
+
+    carried = _carried_proofs(environment.environment_version, paired)
+
+    assert sorted(carried) == sorted(KEYS)
+
+
 def test_states_in_order(user, workspace, storage):
     environment = _environment(user, workspace, storage, "lc-order")
     _suite(environment, _ten())

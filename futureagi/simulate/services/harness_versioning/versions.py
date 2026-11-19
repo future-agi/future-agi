@@ -932,19 +932,12 @@ def _carried_proofs(
     environment_version: HarnessEnvironmentVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Earlier proofs against this environment version for scenarios that did not change.
+    """Earlier proofs against this environment version for scenarios that did not change: each case's newest proof
+    made on the same content, whichever suite version made it.
 
-    An extend proves only its new scenarios; the others keep the proofs they already have.
+    An extend proves only its new scenarios, and a validated candidate only its changed ones; the others keep the
+    proofs they already have.
     """
-    previous = (
-        HarnessSuiteValidation.no_workspace_objects.filter(
-            environment_version=environment_version
-        )
-        .order_by("-proved_at")
-        .first()
-    )
-    if previous is None or not isinstance(previous.proofs, dict):
-        return {}
 
     def proved(content: Mapping[str, Any]) -> dict[str, Any]:
         # A rename keeps the key and what the proof checked; so does a grounding edit, which only
@@ -955,21 +948,32 @@ def _carried_proofs(
             if field not in ("name", "sources")
         }
 
-    contents = {
-        member.scenario_key: proved(member.content or {})
-        for member in HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=previous.suite_version_id
-        )
+    wanted = {
+        row.scenario_key: proved(_member_content(document)) for row, document in paired
     }
     carried: dict[str, Any] = {}
-    for row, document in paired:
-        proof = previous.proofs.get(row.scenario_key)
-        if (
-            isinstance(proof, dict)
-            and row.scenario_key in contents
-            and contents[row.scenario_key] == proved(_member_content(document))
-        ):
-            carried[row.scenario_key] = proof
+    for previous in HarnessSuiteValidation.no_workspace_objects.filter(
+        environment_version=environment_version
+    ).order_by("-proved_at"):
+        if not isinstance(previous.proofs, dict):
+            continue
+        open_keys = [
+            key for key in wanted if key not in carried and key in previous.proofs
+        ]
+        if not open_keys:
+            continue
+        contents = {
+            member.scenario_key: proved(member.content or {})
+            for member in HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=previous.suite_version_id, scenario_key__in=open_keys
+            )
+        }
+        for key in open_keys:
+            proof = previous.proofs[key]
+            if isinstance(proof, dict) and contents.get(key) == wanted[key]:
+                carried[key] = proof
+        if len(carried) == len(wanted):
+            break
     return carried
 
 

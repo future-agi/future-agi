@@ -245,6 +245,8 @@ def _promote_set(
             created_suite=suite_version if created_suite else None,
             moved=moved,
             outgoing_agent_version_id=locked.agent_version_id,
+            # Its validation proved only the changed cases: the others keep theirs, never reading not validated.
+            carry_proofs=True,
         )
     else:
         store_set(locked, None)
