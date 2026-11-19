@@ -54,16 +54,19 @@ from simulate.tests.test_agent_fix_services import (
     BASE_AGENT,
     KEYS,
     PATCH,
+    TRACED,
     _applied,
     _candidate,
     _check,
     _executions,
     _fix_run,
+    _measured_by_the_sandbox,
     _receipt,
     _receipts,
     _run,
     _runtime,
     _tree,
+    _usage,
 )
 from simulate.tests.test_agent_fix_services import (
     any_suite_may_launch as any_suite_may_launch,
@@ -1084,6 +1087,23 @@ class TestUserApi:
 
         assert (bad.status_code, good.status_code) == (400, 201)
         assert AgentFixRun.no_workspace_objects.get().request[field] == taken
+
+    def test_a_fix_from_a_run_the_sandbox_measured_tells_the_page_so(
+        self, auth_client, source_run
+    ):
+        # The epoch page shows its "Measured automatically" notice from this field.
+        _measured_by_the_sandbox(source_run)
+        with patch(TRACED, _usage({})):
+            launched = auth_client.post(
+                f"{BASE}/", _launch_body(source_run), format="json"
+            )
+            assert launched.status_code == 201, launched.content
+            read = auth_client.get(f"{BASE}/{launched.json()['id']}/").json()
+
+        assert (
+            launched.json()["request"].get("measured_automatically"),
+            read["request"].get("measured_automatically"),
+        ) == (True, True)
 
     def test_a_launch_keeps_the_constraints_it_was_given(self, auth_client, source_run):
         response = auth_client.post(
