@@ -45,7 +45,6 @@ import { clickable, focusRing } from "../components/clickable";
 import {
   FIX_IN_FLIGHT,
   FIX_SCENARIO_CAP,
-  VARIATIONS_PER_FAILING,
   variationsPlanOf,
   envsForAgent,
   fixEnvFor,
@@ -509,7 +508,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
       ? "Its environment is still building — start the fix when it's done."
       : overBalance
         ? `Up to ${creditsLabel(spend)}, but only ${Math.max(0, creditBalance.left).toLocaleString()} credits are left this month.`
-        : "A winner comes back as a new version. You decide whether to make it the default.";
+        : "A winner comes back as a new version; you decide if it's the default.";
   const startButton = needsEnv ? (
     <Button
       fullWidth
@@ -801,7 +800,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     meta={
                       edited
                         ? "Edited by you — the search starts from this"
-                        : "Stored by the Error Feed for this issue — edit it if it's wrong"
+                        : "From the Error Feed · edit it if it's wrong"
                     }
                     action={
                       edited ? (
@@ -823,11 +822,6 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       diagnosis={diagnosis}
                       readOnly={!ready}
                       onEdit={(k, v) => setDiagEdits((d) => ({ ...d, [k]: v }))}
-                      symptomFrom={
-                        rootCause?.source === "analysis"
-                          ? "Root cause tab"
-                          : "Error Feed"
-                      }
                     />
                   </Section>
                 )}
@@ -835,7 +829,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                 <Section
                   n={lead + 1}
                   title="Scenarios from this issue"
-                  meta={`${chosen.length} of ${drafts.length} · used by this fix only${drafts.length > FIX_SCENARIO_CAP ? ` · the ${FIX_SCENARIO_CAP} most common are in by default` : ""}`}
+                  meta={`${chosen.length} of ${drafts.length}${drafts.length > FIX_SCENARIO_CAP ? ` · the ${FIX_SCENARIO_CAP} most common are in` : ""}`}
                 >
                   {drafts.length > 20 && (
                     <Box
@@ -929,7 +923,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           <Typography
                             sx={{ typography: "s3", color: "text.subtitle" }}
                           >
-                            {`From ${d.errorFeedIssue.traceIds.length} traces${d.persona?.archetype ? ` · ${d.persona.archetype}, inferred from the calls` : d.persona?.name ? ` · ${d.persona.name}` : ""}`}
+                            {`${d.errorFeedIssue.traceIds.length} traces${d.persona?.archetype ? ` · ${d.persona.archetype}` : d.persona?.name ? ` · ${d.persona.name}` : ""}`}
                           </Typography>
                         </Box>
                       </Stack>
@@ -948,9 +942,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     {[
                       drafts[0]?.subGoals?.[1] &&
                         `Each checks: ${drafts[0].subGoals[1].replace(/^Verify the step that failed in production:\s*/i, "")}.`,
-                      ready
-                        ? "Failing ones become targets; some are held back to prove the fix."
-                        : "You can edit them once its environment is ready.",
+                      !ready && "You can edit them once its environment is ready.",
                     ]
                       .filter(Boolean)
                       .join(" ")}
@@ -964,7 +956,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                      that agent's main environment; none yet → Build one. */
                   meta={
                     main
-                      ? `${agent.name}'s main environment, found through the agent this issue's project is linked to · a change that breaks what passes today is rejected`
+                      ? "Breaking what passes today is rejected"
                       : `${agent.name} has no environment yet — build one here`
                   }
                 >
@@ -1015,8 +1007,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           sx={{ typography: "s3", color: "text.subtitle" }}
                         >
                           {ready
-                            ? `${main.id === envs[0]?.id ? "Main environment" : "Picked for this fix"} · ${pairOf(main)} · measured on today's version first`
-                            : `${main.id === envs[0]?.id ? "Main environment" : "Picked for this fix"} · still building — the fix starts once it's built`}
+                            ? pairOf(main)
+                            : "Still building — the fix starts once it's built"}
                         </Typography>
                       </Box>
                       <Typography
@@ -1027,9 +1019,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           flexShrink: 0,
                         }}
                       >
-                        {main.id === envs[0]?.id
-                          ? "Main · always checked"
-                          : "Runs here · always checked"}
+                        {main.id === envs[0]?.id ? "Main" : "Runs here"}
                       </Typography>
                     </Stack>
                   )}
@@ -1161,7 +1151,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   {lineageVersions.length > 0 && (
                     <SettingRow
                       title="Search across earlier versions"
-                      body={`Also tries the changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label} made, on ${production.label}.`}
+                      body={`Also tries the ${lineageVersions.length === 1 ? `change ${lineageVersions[0].label}` : `changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label}`} made, on ${production.label}.`}
                     >
                       <Switch
                         size="small"
@@ -1181,8 +1171,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           color: "text.secondary",
                         }}
                       >
-                        Searches the parts the agent allows, guided by the
-                        evidence. Nothing to choose for this agent.
+                        Guided by the evidence — nothing to choose for this agent.
                       </Typography>
                     )}
                 </Section>
@@ -1279,7 +1268,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       {main
                         ? alsoNames.length
                           ? `+ must-pass from ${alsoNames.join(", ")}`
-                          : "its must-pass set is the regression check"
+                          : "its must-pass set guards regressions"
                         : "built before the fix starts"}
                     </Typography>
                   </SumRow>
@@ -1292,8 +1281,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       sx={{ typography: "s3", color: "text.subtitle" }}
                     >
                       {variationsPlanOf(chosen.length).drafted
-                        ? `+ up to ${variationsPlanOf(chosen.length).upTo} variations (up to ${VARIATIONS_PER_FAILING} per failing scenario), drafted when you start`
-                        : `No variations drafted — ${FIX_SCENARIO_CAP} or more failing scenarios are enough`}
+                        ? `+ up to ${variationsPlanOf(chosen.length).upTo} variations, drafted when you start`
+                        : "No variations needed"}
                     </Typography>
                     {regressionCount > 0 && (
                       <Typography
@@ -1305,14 +1294,14 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       held back, what may change, what stays locked. */}
                   <SumRow k="Held back">
                     <Typography sx={{ typography: "s2" }}>
-                      {`About ${Math.round(chosen.length * HELD_SHARE)} of the reproducing scenarios${variationsPlanOf(chosen.length).drafted ? ", plus some of the variations" : ""} — set aside before the fix`}
+                      {`About ${Math.round(chosen.length * HELD_SHARE)} scenarios${variationsPlanOf(chosen.length).drafted ? " and some variations" : ""}, kept aside`}
                     </Typography>
                     <Typography
                       sx={{ typography: "s3", color: "text.subtitle" }}
                     >
                       {Math.round(chosen.length * HELD_SHARE) < 4
-                        ? "Under 4 untouched, it can't be Verified and any pull request opens as a draft."
-                        : "4 or more untouched can verify the fix."}
+                        ? "Under 4: can't be Verified; a PR opens as a draft."
+                        : "Enough to verify the fix."}
                     </Typography>
                   </SumRow>
                   <SumRow k="May change">
@@ -1333,8 +1322,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     <Typography
                       sx={{ typography: "s3", color: "text.subtitle" }}
                     >
-                      Evaluators, hidden cases and frozen world inputs are never
-                      editable.
+                      Never evaluators, hidden cases or frozen inputs
                     </Typography>
                   </SumRow>
                   <SumRow k="Locked">
@@ -1381,7 +1369,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                               (plan improve §4, costFlags). */}
                           {SHOW_RUN_COST
                             ? `Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`
-                            : `Up to ${estimate.runs} candidates · stops at ${creditsLabel(spend)} or ${spendMinutes >= 60 ? `${Math.floor(spendMinutes / 60)} h${spendMinutes % 60 ? ` ${spendMinutes % 60} min` : ""}` : `${spendMinutes} min`}, whichever comes first`}
+                            : `Up to ${estimate.runs} candidates · stops at ${creditsLabel(spend)} or ${spendMinutes >= 60 ? `${Math.floor(spendMinutes / 60)} h${spendMinutes % 60 ? ` ${spendMinutes % 60} min` : ""}` : `${spendMinutes} min`}`}
                         </Typography>
                         <Typography
                           sx={{
@@ -1397,7 +1385,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials; you'll get the best it found.`
                             : SHOW_RUN_COST
                               ? `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote(estimate.runs)}`
-                              : stopEarlyNote(estimate.runs)}
+                              : null}
                         </Typography>
                         {/* What the ceiling is made of, part by part. */}
                         {SHOW_RUN_COST && (
@@ -1492,7 +1480,7 @@ FixPage.propTypes = {
   and what to change — the last two edited in place, like the scenario
   titles below. The feed's read is kept as the symptom it is.
 */
-function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
+function Diagnosis({ diagnosis, readOnly, onEdit }) {
   const field = (k) => (
     <InputBase
       fullWidth
@@ -1561,9 +1549,6 @@ function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
         sx={{ typography: "s2", color: "text.primary" }}
       >
         {diagnosis.suggested}
-        <Box component="span" sx={{ color: "text.subtitle" }}>
-          {" · from the Error Feed"}
-        </Box>
       </Typography>,
     ],
     ["Why it fails", field("cause")],
@@ -1575,9 +1560,6 @@ function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
         sx={{ typography: "s2", color: "text.secondary" }}
       >
         {diagnosis.wrongIf}
-        <Box component="span" sx={{ color: "text.subtitle" }}>
-          {" · what would prove this fix wrong, from the Error Feed"}
-        </Box>
       </Typography>,
     ],
     diagnosis.symptom && [
@@ -1587,10 +1569,6 @@ function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
         sx={{ typography: "s2", color: "text.secondary" }}
       >
         {diagnosis.symptom}
-        <Box
-          component="span"
-          sx={{ color: "text.subtitle" }}
-        >{` · what ${symptomFrom} saw — the search doesn't start from it`}</Box>
       </Typography>,
     ],
   ].filter(Boolean);
@@ -1628,7 +1606,6 @@ Diagnosis.propTypes = {
   diagnosis: PropTypes.object.isRequired,
   readOnly: PropTypes.bool,
   onEdit: PropTypes.func.isRequired,
-  symptomFrom: PropTypes.string,
 };
 
 function Section({ n, title, meta, action, children }) {
