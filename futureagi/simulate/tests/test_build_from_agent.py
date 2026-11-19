@@ -5,17 +5,21 @@ the agent, and stays pinned unless it asks to follow production."""
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
+    AgentVersionSetup,
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
 from simulate.models.run_test import RunTest
 from simulate.services.agent_connect import found_check
+from simulate.services.agent_versions import set_production
 from simulate.services.harness_agent_versions import POLICY_KEY
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_agent_creation import (
     _body,
     _job,
@@ -62,11 +66,33 @@ def agent(user, workspace):
 @pytest.fixture
 def production(agent):
     version = _connect(agent)
-    found_check(agent)
+    AgentDefinition.objects.filter(id=agent.id).update(found_checked_at=timezone.now())
+    agent.refresh_from_db()
     with patch(NUDGE):
         _preflight(version)
     version.refresh_from_db()
     return version
+
+
+def test_confirming_before_any_reading_is_stored_is_refused(agent):
+    _connect(agent)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        found_check(agent)
+
+    assert refused.value.code == "reading_not_finished"
+    assert refused.value.status_code == status.HTTP_409_CONFLICT
+    agent.refresh_from_db()
+    assert agent.found_checked_at is None
+
+
+def test_confirming_once_a_reading_is_stored_is_recorded(agent):
+    version = _connect(agent)
+    AgentVersionSetup.no_workspace_objects.create(
+        agent_version=version, status=AgentVersionSetup.Status.STORED
+    )
+
+    assert found_check(agent).found_checked_at is not None
 
 
 def _creation(agent, **metadata):
@@ -94,6 +120,25 @@ def test_an_environment_binds_to_the_agents_production_version(
     assert AgentDefinition.objects.filter(organization=user.organization).count() == 1
     assert AgentVersion.objects.filter(agent_definition=agent).count() == 1
     assert job.payload["agent"]["secret_refs"] == {}
+
+
+def test_a_retry_after_production_moved_replays_the_first_environment(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    first = _job(_post(client, workspace, _creation(agent), key="same-request"))
+    second = _connect(agent, parent=production, commit="b")
+    with patch(NUDGE):
+        _preflight(second)
+        set_production(second)
+
+    again = _job(_post(client, workspace, _creation(agent), key="same-request"))
+
+    assert again.id == first.id
+    assert again.agent_version_id == production.id
 
 
 def test_an_environment_follows_production_only_when_asked(

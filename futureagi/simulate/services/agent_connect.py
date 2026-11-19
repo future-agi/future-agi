@@ -17,6 +17,7 @@ from simulate.models import (
     AgentDefinition,
     AgentScan,
     AgentVersion,
+    AgentVersionSetup,
     HarnessAgentVersionRuntime,
 )
 from simulate.services.harness_agent_versions import (
@@ -357,7 +358,20 @@ def require_found_check(definition: AgentDefinition) -> None:
 
 def found_check(definition: AgentDefinition, user=None) -> AgentDefinition:
     """Record that what the first reading found was confirmed; a second confirmation
-    changes nothing."""
+    changes nothing. Refused while no version of the agent has a stored reading."""
+    if (
+        found_check_required(definition)
+        and not AgentVersionSetup.no_workspace_objects.filter(
+            agent_version__agent_definition_id=definition.id,
+            agent_version__deleted=False,
+            status=AgentVersionSetup.Status.STORED,
+        ).exists()
+    ):
+        raise HostedHarnessError(
+            "reading_not_finished",
+            "Nothing was found about this agent yet; wait for its check to finish",
+            status_code=409,
+        )
     now = timezone.now()
     AgentDefinition.no_workspace_objects.filter(
         id=definition.id, found_checked_at__isnull=True

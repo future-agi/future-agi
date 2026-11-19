@@ -57314,9 +57314,14 @@ export type simulateAgentDefinitionsFoundCheckCreateResponse404 = {
   status: 404;
 };
 
+export type simulateAgentDefinitionsFoundCheckCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsFoundCheckCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 409>;
 };
 
 export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
@@ -57326,6 +57331,7 @@ export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
 export type simulateAgentDefinitionsFoundCheckCreateResponseError = (
   | simulateAgentDefinitionsFoundCheckCreateResponse403
   | simulateAgentDefinitionsFoundCheckCreateResponse404
+  | simulateAgentDefinitionsFoundCheckCreateResponse409
   | simulateAgentDefinitionsFoundCheckCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;

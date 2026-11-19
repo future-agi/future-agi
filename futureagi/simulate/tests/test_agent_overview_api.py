@@ -208,6 +208,26 @@ def test_a_code_agent_without_an_environment_takes_its_newest_version_source(
 
 
 @pytest.mark.django_db
+def test_a_code_agent_whose_first_reading_failed_keeps_its_source(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Unread Repo", provider="")
+    version = agent.create_version(description="", commit_message="v1", status="draft")
+    HarnessAgentVersionRuntime.objects.create(
+        agent_version=version,
+        agent_definition=agent,
+        organization=organization,
+        hash="sha256:" + "1" * 64,
+        source_kind="github",
+        trigger="connect",
+    )
+
+    row = _rows(auth_client)["Unread Repo"]
+
+    assert (row["agent_kind"], row["source"]) == (None, "github")
+
+
+@pytest.mark.django_db
 def test_list_counts_every_environment_and_lists_the_five_oldest(
     auth_client, organization, workspace
 ):

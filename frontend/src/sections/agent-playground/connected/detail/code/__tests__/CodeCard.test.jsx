@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
+import { fireEvent, renderWithRouter, screen } from "src/utils/test-utils";
 import CodeCard from "../CodeCard";
 import { buildTree } from "../treeModel";
 
@@ -45,16 +45,12 @@ const LocationProbe = () => {
 };
 
 const renderCard = (search = "") =>
-  render(
-    <MemoryRouter initialEntries={[`/agents/a1/definition${search}`]}>
-      <Routes>
-        <Route
-          path="/agents/a1/definition"
-          element={<CodeCard agentId="a1" versionId="v2" versionLabel="v2" />}
-        />
-      </Routes>
+  renderWithRouter(
+    <>
+      <CodeCard agentId="a1" versionId="v2" versionLabel="v2" />
       <LocationProbe />
-    </MemoryRouter>,
+    </>,
+    { route: `/agents/a1/definition${search}` },
   );
 
 const FILES = [

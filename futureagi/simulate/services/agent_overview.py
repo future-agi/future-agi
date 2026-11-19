@@ -79,6 +79,7 @@ def annotate_agent_rows(
     )
     return queryset.annotate(
         _agent_kind=Subquery(stored_setups.values("agent_kind")[:1]),
+        _version_source_kind=Subquery(version_source_kinds[:1]),
         _build_source_kind=Coalesce(
             Subquery(source_kinds[:1]),
             Subquery(version_source_kinds[:1]),
@@ -103,6 +104,14 @@ def annotate_agent_rows(
     ).annotate(
         _source=Case(
             When(_agent_kind="source", then=F("_build_source_kind")),
+            When(
+                _agent_kind__isnull=True,
+                _version_source_kind__in=[
+                    HarnessAgentVersionRuntime.SourceKind.GITHUB,
+                    HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
+                ],
+                then=F("_version_source_kind"),
+            ),
             default=F("provider"),
             output_field=CharField(),
         )
