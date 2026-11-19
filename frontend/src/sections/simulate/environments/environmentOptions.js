@@ -127,7 +127,7 @@ export const ENTRY_TAB = {
 };
 export const DEFAULT_ENTRY_TAB = ENTRY_TAB.BUILD;
 
-// Matches the product tab rail (see HarnessDetail): the theme gives every tab a
+// The product tab rail: the theme gives every tab a
 // 40px right margin, which spreads short labels apart and breaks the row into
 // separate boxes. Override it at the Tabs level so tabs sit flush and space
 // themselves with padding — the indicator then spans a whole tab as one rail.
