@@ -76,6 +76,51 @@ def test_changes_with_cited_by(user, workspace, storage, auth_client):
     assert body["truncated"] is False
 
 
+def test_a_rewritten_rule_compares_with_the_rule_the_harness_recorded_in_its_place(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning.review_items import rule_key
+
+    environment = _environment(user, workspace, storage, "sc-replaced")
+    _suite(environment, _ten())
+    parent, child = _changed_pair(environment)
+    old, new = "Never refund after 14 days.", "Never refund after 30 days."
+    documents = dict(child.documents)
+    documents["contract"] = {
+        **documents["contract"],
+        "amendment_records": [
+            {
+                "kind": "rule",
+                "key": f"rule-{rule_key(new)}",
+                "action": "changed",
+                "previous": f"rule-{rule_key(old)}",
+                "text": "rule changed",
+            }
+        ],
+    }
+    HarnessEnvironmentVersion._base_manager.filter(id=child.id).update(
+        documents=documents
+    )
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [
+                {"kind": "rule", "ref": "rule:0", "quote": "Never refund after 14 days"}
+            ]
+        },
+    )
+
+    with patch.object(
+        harness_scenario_actions, "_file_texts", lambda version, paths: {}
+    ):
+        body = auth_client.get(
+            f"{BASE}/{environment.id}/versions/environment/{child.id}/source-changes/"
+        ).json()
+
+    rule = next(one for one in body["changes"] if one["kind"] == "rule")
+    assert (rule["before"], rule["after"]) == (old, new)
+
+
 def test_changes_are_capped(user, workspace, storage):
     environment = _environment(user, workspace, storage, "sc-cap")
     _suite(environment, _ten())

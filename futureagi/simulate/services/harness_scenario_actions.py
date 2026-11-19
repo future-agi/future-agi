@@ -654,6 +654,43 @@ def _file_texts(version: Any, paths: set[str]) -> dict[str, str | None]:
     return texts
 
 
+def _replaced_by(
+    before: str | None,
+    new_rules: list[str],
+    documents: Mapping[str, Any],
+    parent_documents: Mapping[str, Any],
+) -> str | None:
+    """The rule the harness recorded as replacing ``before`` (`amendment_records`: the new record's `previous`, or the
+    old record's `replaced_by`, by rule id), as this version holds it; None when it recorded none."""
+    from simulate.services.harness_versioning.review_items import rule_key
+
+    if not before:
+        return None
+    was = f"rule-{rule_key(before)}"
+    records = [
+        one
+        for side in (documents, parent_documents)
+        for one in ((side.get("contract") or {}).get("amendment_records") or [])
+        if isinstance(one, Mapping) and one.get("kind") == "rule"
+    ]
+    now = next(
+        (
+            str(one.get("key"))
+            for one in records
+            if one.get("previous") == was and one.get("key")
+        ),
+        None,
+    ) or next(
+        (
+            str(one.get("replaced_by"))
+            for one in records
+            if one.get("key") == was and one.get("replaced_by")
+        ),
+        None,
+    )
+    return next((rule for rule in new_rules if f"rule-{rule_key(rule)}" == now), None)
+
+
 def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChanges:
     """What changed between an environment version and its parent in the rules and files the
     default suite cites, each with the cases that cite it."""
@@ -708,9 +745,13 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
             if kind == "rule":
                 quote = str(source.get("quote") or "")
                 entry["before"] = matched_rule(quote, old_rules)
-                # A cited rule this version no longer holds has no "after": nothing guesses which new rule took its
-                # place by how it reads.
-                entry["after"] = matched_rule(quote, new_rules)
+                # A cited rule this version no longer holds reads its replacement only as the harness declared it.
+                entry["after"] = matched_rule(quote, new_rules) or _replaced_by(
+                    entry["before"],
+                    new_rules,
+                    version.documents or {},
+                    parent_documents,
+                )
             else:
                 files.add(file_path(ref))
     before_texts = _file_texts(parent, files) if parent else {}
