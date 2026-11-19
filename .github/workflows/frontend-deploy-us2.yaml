@@ -36,6 +36,9 @@ jobs:
         run: yarn
 
       - name: Create .env file from secrets
+        env:
+          # Non-main dispatches also deploy to the US2 bucket, but must not send development traffic to production GA.
+          APP_GA_ID: ${{ github.ref == 'refs/heads/main' && inputs.branch == 'main' && secrets.PROD_VITE_APP_GA_ID || '' }}
         run: |
           cat <<EOF > .env
           VITE_ENVIRONMENT=${{ inputs.branch == 'main' && 'production' || 'dev' }}
@@ -50,7 +53,7 @@ jobs:
           VITE_GENERATE_LINK=${{ secrets.US2_VITE_GENERATE_LINK }}
           VITE_HELP_LINK=${{ secrets.PROD_VITE_HELP_LINK }}
           VITE_GOOGLE_SITE_KEY=${{ secrets.PROD_VITE_GOOGLE_SITE_KEY }}
-          VITE_GA_ID=${{ secrets.PROD_VITE_APP_GA_ID }}
+          VITE_GA_ID=${APP_GA_ID}
           VITE_MIXPANEL_TOKEN=${{ secrets.PROD_VITE_MIXPANEL_TOKEN }}
           VITE_STRIPE_PUBLIC_KEY=${{ secrets.PROD_VITE_STRIPE_PUBLIC_KEY }}
           VITE_AG_GRID_LICENSE_KEY=${{ secrets.PROD_VITE_AG_GRID_LICENSE_KEY }}
