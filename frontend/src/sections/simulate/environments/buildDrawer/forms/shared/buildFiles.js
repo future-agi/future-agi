@@ -1,6 +1,7 @@
 // Files picked on a build form, kept as plain rows.
 
-// A build that asks what to test waits for at least this many characters.
+// A build that asks what to test, or the flow to build from, waits for at
+// least this many characters.
 export const BUILD_TEST_MIN = 10;
 
 export const BUILD_FILES_ACCEPT = ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf";
@@ -11,19 +12,41 @@ export const extOf = (name) =>
     .pop()
     .toLowerCase();
 
-/** Picked files as plain rows. The same name again replaces the earlier row. */
-export function mergeBuildFiles(prev, list) {
-  const added = Array.from(list || []).map((f) => ({
-    id: `${f.name}-${f.size}-${f.lastModified}`,
-    name: f.name,
-    size: f.size || 0,
-    type: f.type || "",
-  }));
-  return [
-    ...prev.filter((f) => !added.some((a) => a.name === f.name)),
-    ...added,
-  ];
+/**
+ * Add file rows by name. A new name joins the others; the same name with
+ * other contents replaces the earlier row in place; an identical copy (the
+ * same id: name, size and modified time) is skipped. The note lists the
+ * names in each group.
+ */
+export function mergeFileRows(existing, added) {
+  const files = [...existing];
+  const note = { added: [], replaced: [], skipped: [] };
+  added.forEach((f) => {
+    const at = files.findIndex((x) => x.name === f.name);
+    if (at < 0) {
+      files.push(f);
+      note.added.push(f.name);
+    } else if (files[at].id === f.id) {
+      note.skipped.push(f.name);
+    } else {
+      files[at] = f;
+      note.replaced.push(f.name);
+    }
+  });
+  return { files, note };
 }
+
+/** Picked files as plain rows, merged into `prev` by name. */
+export const mergeBuildFiles = (prev, list) =>
+  mergeFileRows(
+    prev,
+    Array.from(list || []).map((f) => ({
+      id: `${f.name}-${f.size}-${f.lastModified}`,
+      name: f.name,
+      size: f.size || 0,
+      type: f.type || "",
+    })),
+  ).files;
 
 // How the builder will likely read a file, from its name alone. Drag and drop
 // skips `accept`, so a type outside it says it can't be read.

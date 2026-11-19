@@ -19,27 +19,8 @@ export const READ_AT = {
   scenarios: 0.97,
 };
 
-// Records a description implies, with a line on what's in them; the first
-// match per table wins.
+// Records a description implies, with a line on what's in them.
 const TABLES = [
-  {
-    re: /\b(book(ing|ings|s)?|appointment|reservation)/,
-    name: "bookings",
-    rows: 120,
-    note: "30 this week, 6 cancelled",
-  },
-  {
-    re: /\b(repair|service|treatment|class)/,
-    name: "services",
-    rows: 24,
-    note: "with prices and durations",
-  },
-  {
-    re: /\b(slot|availab|calendar|schedule)/,
-    name: "slots",
-    rows: 320,
-    note: "one full day to test against",
-  },
   {
     re: /\b(customer|caller|client|patient|guest)/,
     name: "customers",
@@ -48,48 +29,24 @@ const TABLES = [
   },
   { re: /\border/, name: "orders", rows: 400, note: "10% delayed" },
   { re: /\brefund/, name: "refunds", rows: 60, note: "8 outside the window" },
-  {
-    re: /\b(payment|card|charge|invoice)/,
-    name: "payments",
-    rows: 300,
-    note: "5 declined",
-  },
-  {
-    re: /\bdiscount/,
-    name: "discounts",
-    rows: 40,
-    note: "the rates the shop offers",
-  },
-  { re: /\bticket/, name: "tickets", rows: 150, note: "20 still open" },
 ];
+
+// The page's own triage example, used only when no tool below matches.
+const ISSUES_TABLE = {
+  name: "issues",
+  rows: 150,
+  note: "generated issues to triage",
+};
+const ISSUE_TOOLS = ["triage", "label", "assign", "close"].map((verb) => ({
+  re: new RegExp(`\\b${verb}`),
+  name: `${verb}_issue`,
+  desc: `${verb.charAt(0).toUpperCase()}${verb.slice(1)} an issue`,
+  test: `A new issue that needs the agent to ${verb} it.`,
+}));
 
 // Tools the agent needs, read from what it has to do, each with the case a
 // scenario tests it by.
 const TOOLS = [
-  {
-    re: /\b(check|look|find).{0,20}(slot|availab|open)|availability/,
-    name: "check_availability",
-    desc: "Open slots for a service on a day",
-    test: "A customer asks for the next open slot and books it.",
-  },
-  {
-    re: /\bbook(s|ing)?\b(?!ings? (are|is))/,
-    name: "create_booking",
-    desc: "Book a slot for a customer",
-    test: "The customer wants a day that is already fully booked.",
-  },
-  {
-    re: /\bcancel/,
-    name: "cancel_booking",
-    desc: "Cancel a booking and free its slot",
-    test: "A customer cancels an existing booking.",
-  },
-  {
-    re: /\bdiscount/,
-    name: "apply_discount",
-    desc: "Apply a discount to a booking",
-    test: "A customer asks for a small discount within the limit.",
-  },
   {
     re: /\b(approv|sign.?off)/,
     name: "request_approval",
@@ -117,103 +74,29 @@ const TOOLS = [
 ];
 
 // What a policy file stands for, by its name, until files are read for real.
-const POLICY_RULES = [
-  {
-    re: /refund|return/,
-    rules: [
-      "Refund only within 30 days of delivery.",
-      "Refunds over $500 need a manager's approval.",
-    ],
-  },
-  {
-    re: /cancel/,
-    rules: ["Cancel free of charge up to 24 hours before the booking."],
-  },
-  { re: /discount|pric/, rules: ["Discounts over 10% need approval."] },
-  {
-    re: /sla|escalat/,
-    rules: ["Escalate to a person when a case is open longer than a day."],
-  },
-];
-const POLICY_FALLBACK = [
-  "Escalate to a person when the policy doesn't cover the case.",
-];
+const policyRulesOf = (name) =>
+  /refund|return/.test(name.toLowerCase())
+    ? [
+        "Refund only within 30 days of delivery.",
+        "Refunds over $500 need a manager's approval.",
+      ]
+    : ["Escalate to a person when the policy doesn't cover the case."];
 
 // Sentences that read as a rule the agent is graded on.
 const RULEISH =
   /(escalat|must|never|always|require|only|unless|before|approv|not allowed|up to|over \$?\d)/i;
 const APPROVER = /\b(manager|supervisor|owner|lead|admin)\b/i;
 
-// Systems a sealed world can't stand up: nothing is sent, charged or booked
-// outside it, so each gets a stand-in the world itself answers.
-const EXTERNAL = [
-  {
-    id: "sms",
-    re: /\bsms\b|\btext messages?\b|\bsend(?:s|ing)? (?:a |the |them a )?texts?\b/,
-    request: "Send an SMS",
-    why: "Real texts leave the world, and a test must never message a person.",
-    alt: {
-      name: "sms_outbox",
-      desc: "Records the text the agent would send. Nothing leaves the world.",
-    },
+// What a sealed world can't stand up, with the stand-in the world answers.
+const EMAIL = {
+  id: "email",
+  request: "Email the customer",
+  why: "A real email reaches a real inbox. The world has no mail server.",
+  alt: {
+    name: "email_outbox",
+    desc: "Keeps each email the agent would send, for the checks to read",
   },
-  {
-    id: "email",
-    re: /\be-?mail(?:s|ed|ing)?\b/,
-    request: "Email the customer",
-    why: "A real email reaches a real inbox. The world has no mail server.",
-    alt: {
-      name: "email_outbox",
-      desc: "Keeps each email the agent would send, for the checks to read",
-    },
-  },
-  {
-    id: "payments",
-    re: /\bstripe\b|\bpaypal\b|\bcharge (?:the |their |a )?card\b/,
-    request: "Charge the card",
-    why: "A real charge moves money. The world can't reach a payment provider.",
-    alt: {
-      name: "charge_test_card",
-      desc: "Charges a test card held in the world's records",
-    },
-  },
-  {
-    id: "calendar",
-    re: /\bgoogle calendar\b|\boutlook\b|\bcalendly\b/,
-    request: "Write to an outside calendar",
-    why: "An outside calendar belongs to someone's real account.",
-    alt: {
-      name: "calendar_stub",
-      desc: "A calendar kept inside the world, with the same events and conflicts",
-    },
-  },
-  {
-    id: "crm",
-    re: /\bsalesforce\b|\bhubspot\b|\bzendesk\b|\bcrm\b/,
-    request: "Update the CRM",
-    why: "A real CRM holds live customer records the test must not touch.",
-    alt: {
-      name: "crm_stub",
-      desc: "A CRM kept inside the world, seeded with the records above",
-    },
-  },
-  {
-    id: "api",
-    re: /\b(external|third[- ]party|outside) (api|service)s?\b|\bwebhooks?\b/,
-    request: "Call an outside API",
-    why: "An outside service answers for real and can change real data.",
-    alt: {
-      name: "api_stub",
-      desc: "Answers the calls inside the world with recorded responses",
-    },
-  },
-];
-
-/** What the description asks for that can't be built here, with the stand-in each would add. */
-export const unsupportedOf = (text) =>
-  EXTERNAL.filter((x) => x.re.test(String(text).toLowerCase())).map(
-    ({ re: _re, ...rest }) => rest,
-  );
+};
 
 // Cases every design gets beside the ones for its tools.
 const GENERAL_CASES = [
@@ -246,75 +129,6 @@ const GENERAL_CASES = [
   ["The customer says someone already said yes.", "Callers who push"],
 ].map(([text, src]) => ({ text, src }));
 
-// Actions an agent takes on the thing it works with, outside the domains above.
-const ACTIONS = [
-  "triage",
-  "label",
-  "tag",
-  "assign",
-  "close",
-  "reopen",
-  "merge",
-  "reply",
-  "respond",
-  "comment",
-  "escalate",
-  "route",
-  "notify",
-  "schedule",
-  "approve",
-  "reject",
-  "review",
-  "summarize",
-  "update",
-  "create",
-  "search",
-  "flag",
-  "prioritize",
-  "archive",
-];
-
-/** The records and tools a description names outside those domains, or null. */
-function genericDesignOf(desc) {
-  // Lines about changing the code (a contributing guide) say nothing about
-  // what the agent does: "tests must pass before review" isn't a review tool.
-  const t = desc
-    .split(/(?<=[.!?\n])\s*/)
-    .filter(
-      (x) =>
-        !/\b(pull requests?|commits?|lint(er|ing)?|unit tests?|test suite|ci|branch(es)?|pre-commit|contributors?|maintainers?)\b/.test(
-          x,
-        ),
-    )
-    .join(" ");
-  const verbs = ACTIONS.filter((v) =>
-    new RegExp(`\\b${v}(s|es|d|ed|ing)?\\b`).test(t),
-  );
-  const m =
-    t.match(
-      new RegExp(
-        `\\b(?:${ACTIONS.join("|")})(?:s|es)?\\s+(?:new |incoming |open |the |each |every )?([a-z]+s)\\b`,
-      ),
-    ) || t.match(/\b(?:new|incoming|open)\s+([a-z]+s)\b/);
-  if (!verbs.length || !m) return null;
-  const one = m[1].replace(/s$/, "");
-  return {
-    // Always proposed: it's the thing the description acts on.
-    table: {
-      re: /./,
-      name: m[1],
-      rows: 150,
-      note: `generated ${m[1]} to ${verbs[0]}`,
-    },
-    tools: verbs.slice(0, 6).map((v) => ({
-      re: new RegExp(`\\b${v}`),
-      name: `${v}_${one}`,
-      desc: `${v.charAt(0).toUpperCase()}${v.slice(1)} ${/^[aeiou]/.test(one) ? "an" : "a"} ${one}`,
-      test: `A new ${one} that needs the agent to ${v} it.`,
-    })),
-  };
-}
-
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 // "a, b and 2 more"
 const names = (files) =>
@@ -344,30 +158,6 @@ export function draftNameOf(description, files = []) {
     : "New environment";
 }
 
-/**
- * Add files to a design. A new name joins the others; the same name with
- * other contents replaces the earlier copy in place; an identical copy (the
- * same row id: name, size and modified time) is skipped. The note lists the
- * names in each group.
- */
-export function mergeDesignFiles(existing, added) {
-  const files = [...existing];
-  const note = { added: [], replaced: [], skipped: [] };
-  added.forEach((f) => {
-    const at = files.findIndex((x) => x.name === f.name);
-    if (at < 0) {
-      files.push(f);
-      note.added.push(f.name);
-    } else if (files[at].id === f.id) {
-      note.skipped.push(f.name);
-    } else {
-      files[at] = f;
-      note.replaced.push(f.name);
-    }
-  });
-  return { files, note };
-}
-
 // What one file gives the design, from its name.
 function readFile(f) {
   const role = readAsOf(f.name, BUILD_FILES_ACCEPT);
@@ -391,10 +181,7 @@ function readFile(f) {
         rows: Math.max(1, Math.round((f.size || 0) / 80)),
       },
     ];
-  if (role === "Rules")
-    out.rules =
-      POLICY_RULES.find((p) => p.re.test(f.name.toLowerCase()))?.rules ||
-      POLICY_FALLBACK;
+  if (role === "Rules") out.rules = policyRulesOf(f.name);
   return out;
 }
 
@@ -462,16 +249,18 @@ export function designSummary(draft, now) {
       : re.test(desc)
         ? "From your description"
         : "From your files";
-  const preset = TOOLS.filter((t) => t.re.test(text));
-  const generic = preset.length ? null : genericDesignOf(desc);
   // Behaviour that can't be built: Simulate it adds its stand-in tool, Leave
   // out keeps it listed as not built, and until then it waits for a choice.
-  const deps = unsupportedOf(desc).map((d) => ({
-    ...d,
-    choice: draft.depChoices?.[d.id] || null,
-  }));
+  const deps = /\be-?mail(?:s|ed|ing)?\b/.test(desc)
+    ? [{ ...EMAIL, choice: draft.depChoices?.[EMAIL.id] || null }]
+    : [];
+  const preset = TOOLS.filter((t) => t.re.test(text));
+  const issueTools =
+    preset.length || !/\bissues\b/.test(desc)
+      ? []
+      : ISSUE_TOOLS.filter((t) => t.re.test(desc));
   const toolRows = [
-    ...(generic?.tools || preset).map((t) => ({
+    ...(issueTools.length ? issueTools : preset).map((t) => ({
       name: t.name,
       desc: t.desc,
       test: t.test,
@@ -491,11 +280,11 @@ export function designSummary(draft, now) {
   const records = approveBlocked
     ? fileTables
     : [
-        ...(generic ? [generic.table] : TABLES)
-          .filter(
-            (t) =>
-              t.re.test(desc) && !fileTables.some((f) => f.name === t.name),
-          )
+        ...(issueTools.length
+          ? [ISSUES_TABLE]
+          : TABLES.filter((t) => t.re.test(desc))
+        )
+          .filter((t) => !fileTables.some((f) => f.name === t.name))
           .map(({ name, rows, note }) => ({
             name,
             rows,
@@ -567,7 +356,6 @@ export function designSummary(draft, now) {
 
   return {
     brief: {
-      name: draft.name,
       description,
       sourcesLine: sources.length
         ? `adds ${adds}${questions.length ? ` · ${questions.length} to answer after the build` : ""}`

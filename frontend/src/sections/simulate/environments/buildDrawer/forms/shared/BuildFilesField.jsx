@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { formatFileSize } from "src/utils/utils";
 import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import { OUTLINED_BTN_SX, ROW_BOX_SX, T12, T13 } from "../../drawerStyles";
 import {
@@ -161,7 +162,7 @@ export default function BuildFilesField({
                   noWrap
                   sx={{ ...T12, color: "text.tertiary", flex: 1, minWidth: 0 }}
                 >
-                  {role ? `Read as ${role}` : "Can't be read"}
+                  {role ? `Likely read as ${role}` : "Can't be read"}
                 </Typography>
                 <Typography
                   sx={{
@@ -171,7 +172,7 @@ export default function BuildFilesField({
                     flexShrink: 0,
                   }}
                 >
-                  {kb(f.size)}
+                  {formatFileSize(f.size, { wholeKb: true })}
                 </Typography>
                 <IconButton
                   size="small"

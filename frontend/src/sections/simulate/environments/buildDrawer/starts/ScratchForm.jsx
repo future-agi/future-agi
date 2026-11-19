@@ -10,6 +10,7 @@ import {
 import { Field, HintLine } from "../forms/formBits";
 import {
   BUILD_FILES_ACCEPT,
+  BUILD_TEST_MIN,
   mergeBuildFiles,
 } from "../forms/shared/buildFiles";
 import { T12 } from "../drawerStyles";
@@ -38,7 +39,8 @@ export default function ScratchForm() {
   const [attachments, setAttachments] = useState([]);
   // Asked up front and starting on the safest choice, never a silent default.
   const [personalData, setPersonalData] = useState("replace");
-  const canGo = flowText.trim().length >= 10 || attachments.length > 0;
+  const canGo =
+    flowText.trim().length >= BUILD_TEST_MIN || attachments.length > 0;
 
   const addFiles = (list) =>
     setAttachments((prev) => mergeBuildFiles(prev, list));
