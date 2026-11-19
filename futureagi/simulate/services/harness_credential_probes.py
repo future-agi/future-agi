@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -371,6 +371,239 @@ def probe_livekit_agent(
         f"{LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS}s; check the agent name and that "
         "the agent is running on this LiveKit project",
     )
+
+
+LIVEKIT_ROUTING_ALIASES = (*LIVEKIT_ALIASES, "LIVEKIT_AGENT_NAME")
+# Twirp answers a service the server does not expose with 404 (bad_route) or 501
+# (unimplemented); self-hosted LiveKit has no PhoneNumberService.
+_LIVEKIT_NO_PHONE_NUMBER_SERVICE = frozenset({404, 501})
+
+
+@dataclass(frozen=True)
+class CloudPhoneNumber:
+    e164: str
+    rule_ids: frozenset[str]
+
+
+def _cloud_phone_numbers(items: list[dict[str, Any]]) -> list[CloudPhoneNumber]:
+    numbers = []
+    for item in items:
+        rule_ids = [
+            item.get("sip_dispatch_rule_id"),
+            *(item.get("sip_dispatch_rule_ids") or []),
+        ]
+        numbers.append(
+            CloudPhoneNumber(
+                str(item.get("e164_format") or "").strip(),
+                frozenset(str(rule_id) for rule_id in rule_ids if rule_id),
+            )
+        )
+    return numbers
+
+
+def _accepts_caller(allowed: Iterable[str], caller_number: str) -> bool:
+    allowed = list(allowed)
+    return not caller_number or not allowed or caller_number in allowed
+
+
+def _rule_pin(rule: Any) -> str:
+    kind = rule.rule.WhichOneof("rule")
+    return str(getattr(rule.rule, kind).pin) if kind else ""
+
+
+def _phone_routing_verdict(
+    phone_number: str,
+    agent_name: str,
+    caller_number: str,
+    cloud_numbers: Sequence[CloudPhoneNumber],
+    trunks: Sequence[Any],
+    rules: Sequence[Any],
+) -> tuple[bool, str]:
+    """Decide, from a LiveKit project's listings, whether a number reaches one agent.
+
+    ``trunks`` and ``rules`` are LiveKit ``SIPInboundTrunkInfo`` and
+    ``SIPDispatchRuleInfo`` messages. Trunk selection follows LiveKit's own order: a
+    trunk that lists the number wins; otherwise the project's default trunk (one that
+    lists no numbers) takes every call.
+    """
+    owned = [item for item in cloud_numbers if item.e164 == phone_number]
+    listing = [trunk for trunk in trunks if phone_number in trunk.numbers]
+    holding = listing or [trunk for trunk in trunks if not trunk.numbers]
+    if not owned and not holding:
+        return False, (
+            f"{phone_number} is not on this LiveKit project: no LiveKit phone "
+            "number or inbound trunk lists or accepts it"
+        )
+    if len(holding) > 1:
+        names = ", ".join(sorted(trunk.name or trunk.sip_trunk_id for trunk in holding))
+        what = "list" if listing else "accept any number, including"
+        return False, (
+            f"{len(holding)} inbound trunks {what} {phone_number} ({names}); keep "
+            "one so LiveKit knows where to send our call"
+        )
+    for trunk in holding:
+        if not _accepts_caller(trunk.allowed_numbers, caller_number):
+            return False, (
+                f"inbound trunk {trunk.name or trunk.sip_trunk_id} only accepts "
+                f"calls from its allowed numbers; add {caller_number}, the number "
+                "we call from"
+            )
+    trunk_ids = {trunk.sip_trunk_id for trunk in holding}
+    assigned = (
+        frozenset().union(*(item.rule_ids for item in owned)) if owned else frozenset()
+    )
+    candidates = [
+        rule for rule in rules if _accepts_caller(rule.inbound_numbers, caller_number)
+    ]
+    specific = [
+        rule
+        for rule in candidates
+        if rule.sip_dispatch_rule_id in assigned
+        or phone_number in rule.numbers
+        or trunk_ids & set(rule.trunk_ids)
+    ]
+    catch_all = [rule for rule in candidates if not rule.trunk_ids and not rule.numbers]
+    applying = specific or catch_all
+    if not applying:
+        return False, (
+            f"no dispatch rule routes calls to {phone_number}, so our call would "
+            "ring into an empty room"
+        )
+    if any(_rule_pin(rule) for rule in applying):
+        return False, (
+            f"the dispatch rule for {phone_number} asks callers for a PIN, which "
+            "our simulator cannot enter; use a rule without a PIN"
+        )
+    agents = {
+        agent.agent_name.strip()
+        for rule in applying
+        for agent in rule.room_config.agents
+        if agent.agent_name.strip()
+    }
+    if not agents:
+        return False, (
+            f"the dispatch rule for {phone_number} names no agent; add "
+            f"'{agent_name}' to the rule's agents"
+        )
+    if agent_name not in agents:
+        return False, (
+            f"calls to {phone_number} go to {', '.join(sorted(agents))}, "
+            f"not '{agent_name}'"
+        )
+    if len(agents) > 1:
+        others = ", ".join(sorted(agents - {agent_name}))
+        return False, (
+            f"calls to {phone_number} also go to {others}; route this number "
+            f"to '{agent_name}' only"
+        )
+    message = f"calls to {phone_number} are dispatched to '{agent_name}' only"
+    if holding:
+        message += (
+            "; your carrier must also forward this number to LiveKit, which only "
+            "a call can prove"
+        )
+    return True, message
+
+
+def probe_livekit_phone_routing(
+    phone_number: str, values: Mapping[str, str], caller_number: str = ""
+) -> ProbeResult | None:
+    phone_number = str(phone_number or "").strip()
+    agent_name = str(values.get("LIVEKIT_AGENT_NAME") or "").strip()
+    if (
+        not phone_number
+        or not agent_name
+        or not all(str(values.get(alias) or "").strip() for alias in LIVEKIT_ALIASES)
+    ):
+        return None
+
+    def result(ok: bool, message: str) -> ProbeResult:
+        return ProbeResult(
+            "livekit_routing",
+            "LiveKit phone routing",
+            LIVEKIT_ROUTING_ALIASES,
+            ok,
+            message,
+            agent_name if ok else "",
+        )
+
+    try:
+        livekit_api = load_extra("livekit.api", "voice")
+    except ImportError as exc:
+        logger.warning("livekit_routing_probe_unavailable", exc_info=True)
+        return result(False, str(exc))
+
+    base_url = f"{_livekit_http_url(values['LIVEKIT_URL'])}/twirp"
+    token = (
+        livekit_api.AccessToken(
+            values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
+        )
+        .with_sip_grants(livekit_api.SIPGrants(admin=True))
+        .to_jwt()
+    )
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def listing(service: str, method: str) -> dict[str, Any]:
+        response = requests.post(
+            f"{base_url}/livekit.{service}/{method}",
+            headers=headers,
+            json={},
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return response.json() if response.content else {}
+
+    try:
+        trunks = json_format.ParseDict(
+            listing("SIP", "ListSIPInboundTrunk"),
+            livekit_api.ListSIPInboundTrunkResponse(),
+            ignore_unknown_fields=True,
+        ).items
+        rules = json_format.ParseDict(
+            listing("SIP", "ListSIPDispatchRule"),
+            livekit_api.ListSIPDispatchRuleResponse(),
+            ignore_unknown_fields=True,
+        ).items
+        try:
+            cloud_numbers = _cloud_phone_numbers(
+                list(
+                    listing("PhoneNumberService", "ListPhoneNumbers").get("items") or []
+                )
+            )
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            # The key already listed trunks and rules, so a 401/403 here means it
+            # lacks phone-number access, not that it is wrong.
+            if status not in _LIVEKIT_NO_PHONE_NUMBER_SERVICE | {401, 403}:
+                raise
+            cloud_numbers = []
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        if status in {401, 403}:
+            return result(
+                False,
+                f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})",
+            )
+        logger.warning("livekit_routing_probe_http_error", status=status, exc_info=True)
+        return result(
+            False, f"LiveKit returned HTTP {status} while checking {phone_number}"
+        )
+    except (requests.JSONDecodeError, json_format.ParseError) as exc:
+        logger.warning("livekit_routing_probe_bad_response", exc_info=True)
+        return result(
+            False,
+            f"LiveKit returned an unreadable response ({type(exc).__name__}); "
+            "retry Preflight",
+        )
+    except requests.RequestException as exc:
+        logger.warning("livekit_routing_probe_unreachable", exc_info=True)
+        return result(
+            False, f"LiveKit is unreachable ({type(exc).__name__}); retry Preflight"
+        )
+    ok, message = _phone_routing_verdict(
+        phone_number, agent_name, caller_number, cloud_numbers, trunks, rules
+    )
+    return result(ok, message)
 
 
 def probe_provider_target(

@@ -193,6 +193,38 @@ describe("draftToPreflightPayload — platform", () => {
     });
   });
 
+  it("maps livekit in phone mode to the number, prompt and the chosen direction only", () => {
+    const { payload } = draftToPreflightPayload(
+      platformDraft({
+        provider: "livekit",
+        agentId: undefined,
+        agentMode: "prompt",
+        prompt: " You handle returns. ",
+        callDirection: "outbound",
+        contact: {
+          mode: "phone",
+          inboundCalls: false,
+          agentSpeaksFirst: true,
+          countryCode: "+1",
+          number: "4155550100",
+        },
+      }),
+    );
+    expect(payload.agent).toStrictEqual({
+      connector: "livekit",
+      mode: "connect_only",
+      config: {
+        phone_number: "+14155550100",
+        target_system_prompt: "You handle returns.",
+        inbound: false,
+        target_speaks_first: true,
+      },
+      secret_refs: {},
+      call_direction: "outbound",
+    });
+    expect(payload.metadata.name).toBe("phone-agent");
+  });
+
   it("skips a livekit draft that has no system prompt", () => {
     const result = draftToPreflightPayload(
       platformDraft({ provider: "livekit", agentId: "returns-agent", prompt: "  " }),

@@ -2,12 +2,19 @@ from unittest.mock import Mock, patch
 
 import pytest
 import requests
+from google.protobuf import json_format
 
 from simulate.services.harness_credential_probes import (
     LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS,
+    _cloud_phone_numbers,
+    _phone_routing_verdict,
+    probe_livekit_phone_routing,
     probe_provider_target,
 )
-from simulate.services.harness_provider import _preflight_credential_probe
+from simulate.services.harness_provider import (
+    _preflight_checks,
+    _preflight_credential_probe,
+)
 
 LIVEKIT_VALUES = {
     "LIVEKIT_URL": "wss://demo.livekit.cloud",
@@ -346,3 +353,426 @@ def test_preflight_does_not_dispatch_a_livekit_agent_built_from_source(
 ):
     assert _preflight_credential_probe(_livekit_preflight_payload(mode=None)) == []
     probe_agent.assert_not_called()
+
+
+NUMBER = "+14844815043"
+CALLER = "+13125557682"
+ROUTING_VALUES = {**LIVEKIT_VALUES, "LIVEKIT_AGENT_NAME": "Morgan-467"}
+CLOUD_NUMBER = {"e164_format": NUMBER, "sip_dispatch_rule_ids": []}
+
+
+def _rule(
+    rule_id="SDR_1", agents=("Morgan-467",), trunks=(), numbers=(), callers=(), pin=""
+):
+    return {
+        "sip_dispatch_rule_id": rule_id,
+        "trunk_ids": list(trunks),
+        "numbers": list(numbers),
+        "inbound_numbers": list(callers),
+        "rule": {"dispatch_rule_individual": {"room_prefix": "call-", "pin": pin}},
+        "room_config": {"agents": [{"agent_name": name} for name in agents]},
+    }
+
+
+def _trunk(trunk_id="ST_1", numbers=(NUMBER,), allowed=(), addresses=()):
+    return {
+        "sip_trunk_id": trunk_id,
+        "name": trunk_id.lower(),
+        "numbers": list(numbers),
+        "allowed_numbers": list(allowed),
+        "allowed_addresses": list(addresses),
+    }
+
+
+def _parsed(cloud, trunks, rules):
+    from livekit import api as livekit_api
+
+    return (
+        _cloud_phone_numbers(list(cloud)),
+        json_format.ParseDict(
+            {"items": list(trunks)},
+            livekit_api.ListSIPInboundTrunkResponse(),
+            ignore_unknown_fields=True,
+        ).items,
+        json_format.ParseDict(
+            {"items": list(rules)},
+            livekit_api.ListSIPDispatchRuleResponse(),
+            ignore_unknown_fields=True,
+        ).items,
+    )
+
+
+@pytest.mark.parametrize(
+    "cloud, trunks, rules, caller, ok, message",
+    [
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule()],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="cloud-number-catch-all-rule",
+        ),
+        pytest.param(
+            [],
+            [_trunk()],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            True,
+            "your carrier must also forward this number",
+            id="carrier-number-on-one-trunk",
+        ),
+        pytest.param(
+            [],
+            [_trunk(numbers=(), addresses=("1.2.3.4/32",))],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="default-trunk-accepts-any-number",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [_trunk()],
+            [_rule()],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="number-on-cloud-and-trunk",
+        ),
+        pytest.param(
+            [],
+            [_trunk()],
+            [_rule(trunks=("ST_2",), numbers=(NUMBER,))],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="rule-lists-the-number-under-another-trunk",
+        ),
+        pytest.param(
+            [],
+            [_trunk(allowed=("+15550001111",))],
+            [_rule(trunks=("ST_1",))],
+            "",
+            True,
+            "to 'Morgan-467' only",
+            id="no-caller-number-configured-skips-the-allow-list",
+        ),
+        pytest.param(
+            [{**CLOUD_NUMBER, "sip_dispatch_rule_ids": ["SDR_1"]}],
+            [],
+            [_rule(), _rule("SDR_2", agents=("Riley-1",))],
+            CALLER,
+            True,
+            "to 'Morgan-467' only",
+            id="assigned-rule-wins-over-catch-all",
+        ),
+        pytest.param(
+            [],
+            [_trunk(numbers=("+15550000000",))],
+            [_rule()],
+            CALLER,
+            False,
+            "lists or accepts it",
+            id="number-not-on-project",
+        ),
+        pytest.param(
+            [],
+            [],
+            [_rule()],
+            CALLER,
+            False,
+            "lists or accepts it",
+            id="empty-project",
+        ),
+        pytest.param(
+            [],
+            [_trunk("ST_1"), _trunk("ST_2")],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            False,
+            "2 inbound trunks list +14844815043 (st_1, st_2)",
+            id="number-on-two-trunks",
+        ),
+        pytest.param(
+            [],
+            [_trunk("ST_1", numbers=()), _trunk("ST_2", numbers=())],
+            [_rule()],
+            CALLER,
+            False,
+            "2 inbound trunks accept any number",
+            id="two-default-trunks",
+        ),
+        pytest.param(
+            [],
+            [_trunk(allowed=("+15550001111",))],
+            [_rule(trunks=("ST_1",))],
+            CALLER,
+            False,
+            "add +13125557682, the number we call from",
+            id="trunk-refuses-our-caller",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [],
+            CALLER,
+            False,
+            "ring into an empty room",
+            id="no-dispatch-rule",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(callers=("+15550001111",))],
+            CALLER,
+            False,
+            "ring into an empty room",
+            id="rule-only-for-other-callers",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(pin="1234")],
+            CALLER,
+            False,
+            "asks callers for a PIN",
+            id="rule-needs-a-pin",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(agents=())],
+            CALLER,
+            False,
+            "names no agent",
+            id="rule-names-no-agent",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(agents=("Riley-1",))],
+            CALLER,
+            False,
+            "go to Riley-1, not 'Morgan-467'",
+            id="rule-sends-to-another-agent",
+        ),
+        pytest.param(
+            [CLOUD_NUMBER],
+            [],
+            [_rule(agents=("Morgan-467", "Riley-1"))],
+            CALLER,
+            False,
+            "also go to Riley-1",
+            id="rule-sends-to-two-agents",
+        ),
+        pytest.param(
+            [],
+            [_trunk()],
+            [
+                _rule(trunks=("ST_1",)),
+                _rule("SDR_2", agents=("Riley-1",), numbers=(NUMBER,)),
+            ],
+            CALLER,
+            False,
+            "also go to Riley-1",
+            id="two-rules-send-to-different-agents",
+        ),
+    ],
+)
+def test_phone_routing_verdict(cloud, trunks, rules, caller, ok, message):
+    passed, detail = _phone_routing_verdict(
+        NUMBER, "Morgan-467", caller, *_parsed(cloud, trunks, rules)
+    )
+
+    assert passed is ok
+    assert message in detail
+
+
+def _livekit_sip_server(
+    trunks=(), rules=(), cloud=(), cloud_status=200, status=200, error=None
+):
+    calls = []
+
+    def post(url, headers, json, timeout):
+        method = url.rsplit("/", 1)[-1]
+        calls.append(method)
+        if error is not None:
+            raise error
+        code = cloud_status if method == "ListPhoneNumbers" else status
+        response = Mock(status_code=code, content=b"{}")
+        if code >= 400:
+            response.raise_for_status.side_effect = requests.HTTPError(
+                response=response
+            )
+            return response
+        response.raise_for_status.return_value = None
+        listings = {
+            "ListSIPInboundTrunk": trunks,
+            "ListSIPDispatchRule": rules,
+            "ListPhoneNumbers": cloud,
+        }
+        response.json.return_value = {"items": list(listings[method])}
+        return response
+
+    return post, calls
+
+
+def test_routing_probe_reads_the_project_and_names_the_agent_it_reaches():
+    post, calls = _livekit_sip_server(cloud=[CLOUD_NUMBER], rules=[_rule()])
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is True
+    assert result.provider == "livekit_routing"
+    assert result.target_name == "Morgan-467"
+    assert calls == ["ListSIPInboundTrunk", "ListSIPDispatchRule", "ListPhoneNumbers"]
+
+
+@pytest.mark.parametrize("cloud_status", [401, 403, 404, 501])
+def test_routing_probe_uses_trunks_on_a_server_without_phone_numbers(cloud_status):
+    post, _calls = _livekit_sip_server(
+        trunks=[_trunk()], rules=[_rule(trunks=("ST_1",))], cloud_status=cloud_status
+    )
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is True
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_routing_probe_reports_rejected_credentials(status):
+    post, calls = _livekit_sip_server(status=status)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == (
+        f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})"
+    )
+    assert calls == ["ListSIPInboundTrunk"]
+
+
+def test_routing_probe_reports_other_http_errors():
+    post, _calls = _livekit_sip_server(status=500)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == f"LiveKit returned HTTP 500 while checking {NUMBER}"
+
+
+def test_routing_probe_reports_an_unreadable_response():
+    post, _calls = _livekit_sip_server()
+
+    def post_with_bad_json(url, headers, json, timeout):
+        response = post(url, headers, json, timeout)
+        response.json.side_effect = requests.JSONDecodeError("bad", "", 0)
+        return response
+
+    with patch(
+        "simulate.services.harness_credential_probes.requests.post", post_with_bad_json
+    ):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == (
+        "LiveKit returned an unreadable response (JSONDecodeError); retry Preflight"
+    )
+
+
+def test_routing_results_get_their_own_preflight_check():
+    probe = [
+        {"provider": "livekit", "ok": True, "message": "key ok", "aliases": []},
+        {
+            "provider": "livekit_routing",
+            "ok": False,
+            "message": "no dispatch rule routes calls to +14844815043",
+            "aliases": ["LIVEKIT_URL"],
+        },
+    ]
+
+    checks = {
+        check["id"]: check
+        for check in _preflight_checks("provider", None, 0, [], [], probe, "phone")
+    }
+
+    assert checks["provider_target"]["status"] == "skipped"
+    assert checks["phone_routing"]["status"] == "failed"
+    assert "no dispatch rule" in checks["phone_routing"]["detail"]
+    assert checks["phone_routing"]["fix"] == (
+        "Fix the number, trunk or dispatch rule named above on your LiveKit project"
+    )
+    assert "phone_routing" not in {
+        check["id"]
+        for check in _preflight_checks("provider", None, 0, [], [], probe[:1], "phone")
+    }
+
+
+def test_routing_probe_reports_an_unreachable_server():
+    post, _calls = _livekit_sip_server(error=requests.ConnectionError("refused"))
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == "LiveKit is unreachable (ConnectionError); retry Preflight"
+
+
+@patch(
+    "simulate.services.harness_credential_probes.load_extra",
+    side_effect=ImportError("install the voice extra"),
+)
+@patch("simulate.services.harness_credential_probes.requests.post")
+def test_routing_probe_reports_a_missing_voice_extra(post, _load_extra):
+    result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == "install the voice extra"
+    post.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "number, values",
+    [
+        ("", ROUTING_VALUES),
+        (NUMBER, {**ROUTING_VALUES, "LIVEKIT_AGENT_NAME": " "}),
+        (NUMBER, {**ROUTING_VALUES, "LIVEKIT_API_SECRET": ""}),
+    ],
+)
+@patch("simulate.services.harness_credential_probes.requests.post")
+def test_routing_probe_skips_without_a_number_agent_or_full_credentials(
+    post, number, values
+):
+    assert probe_livekit_phone_routing(number, values, CALLER) is None
+    post.assert_not_called()
+
+
+@patch(
+    "simulate.services.phone_telephony.platform_phone_telephony",
+    return_value={"SIP_OUTBOUND_FROM_NUMBER": CALLER},
+)
+@patch("simulate.services.harness_credential_probes.probe_all", return_value=[])
+@patch("simulate.services.harness_credential_probes.probe_livekit_phone_routing")
+def test_preflight_checks_a_phone_target_routing_from_our_caller_number(
+    probe_routing, _probe_all, _telephony
+):
+    probe_routing.return_value = Mock(as_dict=lambda: {"provider": "livekit_target"})
+    payload = {
+        "source": {"kind": "provider"},
+        "agent": {
+            "connector": "phone",
+            "mode": "connect_only",
+            "config": {"phone_number": NUMBER, "target_system_prompt": "Help."},
+        },
+        "credential_values": ROUTING_VALUES,
+    }
+
+    assert _preflight_credential_probe(payload) == [{"provider": "livekit_target"}]
+    number, values, caller = probe_routing.call_args.args
+    assert (number, values, caller) == (NUMBER, ROUTING_VALUES, CALLER)
