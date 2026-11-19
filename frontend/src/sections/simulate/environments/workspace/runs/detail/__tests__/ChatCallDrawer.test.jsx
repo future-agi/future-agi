@@ -156,7 +156,9 @@ describe("ChatCallDrawer World state", () => {
       />,
     );
     await userEvent.click(screen.getByRole("tab", { name: "World state" }));
-    expect(screen.getByText("Committed: issue_refund")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Committed: issue_refund"),
+    ).toBeInTheDocument();
     mocks.callDetail = null;
   });
 

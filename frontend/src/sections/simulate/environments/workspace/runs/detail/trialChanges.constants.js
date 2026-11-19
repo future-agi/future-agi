@@ -1,7 +1,15 @@
+export const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
+
+export const QUIET = {
+  typography: "s3",
+  color: "text.secondary",
+  wordBreak: "break-word",
+};
+
 export const TRIAL_CHANGES_COPY = {
   tab: "World state",
   heading: "What changed in the world",
-  noticesHeading: "Worth knowing about this trial",
+  noticesHeading: "Worth knowing",
   about:
     "Each participant's attempts in this trial and what the world made of them. Refused and faulted attempts changed nothing.",
   counts: (one) =>
@@ -45,6 +53,45 @@ export const TRIAL_CHANGES_COPY = {
   usageBy: (who, model, line) =>
     `${who}${model ? ` on ${model}` : ""}: ${line}`,
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
+  // The layout's own labels (tables, captions, toggles).
+  callsHeading: "Calls into the world",
+  callsHead: {
+    who: "Participant",
+    attempted: "Attempted",
+    committed: "Committed",
+    read: "Read",
+    refused: "Refused",
+    faulted: "Faulted",
+    duplicate: "Duplicate",
+  },
+  committedLabel: "Committed",
+  readLabel: "Read only",
+  answerLostLabel: "Answered with a timeout",
+  blockedLabel: "Blocked outside the world",
+  blockedCall: (one) =>
+    `${one.host}${one.method ? ` ${one.method}` : ""} ×${one.count}`,
+  endStateHint: "The world's records and action log as this trial ended",
+  recordsHead: { field: "Field", before: "Before", after: "After" },
+  unchangedFields: (n, open) =>
+    open
+      ? "Hide unchanged fields"
+      : `Show ${n} unchanged field${n === 1 ? "" : "s"}`,
+  preRunCaption: "The starting point · not graded",
+  approvalsHead: {
+    request: "Request",
+    decision: "Decision",
+    agent: "The agent",
+  },
+  noDecision: "No decision",
+  usageHead: {
+    who: "Actor",
+    model: "Model",
+    calls: "Calls",
+    tokens: "Tokens",
+    cost: "Cost",
+  },
+  usageTotalLabel: "In all",
+  usageNote: "Counted in the simulator's usage",
   empty: "Nothing changed in the world in this trial.",
   notRecorded: "World state was not recorded for this trial.",
   loadFailed:
@@ -52,7 +99,7 @@ export const TRIAL_CHANGES_COPY = {
   unreadable:
     "What changed in the world could not be read for this trial. Checks that needed it read Unmeasured.",
   endStateLead: "The world as this trial ended is kept:",
-  endState: "download its records and action log",
+  endState: "Download end state",
   recordsHeading: "Records before and after",
   recordsEmpty: "No record changed in this trial.",
   recordKinds: { added: "Added", changed: "Changed", removed: "Removed" },
