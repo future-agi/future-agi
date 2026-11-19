@@ -631,6 +631,7 @@ def _store_reading(
                 retryable=exc.code not in ("agent_invalid", "agent_too_large"),
                 spend=spend,
             )
+        _store_required_names(locked, contract)
     store_version_contract(
         organization_id=runtime.organization_id,
         agent_version_id=runtime.agent_version_id,
@@ -644,6 +645,43 @@ def _store_reading(
         tools=len(document.get("tools") or []),
     )
     return ReadOutcome("stored", spend=spend)
+
+
+def _store_required_names(
+    locked: HarnessAgentVersionRuntime, contract: dict[str, Any]
+) -> None:
+    """Write the names the reading says the agent needs onto its version, on the row the
+    store step holds locked, so a run warns of each one that has no value."""
+    from simulate.services.harness_agent_versions import (
+        NoAnswer,
+        merge_required_names,
+        reading_required_names,
+    )
+
+    # Storing the document may have saved the payload (the prompt's own mark comes off),
+    # so it is read again under the lock already held.
+    locked.refresh_from_db(fields=["agent_payload", "required_variable_names"])
+    names = reading_required_names(contract, locked.agent_payload or {})
+    if isinstance(names, NoAnswer):
+        # No answer writes nothing: null stays null, a parent's copy keeps its mark.
+        log = logger.warning if names is NoAnswer.UNREADABLE else logger.info
+        log(
+            f"required_names_{names.value}",
+            agent_version_id=str(locked.agent_version_id),
+        )
+        return
+    required, own_payload = merge_required_names(
+        locked.required_variable_names, locked.agent_payload, names
+    )
+    changes: dict[str, Any] = {
+        "required_variable_names": required,
+        "updated_at": timezone.now(),
+    }
+    if own_payload is not None:
+        changes["agent_payload"] = own_payload
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(id=locked.id).update(
+        **changes
+    )
 
 
 def _has_document(agent_version_id: UUID) -> bool:

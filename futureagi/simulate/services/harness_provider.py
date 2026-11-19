@@ -1368,7 +1368,8 @@ def _environment_agent_maker(
         organization, payload["agent"]["secret_refs"], secret_values
     )
     check = (
-        CreationCheck(report={}, required_variable_names=[])
+        # Not run for a connected agent: no answer to which names it needs.
+        CreationCheck(report={}, required_variable_names=None)
         if _builds_connected_agent(organization, workspace, payload)
         else check_creation_credentials(
             organization, payload, secret_submitted, analysis

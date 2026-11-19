@@ -15,6 +15,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
+from enum import Enum
 from typing import Any, Literal
 
 from django.db import IntegrityError, transaction
@@ -29,7 +30,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models.agent_definition import ProviderCredentials
-from simulate.serializers.harness_job import CONNECTOR_ALIASES
+from simulate.serializers.harness_job import CONNECTOR_ALIASES, present_provider_aliases
 from simulate.services.harness_credentials import (  # noqa: F401 - re-exported
     agent_version_secret_ref,
     is_credential_file_ref,
@@ -74,6 +75,7 @@ _OWN_PAYLOAD_KEYS = (
     "created_for_environment",
     "discarded_by",
     "prompt_from_parent",
+    "required_names_from_parent",
     OFFERED_KEY,
     PRODUCTION_REQUESTS_KEY,
 )
@@ -153,6 +155,114 @@ def version_credential_names(runtime: HarnessAgentVersionRuntime) -> list[str]:
             *(str(name) for name in runtime.credential_fingerprints or {}),
         }
     )
+
+
+# On a version whose required names are its parent's copy: the first writer of its own
+# replaces them, every later one adds.
+REQUIRED_NAMES_FROM_PARENT = "required_names_from_parent"
+
+
+class NoAnswer(Enum):
+    """Why a writer has no answer to which names an agent needs, so writes nothing:
+    not knowing is not "none"."""
+
+    # No process named: what a reading gets by saying nothing, since the kit takes the
+    # field only from the model and defaults it to {}.
+    NOT_GIVEN = "not_given"
+    # A section of a shape this cannot read.
+    UNREADABLE = "unreadable"
+
+
+def names_met_by_config(agent: Mapping[str, Any]) -> set[str]:
+    """Names an agent's public settings already meet (a LiveKit URL), so its credentials
+    are never asked for them."""
+    return present_provider_aliases(agent) - set(agent.get("secret_refs") or {})
+
+
+def _section(parent: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """``parent[key]`` as a map; absent or null is an empty one. Raises ``ValueError`` for
+    a value of another type."""
+    value = parent.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(key)
+    return value
+
+
+def _names_the_run_supplies(runtime: Mapping[str, Any]) -> set[str]:
+    """Names the run itself gives the agent's process: the local server credential the kit
+    generates per world, and the non-empty public values of the agent's own config files."""
+    supplied: set[str] = set()
+    local_auth = _section(_section(runtime, "interface"), "local_auth")
+    server_environment = local_auth.get("server_environment")
+    if server_environment is not None:
+        if not isinstance(server_environment, str):
+            raise ValueError("local_auth")
+        supplied.add(server_environment)
+    for resource in _section(runtime, "config_files").values():
+        if resource is None:
+            continue
+        if not isinstance(resource, Mapping):
+            raise ValueError("config_files")
+        values = _section(resource, "values")
+        supplied.update(str(name) for name, value in values.items() if value)
+    return supplied
+
+
+def reading_required_names(
+    contract: Mapping[str, Any], agent: Mapping[str, Any]
+) -> list[str] | NoAnswer:
+    """The names a user must give a value for, from a reading's contract: every name under
+    ``runtime.required_environment``, whichever process reads it, less those the run supplies
+    and those ``agent``'s public settings meet. Sorted.
+
+    ``[]`` only when a process is named with an empty list, the reading saying "none" in
+    so many words. A missing or empty section is no answer (``NOT_GIVEN``), and a section
+    of the wrong shape is ``UNREADABLE``: the caller writes nothing for either."""
+    try:
+        runtime = _section(contract, "runtime")
+        required = _section(runtime, "required_environment")
+        answered = False
+        names: set[str] = set()
+        for process_names in required.values():
+            if process_names is None:
+                continue
+            if not isinstance(process_names, list) or not all(
+                isinstance(name, str) and name for name in process_names
+            ):
+                raise ValueError("required_environment")
+            answered = True
+            names.update(process_names)
+        if not answered:
+            return NoAnswer.NOT_GIVEN
+        names -= _names_the_run_supplies(runtime)
+    except ValueError:
+        return NoAnswer.UNREADABLE
+    return sorted(names - names_met_by_config(agent))
+
+
+def merge_required_names(
+    current: list[str] | None, payload: Mapping[str, Any] | None, names: Iterable[str]
+) -> tuple[list[str], dict[str, Any] | None]:
+    """A writer's ``names`` against a version's ``current`` list. The first writer of the
+    version's own replaces a parent's copy (or the unknown, null); a later one adds.
+
+    Returns the list to store, and the payload to store when the parent's mark comes off
+    (None when the payload is unchanged)."""
+    payload = payload or {}
+    if current is None or payload.get(REQUIRED_NAMES_FROM_PARENT):
+        own = None
+        if REQUIRED_NAMES_FROM_PARENT in payload:
+            own = {
+                key: value
+                for key, value in payload.items()
+                if key != REQUIRED_NAMES_FROM_PARENT
+            }
+        return sorted({str(name) for name in names}), own
+    return sorted(
+        {*(str(name) for name in current), *(str(name) for name in names)}
+    ), None
 
 
 _RUN_AGENT_FIELDS = ("connector", "mode", "call_direction", "target_speaks_first")
@@ -899,6 +1009,11 @@ def create_agent_version(
             else _prompt_hash(description)
         )
         names = secret_set.names()
+        if (
+            parent_runtime is not None
+            and parent_runtime.required_variable_names is not None
+        ):
+            payload[REQUIRED_NAMES_FROM_PARENT] = True
         runtime = HarnessAgentVersionRuntime(
             agent_definition=definition,
             organization=organization,
@@ -2282,7 +2397,9 @@ class CreationCheck:
     """The creation's check of them, by name only."""
 
     report: dict[str, Any]
-    required_variable_names: list[str]
+    # None when the check did not run (an environment built from a connected agent):
+    # it has no answer, so it writes nothing.
+    required_variable_names: list[str] | None
 
 
 def environment_owned(definition_id: Any) -> bool:
@@ -2663,7 +2780,6 @@ def check_creation_credentials(
 ) -> CreationCheck:
     """Check a creation's credentials live, reusing its source scan; refused with 422
     when they fail."""
-    from simulate.serializers.harness_job import present_provider_aliases
     from simulate.services.harness_provider import _connector_credential_readiness
 
     detected, required_files, scanned = (
@@ -2706,9 +2822,7 @@ def check_creation_credentials(
     )
     agent = payload["agent"]
     # A name public config meets (a LiveKit URL) is never asked of the credentials.
-    met_by_config = present_provider_aliases(agent) - set(
-        agent.get("secret_refs") or {}
-    )
+    met_by_config = names_met_by_config(agent)
     required = {
         str(item["environment_name"])
         for item in readiness["report"]["requirements"]
@@ -3085,8 +3199,19 @@ def ensure_environment_agent(
             preflight_status=Status.PASSED,
             preflighted_at=now,
             preflight_report=check.report,
-            required_variable_names=check.required_variable_names,
         )
+    if (
+        runtime.preflight_status == Status.PENDING
+        and check.required_variable_names is not None
+    ):
+        # A reading may have listed names already: the check adds its own, never erases.
+        required, own_payload = merge_required_names(
+            runtime.required_variable_names, stored, check.required_variable_names
+        )
+        finished["required_variable_names"] = required
+        if own_payload is not None:
+            stored = own_payload
+            finished["agent_payload"] = stored
     HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
         **finished
     )
