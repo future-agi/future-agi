@@ -10,9 +10,9 @@ import {
 import { isSaved } from "./sources.constants";
 
 /**
- * Stands in for the Knowledge base changing after a copy: a saved copy of a
- * file with sample changes is flagged KB_CHANGE_AFTER_MS after this sees it
- * saved, once per copy (`ui.kb_changed`), so a fresh copy never shows it.
+ * Stands in for the Knowledge base changing after a copy: any saved
+ * Knowledge base copy that read is flagged KB_CHANGE_AFTER_MS after this sees
+ * it saved, once per copy (`ui.kb_changed`), so a fresh copy never shows it.
  */
 export default function useKnowledgeBaseChanges(envId) {
   const { data: summary } = useEnvironmentSources(envId);
