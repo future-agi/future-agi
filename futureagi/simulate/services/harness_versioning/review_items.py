@@ -576,15 +576,16 @@ def _fields(before: Any, after: Any) -> list[str]:
 # A scenario's other files, named in words. Its suite index entry is never named: Save refuses an entry that differs
 # from its scenario, so each real edit there is already named by the scenario's own field.
 _FIELD_WORDS = {"_files": "files"}
+# Fields that are bookkeeping, never a person's edit: who last edited an item, and a scenario's suite index entry.
+_INTERNAL_FIELDS = frozenset({"provenance", INDEX_ENTRY})
 
 
 def _shown_fields(fields: list[str]) -> list[str]:
-    """The fields a person edits, in words: never who last edited an item, nor bookkeeping such as the index entry."""
+    """The fields a person edits, in words."""
     return [
         _FIELD_WORDS.get(field, field)
         for field in fields
-        if field != "provenance"
-        and (field in _FIELD_WORDS or not field.startswith("_"))
+        if field not in _INTERNAL_FIELDS
     ]
 
 
@@ -603,8 +604,13 @@ def _summary(action: str, item: Item, fields: list[str]) -> str:
 _VALUE_SHOWN_MAX = 40
 
 
+# How a declared setting's value reads, by its exact field: a share as a range of percents.
+_FIELD_FORMATS = {"actor_share": "percent_range"}
+
+
 def _value_said(field: str, value: Any) -> str:
-    """A setting's value in words: a {min, max} range as "a-b" (a share as percents), else its text when short."""
+    """A setting's value in words: a {min, max} range as "a-b" (as percents for a field declared so), else its text
+    when short."""
     if value is None:
         return "not set"
     if isinstance(value, dict) and set(value) == {"min", "max"}:
@@ -613,7 +619,11 @@ def _value_said(field: str, value: Any) -> str:
             isinstance(one, int | float) and not isinstance(one, bool)
             for one in (low, high)
         ):
-            if field.endswith("share") and 0 <= low <= 1 and 0 <= high <= 1:
+            if (
+                _FIELD_FORMATS.get(field) == "percent_range"
+                and 0 <= low <= 1
+                and 0 <= high <= 1
+            ):
                 return f"{round(low * 100)}-{round(high * 100)}%"
             return f"{low}-{high}"
     return (
