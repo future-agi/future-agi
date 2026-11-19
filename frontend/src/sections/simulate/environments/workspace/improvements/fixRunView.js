@@ -719,6 +719,12 @@ function constraintRows(request) {
   return rows;
 }
 
+// Nothing held back: the change was proven on its targets only. Its pull request is
+// still a draft, as with Limited validation.
+export function provenOnTargetsOnly(fix) {
+  return !(fix.request?.held_back_scenario_keys || []).length;
+}
+
 // The list's Result cell: the held-back result first, as the design shows it.
 export function listResult(fix) {
   const result = verdictResult(fix);

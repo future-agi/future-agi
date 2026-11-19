@@ -24,7 +24,6 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     eval_review,
     held_back_cases,
-    limited_validation,
     overridable_regressions,
     verdict_tiers,
 )
@@ -115,7 +114,9 @@ def open_pull_request(
             title,
             body,
             token,
-            draft=limited_validation(fix_run) or bool(candidate.override_reason),
+            # Too few held back to verify it, none included: a draft.
+            draft=held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
+            or bool(candidate.override_reason),
         )
     AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
         pull_request_url=url
@@ -189,6 +190,12 @@ def _must_pass_check(check: str) -> str:
     return f"{named}: its “{_text(sub_goal)}” check" if sub_goal else named
 
 
+def _strength(held: int) -> str:
+    """The label of a result too few held-back cases verify: proven on the targets only
+    when none were held back, limited validation when some were."""
+    return "Proven on the targets only" if not held else "Limited validation"
+
+
 def _limited_note(candidate: AgentFixCandidate) -> str:
     held = held_back_cases(candidate.fix_run)
     which = (
@@ -199,7 +206,7 @@ def _limited_note(candidate: AgentFixCandidate) -> str:
         else f"Only {held} failing cases were"
     )
     return (
-        f"**Limited validation.** {which} held back from the epoch to verify it; it takes"
+        f"**{_strength(held)}.** {which} held back from the epoch to verify it; it takes"
         f" {HELD_BACK_VERIFIED_MIN} or more. Check the changed behavior yourself before"
         " you merge."
     )
@@ -648,15 +655,12 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     verdict = candidate.verdict or {}
     # Not the engine's own reason: the checks below say the same in the page's words.
     rates = _evidence(verdict)
-    limited = limited_validation(candidate.fix_run)
+    held = held_back_cases(candidate.fix_run)
+    limited = held < HELD_BACK_VERIFIED_MIN
     overridden = bool(candidate.override_reason)
     proof = "Checked" if limited or overridden else "Verified"
     standing = (
-        "Known regression"
-        if overridden
-        else "Limited validation"
-        if limited
-        else "Verified"
+        "Known regression" if overridden else _strength(held) if limited else "Verified"
     )
     files = _changed_files(patch)
     head = "\n\n".join(
@@ -689,7 +693,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     marks = ", ".join(
         mark
         for mark, applies in (
-            ("limited validation", limited),
+            (_strength(held).lower(), limited),
             ("known regression", overridden),
         )
         if applies
