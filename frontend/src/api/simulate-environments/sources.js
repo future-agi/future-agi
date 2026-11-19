@@ -242,6 +242,8 @@ const CHANGE_KINDS = {
 };
 // Scenarios name these, so they touch a list of scenarios, not all.
 const NAMED = ["tool", "actor", "scenario"];
+// The key of the one change holding every scenario proposed from files.
+const FILE_SCENARIOS = "files";
 
 // The sample scenarios a change makes graded runs check again: rules and
 // records touch every one, an actor or a tool a few. Background is ungraded.
@@ -287,8 +289,8 @@ const added = (value, path = "") => ({ op: "add", path, value });
 
 /**
  * Accepted proposals become accepted changes in Review changes, one per item
- * (one per scenario for a scenarios item); blocked ones land in Couldn't apply. The same ids replace, so adding a
- * file's proposals again doesn't double them.
+ * (scenarios share one); blocked ones land in Couldn't apply. The same ids
+ * replace, so adding a file's proposals again doesn't double them.
  */
 export const appendAcceptedEdits = (
   queryClient,
@@ -381,26 +383,42 @@ export const appendAcceptedEdits = (
   const cleared = (review?.failed || [])
     .filter((row) => supplied.has(row.ui?.needs) || addedIds.has(row.id))
     .map((row) => row.id);
-  // One change per proposed scenario, keyed by its name: adding the same
-  // scenario again, from any file or batch, updates its row.
-  const scenarios = new Map(
-    accepted
-      .filter((item) => item.kind === "scenario")
-      .flatMap((item) => (item.scenario || []).map((one) => [one.t, item])),
+  // Every scenario proposed from files is one change, as the design has it:
+  // the union by name across batches, each cited by the item that first
+  // proposed it (`sources` lines up with `patch`).
+  const scenarioItems = accepted.filter((item) => item.kind === "scenario");
+  const priorScenarios = prior.find(
+    (change) => change.id === `scenario:${FILE_SCENARIOS}`,
   );
+  const proposed = new Map(
+    (priorScenarios?.patch || []).map((op, i) => [
+      op.value,
+      priorScenarios.sources[i],
+    ]),
+  );
+  scenarioItems.forEach((item) =>
+    (item.scenario || []).forEach((one) => {
+      if (!proposed.has(one.t)) proposed.set(one.t, fromItem(item));
+    }),
+  );
+  const names = [...proposed.keys()];
   addSampleEdits(queryClient, envId, {
     changes: [
       ...accepted.filter((item) => item.kind !== "scenario").map(changeOf),
-      ...[...scenarios].map(([name, item]) =>
-        fileChange({
-          kind: "scenario",
-          key: name,
-          summary: `Proposed scenario added: ${name}`,
-          patch: [added(name)],
-          from: fromItem(item),
-          revalidate: [name],
-        }),
-      ),
+      ...(scenarioItems.length
+        ? [
+            {
+              ...fileChange({
+                kind: "scenario",
+                key: FILE_SCENARIOS,
+                summary: `${names.length} proposed scenario${names.length === 1 ? "" : "s"} added`,
+                patch: names.map((name) => added(name)),
+                revalidate: names,
+              }),
+              sources: [...proposed.values()],
+            },
+          ]
+        : []),
     ],
     failed: failed.map((item) => {
       const sourceId =
