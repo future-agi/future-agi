@@ -237,6 +237,32 @@ describe("sequenceOf over the worker record", () => {
     expect(handoff.label).toBe("Inspect order 1042 now");
   });
 
+  it("labels prose with the words it renders to and leaves data as sent", () => {
+    const task =
+      "## Refund **#6984**\n\n1. Check `order_id`, 2*3 = 6 <b>now</b>\n\n- [x] done\n\n| A | B |\n|---|---|\n| 1 | 2 |";
+    const data = '{"note": "**as is**"}';
+    const record = timeline({
+      steps: [
+        handOffStep(1, {
+          worker_id: "r/order_lookup",
+          handoff: { ...DELEGATED, task, task_shown: prose(task) },
+          returned: {
+            ...RETURNED,
+            result: data,
+            result_shown: { format: "code", text: data },
+          },
+        }),
+      ],
+      turns: oneTurn(undefined, undefined, [1]),
+    });
+    const handoff = seqOf(record).steps.find((s) => s.kind === "handoff");
+    expect(handoff.label).toBe(
+      "Refund #6984 · 1. Check order_id, 2*3 = 6 now · [x] done · A | B · 1 | 2",
+    );
+    expect(handoff.full).toBe(task);
+    expect(handoff.answer.label).toBe(data);
+  });
+
   it("keeps API order when times are missing", () => {
     const untimed = (event) => event && { ...event, at: null };
     const record = timeline({
