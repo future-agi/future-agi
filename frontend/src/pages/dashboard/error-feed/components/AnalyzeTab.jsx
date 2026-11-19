@@ -873,7 +873,7 @@ function SynthesisCard({ synthesis }) {
               bgcolor: "status.success.bg",
             }}
           >
-            Fix
+            Suggested change
           </Typography>
           <Box sx={{ flex: 1 }}>
             <AnalyzeMarkdown

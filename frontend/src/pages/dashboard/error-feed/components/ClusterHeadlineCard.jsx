@@ -226,7 +226,7 @@ function AnalyzedState({
             bgcolor: "status.success.bg",
           }}
         >
-          Fix
+          Suggested change
         </Typography>
         <Typography
           fontSize="12px"
