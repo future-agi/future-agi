@@ -25,6 +25,7 @@ ORDERS = "knowledge/orders.csv"
 def versioning_on(settings):
     settings.HARNESS_VERSIONING_ENABLED = True
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    settings.HARNESS_ACTORS_ENABLED = True
 
 
 def _roles(environment):
@@ -99,6 +100,17 @@ def test_a_file_an_actor_reads_is_not_made_evaluator_only(
     assert refused.json()["error"] == "file_in_use"
     assert refused.json()["readers"] == [MANAGER["name"]]
     assert _roles(environment) == {}
+
+
+def test_a_file_role_is_not_served_while_actors_are_off(
+    user, workspace, storage, auth_client, settings
+):
+    settings.HARNESS_ACTORS_ENABLED = False
+    environment = _built(user, workspace, "roles-actors-off")
+
+    refused = _set(auth_client, environment, ANSWERS, "policy")
+
+    assert (refused.status_code, refused.json()["error"]) == (404, "actors_disabled")
 
 
 @pytest.mark.parametrize(

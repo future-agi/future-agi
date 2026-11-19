@@ -6096,3 +6096,43 @@ def test_process_log_capture_labels_the_builds_logs_apart_from_the_runs(tmp_path
         < output.index("402 Payment Required")
         < output.index("live worker")
     )
+
+
+def test_a_build_yield_is_served_with_the_stage_outputs_from_the_build_and_its_archive():
+    """ALK's `generic-harness/yield.json` reads as one stage output: X of N runnable, and what is held and why."""
+    import io
+    import tarfile
+
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs,
+        authoring_stage_outputs_from_archive,
+    )
+
+    build_yield = {
+        "asked": 10,
+        "runnable": 8,
+        "cases": 10,
+        "held": {"not_solvable": 2},
+        "line": "8 of 10 runnable; held: 2 because its expected handling does not pass its checks",
+        "rounds": [{"round": 1, "handed_back": 2}],
+    }
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        data = json.dumps(build_yield).encode()
+        member = tarfile.TarInfo("generic-harness/yield.json")
+        member.size = len(data)
+        archive.addfile(member, io.BytesIO(data))
+
+    [served] = [
+        one
+        for one in authoring_stage_outputs(None, None, None, build_yield=build_yield)
+        if one["kind"] == "yield"
+    ]
+    [archived] = [
+        one
+        for one in authoring_stage_outputs_from_archive(body.getvalue())
+        if one["kind"] == "yield"
+    ]
+
+    assert served == archived
+    assert (served["summary"], served["data"]) == (build_yield["line"], build_yield)

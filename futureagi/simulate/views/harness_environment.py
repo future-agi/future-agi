@@ -787,6 +787,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Give one attached file its role in the environment's draft: a policy, seed records, or evaluator-only
         (kept from the agent and every actor)."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()

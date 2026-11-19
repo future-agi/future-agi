@@ -4095,6 +4095,7 @@ class HostedHarnessGateway:
         cli_spend = _json(_AUTHORING_SPEND_PATH)
         builder_spend = _json(_BUILDER_SPEND_PATH)
         coverage = _json("/work/authoring/coverage.json")
+        build_yield = _json("/work/authoring/generic-harness/yield.json")
         invariants = _json("/work/authoring/source-data-invariants.json")
         certified = _json("/work/authoring/generic-harness/certification.json")
         _read_harness_usage(attempt, sandbox)
@@ -4176,6 +4177,7 @@ class HostedHarnessGateway:
             build_output=build_output,
             coverage=coverage,
             call_actors=call_actors,
+            build_yield=build_yield,
         )
         activities = _activity_events()
         if activities:
@@ -5983,6 +5985,7 @@ def authoring_stage_outputs(
     action_certification: Any = None,
     coverage: Any = None,
     call_actors: Any = None,
+    build_yield: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -6072,6 +6075,29 @@ def authoring_stage_outputs(
                 "data": _secret_safe(coverage),
             }
         )
+    if isinstance(build_yield, dict):
+        # ALK's `generic-harness/yield.json`: what the build was asked for, what runs, what is held and why.
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000008",
+                "kind": "yield",
+                "title": "Runnable cases",
+                "summary": str(build_yield.get("line") or ""),
+                "data": _secret_safe(
+                    {
+                        field: build_yield.get(field)
+                        for field in (
+                            "asked",
+                            "runnable",
+                            "cases",
+                            "held",
+                            "line",
+                            "rounds",
+                        )
+                    }
+                ),
+            }
+        )
     if isinstance(certification, dict):
         status = str(certification.get("status") or "unknown")
         repairs = (
@@ -6152,6 +6178,7 @@ def authoring_stage_outputs_from_archive(
         "repair-history.json",
         "action-certification.json",
         "coverage.json",
+        "yield.json",
     }
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
@@ -6199,6 +6226,7 @@ def authoring_stage_outputs_from_archive(
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
         call_actors=all_actors(documents.get("actors.json")),
+        build_yield=documents.get("yield.json"),
     )
 
 
