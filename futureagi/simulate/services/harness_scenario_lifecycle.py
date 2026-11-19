@@ -353,7 +353,7 @@ def runnable(view: LifecycleView | None) -> bool:
 def lifecycle_counts(views: Iterable[LifecycleView]) -> dict[str, int]:
     """Cases per state, and proved / kept as written / not proved over every case not archived.
     `kept_as_written` is both a state and the proof bucket, counted once. `legacy_without_control` counts the legacy
-    cases that run kept as written with no negative control: a Validate holds each as `no_negative_control`."""
+    cases that run kept as written with no negative control; Validate and rebuild keep them running, with a warning."""
     counts = dict.fromkeys(
         (
             "draft",

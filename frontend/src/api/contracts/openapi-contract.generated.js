@@ -112596,7 +112596,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         legacy_without_control: {
           title: "Legacy without control",
           description:
-            "Legacy cases running kept as written with no negative control: a Validate holds each as `no_negative_control`, so they stop running once validated.",
+            "Legacy cases running kept as written with no negative control: Validate and rebuild keep them running as written, each with a warning that it has no negative control.",
           type: "integer",
         },
       },
