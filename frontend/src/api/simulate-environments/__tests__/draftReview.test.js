@@ -105,13 +105,11 @@ describe("edits added from files", () => {
     const files = sampleFileEdits(review);
     expect(DraftReviewSchema.safeParse(review).error?.issues).toBe(undefined);
     // They join the sample, so its counts don't jump once it loads.
-    expect(review.counts.total).toBe(sampleDraftReview().counts.total + 5);
-    // One row per proposed scenario.
+    expect(review.counts.total).toBe(sampleDraftReview().counts.total + 4);
     expect(files.changes.map((one) => one.kind)).toEqual([
       "rule",
       "rule",
       "world_state",
-      "scenario",
       "scenario",
     ]);
     expect(files.changes.every((one) => one.decision === "accepted")).toBe(
@@ -124,7 +122,7 @@ describe("edits added from files", () => {
     expect(files.failed.map((one) => one.fix)).toEqual(["supply", "attach"]);
     // A refetch (chat nudge, save) keeps what files added.
     const refetched = freshSampleReview(review);
-    expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 5);
+    expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 4);
     expect(refetched.failed).toHaveLength(
       sampleDraftReview().failed.length + 2,
     );
@@ -133,6 +131,29 @@ describe("edits added from files", () => {
       name: "policy.pdf",
       locator: "p2",
     });
+
+    // A later batch repeating a scenario joins the same row, counted once.
+    appendAcceptedEdits(queryClient, envId, {
+      accepted: [
+        {
+          id: "scenario-boundary",
+          kind: "scenario",
+          title: "Scenarios: a return on day 30",
+          cite: { sourceId: "src_1", ref: "policy.pdf · p.4", at: "p4" },
+          scenario: [{ t: "Return on day 30" }, { t: "Duplicate refund" }],
+        },
+      ],
+    });
+    const scenarios = sampleFileEdits(reviewIn(queryClient)).changes.filter(
+      (one) => one.kind === "scenario",
+    );
+    expect(scenarios).toHaveLength(1);
+    expect(scenarios[0].summary).toBe("3 proposed scenarios added");
+    expect(scenarios[0].sources.map((one) => one.used[0].locator)).toEqual([
+      "p1",
+      "p1",
+      "p4",
+    ]);
   });
 
   it("keeps one personal data row per file as the choice changes", () => {
