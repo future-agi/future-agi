@@ -106,7 +106,7 @@ LIFECYCLE_LABELS = {
     PROOF_FAILED_ROW: "Proof",
     ARCHIVED_ROW: "Archived",
     NOT_ACTIVE_ROW: "Not saved",
-    SEED_UNREAD_ROW: "Seed records",
+    SEED_UNREAD_ROW: "Starting records",
     TOOL_MISSING_ROW: "Agent tools",
 }
 # A case whose actors act in the world or whose faults are set on a tool the world's door does not stand in front of.

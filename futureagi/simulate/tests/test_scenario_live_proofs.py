@@ -74,7 +74,7 @@ def test_an_older_offline_only_proof_is_still_read_as_it_was(user, workspace, st
     view = _state(environment)
 
     assert view["state"] == "kept_as_written"
-    assert "issue_refund has no endpoint here" in view["warning_text"]
+    assert "issue_refund has nothing to call here" in view["warning_text"]
 
 
 def test_a_builds_live_proofs_travel_with_its_suite_over_its_offline_ones():

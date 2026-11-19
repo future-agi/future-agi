@@ -265,7 +265,7 @@ def test_a_legacy_case_without_a_negative_control_reads_draft(user, workspace, s
         "draft",
         "no_negative_control",
     )
-    assert "negative control" in views[REFUND_KEYS[0]]["reason_text"]
+    assert "wrong-way example" in views[REFUND_KEYS[0]]["reason_text"]
     assert views[REFUND_KEYS[0]]["warning"] is None
     assert views[REFUND_KEYS[1]]["state"] == "draft"
 
@@ -441,7 +441,7 @@ def test_judged_only_reads_kept_as_written_with_its_text(user, workspace, storag
 
     assert (view["state"], view["warning"]) == ("kept_as_written", "judged_only")
     assert view["warning_text"].startswith(
-        "Kept as written: only a judge grades this case"
+        "Kept as written: only an AI judge grades this case"
     )
 
 
@@ -496,7 +496,7 @@ def test_uncaptured_evidence_warns(user, workspace, storage, monkeypatch):
         "evidence_not_captured",
     )
     assert views[REFUND_KEYS[0]]["warning_text"] == (
-        "refunded reads the tool calls, which this agent does not give the harness; it will read Not measured."
+        "refunded reads the tool calls, which this agent does not share with the test; it will read Not measured."
     )
     assert views[REFUND_KEYS[1]]["warning"] is None
     assert lifecycle.runnable(views[REFUND_KEYS[0]]) is True

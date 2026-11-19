@@ -46,38 +46,38 @@ logger = structlog.get_logger(__name__)
 # case the harness cannot prove (an agent-bound tool) can still be run. Tighten here if product asks.
 RUNNABLE_STATES: frozenset[LifecycleState] = frozenset({"active", "kept_as_written"})
 # Shown for a reason or a warning code this release has no words for: never the code itself.
-UNKNOWN_REASON_TEXT = "Not proved on these versions: validate it again to see why."
-UNKNOWN_WARNING_TEXT = "Kept as written: part of this case could not be proved here."
+UNKNOWN_REASON_TEXT = "Not validated on these versions: validate it again to see why."
+UNKNOWN_WARNING_TEXT = "Kept as written: part of this case could not be checked here."
 DRAFT_CHANGES = frozenset({"added", "changed"})
 
 REASON_TEXTS = {
     "not_validated": "Not validated on these versions yet.",
     "in_draft": "Unsaved change; validate and save to use it.",
-    "not_ready": "The world does not hold what this case presumes: {why}",
-    "not_solvable": "The reference solution does not pass the case's own checks: {why}",
+    "not_ready": "The starting records do not have what this case expects: {why}",
+    "not_solvable": "The expected way of handling this case does not pass its own checks: {why}",
     "vacuous": "Its checks pass when the agent does nothing.",
-    "broken_check": "A check is broken, not failing: {why}",
+    "broken_check": "A check itself is broken, rather than the agent failing it: {why}",
     "weak_check": "A check passes when the agent does nothing: {why}",
-    "credits_failed_attempt": "A check credits a call that failed: {why}",
-    "too_strict": "A check fails a valid route the instructions allow: {why}",
+    "credits_failed_attempt": "A check counts a failed call as done: {why}",
+    "too_strict": "A check fails a way of handling it that the instructions allow: {why}",
     "unchecked": "No check notices a wrong value for: {why}",
     "validation_incomplete": "Validation ran out of time before this case; validate again.",
-    "no_negative_control": "No negative control: add a wrong behaviour that this case's checks must fail.",
+    "no_negative_control": "No wrong-way example: add a wrong way of handling this case that its checks must fail.",
     "not_active": "Validated on these versions, which are not saved yet: save them to run it.",
-    "proved_on_other_agent": "Proved with another agent version; validate it with this one to run it.",
-    "broken_join": "Its seed records do not join up: {joins}. Map the field or add the rows.",
-    "seed_records_unread": "Its seed records could not be read just now, so it is held back. Try again in a few minutes.",
+    "proved_on_other_agent": "Validated with another agent version; validate it with this one to run it.",
+    "broken_join": "Its starting records do not match up: {joins}. Fix the field or add the missing rows.",
+    "seed_records_unread": "Its starting records could not be read just now, so it is held back. Try again in a few minutes.",
     "storage_unreadable": "The files it cites could not be read just now, so it is held back. Try again in a few minutes.",
-    "proofs_unread": "The last validation's proofs could not be read, so it is held back. Validate these versions again.",
+    "proofs_unread": "The last validation's results could not be read, so it is held back. Validate these versions again.",
     "tool_not_on_agent": "Needs {tool}, which agent version {agent} doesn't have.",
-    "tools_unread": "Agent version {agent}'s tools have not been read yet: it is held until they are, then proved again.",
-    "negative_control_passed": "The checks pass a wrong behaviour: {control} ({control_why}). Tighten {checks}.",
+    "tools_unread": "Agent version {agent}'s tools have not been read yet: it is held until they are, then validated again.",
+    "negative_control_passed": "The checks pass a wrong way of handling it: {control} ({control_why}). Tighten {checks}.",
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
     "policy_conflict": "Its expected outcome contradicts a cited rule: {why}",
     "apply_failed": "This change could not be applied: {why}. Fix it in the builder chat or discard it.",
     "archived": "Archived on {date}: {archive_reason}",
-    "validation_unavailable": "Validation is not available on this installation; this case runs unvalidated.",
+    "validation_unavailable": "Validation is not available on this installation; this case runs without it.",
     "validation_failed": "The last validation of these versions failed: {failure}.",
     "validation_ended_on_our_side": "The last validation of these versions did not finish: {failure}.",
 }
@@ -87,16 +87,16 @@ ENDING_REASONS = {
     "unavailable": "validation_ended_on_our_side",
 }
 WARNING_TEXTS = {
-    "solution_assumed": "Kept as written: {k} of {n} solution steps never ran, because {tools} {have} no endpoint here.",
+    "solution_assumed": "Kept as written: {k} of {n} steps of the expected handling never ran, because {tools} {have} nothing to call here.",
     "proof_deferred": (
-        "Kept as written: this agent's world is its own service; the reference solution can only run against it live."
+        "Kept as written: this agent keeps its own data; the expected handling can only be checked against it live."
     ),
-    "control_not_run": "Kept as written: negative control {name} could not run, because {tools} {have} no endpoint here.",
+    "control_not_run": "Kept as written: the wrong-way example {name} could not run, because {tools} {have} nothing to call here.",
     "judged_only": (
-        "Kept as written: only a judge grades this case, and nothing has shown the judge fails a wrong behaviour."
+        "Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer."
     ),
     "evidence_not_captured": (
-        "{check} reads {evidence}, which this agent does not give the harness; it will read Not measured."
+        "{check} reads {evidence}, which this agent does not share with the test; it will read Not measured."
     ),
 }
 EVIDENCE_LABELS = {"tool_calls": "the tool calls", "world_state": "the world's records"}

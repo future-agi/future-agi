@@ -97,7 +97,7 @@ def test_only_the_cases_citing_the_broken_file_are_held(
 
     assert (views[citing]["state"], views[citing]["reason"]) == ("draft", "broken_join")
     assert "order_id O-999 has no row in orders.csv" in views[citing]["reason_text"]
-    assert "Map the field or add the rows" in views[citing]["reason_text"]
+    assert "Fix the field or add the missing rows" in views[citing]["reason_text"]
     assert not runnable(views[citing])
     assert all(views[key]["reason"] != "broken_join" for key in views if key != citing)
     assert harness_scenario_lifecycle.REASON_TEXTS["broken_join"]

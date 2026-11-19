@@ -287,7 +287,7 @@ def test_a_run_holds_back_each_case_that_may_not_run_with_its_reason(
         "proof_failed": 1,
         "scenario_archived": 1,
     }
-    assert "negative control" in plan.view["reasons"]["proof_failed"]
+    assert "wrong-way example" in plan.view["reasons"]["proof_failed"]
     assert "Not validated" in plan.view["reasons"]["not_validated"]
 
 
@@ -393,7 +393,7 @@ def test_kept_as_written_runs_labelled_as_not_proved(user, workspace, storage):
                 "blocked_reason": "new_lane",
             },
             "kept_as_written",
-            "Kept as written: part of this case could not be proved here.",
+            "Kept as written: part of this case could not be checked here.",
         ),
         # An entry from a harness that does not write the verdict reads not proved.
         (
@@ -405,13 +405,13 @@ def test_kept_as_written_runs_labelled_as_not_proved(user, workspace, storage):
                 "assumed": ["refund"],
             },
             "draft",
-            "Not proved on these versions: validate it again to see why.",
+            "Not validated on these versions: validate it again to see why.",
         ),
         # One assumed tool reads in the singular.
         (
             {**KEPT, "assumed": ["issue_refund"], "solution_steps": 1},
             "kept_as_written",
-            "Kept as written: 1 of 1 solution steps never ran, because issue_refund has no endpoint here.",
+            "Kept as written: 1 of 1 steps of the expected handling never ran, because issue_refund has nothing to call here.",
         ),
     ],
 )
