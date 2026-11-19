@@ -188,6 +188,15 @@ def why_items(entry: Mapping[str, Any] | None) -> list[str]:
     ]
 
 
+def _missing_tools(entry: Mapping[str, Any]) -> list[str]:
+    """The tools a refused case's reference calls that the agent lacks: the list the harness writes on the proof, else
+    (a proof from before it wrote one) the items of its reason."""
+    named = entry.get("missing_tools")
+    if isinstance(named, list) and (listed := [str(one) for one in named if one]):
+        return listed
+    return why_items(entry)
+
+
 def _agent_label(agent_version_id: Any) -> str:
     """An agent version as people name it, `v4`; "this one" when its number is not known."""
     from simulate.models import AgentVersion
@@ -596,7 +605,7 @@ def scenario_lifecycle(
                     reason="tool_not_on_agent",
                     entry=entry,
                     reason_extra={
-                        "tool": ", ".join(why_items(entry)),
+                        "tool": ", ".join(_missing_tools(entry)),
                         "agent": _agent_label(
                             entry.get("agent_version_id") or proved_with or agent
                         ),

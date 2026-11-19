@@ -1024,3 +1024,29 @@ def _label(environment):
     from simulate.services.harness_versioning.read import _label as label
 
     return label(environment.agent_version.version_number) or "this one"
+
+
+@pytest.mark.parametrize(
+    "fields, named",
+    [
+        ({"missing_tools": ["issue_refund", "void_order"]}, "issue_refund, void_order"),
+        # A proof from before the harness wrote the list: the items of its reason.
+        ({}, "issue_refund"),
+    ],
+    ids=["listed", "from-the-reason"],
+)
+def test_a_refused_case_names_the_tools_the_agent_lacks(
+    user, workspace, storage, fields, named
+):
+    environment = _environment(user, workspace, storage, f"missing-{len(fields)}")
+    _suite(environment, _ten())
+    _proofs(
+        environment,
+        {LOOKUP_KEYS[0]: _refused("tool_not_on_agent", "issue_refund", **fields)},
+    )
+
+    view = _views(environment)[LOOKUP_KEYS[0]]
+
+    assert view["reason_text"] == (
+        f"Needs {named}, which agent version {_label(environment)} doesn't have."
+    )
