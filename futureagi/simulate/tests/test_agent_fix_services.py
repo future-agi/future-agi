@@ -448,6 +448,8 @@ def test_fewer_cases_than_the_verified_minimum_can_never_hold_back_four():
         # Four held-back cases from two cases of the run: not enough to verify.
         (["a", "a-v1", "a-v2", "b"], {"a-v1": "a", "a-v2": "a"}, True),
         (["a", "b", "c", "d-v1"], {"d-v1": "d"}, False),
+        # Nothing held back: proven on the targets only, not limited validation.
+        ([], {}, False),
     ],
 )
 def test_verified_needs_held_back_cases_from_four_different_cases(
@@ -693,6 +695,32 @@ class TestRetry:
         ) == (State.QUEUED, failed.id, failed.request, failed.base_agent_version_id)
         assert not is_retryable(failed)
         assert _refusal(retry_fix_run, failed, user=user) == ("fix_not_retryable", 409)
+
+    def test_a_retry_that_fails_is_not_retried_again(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        # Once is per epoch, not per row: each retry would spend again.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_deadline", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(failed, user=user)
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.FAILED, failure={"code": "fix_deadline", "message": "m"}
+        )
+        retried.refresh_from_db()
+
+        assert not is_retryable(retried)
+        with pytest.raises(HostedHarnessError) as caught:
+            retry_fix_run(retried, user=user)
+        assert (caught.value.code, caught.value.status_code, caught.value.message) == (
+            "fix_not_retryable",
+            409,
+            "This epoch was already retried once. Run a new epoch from its run instead.",
+        )
+        assert not retried.retries.exists()
 
     @pytest.mark.parametrize(
         "state",

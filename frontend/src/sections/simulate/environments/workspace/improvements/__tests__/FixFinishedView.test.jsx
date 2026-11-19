@@ -263,8 +263,8 @@ describe("FixVerdict", () => {
     expect(screen.getByText("How it was decided")).toBeInTheDocument();
   });
 
-  it("labels limited validation, with the held-back tally only when cases were held back", async () => {
-    const { unmount } = renderUi(
+  it("labels limited validation, with the held-back tally", async () => {
+    renderUi(
       <FixVerdict
         fix={fixOf("fix-ready-archive", { limited_validation: true })}
       />,
@@ -275,14 +275,6 @@ describe("FixVerdict", () => {
         "Too few to tell · Fixed 1 of 2 failing scenarios it never saw — it takes 4 or more to tell.",
       ),
     ).toBeInTheDocument();
-    unmount();
-    renderUi(
-      <FixVerdict
-        fix={fixOf("fix-ready-no-held", { limited_validation: true })}
-      />,
-    );
-    expect(screen.getByText("Limited validation")).toBeInTheDocument();
-    expect(screen.queryByText(/Too few to tell/)).toBeNull();
     expect(screen.queryByText("Proven on the targets only")).toBeNull();
     expect(
       listResult(fixOf("fix-ready-archive", { limited_validation: true })).note,
@@ -675,6 +667,43 @@ describe("Ship", () => {
     );
     expect(shipPosts()[0][0]).toMatch(/make-default\/$/);
   });
+
+  it.each([
+    [
+      "fix-ready-github",
+      "Open pull request",
+      { held_back_scenario_keys: [] },
+      false,
+      "Proven on the targets only: it opens as a draft pull request, marked Proven on the targets only in its title and body.",
+    ],
+    [
+      "fix-ready-archive",
+      "Make default",
+      { held_back_scenario_keys: [] },
+      false,
+      "Proven on the targets only: nothing was held back to prove this change.",
+    ],
+    [
+      "fix-ready-github",
+      "Open pull request",
+      {},
+      true,
+      "Limited validation: it opens as a draft pull request, marked Limited validation in its title and body.",
+    ],
+  ])(
+    "says before %s ships how strong its result is",
+    async (id, button, request, limited, note) => {
+      const user = userEvent.setup();
+      updateFixtureFixRun(id, (f) => ({
+        ...f,
+        request: { ...f.request, ...request },
+        limited_validation: limited,
+      }));
+      renderPage(id);
+      const { dialog } = await confirmShip(user, button);
+      expect(within(dialog).getByText(note)).toBeInTheDocument();
+    },
+  );
 
   it("shows the server's message when the version cannot be activated", async () => {
     hooks.ship = {
