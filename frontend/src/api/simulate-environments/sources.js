@@ -1,10 +1,11 @@
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
+import { ModelHubKnowledgeBaseFilesCreateBody } from "src/generated/api-contracts/api.zod";
+import axios, { endpoints } from "src/utils/axios";
 import { addSampleEdits, draftReviewKey, sampleFileEdits } from "./draftReview";
 import { ALL_SCENARIOS } from "./_fixtures/draftReview";
 import {
-  KNOWLEDGE_BASES,
   draftOfSources,
   kbRefreshed,
   proposalItemsOf,
@@ -23,8 +24,9 @@ const CHECK_CONTRACT = import.meta.env.DEV || import.meta.env.MODE === "test";
 const IMPORT_PREFIX = "stub-import:";
 const STUB_DRAFT_ID = "9e3b1f4a-2c6d-4e8f-a0b1-c2d3e4f5a6b7";
 
-// Sample data shaped like the environment sources API, until it ships. Nothing
-// here calls the backend: reads come from fixtures, writes go to the cache.
+// Sample data shaped like the environment sources API, until it ships. Only
+// the Knowledge base list and its files are real; reads come from fixtures
+// and writes go to the cache.
 export const sourceSummaryKey = (envId) => ["harness-env-sources", envId];
 export const sourceCapabilitiesKey = (envId) => [
   ...sourceSummaryKey(envId),
@@ -173,18 +175,69 @@ export const usePrepareUploadSource = (envId) =>
     ),
   );
 
+// The person's Knowledge bases and their files, from the Knowledge base API.
+// shortcut: the first 100 of each; page them when a workspace has more.
+const KB_PAGE_SIZE = 100;
+const kbListKey = ["knowledge-base", "env-sources-picker"];
+
+const knowledgeBasesQuery = {
+  queryKey: kbListKey,
+  queryFn: async () => {
+    const { data } = await axios.get(endpoints.knowledge.list, {
+      params: { page_size: KB_PAGE_SIZE },
+    });
+    return (data?.result?.table_data || []).map((kb) => ({
+      kb_id: kb.id,
+      name: kb.name,
+      file_count: kb.files_uploaded,
+      updated_at: kb.updated_at,
+    }));
+  },
+  staleTime: 60 * 1000,
+  meta: { errorHandled: true },
+};
+
+const knowledgeBaseFilesQuery = (kbId) => ({
+  queryKey: [...kbListKey, kbId],
+  queryFn: async () => {
+    const body = checked(ModelHubKnowledgeBaseFilesCreateBody, {
+      kb_id: kbId,
+      page_number: 0,
+      page_size: KB_PAGE_SIZE,
+    });
+    const { data } = await axios.post(endpoints.knowledge.files, body);
+    return (data?.result?.table_data || []).map((file) => ({
+      file_id: file.id,
+      name: file.name,
+      size: file.file_size,
+    }));
+  },
+  staleTime: 60 * 1000,
+  meta: { errorHandled: true },
+});
+
+export const useKnowledgeBases = ({ enabled = true } = {}) =>
+  useQuery({ ...knowledgeBasesQuery, enabled });
+
+export const useKnowledgeBaseFiles = (kbId) =>
+  useQuery({ ...knowledgeBaseFilesQuery(kbId), enabled: Boolean(kbId) });
+
 // mutate({ selection: { kind: "knowledge_base", kb_id, file_ids | whole_collection } }).
-// Files the person can't open are left out, as the backend refuses them.
-export const usePrepareKbSource = (envId) =>
-  usePrepare(envId, async ({ selection }) => {
-    const kb = KNOWLEDGE_BASES.find((one) => one.kb_id === selection.kb_id);
+// The Knowledge base and its files are real; copying them in is the stub.
+export const usePrepareKbSource = (envId) => {
+  const queryClient = useQueryClient();
+  return usePrepare(envId, async ({ selection }) => {
+    const kbs = await queryClient.ensureQueryData(knowledgeBasesQuery);
+    const kb = kbs.find((one) => one.kb_id === selection.kb_id);
     if (!kb) throw new Error("Knowledge base not found");
-    return kb.files
+    const files = await queryClient.ensureQueryData(
+      knowledgeBaseFilesQuery(kb.kb_id),
+    );
+    return files
       .filter(
         (file) =>
-          file.access &&
-          (selection.whole_collection ||
-            selection.file_ids?.includes(file.file_id)),
+          selection.whole_collection ||
+          selection.file_ids?.includes(file.file_id),
       )
       .map((file) => ({
         name: file.name,
@@ -197,6 +250,7 @@ export const usePrepareKbSource = (envId) =>
         },
       }));
   });
+};
 
 // Personal-data choices as a change summary words them.
 const PERSONAL_CHOICES = {
