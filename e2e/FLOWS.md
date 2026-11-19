@@ -1118,6 +1118,39 @@
 - opening a trace reads it through the share token and shows its spans
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
 
+### ERR-E2E-006 — a developer runs an Epoch from an Error Feed issue and follows it from the issue
+
+**Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
+
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:130`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue
+2. press Run Epoch
+3. pick the environment
+4. read the plan and swap one trace
+5. press Draft scenarios
+6. untick one drafted scenario
+7. press Run Epoch in the review
+8. read the status strip
+9. reload once the epoch is ready
+10. read the header action
+11. press View Epoch 3
+12. reload the epoch page
+13. open the issue list and hover the epoch icon
+
+**Browser observations:**
+
+- the plan is read only after Run Epoch, first with the issue and project, then with the picked environment, and the picker lists only the code agent's environment
+- the create POST body is exactly the issue, project, environment and the picks after the swap
+- the run POST body is exactly the kept scenario and the review's launch rows at their defaults
+- the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
+- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue
