@@ -74788,6 +74788,8 @@ export const TracerFeedIssuesReadResponse = zod.object({
       external_issue_id: zod.string().min(1),
     }),
     description: zod.string().min(1),
+    fix_hypothesis: zod.string().min(1),
+    falsifier: zod.string().min(1),
     success_trace: zod.object({
       trace_id: zod.string().min(1),
       input: zod.string().min(1),
@@ -74888,6 +74890,8 @@ export const TracerFeedIssuesPartialUpdateResponse = zod.object({
       external_issue_id: zod.string().min(1),
     }),
     description: zod.string().min(1),
+    fix_hypothesis: zod.string().min(1),
+    falsifier: zod.string().min(1),
     success_trace: zod.object({
       trace_id: zod.string().min(1),
       input: zod.string().min(1),
@@ -85304,6 +85308,8 @@ export const TracerSharedReadResponse = zod.object({
           external_issue_id: zod.string().min(1),
         }),
         description: zod.string().min(1),
+        fix_hypothesis: zod.string().min(1),
+        falsifier: zod.string().min(1),
         success_trace: zod.object({
           trace_id: zod.string().min(1),
           input: zod.string().min(1),
