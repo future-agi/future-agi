@@ -121,17 +121,23 @@ function normalizeHostStatusSchema(schema) {
 
 // Run Epoch from an Error Feed issue sends these nested objects as null. drf-yasg
 // writes x-nullable beside no $ref, so the nullable ones are named here.
+const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
 const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
-  AgentFixRun: ["issue"],
-  AgentFixRunDetail: ["issue"],
+  // The epoch an issue's page opens: before it ends it has no report, and only a
+  // failed one has a failure.
+  AgentFixRun: EPOCH_NULLABLE_REFS,
+  AgentFixRunDetail: EPOCH_NULLABLE_REFS,
+  AgentFixCandidate: ["verdict"],
+  AgentFixOverride: ["by"],
 };
 
 function isAgentFixIssueSchema(name) {
   return (
     name.startsWith("AgentFixIssue") ||
+    name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
     // The launch form's parts of an agent: a part it may change has no reason.
     name === "AgentFixLaunchSurface"
@@ -1271,6 +1277,7 @@ export type ${jsonAlias} = JsonValueApi;`,
       ["EvidenceImportCaseApi", "started_at"],
       ["EvidenceImportCaseApi", "ended_at"],
       ["EvidenceImportApi", "project_id"],
+      ["EvidenceImportApi", "dataset_id"],
       ["EvidenceImportApi", "agent_version_id"],
       ["EvidenceDraftRefApi", "id"],
     ]) {
@@ -1796,6 +1803,9 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
     for (const evidenceImportResponse of [
       "export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({",
       "export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse = zod.object({",
+      // A Run Epoch from an issue carries its import for the review.
+      "export const SimulateApiAgentFixIssuesReadResponse = zod.object({",
+      "export const SimulateApiAgentFixIssuesStopResponse = zod.object({",
     ]) {
       zod = assertReplaceRegexInNamedBlock(
         zod,
@@ -1806,6 +1816,7 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       );
       for (const [anchor, label] of [
         [/("project_id": zod\.string\(\)\.uuid\(\))/, "project_id"],
+        [/("dataset_id": zod\.string\(\)\.uuid\(\))/, "dataset_id"],
         [/("agent_version_id": zod\.string\(\)\.uuid\(\))/, "agent_version_id"],
         [/("changed_since_import": zod\.boolean\(\))/, "changed_since_import"],
         [/("started_at": zod\.string\(\)\.datetime\([^)]*\))/, "started_at"],

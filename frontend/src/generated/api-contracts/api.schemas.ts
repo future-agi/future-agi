@@ -18596,7 +18596,7 @@ export interface EvidenceImportApi {
   /** The Observe project; null for evidence from outside Observe. */
   project_id: string | null;
   /** A dataset import's dataset; null otherwise. */
-  dataset_id: string;
+  dataset_id: string | null;
   agent_version_id: string | null;
   source_kind: EvidenceImportApiSourceKind;
   created_at: string;
@@ -18751,20 +18751,6 @@ export const AgentFixRunApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunApiStep =
-  (typeof AgentFixRunApiStep)[keyof typeof AgentFixRunApiStep];
-
-export const AgentFixRunApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
 export type AgentFixRequestApiVariationParents = { [key: string]: string };
 
 export interface AgentFixRequestApi {
@@ -18831,8 +18817,8 @@ export interface AgentFixOverrideApi {
   allowed: boolean;
   regressions: string[];
   reason: string;
-  by: HarnessVersionPersonApi;
-  at: string;
+  by: HarnessVersionPersonApi | null;
+  at: string | null;
 }
 
 export interface AgentFixCandidateApi {
@@ -18846,44 +18832,42 @@ export interface AgentFixCandidateApi {
   version_number: number;
   summary?: string;
   outcome?: AgentFixCandidateApiOutcome;
-  verdict: AgentFixVerdictApi;
+  verdict: AgentFixVerdictApi | null;
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   override?: AgentFixOverrideApi;
-  /** @maxLength 512 */
-  pull_request_url?: string;
+  pull_request_url: string;
   readonly created_at?: string;
 }
 
 export interface AgentFixRunApi {
   readonly id?: string;
-  number: number;
+  number: number | null;
   environment_id: string;
   environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
+  source_run_id: string | null;
+  source_run_number: number | null;
   base_agent_version_id: string;
   agent?: AgentFixAgentApi;
   state?: AgentFixRunApiState;
   /** @maxLength 32 */
   stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
+  step?: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  plan: AgentFixPlanApi | null;
+  diagnosis: AgentFixDiagnosisApi | null;
   request: AgentFixRequestApi;
   spent_credits: number;
   committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
+  report: AgentFixReportApi | null;
+  failure: AgentFixFailureApi | null;
+  retried_from_id: string | null;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   readonly created_at?: string;
 }
 
@@ -19037,20 +19021,6 @@ export const AgentFixRunDetailApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunDetailApiStep =
-  (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
-
-export const AgentFixRunDetailApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
 export type AgentFixRunDetailApiEvalGrading =
   (typeof AgentFixRunDetailApiEvalGrading)[keyof typeof AgentFixRunDetailApiEvalGrading];
 
@@ -19072,34 +19042,33 @@ export interface AgentFixEvalWarningApi {
 
 export interface AgentFixRunDetailApi {
   readonly id?: string;
-  number: number;
+  number: number | null;
   environment_id: string;
   environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
+  source_run_id: string | null;
+  source_run_number: number | null;
   base_agent_version_id: string;
   agent?: AgentFixAgentApi;
   state?: AgentFixRunDetailApiState;
   /** @maxLength 32 */
   stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunDetailApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
+  step?: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  plan: AgentFixPlanApi | null;
+  diagnosis: AgentFixDiagnosisApi | null;
   request: AgentFixRequestApi;
   spent_credits: number;
   committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
+  report: AgentFixReportApi | null;
+  failure: AgentFixFailureApi | null;
+  retried_from_id: string | null;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
