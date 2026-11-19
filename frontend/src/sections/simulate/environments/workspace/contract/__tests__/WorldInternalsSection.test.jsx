@@ -98,9 +98,7 @@ describe("WorldInternalsSection tables", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/^No tables yet\./)).toBeInTheDocument();
     expect(screen.getByText("Tools · 0")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Add tools from an MCP server/ }),
-    ).toBeDisabled();
+    expect(screen.queryByText(/MCP server/)).toBeNull();
   });
 });
 
