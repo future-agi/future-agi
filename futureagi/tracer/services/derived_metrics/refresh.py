@@ -40,6 +40,7 @@ from tracer.services.derived_metrics.bounded_reads import (
     MAX_KEY_IN_ITEMS,
     BucketFieldPlan,
     BucketRangeOverflow,
+    KeyRelation,
     capture_source_output,
     committed_key_pages,
     committed_key_ranges,
@@ -2198,6 +2199,34 @@ class RefreshWriter:
         has_fields = any(True for _ in self.plans(attempt, kind="field_values"))
         # The draft's frozen field batches, captured once (one batch per INSERT).
         overlay, overlay_params = captures.overlay(FIELD_VALUES)
+        if head and has_fields and any(d.level == "span" for d in definitions):
+            # A destination-quarter capture can move a span not named by discovery.
+            # Fold its former quarter from frozen fields, without recapturing it.
+            keys = FIELD_VALUES.logical_key
+            emitted = (
+                f"SELECT * FROM ({overlay}) WHERE level = 'span' AND is_deleted = 0"
+            )
+            previous, pp = committed_rows_select(
+                FIELD_VALUES,
+                head,
+                org_id=self.org_id,
+                project_id=self.lease.project_id,
+                key_relation=KeyRelation(
+                    keys, f"SELECT {', '.join(keys)} FROM ({emitted})", overlay_params
+                ),
+                param_prefix="span_emitted_before",
+            )
+            former = self.store.execute(
+                f"SELECT DISTINCT bucket_start FROM ({previous}) WHERE is_deleted = 0 "
+                f"AND bucket_start NOT IN (SELECT bucket_start FROM ({emitted}))",
+                pp,
+            )
+            # Only the emitted quarters were captured from source. A fold-only
+            # nomination must not claim source coverage during retention.
+            if former:
+                self.append(
+                    attempt, "dirty_before", [{"bucket_start": at} for (at,) in former]
+                )
         if has_fields:
             # Retain ALL existing checked proposals, including losers and
             # both open predicates. R01 changes only the prior lookup domain;

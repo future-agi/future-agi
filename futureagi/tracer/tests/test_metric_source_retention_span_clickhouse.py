@@ -4,7 +4,7 @@
 import re
 from contextlib import contextmanager
 from datetime import timedelta
-from functools import wraps
+from functools import partial, wraps
 from itertools import count
 from uuid import uuid4
 
@@ -229,6 +229,35 @@ def test_corrected_span_follows_source_at_expiry_and_on_refresh(span_versions, p
     assert at_expiry == expected
 
 
+@pytest.mark.parametrize("days", [0, 1], ids=["ordinary", "retention-checkpoint"])
+def test_quarter_mate_move_refolds_former_quarter(span_versions, days):
+    case, _, version, _ = span_versions
+    keep = case.revision("keep", case.quarter, 7, 1)
+    mobile = case.revision("mobile", case.quarter, 5, 1)
+    base = case.refresh(version, keep, mobile)
+    assert case.totals(base, version) == [(2, 12, 2)]
+
+    elsewhere = case.quarter + timedelta(hours=1)
+    case.revision("mobile", elsewhere, 11, 2)
+    trigger = case.revision("trigger", elsewhere, 19, 1)
+    # The old quarter needs a fold from committed fields, not a source refresh.
+    case.revision("keep", case.quarter, 99, 2)
+    case.writer.retention_days = lambda: days
+    head = case.refresh(version, trigger, purpose="backfill")
+    if days:
+        assert head.published_by.purpose == "compaction"
+    assert case.field_values(head, version, case.quarter) == [("keep", 7)]
+    assert case.field_values(head, version, elsewhere) == [
+        ("mobile", 11),
+        ("trigger", 19),
+    ]
+    totals = metric_bucket_rows(case.writer, head, version)
+    assert [(at, n, total, weight) for at, _, n, total, weight in totals] == [
+        (case.quarter, 1, 7, 1),
+        (elsewhere, 2, 30, 2),
+    ]
+
+
 def uncovered_span_head(span_versions):
     case, first, second, old = span_versions
     victim = case.revision("victim", case.quarter, 11, 2)
@@ -237,22 +266,27 @@ def uncovered_span_head(span_versions):
     base = case.refresh(second, victim, keep, mobile, prior=[old])
     assert case.totals(base, second) == [(3, 23, 3)]
 
-    # A bounded source page nominates only 'trigger'. The whole destination
-    # quarter is captured, so mobile moves as a quarter-mate. Its old quarter
-    # was not nominated by this page. No legacy/fabricated checkpoint is needed.
+    # Simulate an already-published head from the old writer: it captured mobile
+    # as a quarter-mate but folded only the quarter nominated by trigger.
     elsewhere = case.quarter + timedelta(hours=1)
     case.revision("mobile", elsewhere, 5, 2)
     trigger = case.revision("trigger", elsewhere, 19, 1)
-    partial = case.refresh(second, trigger, purpose="backfill")
-    assert case.field_values(partial, second, elsewhere) == [
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            case.writer,
+            "_freeze_buckets",
+            partial(case.writer._freeze_buckets, _dirty_starts=[str(elsewhere)]),
+        )
+        legacy = case.refresh(second, trigger, purpose="backfill")
+    assert case.field_values(legacy, second, elsewhere) == [
         ("mobile", 5),
         ("trigger", 19),
     ]
-    assert case.field_values(partial, second, case.quarter) == [
+    assert case.field_values(legacy, second, case.quarter) == [
         ("keep", 7),
         ("victim", 11),
     ]
-    assert case.totals(partial, second) == [(3, 23, 3)]
+    assert case.totals(legacy, second) == [(3, 23, 3)]
 
     # Reactivate the still-pinned, completed v1. It processes *both* terminal
     # corrections. The victim genuinely expires (unlike the live-source case
