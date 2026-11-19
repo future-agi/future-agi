@@ -1499,44 +1499,121 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
 @pytest.mark.unit
 def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatch):
     from threading import Event
+    from time import monotonic
 
     from tracer.services.clickhouse.client import ClickHouseClient
     from tracer.services.clickhouse.read_budget import ReadDeadline
     from tracer.services.clickhouse.v2 import query_service
 
-    entered, release = Event(), Event()
-    calls = []
+    project = _uuid(1)
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([project], []))
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    request_deadlines = []
+
+    def read_projects(deadline, read):
+        request_deadlines.append(deadline)
+        return read()
+
+    monkeypatch.setattr(dashboard_view, "_run_filter_value_pg_read", read_projects)
+    wall_ms = 1_750
+    monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", wall_ms)
+    entered, release, finished = Event(), Event(), Event()
+    metadata_calls = []
+    page_calls = []
 
     class Driver:
-        def execute(self, *_args, **_kwargs):
-            calls.append(1)
-            entered.set()
-            release.wait(timeout=5)
-            return [], []
+        def execute(self, query, params, **_kwargs):
+            if "system.parts" in query:
+                metadata_calls.append(1)
+                entered.set()
+                release.wait(timeout=5)  # Bound failure on the old shared-permit path.
+                finished.set()
+                return [(None,)], [("retained_start", "Nullable(DateTime)")]
+            page_calls.append((monotonic(), entered.is_set(), finished.is_set()))
+            assert "PREWHERE project_id IN %(project_ids)s" in query
+            assert params["project_ids"] == (project,)
+            return [("scoped name",)], [("val", "String")]
 
-    client = ClickHouseClient(server_enforced_readonly=False)
-    monkeypatch.setattr(client, "_create_client", lambda: Driver())
+    client = ClickHouseClient(server_enforced_readonly=False, pool_size=1)
+    monkeypatch.setattr(client, "_create_client", Driver)
     monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
-    end = datetime.now(UTC)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
 
     def lookup(ms):
         return dashboard_view._batched_span_system_retained_window_start(
-            [_uuid(1)], window_end=end, deadline=ReadDeadline.start(ms)
+            [project], window_end=datetime.now(UTC), deadline=ReadDeadline.start(ms)
         )
 
-    epoch = datetime(1970, 1, 1, tzinfo=UTC)
     assert lookup(1_024) == epoch
-    assert not calls
+    assert not metadata_calls
     try:
-        deadline = ReadDeadline.start(1_500)
-        assert dashboard_view._batched_span_system_retained_window_start(
-            [_uuid(1)], window_end=end, deadline=deadline
-        ) == epoch
-        assert entered.is_set()
-        assert deadline.remaining_ms() >= 900  # Allow scheduler jitter.
-        assert lookup(1_500) == epoch
-        assert calls == [1]
+        page = _result(
+            _invoke({
+                "metric_name": "name",
+                "metric_type": "system_metric",
+                "source": "traces",
+                "project_ids": [],
+                "search": "",
+                "page_size": 1,
+            })
+        )
+        assert datetime.fromisoformat(page["query_window_start"]) == epoch
+        assert page["values"] == [{"value": "scoped name", "label": "scoped name"}]
+        [(started, metadata_entered, metadata_finished)] = page_calls
+        assert metadata_entered and not metadata_finished
+        parent = request_deadlines[0]
+        parent_end = parent.started + parent.total_ms / 1000
+        assert started < parent_end
+        assert lookup(wall_ms) == epoch
+        assert metadata_calls == [1]
+        assert not finished.wait(timeout=max(0, parent_end - monotonic()))
     finally:
         release.set()
-        # Drain the single worker before pytest restores patched dependencies.
-        dashboard_view._RETAINED_LOOKUP_POOL.submit(lambda: None).result(timeout=5)
+        # Wait for the worker's cleanup before restoring dependencies.
+        slot = dashboard_view._RETAINED_LOOKUP_SLOT
+        assert slot.acquire(timeout=5)
+        slot.release()
+
+
+@pytest.mark.unit
+def test_held_retained_lookup_allows_process_exit():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    program = """
+from datetime import UTC, datetime
+from threading import Event
+from unittest.mock import patch
+import django
+django.setup()
+from tracer.views import dashboard
+from tracer.services.clickhouse.read_budget import ReadDeadline
+entered = Event()
+def hold(*args, **kwargs):
+    entered.set()
+    Event().wait()  # No release: this worker must not be joined at shutdown.
+with patch.object(dashboard, 'AttributeReadSelector') as selector:
+    selector.return_value.retained_window_start.side_effect = hold
+    result = dashboard._batched_span_system_retained_window_start(
+        ['00000000-0000-0000-0000-000000000001'], window_end=datetime.now(UTC),
+        deadline=ReadDeadline.start(2000),
+    )
+    assert entered.is_set() and result == datetime(1970, 1, 1, tzinfo=UTC)
+"""
+    subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=Path(__file__).resolve().parents[2],
+        env={
+            **os.environ,
+            "DJANGO_SETTINGS_MODULE": "tfc.settings.test",
+            "NO_STARTUP_DB_MUTATIONS": "true",
+        },
+        check=True,
+        timeout=30,
+    )

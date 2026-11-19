@@ -742,7 +742,7 @@ class V2AttributeQueryExecutor:
                         params,
                         timeout_ms=timeout_ms,
                         settings=settings,
-                        **({"quiet_metadata": True} if bounded_retained_lookup else {}),
+                        **({"retained_lookup": True} if bounded_retained_lookup else {}),
                     )
                 elif bounded_retained_lookup:
                     # Do not fall through to a client without quiet metadata support.
@@ -1437,10 +1437,12 @@ class AttributeReadSelector:
         # particular, a fail-open speculative probe must not wait for the
         # semaphore longer than its own short cap and consume the exact
         # fallback's whole operation wall.
-        acquired = _ATTRIBUTE_READ_CAPACITY.acquire(
+        # The optional retained lookup has its own non-queueing worker and
+        # native permit. Leave all ordinary attribute slots available as well.
+        use_attribute_slot = retained_lookup_deadline is None
+        if use_attribute_slot and not _ATTRIBUTE_READ_CAPACITY.acquire(
             timeout=max(min(remaining_ms, timeout_cap_ms), 0) / 1000
-        )
-        if not acquired:
+        ):
             raise ReadDeadlineExceeded("Attribute read capacity is busy")
         try:
             remaining_ms = int((self._deadline - self._clock()) * 1000)
@@ -1472,7 +1474,8 @@ class AttributeReadSelector:
                 },
             )
         finally:
-            _ATTRIBUTE_READ_CAPACITY.release()
+            if use_attribute_slot:
+                _ATTRIBUTE_READ_CAPACITY.release()
         if not isinstance(page, AttributeQueryPage) or not isinstance(page.data, list):
             raise IncompleteLatestStateReplay(
                 "Attribute query returned an invalid result envelope"

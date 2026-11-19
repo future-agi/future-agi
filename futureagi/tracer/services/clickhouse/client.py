@@ -371,6 +371,9 @@ class ClickHouseClient:
         self._pool_lock = threading.Lock()
         self._pool_initialized = False
         self._read_admission = threading.BoundedSemaphore(self._pool_size)
+        # One extra native read may be in flight for the optional retained
+        # window. Its caller can time out before the driver returns.
+        self._retained_lookup_admission = threading.BoundedSemaphore(1)
 
     @property
     def is_available(self) -> bool:
@@ -562,7 +565,7 @@ class ClickHouseClient:
         timeout_ms: int | None = None,
         settings: dict[str, Any] | None = None,
         *,
-        quiet_metadata: bool = False,
+        retained_lookup: bool = False,
     ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
         """Execute a guarded read and include native rows/bytes progress."""
 
@@ -572,7 +575,7 @@ class ClickHouseClient:
             timeout_ms=timeout_ms,
             settings=settings,
             include_progress=True,
-            quiet_metadata=quiet_metadata,
+            retained_lookup=retained_lookup,
         )
         assert len(result) == 5
         return result
@@ -585,7 +588,7 @@ class ClickHouseClient:
         settings: dict[str, Any] | None = None,
         *,
         include_progress: bool,
-        quiet_metadata: bool = False,
+        retained_lookup: bool = False,
     ) -> (
         tuple[list[tuple], list[tuple], float]
         | tuple[list[tuple], list[tuple], float, int | None, int | None]
@@ -680,18 +683,23 @@ class ClickHouseClient:
         admission_acquired = False
         client = None
 
+        admission = (
+            self._retained_lookup_admission if retained_lookup else self._read_admission
+        )
         try:
-            admission_acquired = self._read_admission.acquire(
-                # Queue admission stays bounded independently of statement
-                # execution. Do not exhaust all HTTP workers waiting for a slot.
-                timeout=max(
-                    (timeout_ms or self.read_timeout_ceiling_ms) / 1000.0, 0.001
+            if retained_lookup:
+                admission_acquired = admission.acquire(blocking=False)
+            else:
+                # Queue admission stays bounded independently of statement execution.
+                admission_acquired = admission.acquire(
+                    timeout=max(
+                        (timeout_ms or self.read_timeout_ceiling_ms) / 1000.0, 0.001
+                    )
                 )
-            )
             if not admission_acquired:
                 raise TimeoutError("ClickHouse read admission deadline exhausted")
             client = self._get_client()
-            if not quiet_metadata:
+            if not retained_lookup:
                 logger.debug(
                     "Executing ClickHouse read query",
                     query=query[:200],
@@ -710,7 +718,7 @@ class ClickHouseClient:
                     )
                     break
                 except CHError as exc:
-                    if quiet_metadata:
+                    if retained_lookup:
                         raise
                     if getattr(
                         exc, "code", None
@@ -764,7 +772,7 @@ class ClickHouseClient:
             read_rows = progress_metric("rows")
             read_bytes = progress_metric("bytes")
 
-            if not quiet_metadata:
+            if not retained_lookup:
                 logger.info(
                     "ClickHouse read query completed",
                     query=query[:200],
@@ -788,7 +796,7 @@ class ClickHouseClient:
 
         except CHError as e:
             query_time_ms = (time.monotonic() - t_start) * 1000
-            if not quiet_metadata:
+            if not retained_lookup:
                 logger.error(
                     "ClickHouse read query failed",
                     error=str(e),
@@ -801,7 +809,7 @@ class ClickHouseClient:
             if client is not None:
                 self._return_client(client)
             if admission_acquired:
-                self._read_admission.release()
+                admission.release()
 
     @staticmethod
     def _execute_native_read_with_remaining_timeout(

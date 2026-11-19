@@ -1,5 +1,5 @@
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
@@ -7,7 +7,7 @@ from decimal import Decimal
 from hashlib import blake2b
 from math import isfinite
 from numbers import Real
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Thread
 from time import monotonic
 from types import SimpleNamespace
 from uuid import UUID
@@ -666,7 +666,6 @@ class _BatchedFilterValueCursor:
 
 # Socket timeouts bound individual I/O, not the lifetime of a native call.
 # Never queue optional work or wait for a late driver during request cleanup.
-_RETAINED_LOOKUP_POOL = ThreadPoolExecutor(max_workers=1)
 _RETAINED_LOOKUP_SLOT = BoundedSemaphore(1)
 _RETAINED_PAGE_RESERVE_MS = 1_000
 
@@ -690,6 +689,8 @@ def _batched_span_system_retained_window_start(
         lookup_deadline, total_ms=min(budget, lookup_deadline.total_ms)
     )
 
+    future: Future[datetime | None] = Future()
+
     def lookup():
         try:
             selector = AttributeReadSelector(
@@ -702,9 +703,17 @@ def _batched_span_system_retained_window_start(
         finally:
             _RETAINED_LOOKUP_SLOT.release()
 
+    def run():
+        try:
+            future.set_result(lookup())
+        except Exception as exc:  # noqa: BLE001 - deliver worker failure to the waiter
+            future.set_exception(exc)
+
     try:
-        future = _RETAINED_LOOKUP_POOL.submit(lookup)
-    except RuntimeError:  # Executor shutdown: no worker owns the slot.
+        # Executor workers are joined at interpreter shutdown, even after the
+        # request timed out. A late optional read must not hold the process open.
+        Thread(target=run, name="retained-window", daemon=True).start()
+    except RuntimeError:  # Thread did not start: no worker owns the slot.
         _RETAINED_LOOKUP_SLOT.release()
         return _FILTER_VALUE_RETAINED_START
     try:
