@@ -544,8 +544,10 @@ def _log_uncharged_reading(
 
 def _reading_event_id(subject_id, purpose: str, check_id, stage: str) -> str:
     """One charge per stage of one check of a subject: the same on every retry of a
-    step inside the check, new when a new check starts. A reading no check started
-    (the background one that stores a document) names the subject alone."""
+    step inside the check, new when a new check starts. An agent's reading always
+    has one: the background reading that stores a document passes its own workflow
+    run, and a reading called outside a check takes a new id. Only a scan, which has
+    none, names its subject alone."""
     name = (
         f"reading:{purpose}:check:{check_id}:{stage}"
         if check_id
@@ -574,7 +576,7 @@ def record_agent_reading_usage(
     purpose, the check (``check_id``, fixed when the check starts) and the stage,
     never the run: a retried step, which reads again under a new run id inside the
     same check, adds none, and a new check of the same version is its own charge.
-    Without a check, every attempt at the subject's reading is one charge."""
+    Without a check (a scan), every attempt at the subject's reading is one charge."""
     if purpose not in _READING_PURPOSES:
         raise ValueError(f"unknown reading purpose {purpose!r}")
     if is_oss() or not isinstance(spend, dict):

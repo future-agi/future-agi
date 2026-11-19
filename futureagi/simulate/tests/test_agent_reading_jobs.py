@@ -5,7 +5,7 @@ import json
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4, uuid5
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 from django.utils import timezone
@@ -512,9 +512,29 @@ class TestReadingBill:
                 "run_id": sent["run_id"],
                 "purpose": "agent",
                 "spend": spend,
-                "check_id": None,
+                "check_id": billed[0]["check_id"],
             }
         ]
+
+    def test_a_reading_called_outside_a_check_is_a_check_of_its_own(
+        self, agent, monkeypatch, no_evals
+    ):
+        """An agent's reading is never charged by its version alone: each call
+        without a check id takes a new one."""
+        version = _connect(agent)
+        failure = {
+            "code": "agent_unreadable",
+            "message": "no agent",
+            "retryable": False,
+        }
+        _reading(monkeypatch, (failure, None, None, {"stages": [{"stage": "s"}]}))
+        billed = _billed(monkeypatch)
+
+        read_version(version.id)
+        read_version(version.id)
+
+        first, second = (UUID(one["check_id"]) for one in billed)
+        assert first != second
 
     def test_a_reading_in_a_check_is_billed_for_that_check(
         self, agent, monkeypatch, no_evals
@@ -644,12 +664,12 @@ class TestReadingBill:
 
     @pytest.mark.requires_ee
     @requires_cloud_billing
-    def test_a_document_reading_outside_a_check_is_charged_once(
+    def test_a_document_reading_retried_inside_its_run_is_charged_once(
         self, agent, monkeypatch, no_evals, ledger
     ):
-        """The background reading that only stores a document is started by no
-        check, and the version's check_started_at can be empty. Its attempts are one
-        charge, keyed by the version, the purpose and the stage."""
+        """The background reading that only stores a document is keyed by its own
+        workflow run, which its retry shares, and the version's check_started_at can
+        be empty. The run's attempts are one charge."""
         from ee.usage.models.usage import UsageEventLog
 
         version = _connect(agent)
@@ -669,13 +689,79 @@ class TestReadingBill:
         monkeypatch.setattr(agent_reading_sandbox, "_store_reading", store)
 
         with pytest.raises(RuntimeError):
-            read_version(version.id, document_only=True)
-        assert read_version(version.id, document_only=True).status == "stored"
+            _read_document(version, "doc-run-1")
+        assert _read_document(version, "doc-run-1") == "stored"
         _drain()
 
         assert _runtime(version).check_started_at is None
         row = UsageEventLog.objects.get(organization=agent.organization)
-        assert row.event_id == uuid5(version.id, "reading:agent:understand-agent")
+        assert row.event_id == uuid5(
+            version.id, "reading:agent:check:doc-run-1:understand-agent"
+        )
+
+    @pytest.mark.requires_ee
+    @requires_cloud_billing
+    def test_try_again_after_a_failed_document_reading_is_a_second_charge(
+        self, agent, monkeypatch, no_evals, ledger
+    ):
+        """Each schedule of the background document reading is a new workflow run,
+        and the run keys its charge: a reading that died early, its retry in the same
+        run, then Try again's full reading in a new run, are two charges, the second
+        at the full amount."""
+        from ee.usage.models.usage import UsageEventLog
+
+        version = _connect(agent)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=version
+        ).update(preflight_status=Status.PASSED, check_started_at=None)
+        full = _cost_file()
+        early = _died_early(full)
+        failure = {"code": "agent_crashed", "message": "died", "retryable": False}
+        _reading(monkeypatch, (failure, None, None, early))
+        assert _read_document(version, "doc-run-1") == "failed"
+        assert _read_document(version, "doc-run-1") == "failed"
+
+        sent = _reading(monkeypatch, (None, {"agent": {}}, {}, full))
+        monkeypatch.setattr(
+            agent_reading_sandbox,
+            "_store_reading",
+            lambda *_a, **_k: agent_reading_sandbox.ReadOutcome("stored"),
+        )
+        assert _read_document(version, "doc-run-2") == "stored"
+        _drain()
+
+        rows = {
+            row.properties["reading_check_id"]: row
+            for row in UsageEventLog.objects.filter(organization=agent.organization)
+        }
+        assert set(rows) == {"doc-run-1", "doc-run-2"}
+        assert rows["doc-run-1"].amount_raw == pytest.approx(
+            _expected_usd(early["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+        )
+        assert rows["doc-run-2"].properties["reading_run_id"] == sent["run_id"]
+        assert rows["doc-run-2"].amount_raw == pytest.approx(
+            _expected_usd(full["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+        )
+
+
+def _read_document(version, workflow_run_id):
+    """Run the background document reading as one attempt of the workflow run
+    ``workflow_run_id``."""
+    import dataclasses
+
+    from temporalio.testing import ActivityEnvironment
+
+    from simulate.tasks import harness_agent_versions
+
+    environment = ActivityEnvironment()
+    environment.info = dataclasses.replace(
+        environment.info, workflow_run_id=workflow_run_id
+    )
+    with patch.object(harness_agent_versions, "close_old_connections", lambda: None):
+        return environment.run(
+            harness_agent_versions.read_harness_agent_version_document._original_func,
+            str(version.id),
+        )
 
 
 class TestReadingFolder:

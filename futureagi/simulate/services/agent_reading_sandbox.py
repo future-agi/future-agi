@@ -437,7 +437,9 @@ def read_version(
     only stores the document of a version that has none, whatever its check says,
     and decides nothing about the version or its agent. ``check_id`` names the
     check the reading is part of, the same on every attempt of it; the charge is
-    keyed by it."""
+    keyed by it. A call without one is a check of its own, under a new id, so a
+    reading is never charged by its version alone."""
+    check_id = check_id or str(uuid4())
     runtime = (
         HarnessAgentVersionRuntime.no_workspace_objects.select_related(
             "agent_definition", "organization", "workspace"
