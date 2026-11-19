@@ -36,13 +36,13 @@ describe("Validate scenarios", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: "Validate scenarios against the environment" }),
+      screen.getByRole("button", { name: "Validate cases not yet proved" }),
     );
     await waitFor(() =>
       expect(getHarnessScenarioValidation).toHaveBeenCalledTimes(1),
     );
     expect(
-      await screen.findByRole("button", { name: "Validate scenarios against the environment" }),
+      await screen.findByRole("button", { name: "Validate cases not yet proved" }),
     ).toBeEnabled();
 
     // Its end refreshes the list. Under the list's key, the status was read again, which refreshed
@@ -92,7 +92,7 @@ describe("A running validation", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Validate scenarios against the environment" }));
+    await user.click(screen.getByRole("button", { name: "Validate cases not yet proved" }));
 
     expect(
       await screen.findByRole("button", { name: "Validating · proved 120 of 500" }),

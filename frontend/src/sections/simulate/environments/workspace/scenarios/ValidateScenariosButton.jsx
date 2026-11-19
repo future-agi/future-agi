@@ -9,8 +9,9 @@ import {
 } from "src/api/harness/scenarios";
 import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 
-// "Validate scenarios against the environment": proves the default pair's cases that have no proof of their own yet,
-// so a validation the window stopped carries on; with `keys`, only those cases, and the others keep their proofs. The
+// "Validate cases not yet proved": proves the default pair's cases that have no proof of their own yet,
+// so a validation the window stopped carries on; with `keys`, only those cases, and the others keep their proofs. To
+// prove every case again, the API takes `reprove_all` (a "Re-prove all" choice for the real UI). The
 // button stays disabled while the validation runs and the list refreshes when it ends, so each case shows its new state.
 export default function ValidateScenariosButton({
   jobId,
