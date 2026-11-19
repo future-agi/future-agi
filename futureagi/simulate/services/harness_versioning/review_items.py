@@ -571,11 +571,21 @@ def _fields(before: Any, after: Any) -> list[str]:
     return []
 
 
+# A scenario's other files, named in words. Its suite index entry is never named: Save refuses an entry that differs
+# from its scenario, so each real edit there is already named by the scenario's own field.
+_FIELD_WORDS = {"_files": "files"}
+
+
 def _summary(action: str, item: Item, fields: list[str]) -> str:
     noun = item.kind.replace("_", " ")
     # A rule's key is a hash of its text, so the text names it; who last edited an item is not a change to it.
     name = f'"{item.value}"' if item.kind == "rule" else item.key
-    shown = [field for field in fields if field != "provenance"]
+    shown = [
+        _FIELD_WORDS.get(field, field)
+        for field in fields
+        if field != "provenance"
+        and (field in _FIELD_WORDS or not field.startswith("_"))
+    ]
     if action == "changed" and shown:
         return f"Change {', '.join(shown)} of {noun} {name}"
     verb = {"added": "Add", "removed": "Remove", "changed": "Change"}[action]
