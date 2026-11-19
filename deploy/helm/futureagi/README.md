@@ -541,6 +541,19 @@ The check is read-only and does not cover replica lag or non-Django routes
 diagnostics, including setup-checks. The guard defaults off outside Helm and,
 with a ready schema, stays ready even when newer-image migrations are present.
 Temporal workers also wait for migrations.
+
+The collector can answer `/healthz` before ClickHouse bootstrap finishes. On
+both install paths its OTLP endpoints refuse valid exports with HTTP 503 and
+`Retry-After`, or gRPC `UNAVAILABLE`, until the writer's own ClickHouse database
+has the local 028 receipt and live attribution views. No rejected span is queued
+or written. Keep SDK retries enabled. This is a startup barrier for a single
+local ClickHouse target, not continuous schema monitoring: quiesce writers for
+schema changes and restart collectors after changing targets. The collector
+needs read access to `schema_versions` and the relevant system metadata in
+addition to its usual data-plane grants (including writes to the materialized
+view destinations). It does not need migration privileges. Do not gate pod readiness on this check: `helm --wait`
+needs ready pods before it starts a bundled post-install hook.
+
 Installation is complete only when bootstrap finishes, including ClickHouse,
 seeding and first-admin creation; Helm waits for that job to finish.
 

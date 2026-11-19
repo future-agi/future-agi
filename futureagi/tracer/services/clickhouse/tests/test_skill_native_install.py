@@ -9,6 +9,7 @@ import ast
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -83,7 +84,7 @@ def installer(topology):
     return ["-c", f"{bindings}; {ast.unparse(native)}"]
 
 
-def native_boot(args, db):
+def native_boot(args, db, *, check=True):
     pg = settings.DATABASES["default"]
     ch_host = os.environ.get("CH25_HOST", "127.0.0.1")
     assert _is_loopback_ch25_host(ch_host) and _is_loopback_ch25_host(pg["HOST"])
@@ -117,11 +118,13 @@ def native_boot(args, db):
         PG_USER=pg["USER"],
         PG_PASSWORD=pg["PASSWORD"],
     )
-    subprocess.run(
+    return subprocess.run(
         [sys.executable, *args],
         cwd=ROOT / "futureagi",
         env=env,
-        check=True,
+        check=check,
+        capture_output=not check,
+        text=True,
         timeout=100,
     )
 
@@ -176,3 +179,73 @@ def test_native_stage_upgrade_without_boot_backfill():
             assert client.query(
                 "SELECT count() FROM skill_trace_links FINAL"
             ).result_rows == [(1,)]
+
+
+@pytest.mark.integration
+def test_production_native_operator_command_and_read_only_gate(monkeypatch):
+    # The deployment contract module is outside the backend package. Its
+    # renderer supplies only synthetic config values and never starts services.
+    import importlib
+
+    monkeypatch.syspath_prepend(str(ROOT))
+    render = importlib.import_module(
+        "deploy.tests.test_observed_catalog_startup"
+    ).render
+
+    service_name = "clickhouse-native-bootstrap"
+    service = render("production")[service_name]
+    entry, *module = service["entrypoint"]
+    assert entry == "python" and module == ["-m", NATIVE]
+    check = module + service["command"]
+    assert "--apply" not in check
+    # `compose run SERVICE ARGS...` replaces (does not append to) command.
+    # Use the args an operator actually copies, not the unoverlaid defaults.
+    prefix = f"$COMPOSE run --rm {service_name} "
+    (line,) = (
+        line
+        for line in (ROOT / "deploy/README.md").read_text().splitlines()
+        if line.startswith(prefix)
+    )
+    apply = module + shlex.split(line[len(prefix) :])
+    with _ch_test_owned_database("test_skill_production_") as db:
+        with _open_ch_test_http_client(database=db) as client:
+            native_boot([*module, "--phase", "native", "--apply"], db)
+            before = client.query("SHOW TABLES").result_rows
+            missing = native_boot(check, db, check=False)
+            assert missing.returncode == 1
+            assert (
+                "skill_trace_links_mv"
+                in json.loads(missing.stdout.splitlines()[-1])["missing_objects"]
+            )
+            assert client.query("SHOW TABLES").result_rows == before
+            for _ in range(2):
+                native_boot(apply, db)
+                native_boot(check, db)
+            assert client.query("SELECT count() FROM schema_versions").result_rows == [
+                (1,)
+            ]
+            client.command("DROP TABLE skill_trace_links_mv SYNC")
+            assert native_boot(check, db, check=False).returncode == 1
+            assert native_boot(apply, db, check=False).returncode == 1
+            assert client.query("EXISTS TABLE skill_trace_links_mv").result_rows == [
+                (0,)
+            ]
+
+
+@pytest.mark.integration
+def test_incompatible_retained_view_cannot_publish_ready_receipt():
+    with _ch_test_owned_database("test_skill_partial_") as db:
+        with _open_ch_test_http_client(database=db) as client:
+            native_boot(["-m", NATIVE, "--phase", "native", "--apply"], db)
+            # An interrupted or manual install left the expected name, not an MV.
+            client.command("CREATE VIEW skill_trace_links_mv AS SELECT 1 AS ignored")
+            apply = installer("distributed")
+            assert native_boot(apply, db, check=False).returncode == 1
+            assert client.query("SELECT count() FROM schema_versions").result_rows == [
+                (0,)
+            ]
+            client.command("DROP VIEW skill_trace_links_mv SYNC")
+            native_boot(apply, db)
+            assert client.query("SELECT count() FROM schema_versions").result_rows == [
+                (1,)
+            ]

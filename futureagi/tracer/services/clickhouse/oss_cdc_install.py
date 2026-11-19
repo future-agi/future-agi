@@ -6,6 +6,7 @@ Run after PG migrations, native ClickHouse initialization and PeerDB setup:
 
 For a fresh native database before starting any writers, use --phase native.
 Its default check is also read-only; --apply creates missing native objects only.
+The production overlay uses --require-skill-schema for a read-only readiness check.
 The install paths opt into --with-skill-schema to apply the packaged additive
 extension under the same advisory lock before any writer is started.
 
@@ -328,6 +329,7 @@ def run(
     phase="cdc",
     wait_for_mirrors=False,
     with_skill_schema=False,
+    require_skill_schema=False,
     timeout=300,
     pg_connect=None,
     ch_connect=None,
@@ -344,9 +346,13 @@ def run(
         with_skill_schema and not (phase == "native" and apply)
     ):
         raise InstallError("Skills schema requires an explicit native apply")
-    if apply and config.hosted:
+    if type(require_skill_schema) is not bool or (
+        require_skill_schema and (phase != "native" or apply)
+    ):
+        raise InstallError("Skills schema check requires read-only native inspection")
+    if (apply or require_skill_schema) and config.hosted:
         raise InstallError(
-            "hosted/replicated apply requires the separately qualified deployment path"
+            "hosted/replicated apply or Skills check requires the separately qualified deployment path"
         )
     # Empty libpq parameters do NOT override environment defaults. Refuse hidden
     # routing before either client connects; TLS settings remain configurable.
@@ -448,7 +454,7 @@ def run(
                 (ddl for name, ddl in definitions.items() if name.endswith("_dict")),
             )
 
-            if with_skill_schema:
+            if with_skill_schema or require_skill_schema:
                 skill_schema = apply_schema.SchemaFile.from_path(
                     native._ROOT / "028_skill_attribution.sql"
                 )
@@ -513,6 +519,17 @@ def run(
                         else "only the verified derived migration receipt may be inserted"
                     )
                 deadline.remaining()
+                # CREATE IF NOT EXISTS can leave a pre-existing, incompatible MV.
+                # The collector must not see a success receipt for that layout.
+                if skill_schema is not None and native.inspect_skill_extension(
+                    self,
+                    config.destination.database,
+                    skill_schema,
+                    require_receipt=False,
+                ):
+                    raise InstallError(
+                        "Skills schema incomplete; no migration receipt recorded"
+                    )
                 return raw.insert(table, rows, column_names=column_names)
 
         def pg_query(statement, parameters):
@@ -539,10 +556,20 @@ def run(
         }
         client = Client()
         if phase == "native":
+            if skill_schema is not None and client.query(
+                "SELECT engine FROM system.databases WHERE name = currentDatabase()"
+            ).result_rows not in ([("Atomic",)], [("Ordinary",)]):
+                raise InstallError(
+                    "Skills startup requires a single local ClickHouse database"
+                )
             missing = native.inspect_native(
                 client, database=config.destination.database
             )
             if not apply:
+                if skill_schema is not None:
+                    missing += native.inspect_skill_extension(
+                        client, config.destination.database, skill_schema
+                    )
                 return {
                     "ready": not missing,
                     "missing_objects": list(missing),
@@ -570,6 +597,12 @@ def run(
                     )
                 elif prior != skill_schema.sha256:
                     raise InstallError("Skills migration hash drift")
+                if prior is not None and native.inspect_skill_extension(
+                    client, config.destination.database, skill_schema
+                ):
+                    raise InstallError(
+                        "Skills schema incomplete after native apply; inspect before retrying"
+                    )
             return {"ready": True, "created_objects": list(created), "applied": True}
         if wait_for_mirrors:
             # Only inspect until initial snapshots settle. Do not wrap apply in
@@ -618,6 +651,11 @@ def main(argv=None):
         action="store_true",
         help="Apply the packaged Skills extension after native tables",
     )
+    parser.add_argument(
+        "--require-skill-schema",
+        action="store_true",
+        help="Check the local Skills extension without applying schema or acquiring the installer lock",
+    )
     parser.add_argument("--phase", choices=("cdc", "native"), default="cdc")
     parser.add_argument(
         "--wait-for-mirrors",
@@ -644,6 +682,7 @@ def main(argv=None):
                 timeout=args.timeout,
                 phase=args.phase,
                 with_skill_schema=args.with_skill_schema,
+                require_skill_schema=args.require_skill_schema,
                 wait_for_mirrors=args.wait_for_mirrors,
             )
         print(json.dumps(result))

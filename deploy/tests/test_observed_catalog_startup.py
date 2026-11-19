@@ -219,6 +219,10 @@ class StartupComposeContractTests(unittest.TestCase):
                     in argv(services[self.phase_job(services, "native")]),
                     variant in ("root", "e2e"),
                 )
+                self.assertEqual(
+                    "--require-skill-schema" in argv(services[self.phase_job(services, "native")]),
+                    variant == "production",
+                )
                 cdc_command = argv(services[self.phase_job(services, "cdc")])
                 self.assertIn("--wait-for-mirrors", cdc_command)
                 self.assertIn("--timeout", cdc_command)

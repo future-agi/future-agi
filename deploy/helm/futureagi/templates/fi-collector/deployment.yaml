@@ -46,6 +46,9 @@ spec:
         - name: fi-collector
           image: {{ include "futureagi.image" (dict "root" . "image" $c.image "digestKey" "fiCollector") }}
           imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $c.image) }}
+          # A matching collector image enforces this at OTLP admission, not pod
+          # readiness: --wait must let the bundled post-install hook start.
+          args: ["-require-skill-schema"]
           ports:
             - name: otlp-grpc
               containerPort: 4317
