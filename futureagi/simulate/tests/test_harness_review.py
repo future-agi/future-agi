@@ -283,6 +283,61 @@ def test_an_actor_share_change_names_its_values_and_grades_nothing():
     )
 
 
+def _renaming(tests="refunds once"):
+    """A saved case and the draft after the builder renamed its folder and name; its suite entry keeps its key."""
+    case = {"tests": "refunds once", "solution": [{"tool": "get_order"}]}
+    old = {**case, "name": "outside_30_days"}
+    new = {**case, "name": "outside_20_days", "tests": tests}
+    entry = {"scenario_key": "outside-30-days"}
+    default = _tree(
+        {},
+        **{
+            "scenarios.json": [{**old, **entry, "folder": "scenarios/outside_30_days"}],
+            "scenarios/outside_30_days/scenario.json": old,
+        },
+    )
+    draft = _tree(
+        {},
+        **{
+            "scenarios.json": [{**new, **entry, "folder": "scenarios/outside_20_days"}],
+            "scenarios/outside_20_days/scenario.json": new,
+        },
+    )
+    return default, draft
+
+
+def test_a_renamed_scenario_is_one_rename_change_that_saves_as_one_scenario():
+    from simulate.services.harness_versioning.review_items import graded
+
+    default, draft = _renaming(tests="refunds nothing")
+    [change] = compute_changes(default, draft)
+    [renamed] = compute_changes(*_renaming())
+
+    assert (
+        change["id"],
+        change["action"],
+        change["renamed_from"],
+        change["summary"],
+    ) == (
+        "scenario:outside_20_days",
+        "changed",
+        "outside_30_days",
+        "Rename scenario outside_30_days → outside_20_days; change tests",
+    )
+    assert (graded(change), graded(renamed)) == (True, False)
+    files = compose_accepted(default, draft, [change], {change["id"]: "accepted"})
+    assert sorted(path for path in files if path.startswith("scenarios")) == [
+        "scenarios.json",
+        "scenarios/outside_20_days/scenario.json",
+    ]
+    assert [one["name"] for one in json.loads(files["scenarios.json"])] == [
+        "outside_20_days"
+    ]
+    assert compose_accepted(
+        default, draft, [change], {change["id"]: "rejected"}
+    ) == dict(default)
+
+
 def _pair():
     default = _tree(
         {"tools": TOOLS, "persona": "calm"},

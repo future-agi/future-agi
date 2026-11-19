@@ -103,6 +103,8 @@ class ReviewChange(TypedDict):
     depends_on: NotRequired[list[str]]
     graded: NotRequired[bool]
     revalidate: NotRequired[list[str]]
+    # A scenario renamed: the key it had in the saved version.
+    renamed_from: NotRequired[str]
 
 
 class SavedChange(TypedDict):
@@ -567,16 +569,21 @@ def _fields(before: Any, after: Any) -> list[str]:
 _FIELD_WORDS = {"_files": "files"}
 
 
-def _summary(action: str, item: Item, fields: list[str]) -> str:
-    noun = item.kind.replace("_", " ")
-    # A rule's key is a hash of its text, so the text names it; who last edited an item is not a change to it.
-    name = f'"{item.value}"' if item.kind == "rule" else item.key
-    shown = [
+def _shown_fields(fields: list[str]) -> list[str]:
+    """The fields a person edits, in words: never who last edited an item, nor bookkeeping such as the index entry."""
+    return [
         _FIELD_WORDS.get(field, field)
         for field in fields
         if field != "provenance"
         and (field in _FIELD_WORDS or not field.startswith("_"))
     ]
+
+
+def _summary(action: str, item: Item, fields: list[str]) -> str:
+    noun = item.kind.replace("_", " ")
+    # A rule's key is a hash of its text, so the text names it; who last edited an item is not a change to it.
+    name = f'"{item.value}"' if item.kind == "rule" else item.key
+    shown = _shown_fields(fields)
     if action == "changed" and shown:
         return f"Change {', '.join(shown)} of {noun} {name}"
     verb = {"added": "Add", "removed": "Remove", "changed": "Change"}[action]
@@ -644,6 +651,69 @@ def _rows_said(rows: list[WorldRowCounts] | None) -> str:
     return "; ".join(said)
 
 
+def _stable_key(item: Item | None) -> str:
+    """The scenario key the platform keeps on a scenario's suite index entry, which a rename leaves as it was."""
+    entry = (
+        item.value.get(INDEX_ENTRY)
+        if item is not None and isinstance(item.value, dict)
+        else None
+    )
+    return str(entry.get("scenario_key") or "") if isinstance(entry, dict) else ""
+
+
+def _renamed(value: Any) -> Any:
+    """A scenario's value without what a rename alone changes: its name and its folder."""
+    if not isinstance(value, dict):
+        return value
+    entry = value.get(INDEX_ENTRY)
+    kept = {
+        name: one for name, one in value.items() if name not in ("name", INDEX_ENTRY)
+    }
+    if isinstance(entry, dict):
+        kept[INDEX_ENTRY] = {
+            name: one for name, one in entry.items() if name not in ("name", "folder")
+        }
+    return kept
+
+
+def _join_renames(
+    changes: list[ReviewChange], before: Mapping[str, Item], after: Mapping[str, Item]
+) -> list[ReviewChange]:
+    """A scenario removed and one added whose suite index entries keep the same scenario key are one scenario renamed:
+    one change, named for the rename and whatever else changed with it."""
+    removed = {
+        key: one
+        for one in changes
+        if one["kind"] == "scenario"
+        and one["action"] == "removed"
+        and (key := _stable_key(before.get(one["id"])))
+    }
+    joined: set[str] = set()
+    for change in changes:
+        key = _stable_key(after.get(change["id"]))
+        if (
+            change["kind"] != "scenario"
+            or change["action"] != "added"
+            or key not in removed
+        ):
+            continue
+        old = removed.pop(key)
+        was, now = before[old["id"]].value, after[change["id"]].value
+        fields = _fields(_renamed(was), _renamed(now))
+        shown = _shown_fields(fields)
+        change.update(
+            action="changed",
+            fields=["name", *fields],
+            patch=[],
+            base_digest=old["base_digest"],
+            renamed_from=old["key"],
+            summary=f"Rename scenario {old['key']} → {change['key']}"
+            + (f"; change {', '.join(shown)}" if shown else ""),
+        )
+        joined.add(old["id"])
+    return [one for one in changes if one["id"] not in joined]
+
+
 def compute_changes(
     default: Mapping[str, bytes], draft: Mapping[str, bytes]
 ) -> list[ReviewChange]:
@@ -695,6 +765,7 @@ def compute_changes(
         if item.kind == "world_state":
             change["rows"] = rows
         changes.append(change)
+    changes = _join_renames(changes, before, after)
     changes.sort(key=lambda one: (KINDS.index(one["kind"]), one["key"]))
     return changes
 
