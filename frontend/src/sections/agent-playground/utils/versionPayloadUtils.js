@@ -1,9 +1,10 @@
 import { NODE_TYPES, API_NODE_TYPES, VERSION_STATUS } from "./constants";
 import {
   normalizeResponseFormat,
-  extractResponseSchema,
+  resolveResponseSchema,
   resolveResponseFormatForApi,
 } from "../AgentBuilder/NodeDrawer/nodeFormUtils";
+import { normalizePromptOutputPorts } from "./promptPortUtils";
 
 /**
  * Transform backend prompt_template (API schema) → form config (Zustand).
@@ -14,7 +15,9 @@ function transformConfigFromApi(apiConfig) {
   if (!apiConfig || Object.keys(apiConfig).length === 0) return {};
 
   return {
-    outputFormat: apiConfig.outputFormat || "string",
+    outputFormat: apiConfig.outputFormat || apiConfig.output_format || "string",
+    templateFormat:
+      apiConfig.templateFormat || apiConfig.template_format || "mustache",
     modelConfig: {
       model: apiConfig.model || "",
       modelDetail: apiConfig.modelDetail || {
@@ -24,7 +27,10 @@ function transformConfigFromApi(apiConfig) {
         isAvailable: false,
       },
       responseFormat: normalizeResponseFormat(apiConfig.response_format),
-      responseSchema: extractResponseSchema(apiConfig.response_format),
+      responseSchema: resolveResponseSchema(
+        apiConfig.response_format,
+        apiConfig.response_schema,
+      ),
       toolChoice: apiConfig.tool_choice || "auto",
       tools: apiConfig.tools || [],
     },
@@ -103,8 +109,9 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
         : node.data?.config;
       apiNode.prompt_template = buildPromptTemplateForApi(effectiveConfig);
 
-      const atomicOutputPorts = (node.data?.ports || []).filter(
-        (p) => p.direction === "output",
+      const atomicOutputPorts = normalizePromptOutputPorts(
+        (node.data?.ports || []).filter((p) => p.direction === "output"),
+        effectiveConfig,
       );
       if (atomicOutputPorts.length > 0) {
         apiNode.ports = atomicOutputPorts.map((port) => ({
@@ -143,8 +150,7 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
 function buildPromptTemplateForApi(formConfig) {
   if (!formConfig || Object.keys(formConfig).length === 0) return null;
 
-  const model = formConfig.modelConfig?.model;
-  if (!model) return null;
+  const model = formConfig.modelConfig?.model || null;
 
   const messages = (formConfig.messages || []).map((m) => ({
     id: m.id,
@@ -155,6 +161,16 @@ function buildPromptTemplateForApi(formConfig) {
   }));
 
   const configuration = formConfig.payload?.promptConfig?.[0]?.configuration;
+  const responseSchema = resolveResponseSchema(
+    formConfig.modelConfig?.responseFormat ??
+      configuration?.responseFormat ??
+      configuration?.response_format,
+    formConfig.modelConfig?.responseSchema ??
+      configuration?.responseSchema ??
+      configuration?.response_schema,
+  );
+
+  if (!model && messages.length === 0) return null;
 
   return {
     prompt_template_id: formConfig.prompt_template_id || null,
@@ -167,22 +183,32 @@ function buildPromptTemplateForApi(formConfig) {
       : configuration?.responseFormat ||
         configuration?.response_format ||
         "text",
-    output_format: "string",
+    response_schema: responseSchema ?? null,
+    output_format:
+      formConfig.outputFormat ||
+      configuration?.outputFormat ||
+      configuration?.output_format ||
+      "string",
     temperature: configuration?.temperature ?? null,
-    max_tokens: configuration?.max_tokens ?? configuration?.max_tokens ?? null,
-    top_p: configuration?.top_p ?? configuration?.top_p ?? null,
+    max_tokens: configuration?.maxTokens ?? configuration?.max_tokens ?? null,
+    top_p: configuration?.topP ?? configuration?.top_p ?? null,
     frequency_penalty:
       configuration?.frequency_penalty ??
       configuration?.frequencyPenalty ??
       null,
     presence_penalty:
       configuration?.presence_penalty ?? configuration?.presencePenalty ?? null,
-    tools: configuration?.tools || formConfig.modelConfig?.tools || [],
+    tools: configuration?.tools ?? formConfig.modelConfig?.tools ?? [],
     tool_choice:
-      configuration?.toolChoice ||
-      configuration?.tool_choice ||
-      formConfig.modelConfig?.toolChoice ||
+      configuration?.toolChoice ??
+      configuration?.tool_choice ??
+      formConfig.modelConfig?.toolChoice ??
       "",
+    template_format:
+      configuration?.templateFormat ??
+      configuration?.template_format ??
+      formConfig.templateFormat ??
+      "mustache",
     save_prompt_version: false,
   };
 }
