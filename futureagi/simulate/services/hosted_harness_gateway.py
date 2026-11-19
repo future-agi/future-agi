@@ -30,17 +30,21 @@ import jwt
 import requests
 import structlog
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
 
 from simulate.models import (
+    CallExecution,
     HostedHarnessAttempt,
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessSecret,
+    TestExecution,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
@@ -158,6 +162,17 @@ _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
+# Capped so pkill 10 + seal 45 + provider get about 30 + delete 120 stays inside the cancel activity's 4-minute timeout.
+_CANCEL_SEAL_CAP_SECONDS = 45
+_CANCEL_SEAL_POLL_SECONDS = 2
+_CANCEL_SIGNAL_TIMEOUT_SECONDS = 10
+
+
+def _cancel_seal_seconds() -> float:
+    """How long a stop waits for the guest to seal the call in flight, as configured and capped."""
+    return max(
+        0.0, min(float(settings.HARNESS_CANCEL_SEAL_SECONDS), _CANCEL_SEAL_CAP_SECONDS)
+    )
 
 
 def _empty_workspace_archive() -> bytes:
@@ -2292,25 +2307,35 @@ def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
 
 
 class HostedHarnessGateway:
-    def __init__(self) -> None:
+    # Set instead of a client when none is configured: raised on first sandbox use.
+    _provider_error: HostedHarnessError | None = None
+
+    def __init__(self, *, require_provider: bool = True) -> None:
         try:
             self.client = get_sandbox_provider()
         except SandboxProviderUnavailableError as exc:
             # The provider SDK is the optional `sandbox` extra. Retrying cannot
             # install it, so this is neither a 503 nor retryable.
-            raise HostedHarnessError(
+            error = HostedHarnessError(
                 "sandbox_sdk_missing",
                 str(exc),
                 status_code=501,
                 retryable=False,
-            ) from exc
+            )
+            if require_provider:
+                raise error from exc
+            self._provider_error = error
         except SandboxProviderConfigurationError as exc:
-            raise HostedHarnessError(
+            error = HostedHarnessError(
                 "sandbox_provider_not_configured",
                 str(exc),
                 status_code=503,
                 retryable=True,
-            ) from exc
+            )
+            if require_provider:
+                raise error from exc
+            # Raised on first sandbox use instead: a run whose sandbox was never created can still be cancelled.
+            self._provider_error = error
 
     # TODO: no caller since the authoring activity was removed; delete with its
     # sandbox helpers.
@@ -4343,7 +4368,11 @@ class HostedHarnessGateway:
         )
         return True
 
-    def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
+    def cancel(
+        self, job: HostedHarnessJob, *, reason: str, await_seal: bool = False
+    ) -> HostedHarnessJob:
+        """Stop the job and remove its sandbox; `await_seal` (the cancel activity only, never a request) first waits,
+        bounded, for the guest to seal the call in flight."""
         from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
 
         validate_cancellation_reason(reason)
@@ -4381,10 +4410,12 @@ class HostedHarnessGateway:
                     attempt.id,
                     provider_ref="",
                     verified_absent=True,
-                    details={"provider": self.client.name, "sandbox_created": False},
+                    details={
+                        # No `client` when no sandbox provider is configured: a stop needs none here.
+                        "provider": getattr(getattr(self, "client", None), "name", ""),
+                        "sandbox_created": False,
+                    },
                 )
-            from simulate.models import CallExecution, TestExecution
-
             job.state = HostedHarnessJob.State.CANCELED
             job.current_stage = HostedHarnessJob.State.CANCELED
             job.terminal_at = timezone.now()
@@ -4417,6 +4448,8 @@ class HostedHarnessGateway:
                 )
             return job
 
+        if self._provider_error is not None:
+            raise self._provider_error
         # Hang up the PSTN leg before any provider call. Reconnecting to or
         # deleting a remote sandbox can take tens of seconds, while Stop must
         # disconnect the caller promptly. This pass is best effort because the
@@ -4458,7 +4491,7 @@ class HostedHarnessGateway:
                     # but not this shell's own command line. An unbracketed `pkill -f`
                     # can terminate its invoking shell before cleanup reaches deletion.
                     "pkill -TERM -f '[f]i.alk.harness.hosted_entrypoint' || true",
-                    timeout=30,
+                    timeout=_CANCEL_SIGNAL_TIMEOUT_SECONDS,
                 )
             except Exception:
                 logger.exception(
@@ -4480,6 +4513,9 @@ class HostedHarnessGateway:
                 ]
             )
 
+        # The guest seals the call in flight with what it kept before its sandbox goes; off the request path only.
+        if await_seal:
+            self._await_guest_seal(attempt)
         return self._delete_and_record(
             attempt,
             # Re-run after sandbox termination to close the create/delete race. Do
@@ -4487,6 +4523,45 @@ class HostedHarnessGateway:
             # verified. A transient failure is retried through SandboxNotFound.
             after_provider_cleanup=lambda: cleanup_hosted_phone_rooms(job),
         )
+
+    def _await_guest_seal(self, attempt: HostedHarnessAttempt) -> None:
+        """Wait, bounded, until every call of this job still in flight has its receipt or the attempt's terminal
+        event arrived. Never raises; a retried cancel never waits twice."""
+
+        def in_flight() -> bool:
+            # Pending too: a call under way may read pending until its "scenario started" event arrives with the receipt.
+            return HostedHarnessExecution.objects.filter(
+                job_id=attempt.job_id,
+                call_execution__status__in=(
+                    CallExecution.CallStatus.PENDING,
+                    CallExecution.CallStatus.ONGOING,
+                ),
+                receipt__isnull=True,
+            ).exists()
+
+        try:
+            if not in_flight():
+                return
+            key = f"hosted-cancel-seal:{attempt.id}"
+            try:
+                if cache.get(key):
+                    return
+                cache.set(key, True, timeout=3600)
+            except Exception:  # noqa: BLE001 - any cache backend's failure; the seal still gets its wait
+                # Without the cache a retry may wait again.
+                logger.warning(
+                    "hosted_cancel_seal_cache_unavailable attempt=%s", attempt.id
+                )
+            deadline = time.monotonic() + _cancel_seal_seconds()
+            while time.monotonic() < deadline:
+                attempt.refresh_from_db(fields=["terminal_event_received"])
+                # Not `terminal_stage`: cancel itself sets it to "canceled" before this wait.
+                if attempt.terminal_event_received or not in_flight():
+                    return
+                time.sleep(_CANCEL_SEAL_POLL_SECONDS)
+            logger.warning("hosted_cancel_seal_timeout attempt=%s", attempt.id)
+        except Exception:
+            logger.exception("hosted cancel seal wait failed attempt=%s", attempt.id)
 
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while

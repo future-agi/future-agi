@@ -3192,6 +3192,25 @@
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 
+### SIM-E2E-009 — a multi-agent call serves its workers turn by turn, an unplaced step as unknown, and a stopped call its cancelled worker
+
+**Goal:** A developer reads which worker did what in each turn of a multi-agent call, what the record could not place, and how a stopped call left its workers
+
+**Spec:** `flows/simulate/participants-table.spec.ts:10`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one completed chat call with a stored Participants record, and a call the user stopped
+2. read the completed call's workers
+3. read the stopped call's workers
+
+**Backend state verified:**
+
+- the workers API serves two turns, each step with its turn and order, and the second hand-off as relationship unknown
+- the stopped call serves its refund worker as cancelled, stopped with the run sandbox
+
 ### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
 
 **Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World state says what the agent only read apart from what it committed
@@ -3223,6 +3242,25 @@
 - Add actor offers the caller's side and the world, and opens Add actor on the side picked
 - the Scenarios table names the actor, never its raw id
 - World state reads "1 read" and "Committed: issue_refund"
+
+### SIM-E2E-011 — the environment serves its declared workers, and a worker the harness stopped at its deadline is served so
+
+**Goal:** A developer reads which workers the app declares before a run, and after a run that a worker past its deadline was stopped, not only refused
+
+**Spec:** `flows/simulate/worker-stop-and-declared-workers.spec.ts:9`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an Environment whose contract declares two workers, with a call whose refund worker the harness stopped at its deadline
+2. read the environment detail
+3. read that call's workers
+
+**Backend state verified:**
+
+- the environment detail serves both declared workers with their binding and the tools each may use
+- the workers API serves the stopped worker as past its deadline with cleanup stopped
 
 ### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
 
@@ -3344,6 +3382,26 @@
 - her decision reads Refused
 - a line says the agent committed the change after Dana Brooks refused it
 - the approval names the refund the agent wrote after the decision
+
+### SIM-E2E-035 — a user stops a running Run, and its call is served Cancelled in the calls list and the runs list while a skipped case stays Error
+
+**Goal:** A developer stops a Run mid-call and the stopped call is counted as Cancelled, never as an error, while a case the harness skipped still reads Error
+
+**Spec:** `flows/simulate/stop-run-reads-cancelled.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a running hosted Run with one call under way and one case the harness skipped
+2. stop the Run, as its Stop simulation button does
+3. read the Run's calls and the runs list
+
+**Backend state verified:**
+
+- the stop is accepted even with no gateway workflow to signal
+- the calls API serves the stopped call as cancelled and the skipped case as error, with status counts Cancelled 1 and Error 1
+- the runs list serves the Run as Cancelled with one cancelled outcome, no errored one and the skipped case as skipped
 
 ### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
 

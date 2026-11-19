@@ -1106,6 +1106,7 @@ class CHSpanReader:
         *,
         project_id: str | None = None,
         include_heavy: bool = True,
+        limit: int | None = None,
     ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace_id__in=trace_ids).
 
@@ -1125,6 +1126,8 @@ class CHSpanReader:
         to stub those three fat columns: under FINAL's in-order read the per-part
         granule buffers for attributes_extra dominate memory, so a caller that only
         needs input/output/metadata/attrs_string should read lean.
+
+        ``limit`` (optional) returns at most that many spans, the earliest in that order.
         """
         if not trace_ids:
             return []
@@ -1134,11 +1137,14 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if limit is not None:
+            params["limit"] = int(limit)
         select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
-            "ORDER BY trace_id, start_time, id",
+            "ORDER BY trace_id, start_time, id"
+            + (" LIMIT %(limit)s" if limit is not None else ""),
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows

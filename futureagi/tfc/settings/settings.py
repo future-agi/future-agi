@@ -1061,6 +1061,9 @@ ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
 # provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
 # (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
 ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# After a user stop, how long cancel waits for the guest to seal the call in flight before deleting the sandbox: above
+# the guest's own bound (ALK_CANCEL_SEAL_SECONDS, 15 s) plus the time its runner takes to post the receipt.
+HARNESS_CANCEL_SEAL_SECONDS = float(os.getenv("HARNESS_CANCEL_SEAL_SECONDS") or 45)
 # Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
 # A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
 ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
