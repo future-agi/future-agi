@@ -18228,6 +18228,7 @@ export interface AgentFixRequestApi {
   cost_limit_usd?: number;
   observes_models?: boolean;
   meters_agent_cost?: boolean;
+  measured_automatically?: boolean;
 }
 
 export interface AgentFixReportApi {

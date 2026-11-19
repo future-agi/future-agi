@@ -35,6 +35,7 @@ from simulate.selectors.agent_fix import (
     fewest_failing_cases,
     is_retryable,
     launch_blocker,
+    measured_automatically,
     model_key,
     models_called,
     overridable_regressions,
@@ -234,6 +235,7 @@ def launch_fix_run(
         cost_limit_usd=cost_limit_usd,
         observes_models=bool(seen),
         meters_agent_cost=bool(usage),
+        measured_automatically=measured_automatically(source_run),
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))
