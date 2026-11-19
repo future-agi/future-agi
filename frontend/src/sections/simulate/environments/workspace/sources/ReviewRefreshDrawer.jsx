@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import {
   Box,
@@ -11,13 +10,10 @@ import {
   Typography,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
+import { kbChangesOf } from "src/api/simulate-environments/_fixtures/sources";
 import {
-  kbChangesOf,
-  kbRefreshed,
-} from "src/api/simulate-environments/_fixtures/sources";
-import {
-  sourceSummaryKey,
   useEnvironmentSources,
+  useRefreshSource,
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
@@ -68,8 +64,8 @@ ScenarioCount.propTypes = {
  * leaves it as it is, still waiting to be reviewed.
  */
 export default function ReviewRefreshDrawer({ envId, sourceId, onClose }) {
-  const queryClient = useQueryClient();
   const { data: summary } = useEnvironmentSources(envId);
+  const refresh = useRefreshSource(envId);
   const [rejected, setRejected] = useState(() => new Set());
   const [validating, setValidating] = useState(false);
 
@@ -102,16 +98,7 @@ export default function ReviewRefreshDrawer({ envId, sourceId, onClose }) {
   const save = () => {
     setValidating(true);
     setTimeout(() => {
-      queryClient.setQueryData(sourceSummaryKey(envId), (current) =>
-        current
-          ? {
-              ...current,
-              sources: current.sources.map((one) =>
-                one.source_id === sourceId ? kbRefreshed(one, accepted) : one,
-              ),
-            }
-          : current,
-      );
+      refresh(sourceId, accepted);
       enqueueSnackbar(`Saved as ${next} with the current ${source.name}.`, {
         variant: "success",
       });

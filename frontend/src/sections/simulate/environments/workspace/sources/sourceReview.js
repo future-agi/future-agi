@@ -7,6 +7,8 @@ export const buildSourceReview = (draft, decisions = {}) => {
     acceptedRuleIds = [],
     acceptedRelationshipIndexes = [],
     personalDataModes = {},
+    editedRules = {},
+    actorEdits = {},
   } = decisions;
   const audience = { tested_agent: testedAgent, participant_ids: [] };
 
@@ -43,7 +45,10 @@ export const buildSourceReview = (draft, decisions = {}) => {
           rules: (proposals.policy_rules || [])
             .filter((proposal) => statements.has(proposal.statement_id))
             .map((proposal) => ({
-              proposal,
+              // A rule reworded before adding goes in as worded.
+              proposal: editedRules[proposal.statement_id]
+                ? { ...proposal, rule: editedRules[proposal.statement_id] }
+                : proposal,
               decision:
                 proposal.status === "supported" &&
                 acceptedRuleIds.includes(proposal.statement_id)
@@ -58,5 +63,7 @@ export const buildSourceReview = (draft, decisions = {}) => {
     relationships: (proposals.relationships || [])
       .filter((_, index) => acceptedRelationshipIndexes.includes(index))
       .map((proposal) => proposal.relationship),
+    // Stub only: the actor's edited approval scope has no backend field yet.
+    ...(Object.keys(actorEdits).length && { ui: { actor_edits: actorEdits } }),
   };
 };

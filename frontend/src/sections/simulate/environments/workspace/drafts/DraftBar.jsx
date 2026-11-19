@@ -16,7 +16,12 @@ import {
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY, REVIEW_COPY } from "../workspace.constants";
-import { keptChanges, reviewCounts, saveLine } from "./reviewView";
+import {
+  keptChanges,
+  recheckedKeys,
+  reviewCounts,
+  saveLine,
+} from "./reviewView";
 
 // The piece a stale refusal names, else the first stale one.
 const staleText = (drafts, piece) => {
@@ -92,7 +97,10 @@ export default function DraftBar({
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
 
-  const needsReview = counts.undecided > 0;
+  // Changes from files get their scenarios checked in Review changes before a save.
+  const needsReview =
+    counts.undecided > 0 ||
+    recheckedKeys(sampleFileEdits(review).changes).length > 0;
   let shortLabel = REVIEW_COPY.couldntApply(failedCount);
   if (uncounted) shortLabel = REVIEW_COPY.unsavedEditsUncounted;
   else if (counts.rejected)

@@ -63,25 +63,27 @@ export default function AddSourceMenu({
             </Typography>
           </MenuItem>
         </CustomTooltip>
-        <CustomTooltip show arrow placement="left" title={COPY.kbHint}>
-          <MenuItem
-            onClick={() => {
-              onClose();
-              onAddKb?.();
-            }}
-            sx={rowSx}
-          >
-            <Iconify icon="solar:document-text-linear" width={16} />
-            <Typography sx={{ typography: "s1", flex: 1 }}>
-              {COPY.kb}
-            </Typography>
-            <Iconify
-              icon="solar:alt-arrow-right-linear"
-              width={14}
-              sx={{ color: "text.tertiary" }}
-            />
-          </MenuItem>
-        </CustomTooltip>
+        {onAddKb && (
+          <CustomTooltip show arrow placement="left" title={COPY.kbHint}>
+            <MenuItem
+              onClick={() => {
+                onClose();
+                onAddKb();
+              }}
+              sx={rowSx}
+            >
+              <Iconify icon="solar:document-text-linear" width={16} />
+              <Typography sx={{ typography: "s1", flex: 1 }}>
+                {COPY.kb}
+              </Typography>
+              <Iconify
+                icon="solar:alt-arrow-right-linear"
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
+            </MenuItem>
+          </CustomTooltip>
+        )}
         <CustomTooltip show arrow placement="left" title={command}>
           <MenuItem onClick={copyCommand} sx={rowSx}>
             <Iconify icon="solar:code-linear" width={16} />
@@ -143,7 +145,7 @@ AddSourceMenu.propTypes = {
   anchorEl: PropTypes.any,
   onClose: PropTypes.func.isRequired,
   onAddFiles: PropTypes.func.isRequired,
-  // Opens the Knowledge base picker.
+  // Opens the Knowledge base picker; without it the row is left out.
   onAddKb: PropTypes.func,
   limits: PropTypes.shape({
     formats: PropTypes.arrayOf(PropTypes.string),

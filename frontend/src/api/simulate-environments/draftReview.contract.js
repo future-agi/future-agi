@@ -118,6 +118,8 @@ const FailedChangeSchema = z.object({
   // Proposed: the file's name, and what fixes it.
   source_name: z.string().optional(),
   fix: z.enum(["supply", "attach"]).optional(),
+  // Stub only: the table it waits on, so adding one clears the row.
+  ui: z.object({ needs: z.string() }).optional(),
 });
 
 export const DraftReviewSchema = z

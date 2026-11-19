@@ -60,20 +60,28 @@ const filesOf = (item) =>
 /**
  * Each file stays "reading" until the live summary says it was read, then its
  * items show. Derived from the cache every render, so closing and reopening
- * mid-read neither repeats items nor reads a finished file again.
+ * mid-read neither repeats items nor reads a finished file again. A file no
+ * longer in the summary was removed: its row and items leave the review.
+ * Without a summary yet (`liveSources` undefined) the prepared status stands.
  */
-export const readProgress = (prepared, liveSources = []) => {
-  const live = new Map(
-    liveSources.map((source) => [source.source_id, source.status]),
+export const readProgress = (prepared, liveSources) => {
+  const live = liveSources
+    ? new Map(liveSources.map((source) => [source.source_id, source.status]))
+    : null;
+  const statusOf = (source) =>
+    live ? live.get(source.source_id) : source.status;
+  const files = prepared?.ui?.sources || [];
+  const gone = new Set(
+    files
+      .filter((source) => !statusOf(source))
+      .map((source) => source.source_id),
   );
-  const reading = (prepared?.ui?.sources || []).filter(
-    (source) => (live.get(source.source_id) ?? source.status) === "reading",
-  );
+  const reading = files.filter((source) => statusOf(source) === "reading");
   const pending = new Set(reading.map((source) => source.source_id));
   return {
     reading,
     items: (prepared?.ui?.items || []).filter((item) =>
-      filesOf(item).every((id) => !pending.has(id)),
+      filesOf(item).every((id) => !pending.has(id) && !gone.has(id)),
     ),
   };
 };
@@ -108,14 +116,35 @@ export const mergePrepared = (current, next) => {
 
 // #4158 knows two modes; "Keep" and "No personal data present" both leave the values as they are.
 const PERSONAL_MODE = { replace: "synthetic_replace" };
+const SYNTHETIC_COLUMNS = ["replace", "mask"];
+
+// Custom sends synthetic values once any column is replaced or masked.
+const personalModeOf = (choice, privacy = {}) => {
+  if (choice === "custom")
+    return Object.values(privacy).some((mode) =>
+      SYNTHETIC_COLUMNS.includes(mode),
+    )
+      ? "synthetic_replace"
+      : "none";
+  return PERSONAL_MODE[choice] || "none";
+};
 
 const statementIdOf = (draft, sourceId, text) =>
   draft.sources
     .find((source) => source.pin.source_id === sourceId)
     ?.statements.find((statement) => statement.text === text)?.statement_id;
 
-/** `buildSourceReview` decisions for the accepted items and each file's personal-data choice. */
-export const reviewDecisions = (draft, accepted, choices = {}) => {
+/**
+ * `buildSourceReview` decisions for the accepted items and each file's
+ * personal-data choice. `privacy` is each file's column map, read for a
+ * custom choice.
+ */
+export const reviewDecisions = (
+  draft,
+  accepted,
+  choices = {},
+  privacy = {},
+) => {
   const tables = new Set(
     accepted
       .filter((item) => item.kind === "table")
@@ -123,16 +152,26 @@ export const reviewDecisions = (draft, accepted, choices = {}) => {
   );
   const indexesOf = (list, keep) =>
     list.flatMap((entry, index) => (keep(entry) ? [index] : []));
+  const ruleOf = (item) => {
+    if (item.kind === "rule")
+      return { id: statementIdOf(draft, item.cite?.sourceId, item.rule) };
+    if (item.kind === "conflict" && item.pick)
+      return { id: statementIdOf(draft, item.pick.sourceId, item.pick.rule) };
+    return {};
+  };
+  const rules = accepted
+    .map((item) => ({ ...ruleOf(item), edited: item.edited }))
+    .filter((rule) => rule.id);
   return {
-    acceptedRuleIds: accepted
-      .map((item) => {
-        if (item.kind === "rule")
-          return statementIdOf(draft, item.cite?.sourceId, item.rule);
-        if (item.kind === "conflict" && item.pick)
-          return statementIdOf(draft, item.pick.sourceId, item.pick.rule);
-        return null;
-      })
-      .filter(Boolean),
+    acceptedRuleIds: rules.map((rule) => rule.id),
+    editedRules: Object.fromEntries(
+      rules.filter((rule) => rule.edited).map((rule) => [rule.id, rule.edited]),
+    ),
+    actorEdits: Object.fromEntries(
+      accepted
+        .filter((item) => item.kind === "actor" && item.edited)
+        .map((item) => [item.id, item.edited]),
+    ),
     acceptedMappingIndexes: indexesOf(
       draft.proposals.field_mappings,
       (proposal) => tables.has(proposal.source_id),
@@ -146,7 +185,7 @@ export const reviewDecisions = (draft, accepted, choices = {}) => {
     personalDataModes: Object.fromEntries(
       Object.entries(choices).map(([sourceId, choice]) => [
         sourceId,
-        PERSONAL_MODE[choice] || "none",
+        personalModeOf(choice, privacy[sourceId]),
       ]),
     ),
   };

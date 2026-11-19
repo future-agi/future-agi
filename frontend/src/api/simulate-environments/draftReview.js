@@ -48,15 +48,15 @@ export function useDraftReview(envId, { enabled = true } = {}) {
   });
 }
 
-// ({ changes, failed }): edits added from files land in the review, already
-// decided, even when no review was loaded yet.
+// ({ changes, failed, cleared }): edits added from files land in the review,
+// already decided, even when no review was loaded yet. `cleared` failed ids go.
 export const addSampleEdits = (
   queryClient,
   envId,
-  { changes = [], failed = [] },
+  { changes = [], failed = [], cleared = [] },
 ) =>
   queryClient.setQueryData(draftReviewKey(envId), (review) => {
-    const next = withSampleEdits(review, changes, failed);
+    const next = withSampleEdits(review, changes, failed, cleared);
     if (CHECK_CONTRACT) DraftReviewSchema.parse(next);
     return next;
   });

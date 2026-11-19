@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useId } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { upsertPersonalDataEdit } from "src/api/simulate-environments/sources";
+import { useSetPersonalData } from "src/api/simulate-environments/sources";
 import {
   Box,
   MenuItem,
@@ -210,29 +209,17 @@ PersonalDataChoice.propTypes = {
  * The file drawer's Personal data tab. Every click rewrites the file's one
  * choice and column map, so all its edits stay a single pending edit.
  */
-export function PersonalDataTab({ envId, source, readOnly = false, onEdit }) {
-  const queryClient = useQueryClient();
+export function PersonalDataTab({ envId, source, readOnly = false }) {
+  const setPersonalData = useSetPersonalData(envId);
   const choice = source.ui?.personal_choice || null;
   const edit = (change) => {
-    const next = (one) => {
-      const [columns, nextChoice] = change(
-        columnsOf(one),
-        one.ui?.personal_choice || null,
-      );
-      return {
-        ...one,
-        ui: {
-          ...one.ui,
-          personal_choice: nextChoice,
-          privacy: Object.fromEntries(
-            columns.map((column) => [column.name, column.mode]),
-          ),
-        },
-      };
-    };
-    onEdit(next);
-    // A saved file's one row in Review changes follows the latest choice.
-    upsertPersonalDataEdit(queryClient, envId, next(source));
+    const [columns, nextChoice] = change(columnsOf(source), choice);
+    setPersonalData(source.source_id, {
+      choice: nextChoice,
+      privacy: Object.fromEntries(
+        columns.map((column) => [column.name, column.mode]),
+      ),
+    });
   };
 
   return (
@@ -264,5 +251,4 @@ PersonalDataTab.propTypes = {
   envId: PropTypes.string.isRequired,
   source: PropTypes.object.isRequired,
   readOnly: PropTypes.bool,
-  onEdit: PropTypes.func.isRequired,
 };
