@@ -344,9 +344,14 @@ describe("initGoogleAnalytics unit", () => {
       });
       const args = [{ tab: 1 }, "", "/dashboard/summary"];
       // Native History rejects this receiver; no analytics should run.
-      expect(() => Reflect.apply(window.history[method], {}, args)).toThrow(
-        window.TypeError,
-      );
+      let observedError;
+      try {
+        Reflect.apply(window.history[method], {}, args);
+      } catch (error) {
+        observedError = error;
+      }
+      expect(observedError?.name).toBe("TypeError");
+      expect(observedError).toBe(underlying.mock.results.at(-1).value);
       expect(push).not.toHaveBeenCalled();
       expect(window.history[method](...args)).toBe(result);
       expect(underlying).toHaveBeenLastCalledWith(...args);
