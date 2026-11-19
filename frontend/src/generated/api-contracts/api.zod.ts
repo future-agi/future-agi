@@ -36269,11 +36269,14 @@ export const SimulateApiAgentFixIssuesListResponse = zod.object({
           "launched",
           "ended",
         ]),
-        issue: zod.object({
-          cluster_id: zod.string().min(1),
-          project_id: zod.string().uuid(),
-          title: zod.string().min(1),
-        }),
+        issue: zod.union([
+          zod.object({
+            cluster_id: zod.string().min(1),
+            project_id: zod.string().uuid(),
+            title: zod.union([zod.string().min(1), zod.null()]),
+          }),
+          zod.null(),
+        ]),
         environment: zod.object({
           id: zod.string().uuid(),
           name: zod.string().min(1),
@@ -36284,37 +36287,43 @@ export const SimulateApiAgentFixIssuesListResponse = zod.object({
             unit: zod.enum(["call", "session", "trace"]),
             source_id: zod.string().min(1),
             reason: zod.enum(["example", "cited", "recent"]),
-            started_at: zod.string().min(1),
+            started_at: zod.union([zod.string().min(1), zod.null()]),
           }),
         ),
-        ending: zod.object({
-          code: zod.string().min(1),
-          message: zod.string().min(1),
-        }),
-        baseline: zod.object({
-          run_id: zod.string().uuid(),
-          state: zod.string().min(1),
-          scenarios: zod.number(),
-          completed_count: zod.number(),
-          failed_count: zod.number(),
-        }),
-        epoch: zod.object({
-          id: zod.string().uuid(),
-          number: zod.number(),
-          environment_id: zod.string().uuid(),
-          state: zod.string().min(1),
-          step: zod.enum([
-            "variations",
-            "reproduce",
-            "search",
-            "verify",
-            "done",
-          ]),
-          failure_code: zod.string().min(1),
-          retryable: zod.boolean(),
-          limited_validation: zod.boolean(),
-          pull_request_url: zod.string().min(1),
-        }),
+        ending: zod.union([
+          zod.object({
+            code: zod.string().min(1),
+            message: zod.string().min(1),
+          }),
+          zod.null(),
+        ]),
+        baseline: zod.union([
+          zod.object({
+            run_id: zod.string().uuid(),
+            state: zod.string().min(1),
+            scenarios: zod.number(),
+            completed_count: zod.number(),
+            failed_count: zod.number(),
+          }),
+          zod.null(),
+        ]),
+        epoch: zod.union([
+          zod.object({
+            id: zod.string().uuid(),
+            number: zod.union([zod.number(), zod.null()]),
+            environment_id: zod.string().uuid(),
+            state: zod.string().min(1),
+            step: zod.union([
+              zod.enum(["variations", "reproduce", "search", "verify", "done"]),
+              zod.null(),
+            ]),
+            failure_code: zod.union([zod.string().min(1), zod.null()]),
+            retryable: zod.boolean(),
+            limited_validation: zod.boolean(),
+            pull_request_url: zod.union([zod.string().min(1), zod.null()]),
+          }),
+          zod.null(),
+        ]),
         created_at: zod.string().datetime({ offset: true }),
       }),
     }),
@@ -36371,25 +36380,31 @@ export const SimulateApiAgentFixIssuesPlanResponse = zod.object({
   issue: zod.object({
     cluster_id: zod.string().min(1),
     project_id: zod.string().uuid(),
-    title: zod.string().min(1),
+    title: zod.union([zod.string().min(1), zod.null()]),
   }),
-  environment: zod.object({
-    id: zod.string().uuid(),
-    name: zod.string().min(1),
-  }),
-  blocked: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
+  environment: zod.union([
+    zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
+  blocked: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
   sample: zod.object({
-    unit: zod.enum(["call", "session", "trace"]),
+    unit: zod.union([zod.enum(["call", "session", "trace"]), zod.null()]),
     picks: zod.array(
       zod.object({
         member_id: zod.string().min(1),
         unit: zod.enum(["call", "session", "trace"]),
         source_id: zod.string().min(1),
         reason: zod.enum(["example", "cited", "recent"]),
-        started_at: zod.string().min(1),
+        started_at: zod.union([zod.string().min(1), zod.null()]),
       }),
     ),
     alternates: zod.array(
@@ -36398,22 +36413,25 @@ export const SimulateApiAgentFixIssuesPlanResponse = zod.object({
         unit: zod.enum(["call", "session", "trace"]),
         source_id: zod.string().min(1),
         reason: zod.enum(["example", "cited", "recent"]),
-        started_at: zod.string().min(1),
+        started_at: zod.union([zod.string().min(1), zod.null()]),
       }),
     ),
   }),
-  open_job_id: zod.string().uuid(),
-  issue_scenarios: zod.object({
-    held: zod.number(),
-    limit: zod.number(),
-  }),
+  open_job_id: zod.union([zod.string().uuid(), zod.null()]),
+  issue_scenarios: zod.union([
+    zod.object({
+      held: zod.number(),
+      limit: zod.number(),
+    }),
+    zod.null(),
+  ]),
   defaults: zod.object({
     surfaces: zod.array(
       zod.object({
         id: zod.enum(["prompt", "tools", "settings", "code"]),
         label: zod.string().min(1),
         allowed: zod.boolean(),
-        reason: zod.string().min(1),
+        reason: zod.union([zod.string().min(1), zod.null()]),
       }),
     ),
     budget_credits: zod.number(),
@@ -36452,11 +36470,14 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
     "launched",
     "ended",
   ]),
-  issue: zod.object({
-    cluster_id: zod.string().min(1),
-    project_id: zod.string().uuid(),
-    title: zod.string().min(1),
-  }),
+  issue: zod.union([
+    zod.object({
+      cluster_id: zod.string().min(1),
+      project_id: zod.string().uuid(),
+      title: zod.union([zod.string().min(1), zod.null()]),
+    }),
+    zod.null(),
+  ]),
   environment: zod.object({
     id: zod.string().uuid(),
     name: zod.string().min(1),
@@ -36467,31 +36488,43 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
       unit: zod.enum(["call", "session", "trace"]),
       source_id: zod.string().min(1),
       reason: zod.enum(["example", "cited", "recent"]),
-      started_at: zod.string().min(1),
+      started_at: zod.union([zod.string().min(1), zod.null()]),
     }),
   ),
-  ending: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
-  baseline: zod.object({
-    run_id: zod.string().uuid(),
-    state: zod.string().min(1),
-    scenarios: zod.number(),
-    completed_count: zod.number(),
-    failed_count: zod.number(),
-  }),
-  epoch: zod.object({
-    id: zod.string().uuid(),
-    number: zod.number(),
-    environment_id: zod.string().uuid(),
-    state: zod.string().min(1),
-    step: zod.enum(["variations", "reproduce", "search", "verify", "done"]),
-    failure_code: zod.string().min(1),
-    retryable: zod.boolean(),
-    limited_validation: zod.boolean(),
-    pull_request_url: zod.string().min(1),
-  }),
+  ending: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
+  baseline: zod.union([
+    zod.object({
+      run_id: zod.string().uuid(),
+      state: zod.string().min(1),
+      scenarios: zod.number(),
+      completed_count: zod.number(),
+      failed_count: zod.number(),
+    }),
+    zod.null(),
+  ]),
+  epoch: zod.union([
+    zod.object({
+      id: zod.string().uuid(),
+      number: zod.union([zod.number(), zod.null()]),
+      environment_id: zod.string().uuid(),
+      state: zod.string().min(1),
+      step: zod.union([
+        zod.enum(["variations", "reproduce", "search", "verify", "done"]),
+        zod.null(),
+      ]),
+      failure_code: zod.union([zod.string().min(1), zod.null()]),
+      retryable: zod.boolean(),
+      limited_validation: zod.boolean(),
+      pull_request_url: zod.union([zod.string().min(1), zod.null()]),
+    }),
+    zod.null(),
+  ]),
   created_at: zod.string().datetime({ offset: true }),
   evidence_import: zod.object({
     id: zod.string().uuid(),
@@ -36783,7 +36816,7 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
         id: zod.enum(["prompt", "tools", "settings", "code"]),
         label: zod.string().min(1),
         allowed: zod.boolean(),
-        reason: zod.string().min(1),
+        reason: zod.union([zod.string().min(1), zod.null()]),
       }),
     ),
     budget_credits: zod.number(),
@@ -36860,7 +36893,7 @@ export const SimulateApiAgentFixIssuesRunBody = zod.object({
     .min(simulateApiAgentFixIssuesRunBodyCostMarginPctMin)
     .max(simulateApiAgentFixIssuesRunBodyCostMarginPctMax)
     .optional(),
-  cost_limit_usd: zod.number().optional(),
+  cost_limit_usd: zod.union([zod.number(), zod.null()]).optional(),
   case_ids: zod
     .array(zod.string().uuid())
     .min(1)
@@ -36900,11 +36933,14 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
     "launched",
     "ended",
   ]),
-  issue: zod.object({
-    cluster_id: zod.string().min(1),
-    project_id: zod.string().uuid(),
-    title: zod.string().min(1),
-  }),
+  issue: zod.union([
+    zod.object({
+      cluster_id: zod.string().min(1),
+      project_id: zod.string().uuid(),
+      title: zod.union([zod.string().min(1), zod.null()]),
+    }),
+    zod.null(),
+  ]),
   environment: zod.object({
     id: zod.string().uuid(),
     name: zod.string().min(1),
@@ -36915,31 +36951,43 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
       unit: zod.enum(["call", "session", "trace"]),
       source_id: zod.string().min(1),
       reason: zod.enum(["example", "cited", "recent"]),
-      started_at: zod.string().min(1),
+      started_at: zod.union([zod.string().min(1), zod.null()]),
     }),
   ),
-  ending: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
-  baseline: zod.object({
-    run_id: zod.string().uuid(),
-    state: zod.string().min(1),
-    scenarios: zod.number(),
-    completed_count: zod.number(),
-    failed_count: zod.number(),
-  }),
-  epoch: zod.object({
-    id: zod.string().uuid(),
-    number: zod.number(),
-    environment_id: zod.string().uuid(),
-    state: zod.string().min(1),
-    step: zod.enum(["variations", "reproduce", "search", "verify", "done"]),
-    failure_code: zod.string().min(1),
-    retryable: zod.boolean(),
-    limited_validation: zod.boolean(),
-    pull_request_url: zod.string().min(1),
-  }),
+  ending: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
+  baseline: zod.union([
+    zod.object({
+      run_id: zod.string().uuid(),
+      state: zod.string().min(1),
+      scenarios: zod.number(),
+      completed_count: zod.number(),
+      failed_count: zod.number(),
+    }),
+    zod.null(),
+  ]),
+  epoch: zod.union([
+    zod.object({
+      id: zod.string().uuid(),
+      number: zod.union([zod.number(), zod.null()]),
+      environment_id: zod.string().uuid(),
+      state: zod.string().min(1),
+      step: zod.union([
+        zod.enum(["variations", "reproduce", "search", "verify", "done"]),
+        zod.null(),
+      ]),
+      failure_code: zod.union([zod.string().min(1), zod.null()]),
+      retryable: zod.boolean(),
+      limited_validation: zod.boolean(),
+      pull_request_url: zod.union([zod.string().min(1), zod.null()]),
+    }),
+    zod.null(),
+  ]),
   created_at: zod.string().datetime({ offset: true }),
   evidence_import: zod.object({
     id: zod.string().uuid(),
@@ -37231,7 +37279,7 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
         id: zod.enum(["prompt", "tools", "settings", "code"]),
         label: zod.string().min(1),
         allowed: zod.boolean(),
-        reason: zod.string().min(1),
+        reason: zod.union([zod.string().min(1), zod.null()]),
       }),
     ),
     budget_credits: zod.number(),
@@ -37493,11 +37541,14 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       retryable: zod.boolean().optional(),
       limited_validation: zod.boolean().optional(),
       issue: zod
-        .object({
-          job_id: zod.string().uuid(),
-          cluster_id: zod.string().min(1),
-          project_id: zod.string().uuid(),
-        })
+        .union([
+          zod.object({
+            job_id: zod.string().uuid(),
+            cluster_id: zod.string().min(1),
+            project_id: zod.string().uuid(),
+          }),
+          zod.null(),
+        ])
         .optional(),
       check_runs: zod
         .array(
@@ -37769,7 +37820,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
       id: zod.enum(["prompt", "tools", "settings", "code"]),
       label: zod.string().min(1),
       allowed: zod.boolean(),
-      reason: zod.string().min(1),
+      reason: zod.union([zod.string().min(1), zod.null()]),
     }),
   ),
   defaults: zod.object({
@@ -38017,11 +38068,14 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   retryable: zod.boolean().optional(),
   limited_validation: zod.boolean().optional(),
   issue: zod
-    .object({
-      job_id: zod.string().uuid(),
-      cluster_id: zod.string().min(1),
-      project_id: zod.string().uuid(),
-    })
+    .union([
+      zod.object({
+        job_id: zod.string().uuid(),
+        cluster_id: zod.string().min(1),
+        project_id: zod.string().uuid(),
+      }),
+      zod.null(),
+    ])
     .optional(),
   check_runs: zod
     .array(
@@ -38448,11 +38502,14 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   retryable: zod.boolean().optional(),
   limited_validation: zod.boolean().optional(),
   issue: zod
-    .object({
-      job_id: zod.string().uuid(),
-      cluster_id: zod.string().min(1),
-      project_id: zod.string().uuid(),
-    })
+    .union([
+      zod.object({
+        job_id: zod.string().uuid(),
+        cluster_id: zod.string().min(1),
+        project_id: zod.string().uuid(),
+      }),
+      zod.null(),
+    ])
     .optional(),
   check_runs: zod
     .array(
