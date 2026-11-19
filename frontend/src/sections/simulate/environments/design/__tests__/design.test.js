@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { READ_AT, READ_MS, designSummary } from "../design";
+import { READ_AT, READ_MS, designSummary, untitledNameOf } from "../design";
 
 const file = (name, size = 1000) => ({
   id: `${name}-${size}`,
@@ -61,5 +61,21 @@ describe("design", () => {
       1,
     );
     expect(simulated.tools.map((t) => t.name)).toContain("email_outbox");
+  });
+
+  it("numbers an untitled name only on a clash, and suggests one once read", () => {
+    expect(untitledNameOf(["Refund desk"])).toBe("Untitled environment");
+    expect(
+      untitledNameOf(["untitled environment", "Untitled environment 2"]),
+    ).toBe("Untitled environment 3");
+    const d = draft({
+      description: "A customer asks for a refund on a late order.",
+      files: [file("orders.csv")],
+      readUntil: 10_000 + READ_MS,
+    });
+    expect(designSummary(d, 10_000).suggestedName).toBeNull();
+    expect(designSummary(d, 10_000 + READ_MS).suggestedName).toBe(
+      "Refund desk",
+    );
   });
 });
