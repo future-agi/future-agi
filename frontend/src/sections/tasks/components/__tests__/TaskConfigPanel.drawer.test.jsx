@@ -1,4 +1,5 @@
 import React from "react";
+import PropTypes from "prop-types";
 import { useForm } from "react-hook-form";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -243,6 +244,11 @@ function TaskForm({ savedTask, runType = "continuous" }) {
     />
   );
 }
+TaskForm.propTypes = {
+  savedTask: PropTypes.object,
+  runType: PropTypes.string,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.width = 1280;
