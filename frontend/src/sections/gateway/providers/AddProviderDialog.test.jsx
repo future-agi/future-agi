@@ -1408,4 +1408,27 @@ describe("AddProviderDialog provider names", () => {
     expect(payload.config.base_url).toBe("https://api.perplexity.ai/v1");
     expect(payload.config.api_path_prefix).toBe("/v1");
   });
+
+  it("offers API Route on its OpenAI-compatible endpoint with one /v1 prefix", async () => {
+    renderWithNames([]);
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "API Route" }));
+
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    expect(screen.getByLabelText(/Base URL/).value).toBe(
+      "https://global.api-route.com/v1",
+    );
+    expect(screen.getByLabelText(/API Path Prefix/i).value).toBe("/v1");
+    await userEvent.type(screen.getByLabelText(/API Key/i), "synthetic-key");
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await addModel("example-model");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("api-route");
+    expect(payload.config.api_format).toBe("openai");
+    expect(payload.config.base_url).toBe("https://global.api-route.com/v1");
+    expect(payload.config.api_path_prefix).toBe("/v1");
+  });
 });

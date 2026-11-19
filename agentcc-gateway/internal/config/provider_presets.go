@@ -12,6 +12,11 @@ type ProviderPreset struct {
 }
 
 // KnownProviders maps provider type names to their default configurations.
+//
+// api-route is API Route's OpenAI-compatible API. The public base URL is
+// https://global.api-route.com/v1 (https://www.api-route.com/integrations).
+// The host and the /v1 prefix are stored separately, as with the other
+// OpenAI-compatible presets, so the prefix is applied once.
 var KnownProviders = map[string]ProviderPreset{
 	"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai", PathPrefix: "/v1"},
 	"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai", PathPrefix: "/v1"},
@@ -26,6 +31,7 @@ var KnownProviders = map[string]ProviderPreset{
 	"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
 	"telnyx":      {BaseURL: "https://api.telnyx.com/v2/ai", APIFormat: "openai", PathPrefix: "/openai"},
+	"api-route":   {BaseURL: "https://global.api-route.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"azure":       {APIFormat: "azure"},
 }
 
