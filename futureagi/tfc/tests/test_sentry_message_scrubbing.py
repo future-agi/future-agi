@@ -25,20 +25,35 @@ def test_ordinary_event_and_next_event(at_ingestion):
     ) as transport:
         crumb = {"method": "POST", "detail": MARKER}
         sentry_sdk.add_breadcrumb(category="http", message=MARKER, data=crumb)
-        logging.getLogger(LOGGER).error("job %s stopped", MARKER, extra={"note": MARKER})
-        sentry_sdk.capture_event({
-            "exception": {"values": [{"type": "LookupError", "value": "row missing"}]},
-            "extra": {"count": 2, "note": MARKER, "input_tokens": 17, "max_tokens": MARKER},
-            "request": {
-                "method": "GET", "headers": {"Cookie": f"first=ok; second={MARKER}"},
-                "cookies": {"session": MARKER},
-            },
-        })
+        logging.getLogger(LOGGER).error(
+            "job %s stopped", MARKER, extra={"note": MARKER}
+        )
+        sentry_sdk.capture_event(
+            {
+                "exception": {
+                    "values": [{"type": "LookupError", "value": "row missing"}]
+                },
+                "extra": {
+                    "count": 2,
+                    "note": MARKER,
+                    "input_tokens": 17,
+                    "max_tokens": MARKER,
+                },
+                "request": {
+                    "method": "GET",
+                    "headers": {"Cookie": f"first=ok; second={MARKER}"},
+                    "cookies": {"session": MARKER},
+                },
+            }
+        )
         first, second = transport.events
         for event in (first, second):
             assert MARKER not in json.dumps(event)
             trail = event["breadcrumbs"]["values"]
-            assert any(c.get("category") == "http" and c.get("data") == {"method": "POST"} for c in trail)
+            assert any(
+                c.get("category") == "http" and c.get("data") == {"method": "POST"}
+                for c in trail
+            )
         assert first["logger"] == LOGGER
         assert first["logentry"] == {"message": sentry._REDACTED}
         assert second["exception"]["values"][-1]["type"] == "LookupError"
@@ -49,14 +64,17 @@ def test_ordinary_event_and_next_event(at_ingestion):
         assert crumb["detail"] == MARKER
 
 
-@pytest.mark.parametrize(("message", "kept"), [
-    ("job failed (max_tokens=4096)", True),
-    ("job failed token_count=12", True),
-    ("job failed synthetic_tokens=12", False),
-    (f"job failed input_tokens={MARKER}", False),
-    (f"Cookie: session=ok; additional={MARKER}", False),
-    (f"job failed password={MARKER} trailing detail", False),
-])
+@pytest.mark.parametrize(
+    ("message", "kept"),
+    [
+        ("job failed (max_tokens=4096)", True),
+        ("job failed token_count=12", True),
+        ("job failed synthetic_tokens=12", False),
+        (f"job failed input_tokens={MARKER}", False),
+        (f"Cookie: session=ok; additional={MARKER}", False),
+        (f"job failed password={MARKER} trailing detail", False),
+    ],
+)
 def test_bounded_message_policy(message, kept):
     with sentry_capture(include_local_variables=False) as transport:
         sentry_sdk.capture_event({"message": message})
@@ -75,12 +93,14 @@ def test_small_limits_discard_uninspectable_payloads(monkeypatch):
     for _ in range(8):
         deep = [deep]
     with sentry_capture(include_local_variables=False) as transport:
-        sentry_sdk.capture_event({
-            "message": "ordinary synthetic diagnostic longer than forty characters",
-            "contexts": {"fixture": {"nested": deep}},
-            "extra": {"note": MARKER},
-            "request": {"headers": dict.fromkeys(("a", "b", "c", "d"), MARKER)},
-        })
+        sentry_sdk.capture_event(
+            {
+                "message": "ordinary synthetic diagnostic longer than forty characters",
+                "contexts": {"fixture": {"nested": deep}},
+                "extra": {"note": MARKER},
+                "request": {"headers": dict.fromkeys(("a", "b", "c", "d"), MARKER)},
+            }
+        )
         sentry_sdk.capture_message("next diagnostic")
         first, second = transport.events
         assert first["message"] == sentry._REDACTED
@@ -95,12 +115,20 @@ def test_over_budget_stack_keeps_the_exception_type(monkeypatch, url):
     frames = [{"function": name} for name in ("start", "read", "finish")]
     with sentry_capture(include_local_variables=False) as transport:
         sentry_sdk.add_breadcrumb(category="job", message=MARKER)
-        sentry_sdk.capture_event({
-            "request": {"url": url},
-            "exception": {"values": [{
-                "type": "LookupError", "value": MARKER, "stacktrace": {"frames": frames},
-            }]},
-        })
+        sentry_sdk.capture_event(
+            {
+                "request": {"url": url},
+                "exception": {
+                    "values": [
+                        {
+                            "type": "LookupError",
+                            "value": MARKER,
+                            "stacktrace": {"frames": frames},
+                        }
+                    ]
+                },
+            }
+        )
         sentry_sdk.capture_message("next diagnostic")
         first, second = transport.events
         [error] = first["exception"]["values"]
@@ -110,12 +138,23 @@ def test_over_budget_stack_keeps_the_exception_type(monkeypatch, url):
         assert MARKER not in json.dumps(transport.events)
 
 
+def test_transaction_with_null_frames_keeps_the_event():
+    event = sentry._before_send_transaction(
+        {"stacktrace": {"frames": None}, "message": MARKER}, {}
+    )
+    assert event == {"stacktrace": {}, "message": sentry._REDACTED}
+
+
 def test_formatted_only_entry_keeps_the_logger_and_level():
     with sentry_capture(include_local_variables=False) as transport:
         sentry_sdk.add_breadcrumb(category="job", message=MARKER)
-        sentry_sdk.capture_event({
-            "logger": LOGGER, "level": "error", "logentry": {"formatted": MARKER},
-        })
+        sentry_sdk.capture_event(
+            {
+                "logger": LOGGER,
+                "level": "error",
+                "logentry": {"formatted": MARKER},
+            }
+        )
         sentry_sdk.capture_message("next diagnostic")
         first, second = transport.events
         assert first["logger"] == LOGGER

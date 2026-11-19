@@ -129,7 +129,7 @@ def _pipeline(name: str):
             try:
                 # Bootstrap can fall back to OSS when the EE usage import fails.
                 absent = not has_ee("ee.usage") and not has_ee("ee.agenthub.insights")
-            except Exception:  # A broken package probe cannot establish absence.
+            except Exception:  # noqa: BLE001 - package probes execute third-party import code
                 absent = False
             if absent:
                 raise ApplicationError(

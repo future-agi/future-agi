@@ -22,7 +22,10 @@ import os
 import re
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from sentry_sdk.types import Event, Hint
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
@@ -163,8 +166,15 @@ _initialized_components: set = set()
 _MAX_TEXT = 8192
 _MAX_ITEMS = 128
 _USAGE_FIELDS = frozenset(
-    {"input_tokens", "output_tokens", "prompt_tokens", "completion_tokens",
-     "total_tokens", "max_tokens", "token_count"}
+    {
+        "input_tokens",
+        "output_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "max_tokens",
+        "token_count",
+    }
 )
 _USAGE_COUNT = re.compile(
     r"(?<![\w.-])(?:" + "|".join(sorted(_USAGE_FIELDS)) + r")=[0-9]{1,18}(?=$|[ )])"
@@ -191,11 +201,11 @@ def _scrub_text(value: Any) -> str:
 
 def _scrub(value: Any) -> Any:
     """Bound the whole walk, not just the width of each branch."""
-    remaining = 512
+    slots = 512
     characters = 32_768
 
     def visit(item: Any, depth: int) -> Any:
-        nonlocal remaining, characters
+        nonlocal slots, characters
         if depth > 6:
             raise ValueError
         if type(item) is str:
@@ -207,10 +217,13 @@ def _scrub(value: Any) -> Any:
             return item
         if type(item) is int and item.bit_length() <= 64:
             return item
-        if type(item) in (list, tuple, dict) and len(item) <= min(_MAX_ITEMS, remaining):
-            remaining -= len(item)  # Reserve all children, including opaque/redacted ones.
+        if type(item) in (list, tuple, dict) and len(item) <= min(_MAX_ITEMS, slots):
+            # Reserve all children, including opaque/redacted ones.
+            slots -= len(item)
             if type(item) is dict:
-                if any(k in item for k in ("private_key", "client_secret", "refresh_token")):
+                if any(
+                    k in item for k in ("private_key", "client_secret", "refresh_token")
+                ):
                     return _REDACTED
                 result: dict[str, Any] = {}
                 for key, val in item.items():
@@ -265,16 +278,21 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
     for key in ("category", "type", "level"):
         if key in crumb:
             result[key] = _scrub_text(crumb[key])
-    if _vertex_log_message(crumb.get("category"), crumb.get("message")) or (
-        crumb.get("message") == _VERTEX_SAFE_MESSAGE
-    ):
+    msg = crumb.get("message")
+    if _vertex_log_message(crumb.get("category"), msg) or msg == _VERTEX_SAFE_MESSAGE:
         result["message"] = _VERTEX_SAFE_MESSAGE
     data = crumb.get("data")
     if type(data) is dict:
         fields: dict[str, Any] = {}
         method = data.get("method")
         if type(method) is str and method in (
-            "GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS",
+            "GET",
+            "POST",
+            "PATCH",
+            "PUT",
+            "DELETE",
+            "HEAD",
+            "OPTIONS",
         ):
             fields["method"] = method
         status = data.get("status_code")
@@ -286,8 +304,11 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
 
 def _entries(container: dict, key: str, limit: int) -> list | tuple | None:
     items = container.get(key)
-    if type(items) not in (list, tuple) or len(items) > min(limit, _MAX_ITEMS) or not all(
-        type(item) is dict for item in items
+    if (
+        items is None
+        or type(items) not in (list, tuple)
+        or len(items) > min(limit, _MAX_ITEMS)
+        or not all(type(item) is dict for item in items)
     ):
         container.pop(key, None)
         return None
@@ -352,7 +373,9 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
                 request[section] = _REDACTED
         for section in ("headers", "env"):
             if section in request:
-                clean = _scrub(request[section]) if type(request[section]) is dict else None
+                clean = (
+                    _scrub(request[section]) if type(request[section]) is dict else None
+                )
                 request[section] = clean if type(clean) is dict else {}
     else:
         event.pop("request", None)
@@ -362,8 +385,11 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
     if "extra" in event:
         extra = event["extra"]
         event["extra"] = {
-            k: extra[k] for k in (*_USAGE_FIELDS, "count", "retry_count")
-            if type(extra) is dict and k in extra and type(extra[k]) is int
+            k: extra[k]
+            for k in (*_USAGE_FIELDS, "count", "retry_count")
+            if type(extra) is dict
+            and k in extra
+            and type(extra[k]) is int
             and 0 <= extra[k] < 2**63
         }
     if "contexts" in event:
@@ -405,7 +431,9 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
                 event["logentry"] = {"message": _REDACTED}
             else:
                 event["logentry"] = {
-                    k: v for k, v in (("message", message), ("formatted", formatted)) if k in entry
+                    k: v
+                    for k, v in (("message", message), ("formatted", formatted))
+                    if k in entry
                 }
     return event
 
@@ -504,10 +532,10 @@ def _scrub_breadcrumbs(event: dict) -> None:
         event["breadcrumbs"] = {"values": clean} if wrapped else clean
 
 
-def _before_send_transaction(event: dict, hint: dict) -> dict | None:
+def _before_send_transaction(event: "Event", hint: "Hint") -> "Event | None":
     try:
-        _scrub_event(event)
-    except Exception:
+        _scrub_event(cast(dict, event))
+    except Exception:  # noqa: BLE001 - drop SDK transactions on any scrubbing failure
         return None
     return event
 
@@ -584,7 +612,11 @@ def _get_before_send() -> Callable:
         # (LiteLLM raises it to our code) is still sent.
         record = hint.get("log_record")
         record_name = getattr(record, "name", None)
-        if type(record_name) is str and len(record_name) <= 128 and record_name in EXPECTED_OUTCOME_LOGGERS:
+        if (
+            type(record_name) is str
+            and len(record_name) <= 128
+            and record_name in EXPECTED_OUTCOME_LOGGERS
+        ):
             return None
         # VertexBase.get_access_token logs and re-raises *all* load_auth
         # failures. Only malformed credentials and known refusals are expected.

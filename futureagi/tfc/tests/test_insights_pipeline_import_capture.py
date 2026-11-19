@@ -119,22 +119,31 @@ async def test_a_broken_pipeline_import_is_reported_once(transport, monkeypatch,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("flavor", "package"), [
-    (DeploymentFlavor.CLOUD, False), (DeploymentFlavor.SELF_HOSTED_EE, False),
-    (DeploymentFlavor.OSS, True),
-])
-async def test_missing_stage_in_expected_install_is_reported(transport, monkeypatch, flavor, package):
+@pytest.mark.parametrize(
+    ("flavor", "package"),
+    [
+        (DeploymentFlavor.CLOUD, False),
+        (DeploymentFlavor.SELF_HOSTED_EE, False),
+        (DeploymentFlavor.OSS, True),
+    ],
+)
+async def test_missing_stage_in_expected_install_is_reported(
+    transport, monkeypatch, flavor, package
+):
     monkeypatch.setattr(service, "is_configured", lambda: True)
     monkeypatch.setattr(service, "get_deployment_flavor", lambda: flavor)
     monkeypatch.setattr(ee_loader, "has_ee", lambda module: package)
-    cause = ModuleNotFoundError("synthetic missing stage", name="ee.agenthub.insights.pipeline")
+    cause = ModuleNotFoundError(
+        "synthetic missing stage", name="ee.agenthub.insights.pipeline"
+    )
     _import_raising(monkeypatch, cause)
     error = await _run_stage()
     assert error.type == "InsightsPipelineImportError"
     assert error.__cause__ is cause
     [event] = transport.events
     assert [v["type"] for v in event["exception"]["values"]] == [
-        "ModuleNotFoundError", "ApplicationError",
+        "ModuleNotFoundError",
+        "ApplicationError",
     ]
 
 
@@ -146,14 +155,21 @@ async def test_self_hosted_startup_without_optional_packages(
     monkeypatch.setenv("CLOUD_DEPLOYMENT", "false")
     monkeypatch.setenv("EE_LICENSE_KEY", "synthetic-license" if licensed else "")
     for name in (
-        "ee", "ee.usage", "ee.agenthub", "ee.agenthub.insights", "ee.agenthub.insights.pipeline",
+        "ee",
+        "ee.usage",
+        "ee.agenthub",
+        "ee.agenthub.insights",
+        "ee.agenthub.insights.pipeline",
     ):
         monkeypatch.setitem(sys.modules, name, None)
 
     # Exercise startup selection and restore the process-wide wiring afterward.
     for attr in (
-        "_configured", "_deployment_flavor", "_deployment_location",
-        "_license_resolver", "_cloud_plan_resolver",
+        "_configured",
+        "_deployment_flavor",
+        "_deployment_location",
+        "_license_resolver",
+        "_cloud_plan_resolver",
     ):
         monkeypatch.setattr(service, attr, getattr(service, attr))
     _bootstrap.wire_resolvers()
