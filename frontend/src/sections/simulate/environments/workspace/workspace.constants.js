@@ -122,15 +122,6 @@ export const WORKSPACE_COPY = {
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
-  // The env-version pin: lists every version of the world, and makes an
-  // earlier one the default.
-  pin: {
-    heading: "Environment versions",
-    subtitle:
-      "Runs use the default version. You can roll back to an earlier one.",
-    default: "default",
-    rollBack: (label) => `Roll back to ${label}`,
-  },
   // Banner shown while the derivation is still in flight — the panels below are
   // loading and this explains why.
   building: {
@@ -142,19 +133,16 @@ export const WORKSPACE_COPY = {
   // The strip under the header: the environment / agent version pairing when
   // versioning is on, else the agent version under test; stated, not selected.
   versionBar: {
-    envPrefix: "env",
-    agentPrefix: "agent",
+    envPrefix: "environment",
+    agentPrefix: "Agent",
     suitePrefix: "scenarios",
-    // Labels the agent in the versioning pairing (the environment's default).
-    defaultAgent: "Default",
     // Labels the agent under test when versioning is off.
     testSubject: "Test subject",
     // The agent has no name on record; the Overview agent card says the same.
     unnamedAgent: "Agent",
     beforeVersioning: "before versioning",
     noAgent: "none",
-    scenariosShared: (n) =>
-      `${n} scenario${n === 1 ? "" : "s"}, shared across agent versions`,
+    scenariosShared: (n) => `${n} scenario${n === 1 ? "" : "s"}`,
     // Either label can be missing: an environment with agent versions but no
     // environment version yet, or one with no default agent version.
     pairingTooltip: (envLabel, envNote, agentLabel) =>

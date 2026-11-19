@@ -395,9 +395,7 @@ describe("EnvironmentWorkspace route shell", () => {
     });
     expect(runButton).toBeDisabled();
     expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
-    expect(
-      screen.queryByText(/scenarios, shared across agent versions/),
-    ).toBeNull();
+    expect(screen.queryByText(/^\d+ scenarios?$/)).toBeNull();
     // The tab area shows the loader rather than an empty pane.
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
   });
@@ -991,12 +989,12 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     renderWorkspace("/dashboard/simulate/environments/job-done");
     const bar = await screen.findByTestId("draft-bar");
     expect(bar.previousElementSibling).toHaveTextContent(
-      /shared across agent versions/,
+      /^Agent .*scenarios?$/,
     );
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the draft in the Versions tab from the bar", async () => {
+  it("opens the draft in the History tab from the bar", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
@@ -1011,7 +1009,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     serve({ environment: null, suite: null, set_aside: [] });
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
-    await screen.findByText(/shared across agent versions/);
+    await screen.findByText(/^\d+ scenarios?$/);
     await waitFor(() =>
       expect(
         axios.get.mock.calls.some(([url]) => url.endsWith("/drafts/")),

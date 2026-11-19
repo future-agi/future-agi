@@ -8,6 +8,20 @@ import {
 } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 
+const Strong = ({ children }) => (
+  <Box
+    component="span"
+    sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+  >
+    {children}
+  </Box>
+);
+Strong.propTypes = { children: PropTypes.node };
+
+const Dot = () => (
+  <Typography sx={{ typography: "s3", color: "text.disabled" }}>·</Typography>
+);
+
 // What is being tested, against what. A run is a pairing — this environment
 // version against that agent version — and a result nobody can attribute to a
 // specific pair is not reproducible, so the pairing is stated here.
@@ -61,8 +75,8 @@ export default function VersionBar({ env, envState }) {
     >
       {showPairing && (
         <>
-          {/* The environment is the primary identity; the agent version is the
-              current test subject running against it. */}
+          {/* One line, agent first: the agent version under test against the
+              environment and scenario versions it runs on. */}
           <Tooltip
             arrow
             title={
@@ -79,7 +93,7 @@ export default function VersionBar({ env, envState }) {
               direction="row"
               alignItems="center"
               spacing={0.75}
-              sx={{ cursor: "default" }}
+              sx={{ cursor: "default", minWidth: 0 }}
             >
               <Iconify
                 icon="solar:box-linear"
@@ -87,67 +101,25 @@ export default function VersionBar({ env, envState }) {
                 sx={{ color: "text.subtitle" }}
               />
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.envPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
-                  {envLabel}
-                </Box>
+                {versionBar.agentPrefix} <Strong>{agentLabel}</Strong>
               </Typography>
-              <Typography
-                sx={{ typography: "s3", color: "text.disabled", mx: 0.25 }}
-              >
-                ·
-              </Typography>
-              <Iconify
-                icon="solar:cpu-bolt-linear"
-                width={14}
-                sx={{ color: "text.subtitle" }}
-              />
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.subtitle",
-                  fontWeight: "fontWeightSemiBold",
-                }}
-              >
-                {versionBar.defaultAgent}
+              <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+                ×
               </Typography>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.agentPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
-                  {agentLabel}
-                </Box>
+                {versionBar.envPrefix} <Strong>{envLabel}</Strong>
               </Typography>
             </Stack>
           </Tooltip>
-          <Typography
-            sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
-          >
-            ·
-          </Typography>
           {suiteV && (
             <>
+              <Dot />
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.suitePrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
-                  {named(suiteV)}
-                </Box>
-              </Typography>
-              <Typography
-                sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
-              >
-                ·
+                {versionBar.suitePrefix} <Strong>{named(suiteV)}</Strong>
               </Typography>
             </>
           )}
+          <Dot />
         </>
       )}
 
