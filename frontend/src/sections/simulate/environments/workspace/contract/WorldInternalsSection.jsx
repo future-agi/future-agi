@@ -34,8 +34,7 @@ const COPY = {
       ? `${agent} declares no tools, so the world has none to answer.`
       : "None yet. The agent's tools are read when it's connected.",
   // An environment without contract detail still names its tools.
-  notRecorded:
-    "Where each tool runs isn't recorded for this environment version.",
+  notRecorded: "Where it runs isn't recorded",
   addFromMcp: "Add tools from an MCP server",
 };
 
@@ -58,7 +57,7 @@ const chevronSx = (open) => ({
 export default function WorldInternalsSection({ env, envState }) {
   const tables = env?.worldTables || [];
   const tools = env?.toolStatus || [];
-  const named = env?.tools?.length || 0;
+  const named = env?.tools || [];
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
@@ -73,7 +72,7 @@ export default function WorldInternalsSection({ env, envState }) {
         <ToolsCard tools={tools} />
       ) : (
         <SectionCard
-          title={COPY.toolsTitle(named)}
+          title={COPY.toolsTitle(named.length)}
           subtitle={T.subtitle}
           action={
             <Stack direction="row" spacing={1} alignItems="center">
@@ -91,9 +90,11 @@ export default function WorldInternalsSection({ env, envState }) {
             </Stack>
           }
         >
-          <EmptyLine>
-            {named ? COPY.notRecorded : COPY.noTools(envState?.agent?.name)}
-          </EmptyLine>
+          {named.length ? (
+            <NamedTools tools={named} />
+          ) : (
+            <EmptyLine>{COPY.noTools(envState?.agent?.name)}</EmptyLine>
+          )}
         </SectionCard>
       )}
     </Stack>
@@ -110,6 +111,62 @@ function EmptyLine({ children }) {
   );
 }
 EmptyLine.propTypes = { children: PropTypes.node };
+
+// Tools the environment names without per-tool status: where each runs is unknown.
+function NamedTools({ tools }) {
+  return (
+    <Stack
+      divider={
+        <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+      }
+    >
+      {tools.map((t) => (
+        <Stack
+          key={t.name}
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ px: 1.5, minHeight: ROW_HEIGHT.default }}
+        >
+          <Typography
+            sx={{
+              typography: "s1",
+              fontWeight: 500,
+              fontFamily: MONO,
+              minWidth: 220,
+            }}
+          >
+            {t.name}
+          </Typography>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3",
+              color: "text.subtitle",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {t.desc}
+          </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", flexShrink: 0 }}
+          >
+            {COPY.notRecorded}
+          </Typography>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+NamedTools.propTypes = {
+  tools: PropTypes.arrayOf(
+    PropTypes.shape({
+      name: PropTypes.string.isRequired,
+      desc: PropTypes.string,
+    }),
+  ).isRequired,
+};
 WorldInternalsSection.propTypes = {
   env: PropTypes.object.isRequired,
   envState: PropTypes.object,
