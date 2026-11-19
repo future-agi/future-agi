@@ -38,13 +38,26 @@ async function loadAndInit() {
   initGoogleAnalytics();
 }
 
+// Each test initializes the loader again; remove the window listeners it adds
+// so an earlier test's listeners don't react to a later test's navigation.
+const windowListeners = [];
+const addWindowListener = window.addEventListener.bind(window);
+
 beforeEach(() => {
   vi.resetModules();
   config.GA_ID = MEASUREMENT_ID;
   window.history.replaceState(null, "", "/dashboard/develop");
+  vi.spyOn(window, "addEventListener").mockImplementation((...args) => {
+    windowListeners.push(args);
+    addWindowListener(...args);
+  });
 });
 
 afterEach(() => {
+  windowListeners
+    .splice(0)
+    .forEach((args) => window.removeEventListener(...args));
+  vi.restoreAllMocks();
   window.history.pushState = originalPushState;
   window.history.replaceState = originalReplaceState;
   document.head
@@ -98,14 +111,23 @@ describe("analyticsPageLocation unit", () => {
       "https://app.test/dashboard/develop/:id/runs/:id",
     ],
     // End-user IDs and folder names are not route words, so they are redacted.
-    ["https://app.test/dashboard/users/alice", "https://app.test/dashboard/users/:id"],
+    [
+      "https://app.test/dashboard/users/alice",
+      "https://app.test/dashboard/users/:id",
+    ],
     [
       "https://app.test/dashboard/workbench/My%20Folder",
       "https://app.test/dashboard/workbench/:id",
     ],
-    ["https://app.test/dashboard/users/someone%40example.com", "https://app.test/dashboard/users/:id"],
+    [
+      "https://app.test/dashboard/users/someone%40example.com",
+      "https://app.test/dashboard/users/:id",
+    ],
     ["https://app.test/dashboard/%E0%A4%A", "https://app.test/dashboard/:id"],
-    ["https://app.test//dashboard//develop", "https://app.test/dashboard/develop"],
+    [
+      "https://app.test//dashboard//develop",
+      "https://app.test/dashboard/develop",
+    ],
     ["https://app.test/%64ashboard", "https://app.test/dashboard"],
     ["https://app.test/settings/billing", "https://app.test/settings/billing"],
   ])("maps %s to %s", async (input, expected) => {
