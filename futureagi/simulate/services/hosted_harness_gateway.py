@@ -491,10 +491,9 @@ def _platform_simulator_material() -> dict[str, str]:
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
         "ALK_HARNESS_WORKERS_AT_ONCE",
+        # Runtime instances in the one sandbox for validation and proving (a ceiling; its own limits decide), the
+        # offline pass's budget, and the time and rounds a build hands held cases back to the writer.
         "ALK_VALIDATION_INSTANCES",
-        # Proving: cases at once in the one sandbox (a ceiling; its own limits decide), the offline pass's budget, and
-        # the time a build hands held cases back to the writer.
-        "ALK_PROVE_CONCURRENCY",
         "ALK_PROVE_SUITE_SECONDS",
         "ALK_HELD_CASE_REPAIR_SECONDS",
         "ALK_HELD_CASE_ROUNDS",

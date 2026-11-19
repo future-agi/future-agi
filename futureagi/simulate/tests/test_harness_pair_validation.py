@@ -2648,7 +2648,7 @@ def test_the_proving_settings_reach_the_sandbox(monkeypatch):
     from simulate.services.hosted_harness_gateway import _platform_simulator_material
 
     for name, value in (
-        ("ALK_PROVE_CONCURRENCY", "6"),
+        ("ALK_VALIDATION_INSTANCES", "6"),
         ("ALK_PROVE_SUITE_SECONDS", "5400"),
         ("ALK_HELD_CASE_REPAIR_SECONDS", "900"),
         ("ALK_HELD_CASE_ROUNDS", "4"),
@@ -2657,7 +2657,7 @@ def test_the_proving_settings_reach_the_sandbox(monkeypatch):
     sent = _platform_simulator_material()
     assert sent["ALK_HELD_CASE_ROUNDS"] == "4"
     assert (
-        sent["ALK_PROVE_CONCURRENCY"],
+        sent["ALK_VALIDATION_INSTANCES"],
         sent["ALK_PROVE_SUITE_SECONDS"],
         sent["ALK_HELD_CASE_REPAIR_SECONDS"],
     ) == (
