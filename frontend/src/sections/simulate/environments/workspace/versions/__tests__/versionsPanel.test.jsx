@@ -205,7 +205,7 @@ const entryOf = (piece, label) =>
 const openActions = async (user, piece, label) => {
   await user.click(
     within(entryOf(piece, label)).getByRole("button", {
-      name: "Version actions",
+      name: `Version actions, ${PIECE_TITLE[piece]} ${label}`,
     }),
   );
   return screen.getByRole("menu");
@@ -859,6 +859,45 @@ describe("VersionsPanel", () => {
 
   it("ignores a link to a version that is no longer listed", () => {
     window.history.pushState({}, "", "/?tab=versions&version=suite:gone");
+    try {
+      render(<VersionsPanel env={ENV} />);
+      expect(screen.queryByTestId("version-detail")).toBeNull();
+      expect(row("suite", "v2")).toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("opens a linked row even when the filter hides its kind", async () => {
+    const user = userEvent.setup();
+    const Link = () => {
+      const { setTab } = useWorkspaceTab();
+      return (
+        <button
+          type="button"
+          onClick={() => setTab("versions", { version: "suite:s1" })}
+        >
+          View changes
+        </button>
+      );
+    };
+    render(
+      <>
+        <Link />
+        <VersionsPanel env={ENV} />
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "Agent" }));
+    await user.click(screen.getByRole("button", { name: "View changes" }));
+    expect(
+      within(screen.getByTestId("history-entry-suite:s1")).getByTestId(
+        "version-detail",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("ignores a hand-edited link that names no piece", () => {
+    window.history.pushState({}, "", "/?tab=versions&version=defaults:x");
     try {
       render(<VersionsPanel env={ENV} />);
       expect(screen.queryByTestId("version-detail")).toBeNull();

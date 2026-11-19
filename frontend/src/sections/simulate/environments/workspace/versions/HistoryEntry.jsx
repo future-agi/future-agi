@@ -152,7 +152,7 @@ export default function HistoryEntry({
         </ButtonBase>
         <IconButton
           size="small"
-          aria-label={MENU.label}
+          aria-label={`${MENU.label}, ${title}`}
           aria-haspopup="menu"
           onClick={(e) => setMenu(e.currentTarget)}
           sx={{ mt: 1.25 }}

@@ -10,6 +10,7 @@ import {
   Typography,
 } from "@mui/material";
 import {
+  VERSION_PIECES,
   isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
@@ -158,7 +159,10 @@ export default function VersionsPanel({ env }) {
   const [picked, setPicked] = useState(null);
   const [kind, setKind] = useState("all");
   useEffect(() => {
-    if (linkedId) setPicked({ piece: linkedPiece, id: linkedId });
+    if (!linkedId) return;
+    setPicked({ piece: linkedPiece, id: linkedId });
+    // A filter could hide the linked row; show every kind again.
+    setKind("all");
   }, [linkedPiece, linkedId]);
   // Held here so a refusal outlives the refresh that re-renders the row.
   const move = useMoveDefault(env?.id);
@@ -167,7 +171,9 @@ export default function VersionsPanel({ env }) {
   // A row opens only when the reader or a link picks it, and only while the
   // version is still listed.
   const openKey =
-    picked && data?.[picked.piece]?.some((v) => v.id === picked.id)
+    // A hand-edited link may name something that isn't a piece.
+    VERSION_PIECES.includes(picked?.piece) &&
+    data?.[picked.piece]?.some((v) => v.id === picked.id)
       ? `${picked.piece}:${picked.id}`
       : null;
   const linkedListed =
