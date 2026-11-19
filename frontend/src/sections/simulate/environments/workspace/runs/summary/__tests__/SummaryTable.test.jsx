@@ -41,3 +41,28 @@ describe("SummaryTable Pass column", () => {
     expect(passCell("Run 3")).not.toHaveTextContent("66.67");
   });
 });
+
+describe("SummaryTable run label", () => {
+  it("names the environment version a run was pinned to after its agent", () => {
+    render(
+      <SummaryTable
+        evals={[]}
+        rows={[
+          {
+            id: "a",
+            label: "Run 2",
+            status: "completed",
+            agentVersion: "v2",
+            environmentVersion: { id: "e3", label: "v3" },
+          },
+          { id: "b", label: "Run 1", status: "completed", agentVersion: "v1" },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByText("Run 2 · agent v2 × environment v3"),
+    ).toBeInTheDocument();
+    // A run from before versioning has no environment version to name.
+    expect(screen.getByText("Run 1 · agent v1")).toBeInTheDocument();
+  });
+});
