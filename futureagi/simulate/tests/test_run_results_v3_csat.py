@@ -135,7 +135,10 @@ def test_v3_detail_uses_explicit_csat_for_existing_score_fields(csat):
     )
     row["csat"] = csat
     call = SimpleNamespace(
-        test_execution=SimpleNamespace(), call_metadata={}, simulation_call_type="voice"
+        test_execution=SimpleNamespace(),
+        call_metadata={},
+        simulation_call_type="voice",
+        status="completed",
     )
     with (
         patch(
