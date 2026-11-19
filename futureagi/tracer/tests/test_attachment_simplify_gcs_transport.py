@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlsplit
@@ -32,18 +32,18 @@ from tracer.services.attachments.interfaces import (
     PutPermit,
 )
 
-CREATED = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+CREATED = datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC)
 KMS = "projects/synthetic/locations/us-central1/keyRings/test/cryptoKeys/test"
 
 
 def binding():
-    values = dict(
-        id=uuid4(),
-        provider="gcs",
-        endpoint="https://storage.googleapis.com",
-        account_identity="123456789",
-        region="us-central1",
-    )
+    values = {
+        "id": uuid4(),
+        "provider": "gcs",
+        "endpoint": "https://storage.googleapis.com",
+        "account_identity": "123456789",
+        "region": "us-central1",
+    }
     for purpose in ("quarantine", "serving"):
         bucket = "synthetic-" + purpose
         values.update(
@@ -175,8 +175,9 @@ class HTTP:
         assert kwargs["timeout"].connect_timeout <= 3
         assert kwargs["timeout"].read_timeout <= 10
         self.calls.append((method, url, kwargs))
-        parsed, query = urlsplit(url), parse_qs(
-            urlsplit(url).query, keep_blank_values=True
+        parsed, query = (
+            urlsplit(url),
+            parse_qs(urlsplit(url).query, keep_blank_values=True),
         )
         purpose = "quarantine" if "synthetic-quarantine" in parsed.path else "serving"
         bucket = getattr(self.b, f"{purpose}_bucket")
@@ -332,7 +333,7 @@ def assert_error(code, function, *args, **kwargs):
 
 def test_signing_matches_independent_canonical_oracle():
     creds = StorageCredentials("SYNTHETIC", "not-base64+/=")
-    now = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    now = datetime(2025, 1, 2, 3, 4, 5, tzinfo=UTC)
     query = g._query({"generation": "123", "prefix": "a b/+é", "versions": ""})
     assert query == "generation=123&prefix=a%20b%2F%2B%C3%A9&versions="
     digest = hashlib.sha256(b"").hexdigest()
@@ -525,7 +526,7 @@ def test_expired_posture_never_refreshes(setup, monkeypatch):
     s, http, b = setup
     s._posture = Credentials(
         "synthetic-token",
-        expiry=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5),
+        expiry=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=5),
     )
     monkeypatch.setattr(s._posture, "refresh", lambda *a: pytest.fail("minted token"))
     assert_error("storage_unverified", s.verify_readiness)
@@ -960,7 +961,7 @@ def test_redacted_provider_failure(setup):
             "media_unavailable",
             s.open_range,
             (identity(b),),
-            dict(start=0, end=1, expected_length=6),
+            {"start": 0, "end": 1, "expected_length": 6},
         ),
         ("storage_unverified", s.verify_readiness, (), {}),
     ]:

@@ -502,11 +502,16 @@ def test_policy_advertises_only_validated_modalities(setup):
     ],
 )
 def test_only_validated_types_are_servable(mime, representation, length, ok):
-    from tracer.services.attachments.interfaces import ObjectIdentity, RepresentationSelection
+    from tracer.services.attachments.interfaces import (
+        ObjectIdentity,
+        RepresentationSelection,
+    )
 
     # Keep the requested wire representation unchanged, including unsupported
     # requests. The verified source selector itself must always be constructible.
-    selected = representation if representation in {"original", "playable"} else "original"
+    selected = (
+        representation if representation in {"original", "playable"} else "original"
+    )
     blob = RepresentationSelection(
         representation=selected,
         identity=ObjectIdentity(uuid.uuid4(), "serving", "original/fixture", "v1"),
@@ -519,7 +524,10 @@ def test_only_validated_types_are_servable(mime, representation, length, ok):
 
 
 def test_octet_stream_peaks_cannot_be_served_as_original():
-    from tracer.services.attachments.interfaces import ObjectIdentity, RepresentationSelection
+    from tracer.services.attachments.interfaces import (
+        ObjectIdentity,
+        RepresentationSelection,
+    )
 
     peaks = RepresentationSelection(
         representation="peaks",

@@ -267,8 +267,16 @@ def media_response(
         + salted_hmac(
             "fi.attachment.etag",
             json.dumps(
-                [str(grant.id), str(identity.binding_id), identity.purpose, identity.key,
-                 identity.version, blob.sha256, str(blob.derivative_id), blob.representation],
+                [
+                    str(grant.id),
+                    str(identity.binding_id),
+                    identity.purpose,
+                    identity.key,
+                    identity.version,
+                    blob.sha256,
+                    str(blob.derivative_id),
+                    blob.representation,
+                ],
                 separators=(",", ":"),
             ),
         ).hexdigest()

@@ -240,15 +240,26 @@ def test_import_opt_in_does_not_enable_live_recording(setup):
     scope, _ = setup
     scope.allow_import = True
     current, _ = session(setup)
-    current.capture_policy = dict(current.capture_policy, allow_import=True, record_audio=False)
-    _admit_policy(scope, current, {"direction": "input", "recording_id": str(uuid.uuid4())})
+    current.capture_policy = dict(
+        current.capture_policy, allow_import=True, record_audio=False
+    )
+    _admit_policy(
+        scope, current, {"direction": "input", "recording_id": str(uuid.uuid4())}
+    )
     with pytest.raises(AttachmentError) as error:
-        admit_audio(scope, CapturePolicy(**current.capture_policy), direction="input",
-                    source_kind="Bytes", creates_recording=True)
+        admit_audio(
+            scope,
+            CapturePolicy(**current.capture_policy),
+            direction="input",
+            source_kind="Bytes",
+            creates_recording=True,
+        )
     assert (error.value.code, error.value.status) == ("recording_disabled", 403)
     scope.allow_import = False
     with pytest.raises(AttachmentError, match="source_unavailable"):
-        _admit_policy(scope, current, {"direction": "input", "recording_id": str(uuid.uuid4())})
+        _admit_policy(
+            scope, current, {"direction": "input", "recording_id": str(uuid.uuid4())}
+        )
 
 
 def test_recording_separate_from_import():
@@ -276,7 +287,9 @@ def test_default_off_creates_nothing(setup, settings):
     assert not broker.CaptureSession.objects.exists()
 
 
-@pytest.mark.parametrize("change", ["writer", "origin", "too_long", "expired", "revoked"])
+@pytest.mark.parametrize(
+    "change", ["writer", "origin", "too_long", "expired", "revoked"]
+)
 def test_database_rejects_invalid_capture_renewal(setup, change):
     current, _ = session(setup)
     rows = CaptureSession.objects.filter(pk=current.pk)

@@ -129,10 +129,8 @@ def storage(client):
         service = storage_s3.S3PrivateMediaStorage(binding=binding, config=config)
     # Request-level component seam only: the real request/hash/privacy code runs.
     # Process supervision has separate tests; this double makes calls observable.
-    service._supervised_put = (
-        lambda permit, stream, length, digest: service._put_request(
-            client, permit, stream, length, digest
-        )
+    service._supervised_put = lambda permit, stream, length, digest: (
+        service._put_request(client, permit, stream, length, digest)
     )
     return service
 
@@ -290,8 +288,12 @@ def test_supervised_promotion_classifies_failures(
     with patch.object(storage_s3, "_client", return_value=client):
         with pytest.raises(AttachmentError) as error:
             service.promote(
-                io.BytesIO(data), permit=permit("serving"), expected_length=expected_length,
-                expected_sha256="0" * 64 if bad_digest else hashlib.sha256(data).hexdigest(),
+                io.BytesIO(data),
+                permit=permit("serving"),
+                expected_length=expected_length,
+                expected_sha256="0" * 64
+                if bad_digest
+                else hashlib.sha256(data).hexdigest(),
             )
     assert (error.value.code, error.value.status) == (code, status)
 

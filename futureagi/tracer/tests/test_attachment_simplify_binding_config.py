@@ -13,7 +13,7 @@ import subprocess
 import sys
 import traceback
 from dataclasses import FrozenInstanceError, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -22,7 +22,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from tfc.utils import storage_config as sc
-
 
 BINDING_IDENTITY_FIELDS = (
     "provider",
@@ -53,7 +52,7 @@ def digest(values):
             if value.tzinfo is None or value.utcoffset() is None:
                 raise ValueError("synthetic-sensitive-incarnation")
             value = (
-                value.astimezone(timezone.utc)
+                value.astimezone(UTC)
                 .isoformat(timespec="microseconds")
                 .replace("+00:00", "Z")
             )
@@ -77,7 +76,7 @@ def binding_record(**overrides):
             {
                 f"{purpose}_resource_identity": f"synthetic:{purpose}:a",
                 f"{purpose}_owner_identity": "synthetic-owner-a",
-                f"{purpose}_created_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+                f"{purpose}_created_at": datetime(2025, 1, 1, tzinfo=UTC),
                 f"{purpose}_encryption_mode": "synthetic-provider-managed",
                 f"{purpose}_encryption_key_identity": "",
             }
@@ -382,7 +381,9 @@ def test_raw_database_error_and_bad_digest_are_content_free(historical):
         traceback.format_exception(caught.value)
     )
     historical[2].AttachmentStorageBinding.objects.get.side_effect = None
-    historical[2].AttachmentStorageBinding.objects.get.return_value.identity_sha256 = (
+    historical[
+        2
+    ].AttachmentStorageBinding.objects.get.return_value.identity_sha256 = (
         "synthetic-sensitive-digest"
     )
     with pytest.raises(sc.StorageConfigurationError) as caught:

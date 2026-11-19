@@ -51,14 +51,14 @@ CREATED = datetime(2025, 1, 1, tzinfo=UTC)
 
 
 def record(provider="s3", **overrides):
-    values = dict(
-        provider=provider,
-        endpoint="https://s3.us-east-1.amazonaws.com",
-        account_identity="owner-a",
-        region="us-east-1",
-        quarantine_bucket="private-quarantine",
-        serving_bucket="private-serving",
-    )
+    values = {
+        "provider": provider,
+        "endpoint": "https://s3.us-east-1.amazonaws.com",
+        "account_identity": "owner-a",
+        "region": "us-east-1",
+        "quarantine_bucket": "private-quarantine",
+        "serving_bucket": "private-serving",
+    }
     if provider == "minio":
         values.update(
             endpoint="https://private-minio.test:9443",
@@ -69,17 +69,17 @@ def record(provider="s3", **overrides):
         values.update(
             {
                 purpose + "_" + key: value
-                for key, value in dict(
-                    resource_identity=(
+                for key, value in {
+                    "resource_identity": (
                         f"arn:aws:s3:::{bucket}"
                         if provider == "s3"
                         else f"minio://installation-a/{bucket}"
                     ),
-                    owner_identity="owner-a",
-                    created_at=CREATED,
-                    encryption_mode="AES256",
-                    encryption_key_identity="",
-                ).items()
+                    "owner_identity": "owner-a",
+                    "created_at": CREATED,
+                    "encryption_mode": "AES256",
+                    "encryption_key_identity": "",
+                }.items()
             }
         )
     values.update(overrides)

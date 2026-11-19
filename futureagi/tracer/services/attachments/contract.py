@@ -190,9 +190,11 @@ def admit_audio(
     # Completed imports have their own opt-in at import admission. A recording
     # must still be audio, and only the trusted import path uses the internal kind.
     if creates_recording and (
-        modality != "audio" or not (
+        modality != "audio"
+        or not (
             scope.allow_import and policy.allow_import
-            if source_kind == "imported_recording" else policy.record_audio
+            if source_kind == "imported_recording"
+            else policy.record_audio
         )
     ):
         raise AttachmentError("recording_disabled", 403)

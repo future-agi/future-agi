@@ -1,8 +1,8 @@
 """Segment planning, manifests and F01 recording-import conformance (no DB)."""
 
 import copy
-import json
 import io
+import json
 import os
 import struct
 import sys
@@ -67,14 +67,17 @@ def reserve_with_headroom(recording, limits, headroom):
     caps = tuple(amount + ResourceVector(**headroom[scope]) for scope in scopes)
     budgets = [
         SimpleNamespace(
-            **dict(zip(capacity_db.BUDGET_FIELDS, capacity_db._values(amount), strict=True)),
+            **dict(
+                zip(capacity_db.BUDGET_FIELDS, capacity_db._values(amount), strict=True)
+            ),
             save=Mock(),
         )
         for _ in scopes
     ]
     job = SimpleNamespace(
         **dict.fromkeys(capacity_db.OWNER_FIELDS, 0),
-        reservation_pool_key=capacity.IMPORT_POOL_KEY, save=Mock(),
+        reservation_pool_key=capacity.IMPORT_POOL_KEY,
+        save=Mock(),
     )
     with (
         patch.object(capacity_db, "limits_for", return_value=caps),
@@ -102,7 +105,11 @@ def replay_range_responses(scenario):
     window = recordings.Limits.from_wire(scenario["limits"]).window
     source = safe_fetch.RangeSource(
         safe_fetch.Destination("media.example.test", 443, "/audio"),
-        total, window, 30, 8 * 1024**2, generation='"fixture-v1"',
+        total,
+        window,
+        30,
+        8 * 1024**2,
+        generation='"fixture-v1"',
     )
     observed = scenario["observation"]
     revision = '"fixture-v1"' if observed["generation_matches"] else '"fixture-v2"'
@@ -119,13 +126,18 @@ def replay_range_responses(scenario):
             reply = SimpleNamespace(status=416)
         else:
             start, size = part["offset"], part["bytes"]
-            headers = {"ETag": revision, "Content-Length": str(size),
-                       "Content-Range": f"bytes {start}-{start + size - 1}/{part['total_bytes']}"}
+            headers = {
+                "ETag": revision,
+                "Content-Length": str(size),
+                "Content-Range": f"bytes {start}-{start + size - 1}/{part['total_bytes']}",
+            }
             # An ignored range has no bounded body to consume. read_range must
             # reject it before reading; successful responses need at most W.
-            reply = SimpleNamespace(status=200 if size > window else 206,
-                                    getheader=headers.get,
-                                    read=io.BytesIO(bytes(min(size, window))).read)
+            reply = SimpleNamespace(
+                status=200 if size > window else 206,
+                getheader=headers.get,
+                read=io.BytesIO(bytes(min(size, window))).read,
+            )
         conn.getresponse.return_value = reply
         with patch.object(source, "_connection", return_value=conn):
             consumed += source.read_range(consumed, length, sink)
@@ -134,15 +146,21 @@ def replay_range_responses(scenario):
 
 
 def test_f01_range_transcript_reads_the_declared_source():
-    assert replay_range_responses(TABLE["base"]) == TABLE["base"]["request"]["recording"]["declared_bytes"]
+    assert (
+        replay_range_responses(TABLE["base"])
+        == TABLE["base"]["request"]["recording"]["declared_bytes"]
+    )
 
 
 def run_case(case):
     scenario = override(TABLE["base"], case["overrides"])
     recording = scenario["request"]["recording"]
     limits = recordings.Limits.from_wire(scenario["limits"])
-    if case["stage"] == "completion" and set(case["overrides"].get("observation", {})) in (
-        {"reads"}, {"generation_matches"},
+    if case["stage"] == "completion" and set(
+        case["overrides"].get("observation", {})
+    ) in (
+        {"reads"},
+        {"generation_matches"},
     ):
         return replay_range_responses(scenario)
     if case["stage"] == "admission" and set(case["overrides"]) == {"headroom"}:

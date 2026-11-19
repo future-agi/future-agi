@@ -240,9 +240,11 @@ def test_single_validation_outside_transaction_then_atomic_publication(
     # The unified inline receipt precedes enqueue in the same transaction.
     # Keep the legacy post-commit settlement expectation visible below.
     accounting = types.ModuleType("tracer.services.attachments.accounting")
+
     def receipt(allocation, *, attachment, outcome):
         assert active and allocation is target and attachment is asset
         assert outcome == target.state == asset.state == "ready"
+
     accounting.receipt_locked = Mock(side_effect=receipt)
     for module in (validation, publication, derivatives, uploads, accounting):
         monkeypatch.setitem(sys.modules, module.__name__, module)

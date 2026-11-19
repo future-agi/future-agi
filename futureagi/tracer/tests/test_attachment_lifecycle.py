@@ -563,7 +563,9 @@ def test_orphan_sweep_tombstones_only_on_a_successful_read(recording, monkeypatc
     assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg) == {}
 
 
-def test_one_empty_read_followed_by_a_live_read_never_tombstones(recording, monkeypatch):
+def test_one_empty_read_followed_by_a_live_read_never_tombstones(
+    recording, monkeypatch
+):
     """Review P1 (c7): a lagging or partially restored replica returns one
     successful-but-empty read. The next live read must clear it, so a later
     empty read starts the grace again instead of erasing live media."""

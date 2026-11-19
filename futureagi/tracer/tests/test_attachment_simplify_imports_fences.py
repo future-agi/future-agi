@@ -160,18 +160,18 @@ def lane(monkeypatch, tmp_path):
     ):
         defaults = {}
         if name == "AttachmentImportJob":
-            defaults = dict(
-                upload_id=None,
-                recording_id=None,
-                lease_epoch=0,
-                lease_token=None,
-                lease_until=None,
-                lease_phase="idle",
-                state="importing",
-                attempts=0,
-                reservation_settled_at=None,
-                reason="queued",
-            )
+            defaults = {
+                "upload_id": None,
+                "recording_id": None,
+                "lease_epoch": 0,
+                "lease_token": None,
+                "lease_until": None,
+                "lease_phase": "idle",
+                "state": "importing",
+                "attempts": 0,
+                "reservation_settled_at": None,
+                "reason": "queued",
+            }
         setattr(record_models, name, model(name, **defaults))
     models.AttachmentState = state
     record_models.RecordingState = state
@@ -428,21 +428,21 @@ def test_fetch_never_requests_more_than_transport_buffer(lane, monkeypatch, tmp_
 
 
 def request(whole):
-    descriptor = dict(
-        schema_version=1,
-        policy_version="1",
-        deletion_generation=0,
-        mime_type="audio/wav",
-        direction="mixed",
-        source_kind="RemoteUrl",
-        modality="audio",
-        declared_bytes=32044,
-        association=dict(
-            capture_session_id=str(uuid4()),
-            correlation_nonce=str(uuid4()),
-            parent=dict(trace_id=uuid4().hex, span_id="1234567890abcdef"),
-        ),
-    )
+    descriptor = {
+        "schema_version": 1,
+        "policy_version": "1",
+        "deletion_generation": 0,
+        "mime_type": "audio/wav",
+        "direction": "mixed",
+        "source_kind": "RemoteUrl",
+        "modality": "audio",
+        "declared_bytes": 32044,
+        "association": {
+            "capture_session_id": str(uuid4()),
+            "correlation_nonce": str(uuid4()),
+            "parent": {"trace_id": uuid4().hex, "span_id": "1234567890abcdef"},
+        },
+    }
     source = {"kind": "RemoteUrlEnvelope", "envelope_id": str(uuid4())}
     if whole:
         descriptor.update(recording_id=str(uuid4()), declared_duration_ms=1000)

@@ -318,7 +318,9 @@ def _locked_job_rows(job_id, *, scope_id=None, require_creator=True):
     )
     scope = AttachmentScope.objects.select_for_update().get(pk=before.scope_id)
     _lock_creator(
-        scope, Importer(before.importer_kind, before.importer_id), required=require_creator
+        scope,
+        Importer(before.importer_kind, before.importer_id),
+        required=require_creator,
     )
     session = CaptureSession.objects.select_for_update().get(
         pk=before.capture_session_id
@@ -459,7 +461,10 @@ def _independent_replay_facts(job, importer, session):
     row = AttachmentSourceEnvelope.objects.filter(
         pk=job.envelope_id, scope_id=job.scope_id, revoked_at__isnull=True
     ).first()
-    if row is None or source_providers._envelope_provider(job.scope_id, row.id) is not None:
+    if (
+        row is None
+        or source_providers._envelope_provider(job.scope_id, row.id) is not None
+    ):
         raise AttachmentError("source_unavailable", 403)
     envelopes.check_capture_session(row, session.id)
     facts = source_providers._job_facts(job)
@@ -470,7 +475,9 @@ def _independent_replay_facts(job, importer, session):
         != (facts.mime_type, facts.byte_length, facts.duration_ms)
     ):
         raise AttachmentError("snapshot_changed", 409)
-    admit_audio(scope, policy, direction=facts.direction, source_kind=IMPORTED_SOURCE_KIND)
+    admit_audio(
+        scope, policy, direction=facts.direction, source_kind=IMPORTED_SOURCE_KIND
+    )
     if not transaction.get_connection().in_atomic_block:
         source_providers._parent(facts, scope, importer)
     return facts
@@ -496,7 +503,9 @@ def _independent_replay_locked(
     ):
         raise AttachmentError("conflict", 409)
     recording = (
-        AttachmentRecording.objects.select_for_update().filter(pk=job.recording_id).first()
+        AttachmentRecording.objects.select_for_update()
+        .filter(pk=job.recording_id)
+        .first()
     )
     association = descriptor["association"]
     parent = association["parent"]
@@ -870,7 +879,9 @@ def submit(importer, *, scope_id, body):
         _lock_creator(scope, importer)
         session = CaptureSession.objects.select_for_update().get(pk=session.id)
         _, _, locked_registration = _lock_source(scope_id, ref)
-        if whole and (locked_registration.id if locked_registration is not None else None) != (registered.id if registered is not None else None):
+        if whole and (
+            locked_registration.id if locked_registration is not None else None
+        ) != (registered.id if registered is not None else None):
             raise AttachmentError("conflict", 409)
         check_session(session)
         _admit_policy(scope, session, descriptor)
@@ -1034,7 +1045,9 @@ def claim(job_id, *, scope_id, now):
         )
         with _locked_job_rows(job_id, scope_id=scope_id) as rows:
             job, _, _, target, _ = rows
-            if job.state in TERMINAL_RECORDING_STATES or (job.lease_until and job.lease_until > now):
+            if job.state in TERMINAL_RECORDING_STATES or (
+                job.lease_until and job.lease_until > now
+            ):
                 return None
             try:
                 _check_job(*rows, timezone.now())
@@ -1042,7 +1055,13 @@ def claim(job_id, *, scope_id, now):
                 # Only an allowlisted permanent revocation may retire unclaimed work.
                 if (error.code, error.status) not in CLAIM_RETIRING_DENIALS:
                     raise
-                _retire_locked(job, target, error.code, _terminal_denial(error.code), claim_denied=True)
+                _retire_locked(
+                    job,
+                    target,
+                    error.code,
+                    _terminal_denial(error.code),
+                    claim_denied=True,
+                )
                 _log_deferred(job.id, error.code)
                 return None
             return _claim_locked(job, locks, now)
@@ -1877,7 +1896,9 @@ def _terminal_denial(code):
 
 def _log_deferred(job_id, code):
     logger.warning(
-        "attachment_import_attempt_deferred", job_id=str(job_id), reason=public_reason(code)
+        "attachment_import_attempt_deferred",
+        job_id=str(job_id),
+        reason=public_reason(code),
     )
 
 
@@ -1891,9 +1912,7 @@ def _retire_locked(job, target, reason, terminal, *, claim_denied=False):
         # Revalidation consumed this attempt without issuing a worker lease.
         job.attempts += 1
         fields.append("attempts")
-    if terminal is None and (
-        not job.lease_until or job.lease_until <= timezone.now()
-    ):
+    if terminal is None and (not job.lease_until or job.lease_until <= timezone.now()):
         return
     if terminal:
         job.lease_phase = "terminal"
@@ -1915,7 +1934,9 @@ def run(job_id, *, scope_id, storage=None, source_factory=None):
         return job.state
     fence = claim(job_id, scope_id=scope_id, now=timezone.now())
     if fence is None:
-        return AttachmentImportJob.objects.values_list("state", flat=True).get(pk=job_id)
+        return AttachmentImportJob.objects.values_list("state", flat=True).get(
+            pk=job_id
+        )
     try:
         with sandbox.import_execution(job.id, fence.epoch) as directory:
             job.refresh_from_db()

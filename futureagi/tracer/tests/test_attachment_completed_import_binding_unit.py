@@ -75,7 +75,14 @@ def test_pending_plaintext_exact_64k_boundary(modules):
     connection = row(authority_generation=7)
     value = info()
     value["padding"] = ""
-    size = len(json.dumps({"egressInfo": value, "authority_generation": 7}, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode())
+    size = len(
+        json.dumps(
+            {"egressInfo": value, "authority_generation": 7},
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+    )
     value["padding"] = "x" * (65536 - size)
     retained = p._pending_plaintext(connection, value)
     assert len(retained) < 65536 and b"padding" not in retained
@@ -228,18 +235,37 @@ def test_sourcefacts_exact_fifteen_fields_unchanged(modules):
 
 def test_signed_extraneous_credentials_are_never_retained(modules):
     value = info()
-    value["request"] = {"s3": {"accessKey": "credential-sentinel", "secret": "credential-sentinel"}}
+    value["request"] = {
+        "s3": {"accessKey": "credential-sentinel", "secret": "credential-sentinel"}
+    }
     value["jwt"] = "credential-sentinel"
     value["fileResults"][0]["credentials"] = "credential-sentinel"
-    plaintext = modules.provider_recordings._pending_plaintext(row(authority_generation=7), value)
+    plaintext = modules.provider_recordings._pending_plaintext(
+        row(authority_generation=7), value
+    )
     assert b"credential-sentinel" not in plaintext
     document = json.loads(plaintext)
     assert set(document) == {"egressInfo", "authority_generation"}
-    assert set(document["egressInfo"]) == {"egressId", "roomName", "status", "updatedAt", "fileResults"}
-    assert set(document["egressInfo"]["fileResults"][0]) == {"location", "size", "duration"}
+    assert set(document["egressInfo"]) == {
+        "egressId",
+        "roomName",
+        "status",
+        "updatedAt",
+        "fileResults",
+    }
+    assert set(document["egressInfo"]["fileResults"][0]) == {
+        "location",
+        "size",
+        "duration",
+    }
 
 
 @pytest.mark.parametrize("updated", [-1, 2**63, "99999999999999999999"])
 def test_pending_update_clock_fits_durable_integer(modules, updated):
     value = {**info(), "updatedAt": updated}
-    assert modules.provider_recordings._pending_plaintext(row(authority_generation=7), value) is None
+    assert (
+        modules.provider_recordings._pending_plaintext(
+            row(authority_generation=7), value
+        )
+        is None
+    )

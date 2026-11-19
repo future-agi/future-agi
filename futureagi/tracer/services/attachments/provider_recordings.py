@@ -1064,11 +1064,15 @@ def _pending_plaintext(connection, info):
             "roomName": info["roomName"],
             "status": "EGRESS_COMPLETE",
             "updatedAt": updated,
-            "fileResults": [{"location": results[0]["location"], "size": size, "duration": duration}],
+            "fileResults": [
+                {"location": results[0]["location"], "size": size, "duration": duration}
+            ],
         },
         "authority_generation": connection.authority_generation,
     }
-    plaintext = json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    plaintext = json.dumps(
+        document, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+    ).encode("utf-8")
     if len(plaintext) > 65536:
         raise AttachmentError("too_large", 413)
     return plaintext

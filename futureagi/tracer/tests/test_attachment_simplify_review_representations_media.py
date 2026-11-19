@@ -433,7 +433,8 @@ def test_unproven_cleanup_never_releases(
 
 
 @pytest.mark.parametrize(
-    "outcome", ["none", "provider-error", "false", "true", "truthy", "receipt", "pending"]
+    "outcome",
+    ["none", "provider-error", "false", "true", "truthy", "receipt", "pending"],
 )
 def test_ready_cleanup_uses_exact_none_contract(service, monkeypatch, outcome):
     row = cleanup_row(service, monkeypatch)
@@ -453,9 +454,11 @@ def test_ready_cleanup_uses_exact_none_contract(service, monkeypatch, outcome):
         "pending": service.i.EraseResult(False, True, "pending", base.NOW),
     }
     store = NS(
-        list_versions=Mock(side_effect=lambda loc, **kw: service.i.VersionPage(
-            (keep, identity) if loc.purpose == "serving" else (), (), None
-        )),
+        list_versions=Mock(
+            side_effect=lambda loc, **kw: service.i.VersionPage(
+                (keep, identity) if loc.purpose == "serving" else (), (), None
+            )
+        ),
         erase_version=Mock(return_value=results.get(outcome)),
     )
     if outcome == "provider-error":
@@ -473,7 +476,11 @@ def test_ready_cleanup_uses_exact_none_contract(service, monkeypatch, outcome):
             assert row.cleanup_checked_at == base.NOW
             assert row.unowned_cleanup_due_at is None
         else:
-            error = RuntimeError if outcome == "provider-error" else service.c.AttachmentError
+            error = (
+                RuntimeError
+                if outcome == "provider-error"
+                else service.c.AttachmentError
+            )
             with pytest.raises(error):
                 service.d._settle(row, store, work)
             service.db.release_locked.assert_not_called()
@@ -494,15 +501,21 @@ def test_all_version_cleanup_rejects_invalid_results(service, monkeypatch, resul
     assert row.unowned_cleanup_due_at == base.NOW
 
 
-@pytest.mark.parametrize("outstanding", ["exact-error", "exact-malformed", "list-error"])
+@pytest.mark.parametrize(
+    "outstanding", ["exact-error", "exact-malformed", "list-error"]
+)
 def test_exact_success_does_not_settle_other_outstanding_versions(
     service, monkeypatch, outstanding
 ):
     row = cleanup_row(service, monkeypatch)
     row.state, row.published_at, row.storage_version = "ready", base.NOW, "keep"
     quarantine, serving = service.d._locators(row.attachment, row)
-    first = service.i.ObjectIdentity(quarantine.binding_id, quarantine.purpose, quarantine.key, "first")
-    second = service.i.ObjectIdentity(serving.binding_id, serving.purpose, serving.key, "second")
+    first = service.i.ObjectIdentity(
+        quarantine.binding_id, quarantine.purpose, quarantine.key, "first"
+    )
+    second = service.i.ObjectIdentity(
+        serving.binding_id, serving.purpose, serving.key, "second"
+    )
 
     def listing(locator, **kwargs):
         if locator == quarantine:
@@ -511,10 +524,20 @@ def test_exact_success_does_not_settle_other_outstanding_versions(
             raise RuntimeError("listing-unavailable")
         return service.i.VersionPage((second,), (), None)
 
-    store = NS(list_versions=Mock(side_effect=listing), erase_version=Mock(
-        side_effect=[None, False if outstanding == "exact-malformed" else RuntimeError("provider-unavailable")]
-    ))
-    error = service.c.AttachmentError if outstanding == "exact-malformed" else RuntimeError
+    store = NS(
+        list_versions=Mock(side_effect=listing),
+        erase_version=Mock(
+            side_effect=[
+                None,
+                False
+                if outstanding == "exact-malformed"
+                else RuntimeError("provider-unavailable"),
+            ]
+        ),
+    )
+    error = (
+        service.c.AttachmentError if outstanding == "exact-malformed" else RuntimeError
+    )
     with service.d._scratch_lock(row) as work, pytest.raises(error):
         service.d._settle(row, store, work)
     assert store.erase_version.call_args_list[0].args == (first,)
@@ -525,7 +548,9 @@ def test_exact_success_does_not_settle_other_outstanding_versions(
 
 
 @pytest.mark.parametrize("fence", ["horizon", "lease"])
-def test_exact_cleanup_does_not_start_before_horizon_or_live_lease(service, monkeypatch, fence):
+def test_exact_cleanup_does_not_start_before_horizon_or_live_lease(
+    service, monkeypatch, fence
+):
     row = cleanup_row(service, monkeypatch)
     row.state = "ready"
     if fence == "horizon":
@@ -541,15 +566,22 @@ def test_exact_cleanup_does_not_start_before_horizon_or_live_lease(service, monk
 
 
 @pytest.mark.parametrize("outcome", ["none", "error", "false", "receipt"])
-def test_stale_returned_exact_cleanup_never_settles_owner(service, monkeypatch, outcome):
+def test_stale_returned_exact_cleanup_never_settles_owner(
+    service, monkeypatch, outcome
+):
     row = cleanup_row(service, monkeypatch)
     identity = service.i.ObjectIdentity(
         row.attachment.storage_binding_id, "serving", row.storage_key, "late"
     )
-    store = NS(erase_version=Mock(return_value={
-        "none": None, "false": False,
-        "receipt": service.i.EraseResult(True, False, None, base.NOW),
-    }.get(outcome)))
+    store = NS(
+        erase_version=Mock(
+            return_value={
+                "none": None,
+                "false": False,
+                "receipt": service.i.EraseResult(True, False, None, base.NOW),
+            }.get(outcome)
+        )
+    )
     if outcome == "error":
         store.erase_version.side_effect = RuntimeError("provider-unavailable")
     if outcome == "none":

@@ -54,7 +54,11 @@ from tracer.services.attachments import (
     storage as storage_service,
 )
 from tracer.services.attachments.contract import AttachmentError
-from tracer.tests.attachment_fixtures import MemoryObjectStore, storage_binding, wait_for_db
+from tracer.tests.attachment_fixtures import (
+    MemoryObjectStore,
+    storage_binding,
+    wait_for_db,
+)
 from tracer.tests.test_attachment_api import api  # noqa: F401  (HTTP fixture)
 
 pytestmark = [
@@ -253,7 +257,9 @@ def session(env, **policy):
     )
 
 
-def envelope(env, data, *, current, url=None, direction="mixed", lifetime=timedelta(minutes=10)):
+def envelope(
+    env, data, *, current, url=None, direction="mixed", lifetime=timedelta(minutes=10)
+):
     scope, _, importer, _ = env
     return envelopes.seal(
         scope=scope,
@@ -361,7 +367,13 @@ def test_completed_import_publishes_bounded_segments_once(env, monkeypatch):
     data = wav_bytes()
     current = session(env)
     store = Store()
-    request = body(current, data=data, envelope_id=envelope(env, data, current=current, lifetime=timedelta(seconds=16)))
+    request = body(
+        current,
+        data=data,
+        envelope_id=envelope(
+            env, data, current=current, lifetime=timedelta(seconds=16)
+        ),
+    )
     response, job = submit_job(env[2], scope_id=env[0].id, body=request)
     assert response["state"] == "importing" and set(response) == {
         "mode",
@@ -560,7 +572,10 @@ def test_unapproved_destination_dead_letters_without_secret_canaries(
     assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
     # The claim-time denial issues no lease, so nothing extends cleanup past the
     # short-lived envelope; let the database clock pass its own expiry.
-    wait_for_db(AttachmentSourceEnvelope.objects.get(pk=sealed).expires_at + timedelta(seconds=1))
+    wait_for_db(
+        AttachmentSourceEnvelope.objects.get(pk=sealed).expires_at
+        + timedelta(seconds=1)
+    )
     assert envelopes.sweep() == 1
     assert not AttachmentSourceEnvelope.objects.exists()
 
@@ -570,20 +585,36 @@ def test_permanent_claim_denial_rejects_without_fetch_or_lease(env, settings):
     settings.FI_ATTACHMENTS_IMPORT_HOSTS = ("other.example.com",)
     source = Mock(side_effect=AssertionError("unexpected source access"))
     for _ in range(2):
-        assert imports.run(job.pk, scope_id=job.scope_id, source_factory=source) == "rejected"
+        assert (
+            imports.run(job.pk, scope_id=job.scope_id, source_factory=source)
+            == "rejected"
+        )
     source.assert_not_called()
     job.refresh_from_db()
-    assert (job.state, job.reason, job.recording.state) == ("rejected", "source_unavailable", "rejected")
+    assert (job.state, job.reason, job.recording.state) == (
+        "rejected",
+        "source_unavailable",
+        "rejected",
+    )
     assert job.finished_at is not None
     assert (job.attempts, job.lease_epoch, job.lease_phase) == (1, 0, "terminal")
     assert job.lease_token is None and job.lease_until is None
-    assert imports.status(env[2], scope_id=job.scope_id, job_id=job.pk)["reason"] == "source_unavailable"
+    assert (
+        imports.status(env[2], scope_id=job.scope_id, job_id=job.pk)["reason"]
+        == "source_unavailable"
+    )
 
 
-def test_transient_claim_denial_remains_pending_without_fetch_or_lease(env, monkeypatch):
+def test_transient_claim_denial_remains_pending_without_fetch_or_lease(
+    env, monkeypatch
+):
     job = _submitted(env, wav_bytes(seconds=1))
     original = (job.state, job.reason, job.recording.state)
-    monkeypatch.setattr(imports, "_revalidate", Mock(side_effect=AttachmentError("source_unavailable", 503)))
+    monkeypatch.setattr(
+        imports,
+        "_revalidate",
+        Mock(side_effect=AttachmentError("source_unavailable", 503)),
+    )
     source = Mock(side_effect=AssertionError("unexpected source access"))
     with pytest.raises(AttachmentError) as exc:
         imports.run(job.pk, scope_id=job.scope_id, source_factory=source)
@@ -740,7 +771,11 @@ def _submitted(env, data, *, lifetime=timedelta(minutes=10)):
     _, job = submit_job(
         env[2],
         scope_id=env[0].id,
-        body=body(current, data=data, envelope_id=envelope(env, data, current=current, lifetime=lifetime)),
+        body=body(
+            current,
+            data=data,
+            envelope_id=envelope(env, data, current=current, lifetime=lifetime),
+        ),
     )
     return job
 

@@ -801,21 +801,32 @@ def test_dispatch_survives_capacity_failure_and_bool_return(modules, monkeypatch
     # and bound its external authority/ORM collaborators to this fixture.
     scope = row(id=scope_id)
     m.am.AttachmentScope.objects = Query([scope])
-    live = row(id=registration.connection_id, provider="livekit", enabled=True,
-               revoked_at=None, authority_generation=4)
-    monkeypatch.setattr(m.provider_recordings, "_parent_expiry", lambda *_: registration.expires_at)
+    live = row(
+        id=registration.connection_id,
+        provider="livekit",
+        enabled=True,
+        revoked_at=None,
+        authority_generation=4,
+    )
+    monkeypatch.setattr(
+        m.provider_recordings, "_parent_expiry", lambda *_: registration.expires_at
+    )
     monkeypatch.setattr(m.provider_recordings, "_lock_registrar", lambda *_: session)
     resolved = object()
     monkeypatch.setattr(m.source_providers, "resolve", Mock(return_value=resolved))
-    monkeypatch.setattr(m.source_providers, "lock_source", Mock(return_value=(live, None, registration)))
+    monkeypatch.setattr(
+        m.source_providers, "lock_source", Mock(return_value=(live, None, registration))
+    )
     monkeypatch.setattr(m.source_providers, "revalidate", Mock())
     imports._check_registered_descriptor = Mock()
     imports._registered_job = Mock(return_value=None)
+
     def recover(candidate, caller):
         assert m.depth.value == 0 and candidate is registration
         assert caller == registrar and registration.import_job_id is None
         assert not m.rm.AttachmentImportJob.objects.exists()
         return None
+
     imports.recover_auto_dispatch = Mock(side_effect=recover)
     bodies = []
 
@@ -825,8 +836,13 @@ def test_dispatch_survives_capacity_failure_and_bool_return(modules, monkeypatch
         if len(bodies) == 1:
             raise m.contract.AttachmentError("throttled", 429)
         assert _importer == registrar and kw["scope_id"] == scope_id
-        linked_job = row(id=job_id, scope_id=scope_id, provider_recording_id=registration.id,
-                         importer_kind=_importer.kind, importer_id=_importer.id)
+        linked_job = row(
+            id=job_id,
+            scope_id=scope_id,
+            provider_recording_id=registration.id,
+            importer_kind=_importer.kind,
+            importer_id=_importer.id,
+        )
         m.rm.AttachmentImportJob.objects.rows.append(linked_job)
         registration.import_job_id = linked_job.id
         registration.dispatch_due_at = None
@@ -1030,7 +1046,9 @@ def test_completion_persists_receipt_intent_and_original_session(modules, monkey
             "status": "EGRESS_COMPLETE",
             "roomName": "room",
             "updatedAt": 2,
-            "fileResults": [{"location": metadata["url"], "size": 8, "duration": 1_000_000}],
+            "fileResults": [
+                {"location": metadata["url"], "size": 8, "duration": 1_000_000}
+            ],
         },
     }
     assert p.process_livekit_event(connection, event) is registration
@@ -1345,12 +1363,12 @@ def test_source_expiry_denies_after_clock_advance(
     f, scope, session, envelope, _ = setup_source(modules, monkeypatch)
     # Isolate each stored expiry bound without changing production TTLs.
     setattr(envelope, expiry_field, NOW + timedelta(seconds=30))
-    arguments = dict(
-        source=modules.interfaces.SourceRef(f.source_kind, f.source_id),
-        scope_id=scope.id,
-        importer=SimpleNamespace(kind=f.creator_kind, id=f.creator_id),
-        capture_session_id=session.id,
-    )
+    arguments = {
+        "source": modules.interfaces.SourceRef(f.source_kind, f.source_id),
+        "scope_id": scope.id,
+        "importer": SimpleNamespace(kind=f.creator_kind, id=f.creator_id),
+        "capture_session_id": session.id,
+    }
     source_clock.advance(timedelta(seconds=30) - timedelta(microseconds=1))
     assert modules.source_providers.resolve(**arguments).source_id == f.source_id
     source_clock.advance(timedelta(microseconds=1))

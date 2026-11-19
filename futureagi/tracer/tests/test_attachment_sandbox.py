@@ -37,9 +37,8 @@ from tracer.services.attachments import uploads, validation
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.probe import REJECTED_EXIT, probe
 from tracer.tests import test_attachment_core as core
-from tracer.tests.attachment_fixtures import erase_terminal_upload
+from tracer.tests.attachment_fixtures import erase_terminal_upload, wait_for_db
 from tracer.tests.test_attachment_core import ImmutableStore, initialized
-from tracer.tests.attachment_fixtures import wait_for_db
 
 setup = core.setup
 

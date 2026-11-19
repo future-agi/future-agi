@@ -16,8 +16,8 @@ from urllib.parse import urlsplit
 from minio.minioadmin import MinioAdmin
 
 from tracer.services.attachments.storage_s3 import (
-    S3PrivateMediaStorage,
     S3PostureCredentials,
+    S3PrivateMediaStorage,
     _client,
     _optional,
 )

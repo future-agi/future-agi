@@ -1133,7 +1133,8 @@ def accepted_independent(services, monkeypatch):
     import sys
     from collections import namedtuple
     from copy import deepcopy
-    from types import ModuleType, SimpleNamespace as NS
+    from types import ModuleType
+    from types import SimpleNamespace as NS
     from unittest.mock import Mock
     from uuid import UUID
 
@@ -1191,7 +1192,10 @@ def accepted_independent(services, monkeypatch):
         # Usage receipts are inline on Upload, not a separate receipt model.
         # Keep every receipt column in the full-row snapshot, plus its audit/outbox.
         receipt_fields = {
-            "usage_id", "usage_created_at", "usage_outcome", "usage_stored_bytes",
+            "usage_id",
+            "usage_created_at",
+            "usage_outcome",
+            "usage_stored_bytes",
             "settlement_event_id",
         }
         assert receipt_fields <= {
@@ -1200,10 +1204,16 @@ def accepted_independent(services, monkeypatch):
         return {
             name: list(s.case.model(name).objects.order_by("pk").values())
             for name in (
-                "AttachmentImportJob", "AttachmentRecording", "AttachmentBudget",
-                "Attachment", "AttachmentUpload", "AttachmentRecordingSegment",
-                "AttachmentOccurrence", "AttachmentManifestRevision",
-                "AttachmentAuditEvent", "AttachmentOutbox",
+                "AttachmentImportJob",
+                "AttachmentRecording",
+                "AttachmentBudget",
+                "Attachment",
+                "AttachmentUpload",
+                "AttachmentRecordingSegment",
+                "AttachmentOccurrence",
+                "AttachmentManifestRevision",
+                "AttachmentAuditEvent",
+                "AttachmentOutbox",
             )
         }
 
@@ -1214,9 +1224,15 @@ def accepted_independent(services, monkeypatch):
         (s.source_providers.safe_fetch, ("inspect_metadata",)),
         (s.source_providers.safe_fetch.RangeSource, ("read_range",)),
         (s.envelopes, ("open_url",)),
-        (s.capacity_db, ("lock_capacity", "count_attempt", "reserve_locked", "transfer_locked")),
+        (
+            s.capacity_db,
+            ("lock_capacity", "count_attempt", "reserve_locked", "transfer_locked"),
+        ),
         (s.imports, ("publish", "run")),
-        (sys.modules["tracer.services.attachments.readiness"], ("require_new_admission",)),
+        (
+            sys.modules["tracer.services.attachments.readiness"],
+            ("require_new_admission",),
+        ),
         (sys.modules["tracer.services.attachments.validation"], ("require_decoder",)),
         (s.case.model("AttachmentImportJob"), ("save",)),
         (s.case.model("AttachmentRecording"), ("save",)),
@@ -1226,12 +1242,21 @@ def accepted_independent(services, monkeypatch):
             monkeypatch.setattr(module, name, spy)
             forbidden.append(spy)
     yield NS(
-        s=s, body=body, first=first, job=job, envelope=envelope, expiry=expiry,
-        state=state, parent_source=parent_source, parent_lookup=parent_lookup,
+        s=s,
+        body=body,
+        first=first,
+        job=job,
+        envelope=envelope,
+        expiry=expiry,
+        state=state,
+        parent_source=parent_source,
+        parent_lookup=parent_lookup,
     )
     for spy in forbidden:
         spy.assert_not_called()
-    assert snapshot() == before  # includes job/fingerprint, allocations and publication receipts
+    assert (
+        snapshot() == before
+    )  # includes job/fingerprint, allocations and publication receipts
 
 
 def _accepted_replay(case):
@@ -1252,7 +1277,9 @@ def test_independent_envelope_accepted_replay_keeps_legacy_expiry_behavior(
     c.parent_source.assert_called_once()
 
 
-def test_independent_authorized_replay_keeps_identity_and_fingerprint(accepted_independent):
+def test_independent_authorized_replay_keeps_identity_and_fingerprint(
+    accepted_independent,
+):
     c = accepted_independent
     fingerprint = c.job.request_fingerprint
     assert _accepted_replay(c) == (c.first, False)
@@ -1320,7 +1347,9 @@ def test_independent_replay_requires_current_parent_authority(
     c.parent_source.assert_called_once()
 
 
-@pytest.mark.parametrize("field", ["importer_id", "capture_session_id", "envelope_id", "source_creator_id"])
+@pytest.mark.parametrize(
+    "field", ["importer_id", "capture_session_id", "envelope_id", "source_creator_id"]
+)
 @pytest.mark.parametrize("locked_only", [False, True])
 def test_independent_replay_rejects_inconsistent_job_snapshot(
     accepted_independent, monkeypatch, field, locked_only
@@ -1344,7 +1373,9 @@ def test_independent_replay_rejects_inconsistent_job_snapshot(
         _accepted_replay(c)
 
 
-@pytest.mark.parametrize("field", ["client_id", "capture_session_id", "correlation_nonce", "trace_id"])
+@pytest.mark.parametrize(
+    "field", ["client_id", "capture_session_id", "correlation_nonce", "trace_id"]
+)
 def test_independent_replay_rejects_inconsistent_recording_association(
     accepted_independent, monkeypatch, field
 ):
@@ -1384,7 +1415,9 @@ def test_independent_replay_rechecks_late_source_change_under_locks(
     c.parent_source.assert_called_once()  # no network/parent lookup under locks
 
 
-def test_independent_replay_requires_retained_capture_proof(accepted_independent, monkeypatch):
+def test_independent_replay_requires_retained_capture_proof(
+    accepted_independent, monkeypatch
+):
     c = accepted_independent
     monkeypatch.setattr(settings, "FI_ATTACHMENTS_ENVELOPE_KEYS", "")
     with pytest.raises(c.s.contract.AttachmentError):
@@ -1424,8 +1457,11 @@ def test_expired_accepted_metadata_does_not_enable_resolve_or_new_admission(
 def test_independent_replay_takes_only_ordered_local_locks(accepted_independent):
     c = accepted_independent
     tables = (
-        "tracer_attachmentscope", "accounts_user", "tracer_capturesession",
-        "tracer_attachmentsourceenvelope", "tracer_attachmentimportjob",
+        "tracer_attachmentscope",
+        "accounts_user",
+        "tracer_capturesession",
+        "tracer_attachmentsourceenvelope",
+        "tracer_attachmentimportjob",
         "tracer_attachmentrecording",
     )
     observed = []
@@ -1453,7 +1489,8 @@ def test_registered_accepted_aliases_keep_strict_expiry(services, monkeypatch):
     assert created
     alias = deepcopy(body)
     alias["source"] = {
-        "kind": "RemoteUrlEnvelope", "envelope_id": str(row.output_envelope_id)
+        "kind": "RemoteUrlEnvelope",
+        "envelope_id": str(row.output_envelope_id),
     }
     alias["recording"]["source_kind"] = "RemoteUrl"
     before = list(s.case.model("AttachmentBudget").objects.order_by("pk").values())
@@ -1465,5 +1502,7 @@ def test_registered_accepted_aliases_keep_strict_expiry(services, monkeypatch):
         with pytest.raises(s.contract.AttachmentError):
             s.imports.submit(s.importer, scope_id=s.case.scope.id, body=request)
     independent.assert_not_called()
-    assert list(s.case.model("AttachmentBudget").objects.order_by("pk").values()) == before
+    assert (
+        list(s.case.model("AttachmentBudget").objects.order_by("pk").values()) == before
+    )
     assert str(s.case.model("AttachmentImportJob").objects.get().id) == first["job_id"]

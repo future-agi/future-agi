@@ -293,12 +293,12 @@ class S3PrivateMediaStorage:
     @classmethod
     def _observe(cls, config, posture, credentials):
         account, buckets = cls._inventory(config, posture, credentials)
-        values = dict(
-            provider=cls.provider,
-            endpoint=config.storage.endpoint_url,
-            account_identity=account,
-            region=config.storage.region,
-        )
+        values = {
+            "provider": cls.provider,
+            "endpoint": config.storage.endpoint_url,
+            "account_identity": account,
+            "region": config.storage.region,
+        }
         for purpose in ("quarantine", "serving"):
             bucket = getattr(config, purpose + "_bucket")
             created = buckets[bucket]
@@ -326,14 +326,14 @@ class S3PrivateMediaStorage:
             values.update(
                 {
                     purpose + "_" + k: v
-                    for k, v in dict(
-                        bucket=bucket,
-                        resource_identity=resource,
-                        owner_identity=owner,
-                        created_at=created.astimezone(UTC),
-                        encryption_mode=mode,
-                        encryption_key_identity=key,
-                    ).items()
+                    for k, v in {
+                        "bucket": bucket,
+                        "resource_identity": resource,
+                        "owner_identity": owner,
+                        "created_at": created.astimezone(UTC),
+                        "encryption_mode": mode,
+                        "encryption_key_identity": key,
+                    }.items()
                 }
             )
         return values
@@ -648,7 +648,7 @@ class S3PrivateMediaStorage:
             raise ValueError
         _revision(identity.version)
         _length(expected_length)
-        args = dict(Bucket=bucket, Key=identity.key, VersionId=identity.version)
+        args = {"Bucket": bucket, "Key": identity.key, "VersionId": identity.version}
         if start is not None:
             if (
                 type(start) is not int
@@ -745,7 +745,7 @@ class S3PrivateMediaStorage:
         ):
             raise ValueError
         scope = [str(self.binding_id), locator.purpose, locator.key]
-        args = dict(Bucket=bucket, Prefix=locator.key, MaxKeys=limit)
+        args = {"Bucket": bucket, "Prefix": locator.key, "MaxKeys": limit}
         if cursor is not None:
             if not isinstance(cursor, str) or len(cursor) > 4096:
                 raise ValueError
@@ -807,9 +807,11 @@ class S3PrivateMediaStorage:
         client, bucket = self._target(identity)
         if not isinstance(identity, ObjectIdentity):
             raise ValueError
-        args = dict(
-            Bucket=bucket, Key=identity.key, VersionId=_revision(identity.version)
-        )
+        args = {
+            "Bucket": bucket,
+            "Key": identity.key,
+            "VersionId": _revision(identity.version),
+        }
         try:
             result = client.delete_object(**args)
             if result.get("VersionId") not in (None, identity.version):
@@ -836,7 +838,7 @@ class S3PrivateMediaStorage:
 
     def _multipart(self, locator, budget, *, erase):
         client, bucket = self._target(locator)
-        args = dict(Bucket=bucket, Prefix=locator.key, MaxUploads=100)
+        args = {"Bucket": bucket, "Prefix": locator.key, "MaxUploads": 100}
         seen, found = set(), False
         while budget[0] > 0:
             budget[0] -= 1

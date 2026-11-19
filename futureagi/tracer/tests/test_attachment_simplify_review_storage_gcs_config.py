@@ -209,14 +209,17 @@ class NativeHTTP:
                 ) in ("0", 0):
                     status, data = 400, self.list_error
                 else:
-                    status, data = 200, {
-                        "kind": "storage#objects",
-                        "items": [
-                            {"name": k, "generation": v}
-                            for k, v in sorted(self.soft)
-                            if k.startswith(query["prefix"])
-                        ],
-                    }
+                    status, data = (
+                        200,
+                        {
+                            "kind": "storage#objects",
+                            "items": [
+                                {"name": k, "generation": v}
+                                for k, v in sorted(self.soft)
+                                if k.startswith(query["prefix"])
+                            ],
+                        },
+                    )
                 self.after_list()
             else:
                 status, data = 200, deepcopy(self.meta[purpose])

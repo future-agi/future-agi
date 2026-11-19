@@ -101,7 +101,10 @@ def servable(selection, representation):
         served is None
         or representation not in SERVED_REPRESENTATIONS
         or representation != expected
-        or (selection.mime_type == "application/octet-stream" and representation != "peaks")
+        or (
+            selection.mime_type == "application/octet-stream"
+            and representation != "peaks"
+        )
         or (representation in {"playable", "channel"} and not served.media)
         or not 0 < selection.byte_length <= MAX_SERVED_BYTES
     ):
