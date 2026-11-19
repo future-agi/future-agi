@@ -78,6 +78,7 @@ class ErasureProgressPending(MetricStateConflict):
 MAX_AUTOMATIC_ATTEMPTS = 5
 TERMINAL_ERRORS = (
     "source_rebuild_required",
+    "ambiguous_organization_scope",
     "legacy_writer_drain_required",  # Preserve refusal of existing diagnostic rows.
     "legacy_writer_precondition_failed",
 )
@@ -674,6 +675,10 @@ def _process_erasure(request_id, *, store=None, writer=None):
         phase = "saved_sql_cleanup"
         try:
             request.refresh_from_db()
+            if request.scope_kind == "organization" and request.project_key is not None:
+                # A pre-validation request is ambiguous. Never widen it or certify a partial purge.
+                phase = "scope_validation"
+                raise ErasureRecoveryRequired("ambiguous_organization_scope")
             from tracer.sql_workbench.metric_retention import (
                 invalidate_scope,
                 invalidate_snapshot,

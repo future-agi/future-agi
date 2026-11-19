@@ -65,6 +65,23 @@ def _outbox_row(**fields):
     return row
 
 
+@pytest.mark.parametrize("status", ["queued", "failed"])
+def test_ambiguous_legacy_organization_scope_is_not_processed(live_writer, status):
+    request = _outbox_row(
+        organization_key=live_writer.org_id,
+        project_key=live_writer.lease.project_id,
+        scope_kind="organization",
+        status=status,
+    )
+    with patch.object(erasure, "_purge_snapshots") as purge:
+        assert not erasure.process_erasure(request.id, store=live_writer.store)
+        purge.assert_not_called()
+    request.refresh_from_db()
+    assert request.status == "failed" and request.completed_at is None
+    assert not request.receipts and request.error_code == "ambiguous_organization_scope"
+    assert not erasure.pending_requests().filter(pk=request.pk).exists()
+
+
 def _assert_scrubbed_parent(request, *, subjects, legacy_hash):
     assert request.status == "done" and set(request.receipts) == STORES
     assert request.subject_ids == []

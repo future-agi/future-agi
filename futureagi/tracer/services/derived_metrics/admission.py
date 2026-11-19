@@ -475,6 +475,7 @@ def record_failure(reservation: Reservation, *, now: datetime, code: str) -> Non
         last_error_at=now,
         last_error_code=code,
         consecutive_failures=F("consecutive_failures") + 1,
+        **({"pending_expiry": True} if reservation.purpose == "expiry" else {}),
         **({"busy_yields": 0} if code == "metric_refresh_failed" else {}),
     )
 
