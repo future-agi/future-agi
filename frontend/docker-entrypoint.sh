@@ -72,15 +72,29 @@ write_config_entry() {
   printf '  %s: "%s",\n' "$config_name" "$config_value"
 }
 
-{
-  printf '%s\n' 'window.__FUTURE_AGI_CONFIG__ = {'
-  for config_name in $CONFIG_NAMES; do
-    write_config_entry "$config_name"
-  done
-  printf '%s\n' '};'
-} > "$CONFIG_PATH"
+# A read-only root filesystem needs CONFIG_PATH on a writable mount
+# (deploy/README.md, "Read-only root filesystem"). Without one the container
+# still starts, as it always has, and serves the image's placeholder config.
+if (: > "$CONFIG_PATH") 2>/dev/null; then
+  {
+    printf '%s\n' 'window.__FUTURE_AGI_CONFIG__ = {'
+    for config_name in $CONFIG_NAMES; do
+      write_config_entry "$config_name"
+    done
+    printf '%s\n' '};'
+  } > "$CONFIG_PATH"
+  echo "[entrypoint] wrote ${CONFIG_PATH}"
+else
+  echo "[entrypoint] warning: cannot write ${CONFIG_PATH}; serving the image's placeholder config (mount it writable on a read-only root filesystem)" >&2
+fi
 
-echo "[entrypoint] wrote ${CONFIG_PATH}"
+# futureagi/standalone runs its own nginx and needs only config.js: with this
+# set, the listener settings below, this image's own, are neither checked nor
+# written, and no command runs. Not for the frontend image on its own.
+if [ "${FRONTEND_CONFIG_ONLY:-false}" = true ]; then
+  echo '[entrypoint] FRONTEND_CONFIG_ONLY is set: exiting after config.js'
+  exit 0
+fi
 
 http_enabled=${FRONTEND_HTTP_ENABLED:-true}
 http_port=${FRONTEND_HTTP_PORT:-80}
@@ -95,6 +109,12 @@ key_file=${FRONTEND_TLS_KEY_FILE:-}
 # busybox base64, od and awk only as far as Validity.notAfter (UTCTime or
 # GeneralizedTime). An expired leaf would fail every verifying client: the
 # gateway refuses one too, at startup and on reload.
+# Kept on purpose: nothing in nginx:alpine-slim reads certificate dates
+# (nginx -t loads an expired certificate), and the openssl package would add
+# a binary to the served image for this one field. It only reads the date;
+# nginx parses and checks the rest. frontend/tests/image runs it in the real
+# image against openssl-issued leaves and chains, both time encodings and
+# rotations.
 tls_cert_problem() {
   not_after=$(
     awk '/^-----BEGIN [A-Z0-9 ]*CERTIFICATE-----/ { pem = 1; next }
@@ -156,6 +176,18 @@ tls_cert_problem() {
   fi
 }
 
+# Warns, and still starts, when the private key's mode grants more than owner
+# read-write and group read: a Kubernetes Secret mounted with fsGroup needs
+# 0440 at most. stat -L reads the file behind a Secret's symlinks. Never
+# prints the key.
+warn_broad_key_mode() {
+  key_mode=$(stat -L -c %a "$1" 2>/dev/null) || return 0
+  case "$key_mode" in ''|*[!0-7]*) return 0 ;; esac
+  if [ $((0$key_mode & 037)) -ne 0 ]; then
+    echo "$2 warning: TLS private key $1 has mode $key_mode, which grants group write or access to others; use 0400 or 0440" >&2
+  fi
+}
+
 case "$http_enabled:$tls_enabled" in
   true:true|true:false|false:true) ;;
   false:false) echo '[entrypoint] HTTP and TLS cannot both be disabled' >&2; exit 1 ;;
@@ -201,11 +233,15 @@ if [ "$tls_enabled" = true ]; then
     echo "[entrypoint] $problem" >&2
     exit 1
   fi
+  warn_broad_key_mode "$key_file" '[entrypoint]'
 fi
 
 # /tmp is writable even in the Helm read-only-root deployment. Its ConfigMap
 # nginx.conf need not include this file, but the image's nginx.conf does.
-mkdir -p /tmp/futureagi-nginx
+if ! (mkdir -p /tmp/futureagi-nginx && : > /tmp/futureagi-nginx/listen.conf) 2>/dev/null; then
+  echo '[entrypoint] cannot write /tmp/futureagi-nginx/listen.conf: mount a writable /tmp on a read-only root filesystem' >&2
+  exit 1
+fi
 {
   if [ "$http_enabled" = true ]; then
     printf 'listen %s;\nlisten [::]:%s;\n' "$http_port" "$http_port"
@@ -243,6 +279,7 @@ if [ "$tls_enabled" = true ] && [ "${1:-}" = nginx ]; then
           echo "[tls-reload] $problem; keeping current configuration" >&2
           continue
         fi
+        warn_broad_key_mode "$key_file" '[tls-reload]'
         echo '[tls-reload] certificate files changed; signalling nginx master' >&2
         kill -HUP "$nginx_pid" 2>/dev/null || exit 0
       fi

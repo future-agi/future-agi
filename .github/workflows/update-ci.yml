@@ -229,8 +229,11 @@ jobs:
               - '**/requirements*.txt'
               - '**/go.mod'
               - '**/go.sum'
-              # Backend image root: Dockerfile, entrypoint, manage.py, project and lock
-              - 'futureagi/*'
+              # Backend image root: Dockerfile, entrypoint, manage.py, project and lock.
+              # Not the type-check baseline or the test-duration record: they
+              # change on many pull requests, and futureagi/.dockerignore keeps
+              # both out of the image.
+              - 'futureagi/!(mypy-baseline.txt|.test_durations)'
               # Data model and migrations, including post_migrate hooks
               - 'futureagi/**/migrations/**'
               - 'futureagi/**/models.py'

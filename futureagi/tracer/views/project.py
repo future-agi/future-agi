@@ -95,8 +95,8 @@ from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
     OBSERVE_CODEBLOCK,
-    ORG_BASE_URL,
     ORG_KEYS,
+    ORG_SELF_HOSTED_URLS,
     PROTOTYPE_CODEBLOCK,
 )
 from tracer.utils.graphs_optimized import (
@@ -115,16 +115,22 @@ logger = structlog.get_logger(__name__)
 
 def sdk_key_snippets():
     """The keys block of the in-app SDK snippet, per language, with placeholder
-    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's
-    collector: the SDKs default to Cloud, and without it the spans (prompts and
-    completions included) would leave for api.futureagi.com."""
+    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's API
+    (FI_API_PUBLIC_URL) and FI_TRACES_URL to its trace collector
+    (FI_COLLECTOR_PUBLIC_URL): the SDKs default to Cloud, and without them the
+    spans (prompts and completions included) would leave for
+    api.futureagi.com."""
     snippets = {
         lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
         for lang, code in ORG_KEYS.items()
     }
     if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
-        for lang, line in ORG_BASE_URL.items():
-            snippets[lang] += line.format(settings.FI_COLLECTOR_PUBLIC_URL)
+        urls = {
+            "api_url": settings.FI_API_PUBLIC_URL.rstrip("/"),
+            "traces_url": settings.FI_COLLECTOR_PUBLIC_URL.rstrip("/"),
+        }
+        for lang, lines in ORG_SELF_HOSTED_URLS.items():
+            snippets[lang] += lines.format(**urls)
     return snippets
 
 
