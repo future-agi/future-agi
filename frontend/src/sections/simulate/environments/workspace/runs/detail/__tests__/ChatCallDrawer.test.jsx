@@ -175,6 +175,73 @@ describe("ChatCallDrawer World state", () => {
     mocks.callDetail = null;
   });
 
+  it("shows only a call's shared records under World state while actors are off", async () => {
+    const trialState = {
+      state_changes: [
+        {
+          who: "agent",
+          name: "the agent",
+          attempted: 1,
+          committed: 1,
+          refused: 0,
+          faulted: 0,
+          duplicate: 0,
+          committed_actions: ["issue_refund"],
+        },
+      ],
+      shared_records: [
+        {
+          key: "order_id=1042",
+          argument: "order_id",
+          value: "1042",
+          actions: [
+            {
+              who: "worker:refund",
+              name: "Refund worker",
+              tool: "issue_refund",
+              outcome: "committed",
+              write: true,
+            },
+          ],
+          committed_writes: 1,
+          truncated: false,
+          actions_truncated: false,
+          truncation: null,
+        },
+      ],
+      duplicates: [],
+      decisions: [],
+      pre_run: [],
+      approvals: [],
+      usage: [],
+      usage_summary: [],
+      notices: [],
+      unreadable: false,
+    };
+    for (const actorsEnabled of [false, true]) {
+      mocks.callDetail = { actorsEnabled, trial_state: trialState };
+      const { unmount } = render(
+        <ChatCallDrawer
+          task={{
+            id: `call-execution-shared-${actorsEnabled}`,
+            status: "completed",
+          }}
+          onClose={vi.fn()}
+        />,
+      );
+      await userEvent.click(screen.getByRole("tab", { name: "World state" }));
+      expect(screen.getByTestId("shared-records")).toHaveTextContent(
+        "Refund worker",
+      );
+      // What the agent changed is actors content: shown only with actors on.
+      expect(screen.queryByLabelText("Committed: issue_refund") !== null).toBe(
+        actorsEnabled,
+      );
+      unmount();
+    }
+    mocks.callDetail = null;
+  });
+
   it("shows World state on a trial with no actors", async () => {
     mocks.callDetail = {
       actorsEnabled: true,
