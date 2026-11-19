@@ -115,6 +115,13 @@ describe("edits added from files", () => {
     expect(files.changes.every((one) => one.decision === "accepted")).toBe(
       true,
     );
+    // Numbered after the sample's R5, not from R1.
+    const ruleTitles = (changes) =>
+      changes.filter((one) => one.kind === "rule").map((one) => one.summary);
+    expect(ruleTitles(files.changes)).toEqual([
+      "Rule R6 added: refunds within 14 days",
+      "Rule R7 added: returns within 30 days",
+    ]);
     // Rules and records recheck every sample scenario; new scenarios add theirs.
     expect(new Set(files.changes.flatMap((one) => one.revalidate)).size).toBe(
       ALL_SCENARIOS.length + 2,
@@ -153,6 +160,20 @@ describe("edits added from files", () => {
       ],
     });
     appendAcceptedEdits(queryClient, envId, { accepted: [supervisor("p6")] });
+    // A rule added again keeps its number.
+    appendAcceptedEdits(queryClient, envId, {
+      accepted: [
+        {
+          id: "rule-src_1-p2",
+          kind: "rule",
+          rule: "refunds within 30 days",
+          cite: { sourceId: "src_1", ref: "policy.pdf · p.2", at: "p2" },
+        },
+      ],
+    });
+    expect(ruleTitles(sampleFileEdits(reviewIn(queryClient)).changes)[0]).toBe(
+      "Rule R6 added: refunds within 30 days",
+    );
     expect(
       sampleFileEdits(reviewIn(queryClient)).changes.filter(
         (one) => one.kind === "actor",

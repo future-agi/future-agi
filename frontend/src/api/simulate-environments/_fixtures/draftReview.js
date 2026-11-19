@@ -259,7 +259,7 @@ export const withSampleDecisions = (review, decisions) =>
   );
 
 // Changes and failed changes from added files, replacing any with the same id;
-// `cleared` failed ids leave. With no review loaded yet, they join the sample.
+// `cleared` ids (changes or failed) leave. With no review loaded yet, they join the sample.
 export const withSampleEdits = (
   review,
   changes = [],
@@ -276,7 +276,7 @@ export const withSampleEdits = (
   };
   const base = review || sampleDraftReview();
   return reviewOf(
-    upsert(base.changes, changes),
+    upsert(base.changes, changes).filter((one) => !cleared.includes(one.id)),
     upsert(base.failed || [], failed).filter(
       (one) => !cleared.includes(one.id),
     ),

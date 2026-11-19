@@ -39,6 +39,8 @@ const OWN_FIELDS = {
   "/tables": "Tables",
   "/world_data": "World data",
   "/personal_data": "Personal data",
+  "/mapping": "Mapping",
+  "/used_as": "Used as",
 };
 
 /** Undo rejects a change: it leaves the list. Keeping one accepts it at Save. */

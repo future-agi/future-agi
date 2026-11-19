@@ -23,10 +23,8 @@ import {
   editColumn,
   idCheckOf,
   joinsOf,
-  mappingVersionOf,
   relationshipTargets,
   setJoin,
-  toReviewOf,
 } from "./mapping";
 import { standInId } from "./personalData";
 
@@ -112,7 +110,7 @@ function IdProposal({ source, column, sources, readOnly, onEdit, onSupply }) {
       <Heading
         note={
           done
-            ? `Approved · mapping v${mappingVersionOf(source)}`
+            ? "Approved"
             : "Suggested by the builder. Not applied until you approve it."
         }
       >
@@ -615,7 +613,6 @@ export default function MappingTab({
 
   const sources = summary?.sources || [source];
   const parsed = source.ui.parsed;
-  const review = toReviewOf(source);
   const snapshot = summary?.snapshot_digest
     ?.replace(/^sha256:/, "")
     .slice(0, 12);
@@ -628,9 +625,6 @@ export default function MappingTab({
     <Stack spacing={1.75}>
       <Box>
         <Row label="Becomes table">{mono(parsed.table)}</Row>
-        <Row label="Mapping version">
-          {`v${mappingVersionOf(source)} · ${review ? `${review} to review` : "nothing to review"}`}
-        </Row>
         <Row label="Source snapshot">
           {`${name} · ${isSaved(source) && snapshot ? `snapshot ${snapshot}` : "not saved into the environment yet"}`}
         </Row>

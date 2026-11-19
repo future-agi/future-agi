@@ -14,6 +14,7 @@ import {
   useDraftCheck,
   useDraftReview,
 } from "src/api/simulate-environments/draftReview";
+import { useRevertFileEdits } from "src/api/simulate-environments/sources";
 import { useEnvironmentVersions } from "src/api/simulate-environments/versions";
 import SideDrawer from "../../components/SideDrawer";
 import MockBadge from "../../components/MockBadge";
@@ -90,6 +91,7 @@ export default function ReviewChangesDrawer({
   });
   const decide = useDecideChanges(env?.id);
   const dismiss = useDismissFailedChange(env?.id);
+  const revertFileEdits = useRevertFileEdits(env?.id);
   const [name, setName] = useState("");
   const [discarding, setDiscarding] = useState(false);
   const [announced, setAnnounced] = useState("");
@@ -162,6 +164,8 @@ export default function ReviewChangesDrawer({
     if (decision) said = COPY.announced[decision];
     else if (change.decision === "rejected") said = COPY.announced.restored;
     setAnnounced(said(change.summary));
+    // A file drawer edit rejected or undone goes back to the saved file.
+    if (decision !== "accepted" && revertFileEdits([change])) return;
     decide.mutate([{ id: change.id, decision }]);
   };
   const acceptRemaining = () => {
@@ -199,6 +203,7 @@ export default function ReviewChangesDrawer({
   };
   const discard = () => {
     setDiscarding(false);
+    revertFileEdits(changes);
     if (review?.is_sample) {
       enqueueSnackbar(COPY.sampleDiscarded, { variant: "info" });
     }

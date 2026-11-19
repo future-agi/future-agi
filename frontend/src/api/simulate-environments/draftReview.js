@@ -56,7 +56,7 @@ const draftCheckKey = (envId) => ["harness-env-draft-check", envId];
 const NO_CHECK = { key: null, state: "idle" };
 
 // ({ changes, failed, cleared }): edits added from files land in the review,
-// already decided, even when no review was loaded yet. `cleared` failed ids go.
+// already decided, even when no review was loaded yet. `cleared` ids go.
 // New edits can recheck the same scenarios, so the last check no longer counts.
 export const addSampleEdits = (
   queryClient,

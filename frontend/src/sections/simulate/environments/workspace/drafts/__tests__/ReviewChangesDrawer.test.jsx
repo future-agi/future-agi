@@ -26,6 +26,10 @@ vi.mock(
     useDraftCheck: () => useState({ key: null, state: "idle" }),
   }),
 );
+vi.mock("src/api/simulate-environments/sources", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useRevertFileEdits: () => () => false,
+}));
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentVersions: vi.fn(() => ({
