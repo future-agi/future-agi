@@ -148528,9 +148528,8 @@
                 },
                 "saved_without_check": {
                     "title": "Saved without check",
-                    "description": "Saved while the check was unavailable; its pairings read Untested until checked.",
-                    "type": "boolean",
-                    "default": false
+                    "description": "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
+                    "type": "boolean"
                 },
                 "stale": {
                     "title": "Stale",
@@ -148681,8 +148680,7 @@
                 "suite",
                 "set_aside",
                 "validation",
-                "candidates",
-                "validation_required"
+                "candidates"
             ],
             "type": "object",
             "properties": {
@@ -148706,7 +148704,7 @@
                 },
                 "validation_required": {
                     "title": "Validation required",
-                    "description": "A Save of these drafts must go through Validate first; a plain Save is refused.",
+                    "description": "A Save of these drafts must go through Validate first; a plain Save is refused. Always sent by this release; read as false when absent (a server from before it, during a rolling deploy).",
                     "type": "boolean"
                 }
             }
@@ -149300,9 +149298,8 @@
                 },
                 "saved_without_check": {
                     "title": "Saved without check",
-                    "description": "Saved while the check was unavailable; its pairings read Untested until checked.",
-                    "type": "boolean",
-                    "default": false
+                    "description": "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
+                    "type": "boolean"
                 }
             }
         },

@@ -1409,8 +1409,8 @@ class HarnessVersionSerializer(serializers.Serializer):
     )
     saved_without_check = serializers.BooleanField(
         required=False,
-        default=False,
-        help_text="Saved while the check was unavailable; its pairings read Untested until checked.",
+        help_text="Saved while the check was unavailable; its pairings read Untested until checked. Read as false "
+        "when absent.",
     )
 
 
@@ -1604,7 +1604,9 @@ class HarnessDraftsSerializer(serializers.Serializer):
         help_text="The versions Validate built; send them to Save once validation is ready.",
     )
     validation_required = serializers.BooleanField(
-        help_text="A Save of these drafts must go through Validate first; a plain Save is refused."
+        required=False,
+        help_text="A Save of these drafts must go through Validate first; a plain Save is refused. Always sent by "
+        "this release; read as false when absent (a server from before it, during a rolling deploy).",
     )
 
 

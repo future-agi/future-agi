@@ -1724,3 +1724,32 @@ def test_the_sweep_drops_an_old_set_that_named_only_active_versions(
     discard_expired_candidates()
     environment.refresh_from_db()
     assert VALIDATION_KEY not in environment.payload["metadata"]
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "simulate.services.harness_versioning.candidate_sets",
+        "simulate.services.harness_versioning.drafts",
+        "simulate.services.harness_readiness",
+    ],
+)
+def test_each_module_imports_first_in_a_fresh_process(module):
+    """A script that imports one of these before anything else (the e2e seed imports the candidate sets) must not
+    meet a circular import."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[2]
+    done = subprocess.run(
+        [sys.executable, "-c", f"import django; django.setup(); import {module}"],
+        cwd=backend,
+        env={**os.environ, "DJANGO_SETTINGS_MODULE": "tfc.settings.test"},
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert done.returncode == 0, done.stderr[-2000:]
