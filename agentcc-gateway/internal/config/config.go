@@ -1309,23 +1309,10 @@ func envDuration(name string, dst *time.Duration) {
 	*dst = d
 }
 
-// envBool is envDuration for true or false.
-func envBool(name string, dst *bool) {
-	v := os.Getenv(name)
-	if v == "" {
-		return
-	}
-	b, err := strconv.ParseBool(strings.TrimSpace(v))
-	if err != nil {
-		slog.Warn("ignoring environment variable: not true or false",
-			"env", name, "value", v)
-		return
-	}
-	*dst = b
-}
-
-// envListenerSwitch is envBool for a listener switch: a value that is not
-// true or false is kept for Validate to refuse, never ignored.
+// envListenerSwitch applies a listener switch (true or false) from the
+// environment. Unlike envDuration, a value that is not true or false is kept
+// for Validate to refuse, never ignored: ignoring it could leave a listener on
+// that the operator meant to turn off.
 func (s *ServerConfig) envListenerSwitch(name string, dst *bool) {
 	v := os.Getenv(name)
 	if v == "" {

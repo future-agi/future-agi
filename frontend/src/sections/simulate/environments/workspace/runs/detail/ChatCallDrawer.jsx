@@ -309,7 +309,9 @@ export default function ChatCallDrawer({
             {showWorkers ? (
               <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
             ) : null}
-            <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            {callDetail?.actorsEnabled === true && (
+              <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            )}
           </CustomTabs>
 
           <Box

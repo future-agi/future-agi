@@ -46,6 +46,7 @@ from simulate.tests.test_evidence_datasets import rows as rows
 from simulate.tests.test_evidence_drafts import (  # noqa: F401 - fixtures
     INJECTED,
     _end_turn,
+    _other_edit,
     _promote,
     _save,
 )
@@ -153,6 +154,17 @@ class TestStart:
         assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
             conversation__job=environment
         ).exists()
+
+    def test_the_turn_keeps_how_many_scenarios_it_starts_from(
+        self, environment, cases, user, scheduled
+    ):
+        """The sandbox composes the suite draft over the default, so the command
+        keeps that suite's count (a draft that dropped one of two scenarios)."""
+        _other_edit(environment, user)
+
+        command = _command(_start(cases, user))
+
+        assert command.payload["_starting_scenarios"] == 1
 
     def test_a_second_draft_while_one_runs_is_refused(self, cases, user, scheduled):
         _start(cases[:1], user)

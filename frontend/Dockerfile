@@ -10,7 +10,7 @@
 #     nginx:alpine (amd64, Docker Hub, 2026-11-14). nginx.conf uses only core
 #     http directives (gzip, expires, add_header, try_files) and
 #     docker-entrypoint.sh and the healthcheck use busybox sh/printenv/sed/
-#     cat/md5sum/sleep/kill/wget, and awk/tr/base64/od/date to read a
+#     cat/md5sum/sleep/kill/wget/stat, and awk/tr/base64/od/date to read a
 #     certificate's expiry (plus the base image's ssl_client for HTTPS), so
 #     none of the modules alpine-slim leaves out (njs, geoip, image-filter,
 #     xslt, acme) nor nginx:alpine's curl are used.

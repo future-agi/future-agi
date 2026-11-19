@@ -37,6 +37,12 @@ def set_integration_encryption_key(settings):
 
 
 @pytest.fixture(autouse=True)
+def enable_harness_actors(settings):
+    """Actors on, as the tests of the actors feature expect; a test of the off switch turns it off itself."""
+    settings.HARNESS_ACTORS_ENABLED = True
+
+
+@pytest.fixture(autouse=True)
 def set_workspace_context_fixture(request):
     """Ensure workspace context is set for each test via thread-local storage.
 
