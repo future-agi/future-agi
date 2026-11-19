@@ -1075,6 +1075,11 @@ ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
 ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
     os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
 )
+# How long a Validate (a check of an environment's cases) may run before it is stopped: generous, so a suite of a
+# thousand cases is proved; cases a stopped check did not reach keep their earlier proofs.
+HARNESS_VALIDATION_CHECK_SECONDS = int(
+    os.getenv("HARNESS_VALIDATION_CHECK_SECONDS", "") or 7200
+)
 # Derived from the budget above so the two cannot disagree.
 ALK_HOSTED_AUTHORING_TIMEOUT = int(
     os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")

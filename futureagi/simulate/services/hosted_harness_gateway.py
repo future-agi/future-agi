@@ -492,6 +492,11 @@ def _platform_simulator_material() -> dict[str, str]:
         "ALK_VOICEMAIL_SCENARIOS",
         "ALK_HARNESS_WORKERS_AT_ONCE",
         "ALK_VALIDATION_INSTANCES",
+        # Proving: cases at once in the one sandbox (a ceiling; its own limits decide), the offline pass's budget, and
+        # the time a build hands held cases back to the writer.
+        "ALK_PROVE_CONCURRENCY",
+        "ALK_PROVE_SUITE_SECONDS",
+        "ALK_HELD_CASE_REPAIR_SECONDS",
         # The guest waits this long for the build; unset, it falls back to its own default.
         "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
     ):

@@ -1405,6 +1405,11 @@ def _age(job, minutes, *, launched=None):
 
 
 class TestDeadline:
+    @pytest.fixture(autouse=True)
+    def _a_45_minute_check(self, settings):
+        # These read against a 45-minute check window, set the way a deployment sets it.
+        settings.HARNESS_VALIDATION_CHECK_SECONDS = 45 * 60
+
     def test_a_check_past_its_deadline_is_stopped_and_runs_go_ahead(
         self,
         user,
@@ -1481,6 +1486,11 @@ class TestDeadline:
 
 
 class TestRefusals:
+    @pytest.fixture(autouse=True)
+    def _a_45_minute_check(self, settings):
+        # These read against a 45-minute check window, set the way a deployment sets it.
+        settings.HARNESS_VALIDATION_CHECK_SECONDS = 45 * 60
+
     def test_a_validating_refusal_says_when_to_retry(self, user, workspace, storage):
         from simulate.tests.test_harness_versioning_runs import _run
 
@@ -2616,3 +2626,34 @@ def test_record_proofs_interleaved_keep_both(user, workspace, storage):
         None,
     )
     assert _validation_proofs(environment)[first]["proved"] is True
+
+
+def test_a_check_runs_two_hours_by_default_and_as_long_as_its_setting_says(settings):
+    from datetime import timedelta
+
+    from simulate.services.harness_versioning.validation import check_window
+
+    assert check_window() == timedelta(hours=2)
+    settings.HARNESS_VALIDATION_CHECK_SECONDS = 3 * 3600
+    assert check_window() == timedelta(hours=3)
+
+
+def test_the_proving_settings_reach_the_sandbox(monkeypatch):
+    from simulate.services.hosted_harness_gateway import _platform_simulator_material
+
+    for name, value in (
+        ("ALK_PROVE_CONCURRENCY", "6"),
+        ("ALK_PROVE_SUITE_SECONDS", "5400"),
+        ("ALK_HELD_CASE_REPAIR_SECONDS", "900"),
+    ):
+        monkeypatch.setenv(name, value)
+    sent = _platform_simulator_material()
+    assert (
+        sent["ALK_PROVE_CONCURRENCY"],
+        sent["ALK_PROVE_SUITE_SECONDS"],
+        sent["ALK_HELD_CASE_REPAIR_SECONDS"],
+    ) == (
+        "6",
+        "5400",
+        "900",
+    )
