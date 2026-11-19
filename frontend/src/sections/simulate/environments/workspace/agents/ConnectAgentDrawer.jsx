@@ -13,9 +13,8 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
-import AgentPicker, {
-  useWorldAgents,
-} from "../../buildDrawer/starts/AgentPicker";
+import { AgentRow, useWorldAgents } from "../../buildDrawer/starts/AgentPicker";
+import { sourceLabel } from "src/sections/agent-playground/connected/connectedAgentLabels";
 import ConnectSection from "../../buildDrawer/ConnectSection";
 import { connectItemsFor } from "../../buildDrawer/buildDrawerCatalog";
 import {
@@ -25,7 +24,13 @@ import {
   connectTitleFor,
 } from "../../buildDrawer/connectNewAgent";
 import { FORMS_BY_PANEL } from "../../buildDrawer/forms/formsByPanel";
-import { BTN_SX, T12, T14 } from "../../buildDrawer/drawerStyles";
+import {
+  BTN_SX,
+  PANEL_SX,
+  T12,
+  T13,
+  T14,
+} from "../../buildDrawer/drawerStyles";
 
 const TYPE_WORD = { voice: "voice", text: "chat" };
 
@@ -82,29 +87,85 @@ Header.propTypes = {
   onClose: PropTypes.func.isRequired,
 };
 
-// The agents of the environment's channel, with the one picked.
-function PickAgent({ modality, value, onChange }) {
+// Where an agent comes from, how many versions it has and where it's used.
+const metaOf = (agent) =>
+  [
+    agent.source && sourceLabel(agent.source),
+    agent.versionCount != null
+      ? `${agent.versionCount} version${agent.versionCount === 1 ? "" : "s"}`
+      : agent.latestLabel,
+    agent.environments?.length &&
+      `used in ${agent.environments.map((e) => e.name).join(", ")}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+// The channel's agents to pick from, then the way to connect a new one.
+function PickAgent({ modality, value, onChange, onConnectNew }) {
+  const word = TYPE_WORD[modality];
   const { agents, isLoading } = useWorldAgents(modality);
+  const { agents: all } = useWorldAgents();
+  const other = all.length - agents.length;
   return (
-    <AgentPicker
-      agents={agents}
-      isLoading={isLoading}
-      value={value}
-      onChange={(id) =>
-        onChange(
-          id,
-          agents.find((a) => a.id === id),
-        )
-      }
-      title={`Connected ${TYPE_WORD[modality]} agents`}
-      modality={modality}
-    />
+    <Stack spacing={2.5}>
+      <Box>
+        <Typography sx={{ ...T13, fontWeight: 600, mb: 0.75 }}>
+          {`Connected ${word} agents`}
+        </Typography>
+        {agents.length ? (
+          <Box
+            role="radiogroup"
+            aria-label={`Connected ${word} agents`}
+            sx={PANEL_SX}
+          >
+            {agents.map((a, i) => (
+              <AgentRow
+                key={a.id}
+                agent={a}
+                divider={i > 0}
+                selected={a.id === value}
+                onClick={() => onChange(a)}
+                meta={metaOf(a)}
+              />
+            ))}
+          </Box>
+        ) : (
+          <Typography sx={{ ...T12, color: "text.secondary" }}>
+            {isLoading ? "Loading agents…" : `No ${word} agents in Agents yet.`}
+          </Typography>
+        )}
+        {other > 0 && (
+          <Typography sx={{ ...T12, color: "text.secondary", mt: 1 }}>
+            {`${other} agent${other === 1 ? "" : "s"} on other channels ${other === 1 ? "isn't" : "aren't"} listed. This is a ${word} environment.`}
+          </Typography>
+        )}
+      </Box>
+      <Box sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}>
+        <Typography sx={{ ...T13, fontWeight: 600 }}>
+          Not connected yet?
+        </Typography>
+        <Typography sx={{ ...T12, color: "text.secondary", mt: 0.25, mb: 1 }}>
+          {`Connect it here. Only the ways that bring a ${word} agent are shown.`}
+        </Typography>
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={onConnectNew}
+          startIcon={<Iconify icon="solar:link-circle-linear" width={16} />}
+          sx={BTN_SX}
+        >
+          {`Connect a ${word} agent`}
+        </Button>
+      </Box>
+    </Stack>
   );
 }
 PickAgent.propTypes = {
   modality: PropTypes.oneOf(["voice", "text"]).isRequired,
   value: PropTypes.string,
   onChange: PropTypes.func.isRequired,
+  onConnectNew: PropTypes.func.isRequired,
 };
 
 /**
@@ -170,11 +231,8 @@ export default function ConnectAgentDrawer({ open, env, onClose, onPick }) {
             <PickAgent
               modality={modality}
               value={picked?.id}
-              // A just-connected agent isn't in the picker's list until it
-              // re-renders, so it's kept as picked when connected.
-              onChange={(id, agent) =>
-                setPicked((prev) => agent || (prev?.id === id ? prev : null))
-              }
+              onChange={setPicked}
+              onConnectNew={() => setConnecting({})}
             />
           </Box>
           <Stack

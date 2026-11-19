@@ -89,6 +89,12 @@ export function designEnvironmentOf(draft, now = Date.now()) {
       ? { id: agent.id, name: agent.name, active_version: agent.version }
       : null,
     designBuild: build,
+    // The header pill while the build runs; Ready once its checks pass.
+    buildingLabel: ["building", "validating"].includes(build?.status)
+      ? "Building v1"
+      : undefined,
+    // What the design will make, counted before the scenarios are written.
+    designScenarioCount: summary.scenarios?.length ?? 0,
     // The design's builder chat, read only, with how the build went.
     designChat: turnsOf(draft, summary, build),
   };

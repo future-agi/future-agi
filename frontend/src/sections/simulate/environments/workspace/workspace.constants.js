@@ -148,6 +148,14 @@ export const WORKSPACE_COPY = {
   // The strip under the header: the environment / agent version pairing when
   // versioning is on, else the agent version under test; stated, not selected.
   versionBar: {
+    // A design's environment, before it's on the server.
+    design: {
+      noAgent: "No agent yet",
+      agent: "Agent",
+      environment: "environment",
+      notRun: "not run yet",
+      scenarios: (n) => `${n} scenario${n === 1 ? "" : "s"}`,
+    },
     envPrefix: "env",
     agentPrefix: "agent",
     suitePrefix: "scenarios",
