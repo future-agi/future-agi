@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Collapse, Stack, Typography, Grid } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
@@ -67,13 +67,21 @@ export default function OverviewPanel({
   counts,
   latestRun,
   backedWorld,
+  onReviewChanges,
 }) {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const reduce = usePrefersReducedMotion();
+  // Connect agent before v1 is saved: Review and save first, then the picker.
+  const [connectAfterSave, setConnectAfterSave] = useState(false);
   // An environment built from a design connects its agent once it's saved.
   const design = env.designBuild;
   const canConnect = design?.status === "saved" && !env.testSubject;
+  useEffect(() => {
+    if (!connectAfterSave || !canConnect) return;
+    setConnectAfterSave(false);
+    setConnectOpen(true);
+  }, [connectAfterSave, canConnect]);
   // Agent versions are managed on real data, so only while versioning is on.
   const canManageVersions =
     !locked && !design && Boolean(env.versioning?.enabled);
@@ -116,7 +124,13 @@ export default function OverviewPanel({
             design
               ? {
                   saved: design.status === "saved",
-                  onClick: () => setConnectOpen(true),
+                  onClick: () => {
+                    if (design.status === "saved") setConnectOpen(true);
+                    else {
+                      setConnectAfterSave(true);
+                      onReviewChanges?.();
+                    }
+                  },
                 }
               : undefined
           }
@@ -368,4 +382,6 @@ OverviewPanel.propTypes = {
     amendments: PropTypes.array,
     dependencies: PropTypes.array,
   }),
+  // Opens Review changes, where a design environment is saved as v1.
+  onReviewChanges: PropTypes.func,
 };
