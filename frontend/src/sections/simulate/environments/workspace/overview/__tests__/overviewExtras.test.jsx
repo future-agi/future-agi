@@ -78,10 +78,10 @@ describe("NextStepsChecklist", () => {
     expect(onGo).not.toHaveBeenCalledWith("agent");
   });
 
-  it("lists only Connect an agent for a design, saying v1 is saved first", async () => {
+  it("lists only Connect an agent for a design", async () => {
     const onClick = vi.fn();
-    renderChecklist({ connect: { saved: false, onClick } });
-    expect(screen.getByText(/Save v1 first/)).toBeInTheDocument();
+    renderChecklist({ connect: { onClick } });
+    expect(screen.getByText(/Wire your agent so it can act/)).toBeInTheDocument();
     expect(screen.queryByText(/Tasks the agent has to complete/)).not.toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("button", { name: /connect agent/i }));
     expect(onClick).toHaveBeenCalled();

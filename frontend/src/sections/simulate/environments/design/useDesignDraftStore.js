@@ -150,7 +150,7 @@ export const useDesignDraftStore = create(
             "saveDesignRelease",
           ),
 
-        // agent: { id, name, version } picked or connected after save. Kept
+        // agent: { id, name, version } picked or connected on its environment. Kept
         // apart from `agent`, which an agent-built design was read from.
         connectDesignAgent: (draftId, agent) =>
           set(
