@@ -104,6 +104,7 @@ from tracer.views.trace_severity import (
     ReserveSeverityView,
     SettleSeverityView,
 )
+from tracer.views.trace_skills import TraceSkillsView
 
 router = DefaultRouter()
 
@@ -135,6 +136,11 @@ router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 
 urlpatterns = [
+    path(
+        "trace/skill-projection/",
+        TraceSkillsView.as_view(),
+        name="trace-skill-projection",
+    ),
     path("alerts/", AlertView.as_view(), name="alerts"),
     path("alerts/options/", AlertOptionsView.as_view(), name="alert-options"),
     path(

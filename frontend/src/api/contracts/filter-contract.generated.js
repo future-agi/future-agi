@@ -157,6 +157,7 @@ export const FILTER_CONTRACT = Object.freeze({
     allowed: [
       "SYSTEM_METRIC",
       "SPAN_ATTRIBUTE",
+      "SKILL",
       "EVAL_METRIC",
       "ANNOTATION",
       "ANNOTATION_RUNS",

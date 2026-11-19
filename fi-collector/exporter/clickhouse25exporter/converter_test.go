@@ -2,11 +2,19 @@ package clickhouse25exporter
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -123,6 +131,199 @@ func TestConvertMinimalGenAISpan(t *testing.T) {
 	// _version is non-zero (used by ReplacingMergeTree).
 	if r["_version"].(uint64) == 0 {
 		t.Errorf("_version must be non-zero (used for dedup)")
+	}
+}
+
+// Pin the runtime skill schema without introducing a new observation type.
+// chwriter serializes these maps directly as JSONEachRow; dotted list keys
+// must stay flat even after that JSON round trip (migration 013 stores text).
+func TestConvertSkillAttributes(t *testing.T) {
+	const version = "11111111-1111-4111-8111-111111111111"
+	const second = "22222222-2222-4222-8222-222222222222"
+	for _, cached := range []bool{false, true} {
+		traces := buildOTLPSpan()
+		sp := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		sp.SetName("skill.load")
+		sp.SetKind(ptrace.SpanKindInternal)
+		a := sp.Attributes()
+		a.Clear()
+		a.PutStr("fi.skill.version_id", version)
+		a.PutInt("fi.skill.version", 3)
+		a.PutInt("fi.skill.requested_version", 3)
+		a.PutBool("fi.skill.load.cached", cached)
+		a.PutBool("fi.skill.load.root_file", !cached)
+		versions := a.PutEmptySlice("fi.skills.version_ids")
+		versions.AppendEmpty().SetStr(version)
+		versions.AppendEmpty().SetStr(second)
+		rows, err := Convert(traces)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("convert skill load: rows=%d err=%v", len(rows), err)
+		}
+		r := rows[0]
+		if r["name"] != "skill.load" || r["observation_type"] != "unknown" {
+			t.Fatalf("skill.load must keep the existing observation type: %#v", r)
+		}
+		if got := r["attrs_string"].(map[string]string); !reflect.DeepEqual(got, map[string]string{"fi.skill.version_id": version}) {
+			t.Fatalf("skill strings: %#v", got)
+		}
+		if got := r["attrs_number"].(map[string]float64); !reflect.DeepEqual(got, map[string]float64{"fi.skill.version": 3, "fi.skill.requested_version": 3}) {
+			t.Fatalf("skill numbers: %#v", got)
+		}
+		var cachedByte uint8
+		if cached {
+			cachedByte = 1
+		}
+		if got := r["attrs_bool"].(map[string]uint8); !reflect.DeepEqual(got, map[string]uint8{"fi.skill.load.cached": cachedByte, "fi.skill.load.root_file": 1 - cachedByte}) {
+			t.Fatalf("skill booleans: %#v", got)
+		}
+		encoded, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire map[string]any
+		if err := json.Unmarshal(encoded, &wire); err != nil {
+			t.Fatal(err)
+		}
+		extra := wire["attributes_extra"].(map[string]any)
+		if !reflect.DeepEqual(extra["fi.skills.version_ids"], []any{version, second}) {
+			t.Fatalf("flat dotted array did not survive JSONEachRow encoding: %#v", extra)
+		}
+		if _, nested := extra["fi"]; nested {
+			t.Fatal("skill attribute names must not become nested JSON paths")
+		}
+	}
+}
+
+func TestConvertFailedSkillAttributes(t *testing.T) {
+	traces := buildOTLPSpan()
+	sp := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	sp.SetName("skill.load")
+	sp.Status().SetCode(ptrace.StatusCodeError)
+	a := sp.Attributes()
+	a.Clear()
+	want := map[string]string{
+		"fi.skill.name":            "policy",
+		"fi.skill.requested_label": "production",
+		"fi.skill.load.via":        "sdk.read_file",
+		"error.type":               "integrity",
+		"gen_ai.agent.name":        "reviewer",
+		"fi.context.id":            "11111111-1111-4111-8111-111111111111",
+		"fi.context.version_id":    "22222222-2222-4222-8222-222222222222",
+	}
+	for key, value := range want {
+		a.PutStr(key, value)
+	}
+	rows, err := Convert(traces)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("convert failed load: rows=%d err=%v", len(rows), err)
+	}
+	if rows[0]["status"] != "ERROR" || !reflect.DeepEqual(rows[0]["attrs_string"], want) {
+		t.Fatalf("failure must preserve scope without manufacturing verified identity: %#v", rows[0])
+	}
+}
+
+// Opt-in on the cloud standalone stack. Use an owned database, never an
+// existing database, and an explicitly ported loopback endpoint only.
+func TestConvertSkillAttributesClickHouse(t *testing.T) {
+	origin := os.Getenv("SKILL_TEST_CH_URL")
+	if origin == "" {
+		t.Skip("set SKILL_TEST_CH_URL on the cloud test host for collector writer integration")
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		t.Fatal("skill test ClickHouse must be an explicitly ported loopback HTTP server")
+	}
+	origin = strings.TrimRight(origin, "/")
+	user := os.Getenv("CH25_USER")
+	if user == "" {
+		user = "default"
+	}
+	password := os.Getenv("CH25_PASSWORD")
+	database := fmt.Sprintf("test_skill_go_%d", time.Now().UnixNano())
+	sql := func(db, statement string) string {
+		t.Helper()
+		target := origin + "?" + url.Values{"database": {db}}.Encode()
+		req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(statement))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.SetBasicAuth(user, password)
+		response, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		if err != nil || response.StatusCode != http.StatusOK || strings.Contains(string(body), "DB::Exception") {
+			t.Fatalf("skill fixture SQL failed: HTTP %d, %s (%v)", response.StatusCode, body, err)
+		}
+		return strings.TrimSpace(string(body))
+	}
+	sql("default", "CREATE DATABASE "+database)
+	t.Cleanup(func() { sql("default", "DROP DATABASE IF EXISTS "+database+" SYNC") })
+	for _, filename := range []string{"002_spans_v2.sql", "013_attributes_extra_as_string.sql", "028_skill_attribution.sql"} {
+		contents, err := os.ReadFile(filepath.Join("..", "..", "..", "futureagi", "tracer", "services", "clickhouse", "v2", "schema", filename))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// These three fixed migrations contain no semicolons or comment
+		// markers inside SQL literals. Strip comments before splitting DDL.
+		var code []string
+		for _, line := range strings.Split(string(contents), "\n") {
+			before, _, _ := strings.Cut(line, "--")
+			code = append(code, before)
+		}
+		for _, statement := range strings.Split(strings.Join(code, "\n"), ";") {
+			if strings.TrimSpace(statement) != "" {
+				sql(database, statement)
+			}
+		}
+	}
+	sql(database, "ALTER TABLE spans REMOVE TTL")
+	traces := buildOTLPSpan()
+	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	loaded := spans.At(0)
+	loaded.SetName("skill.load")
+	loaded.Attributes().Clear()
+	loaded.Attributes().PutStr("fi.skill.id", "22222222-2222-4222-8222-222222222222")
+	loaded.Attributes().PutStr("fi.skill.name", "policy")
+	loaded.Attributes().PutStr("fi.skill.version_id", "11111111-1111-4111-8111-111111111111")
+	loaded.Attributes().PutInt("fi.skill.version", 3)
+	loaded.Attributes().PutInt("fi.skill.requested_version", 3)
+	loaded.Attributes().PutBool("fi.skill.load.cached", true)
+	loaded.Attributes().PutBool("fi.skill.load.root_file", true)
+	loaded.Attributes().PutEmptySlice("fi.skills.version_ids").AppendEmpty().SetStr("11111111-1111-4111-8111-111111111111")
+	failed := spans.AppendEmpty()
+	loaded.CopyTo(failed)
+	failed.SetSpanID([8]byte{1, 1, 1, 1, 1, 1, 1, 1})
+	failed.Status().SetCode(ptrace.StatusCodeError)
+	failed.Attributes().Clear()
+	failed.Attributes().PutStr("fi.skill.name", "policy")
+	failed.Attributes().PutStr("error.type", "integrity")
+	failed.Attributes().PutStr("gen_ai.agent.name", "reviewer")
+	rows, err := Convert(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, err := chwriter.New(chwriter.Config{
+		URL: origin, Username: user, Password: password, Database: database, Table: "spans",
+		DeadLetterFile: filepath.Join(t.TempDir(), "dead_letter.jsonl"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writer.Close() })
+	if err := writer.Insert(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+	if got := sql(database, "SELECT count() FROM skill_trace_links FINAL WHERE skill_version = 3 AND requested_version = 3 AND cached = 1 AND root_file = 1 AND is_deleted = 0"); got != "1" {
+		t.Fatalf("collector load view count = %s, want 1", got)
+	}
+	if got := sql(database, "SELECT count() FROM skill_load_failures FINAL WHERE error_type = 'integrity' AND agent_name = 'reviewer' AND is_deleted = 0"); got != "1" {
+		t.Fatalf("collector failure view count = %s, want 1", got)
+	}
+	if got := sql(database, "SELECT count() FROM spans WHERE has(skill_version_ids, '11111111-1111-4111-8111-111111111111')"); got != "1" {
+		t.Fatalf("collector dotted-array membership count = %s, want 1", got)
 	}
 }
 

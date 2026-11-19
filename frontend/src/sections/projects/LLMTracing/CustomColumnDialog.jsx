@@ -33,6 +33,11 @@ const CustomColumnDialog = ({
   fetchNextAttributePage,
   isFetchingNextAttributePage,
   inventoryControlProps,
+  // Skill-trace columns offered under "Skills" (SKILL-TRACES §7.1, UX-12):
+  // [{ id, name }]. Never added by default; only shown when the caller
+  // passes them (the skillTraces flag is on and the tab is traces).
+  skillColumns,
+  skillColumnsTitle = "Skills",
 }) => {
   const [search, setSearch] = useState("");
   const attributeListRef = useRef(null);
@@ -76,7 +81,7 @@ const CustomColumnDialog = ({
     // span attribute roll-up has rotated out the key) must still appear
     // here — otherwise it stays in state, invisibly checked, and the
     // panel's "X added" badge drifts above the user's selection (TH-4139).
-    const seen = new Set();
+    const seen = new Set((skillColumns || []).map((column) => column.id));
     const merged = [];
     for (const attr of allAttrs) {
       const key = attrKey(attr);
@@ -92,7 +97,22 @@ const CustomColumnDialog = ({
     if (!search.trim()) return merged;
     const q = search.toLowerCase();
     return merged.filter((attr) => attrKey(attr).toLowerCase().includes(q));
-  }, [attributes, existingColumns, search]);
+  }, [attributes, existingColumns, search, skillColumns]);
+  const skillColumnNames = useMemo(
+    () =>
+      new Map((skillColumns || []).map((column) => [column.id, column.name])),
+    [skillColumns],
+  );
+  const filteredSkillColumns = useMemo(() => {
+    const list = skillColumns || [];
+    if (!search.trim()) return list;
+    const q = search.toLowerCase();
+    return list.filter(
+      (column) =>
+        column.name.toLowerCase().includes(q) ||
+        column.id.toLowerCase().includes(q),
+    );
+  }, [search, skillColumns]);
 
   const handleToggle = (key) => {
     setChecked((prev) => {
@@ -114,7 +134,7 @@ const CustomColumnDialog = ({
       onAddColumns?.(
         toAdd.map((key) => ({
           id: key,
-          name: key,
+          name: skillColumnNames.get(key) || key,
           isVisible: true,
           groupBy: "Custom Columns",
         })),
@@ -132,14 +152,14 @@ const CustomColumnDialog = ({
     } else if (toAdd.length > 0) {
       enqueueSnackbar(
         toAdd.length === 1
-          ? `Column "${toAdd[0]}" added`
+          ? `Column "${skillColumnNames.get(toAdd[0]) || toAdd[0]}" added`
           : `${toAdd.length} columns added`,
         { variant: "success" },
       );
     } else if (toRemove.length > 0) {
       enqueueSnackbar(
         toRemove.length === 1
-          ? `Column "${toRemove[0]}" removed`
+          ? `Column "${skillColumnNames.get(toRemove[0]) || toRemove[0]}" removed`
           : `${toRemove.length} columns removed`,
         { variant: "success" },
       );
@@ -207,7 +227,45 @@ const CustomColumnDialog = ({
             borderRadius: 1,
           }}
         >
-          {filteredAttributes.length === 0 ? (
+          {filteredSkillColumns.length > 0 && (
+            <Box data-custom-column-section="skills">
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", px: 1.5, pt: 1, fontWeight: 600 }}
+              >
+                {skillColumnsTitle}
+              </Typography>
+              {filteredSkillColumns.map((column) => (
+                <FormControlLabel
+                  key={column.id}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={checked.has(column.id)}
+                      onChange={() => handleToggle(column.id)}
+                      sx={{ p: 0.5 }}
+                    />
+                  }
+                  label={
+                    <Typography variant="body2" sx={{ fontSize: 13 }}>
+                      {column.name}
+                    </Typography>
+                  }
+                  sx={{
+                    mx: 0,
+                    px: 1.5,
+                    py: 0.25,
+                    width: "100%",
+                    "&:hover": { bgcolor: "action.hover" },
+                  }}
+                />
+              ))}
+            </Box>
+          )}
+          {filteredAttributes.length === 0 &&
+          filteredSkillColumns.length > 0 ? null : filteredAttributes.length ===
+            0 ? (
             <Box sx={{ p: 2, textAlign: "center" }}>
               <Typography variant="body2" color="text.disabled">
                 {attributes?.length === 0
@@ -285,6 +343,10 @@ CustomColumnDialog.propTypes = {
   fetchNextAttributePage: PropTypes.func,
   isFetchingNextAttributePage: PropTypes.bool,
   inventoryControlProps: PropTypes.object,
+  skillColumns: PropTypes.arrayOf(
+    PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }),
+  ),
+  skillColumnsTitle: PropTypes.string,
 };
 
 export default React.memo(CustomColumnDialog);

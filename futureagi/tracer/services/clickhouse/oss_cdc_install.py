@@ -6,6 +6,9 @@ Run after PG migrations, native ClickHouse initialization and PeerDB setup:
 
 For a fresh native database before starting any writers, use --phase native.
 Its default check is also read-only; --apply creates missing native objects only.
+The production overlay uses --require-skill-schema for a read-only readiness check.
+The install paths opt into --with-skill-schema to apply the packaged additive
+extension under the same advisory lock before any writer is started.
 
 Uses the existing PG_*, CH_*, SRC_PG_*, DST_CH_* connection settings. No Django
 startup hooks, source-table migration replay, mirror creation/resync, or operator
@@ -325,6 +328,8 @@ def run(
     apply=False,
     phase="cdc",
     wait_for_mirrors=False,
+    with_skill_schema=False,
+    require_skill_schema=False,
     timeout=300,
     pg_connect=None,
     ch_connect=None,
@@ -337,9 +342,17 @@ def run(
         raise InstallError("unknown installation phase")
     if type(wait_for_mirrors) is not bool or (wait_for_mirrors and phase != "cdc"):
         raise InstallError("mirror readiness waiting is only supported for CDC")
-    if apply and config.hosted:
+    if type(with_skill_schema) is not bool or (
+        with_skill_schema and not (phase == "native" and apply)
+    ):
+        raise InstallError("Skills schema requires an explicit native apply")
+    if type(require_skill_schema) is not bool or (
+        require_skill_schema and (phase != "native" or apply)
+    ):
+        raise InstallError("Skills schema check requires read-only native inspection")
+    if (apply or require_skill_schema) and config.hosted:
         raise InstallError(
-            "hosted/replicated apply requires the separately qualified deployment path"
+            "hosted/replicated apply or Skills check requires the separately qualified deployment path"
         )
     # Empty libpq parameters do NOT override environment defaults. Refuse hidden
     # routing before either client connects; TLS settings remain configurable.
@@ -433,12 +446,31 @@ def run(
             ),
             (declarations[name] for name in core.DEPENDENT if name.endswith("_dict")),
         )
+        skill_schema = None
         if phase == "native":
             definitions = native.native_definitions(config.destination.database)
             allowed = packaged(
                 definitions.values(),
                 (ddl for name, ddl in definitions.items() if name.endswith("_dict")),
             )
+
+            if with_skill_schema or require_skill_schema:
+                skill_schema = apply_schema.SchemaFile.from_path(
+                    native._ROOT / "028_skill_attribution.sql"
+                )
+                allowed.update(
+                    packaged(
+                        [
+                            core._LEDGER_DDL,
+                            *apply_schema.split_statements(
+                                skill_schema.path.read_text()
+                            ),
+                        ],
+                        (),
+                    )
+                )
+
+        receipt_file = skill_schema if phase == "native" else derived
 
         class Client:
             def query(self, statement, parameters=None, settings=None):
@@ -469,23 +501,35 @@ def run(
                 if not apply:
                     raise InstallError("apply was not requested")
                 if (
-                    phase != "cdc"
-                    or derived is None
+                    receipt_file is None
                     or table != "schema_versions"
                     or column_names != ["filename", "sha256", "applied_by", "notes"]
                     or len(rows) != 1
                     or rows[0]
                     != [
-                        derived.path.name,
-                        derived.sha256,
+                        receipt_file.path.name,
+                        receipt_file.sha256,
                         "oss-cdc-bootstrap",
                         "schema-topology/v1/local",
                     ]
                 ):
                     raise InstallError(
-                        "only the verified derived migration receipt may be inserted"
+                        "only the verified Skills migration receipt may be inserted"
+                        if with_skill_schema
+                        else "only the verified derived migration receipt may be inserted"
                     )
                 deadline.remaining()
+                # CREATE IF NOT EXISTS can leave a pre-existing, incompatible MV.
+                # The collector must not see a success receipt for that layout.
+                if skill_schema is not None and native.inspect_skill_extension(
+                    self,
+                    config.destination.database,
+                    skill_schema,
+                    require_receipt=False,
+                ):
+                    raise InstallError(
+                        "Skills schema incomplete; no migration receipt recorded"
+                    )
                 return raw.insert(table, rows, column_names=column_names)
 
         def pg_query(statement, parameters):
@@ -512,10 +556,20 @@ def run(
         }
         client = Client()
         if phase == "native":
+            if skill_schema is not None and client.query(
+                "SELECT engine FROM system.databases WHERE name = currentDatabase()"
+            ).result_rows not in ([("Atomic",)], [("Ordinary",)]):
+                raise InstallError(
+                    "Skills startup requires a single local ClickHouse database"
+                )
             missing = native.inspect_native(
                 client, database=config.destination.database
             )
             if not apply:
+                if skill_schema is not None:
+                    missing += native.inspect_skill_extension(
+                        client, config.destination.database, skill_schema
+                    )
                 return {
                     "ready": not missing,
                     "missing_objects": list(missing),
@@ -527,6 +581,28 @@ def run(
                 ch_user=config.ch_user,
                 ch_password=config.ch_password,
             )
+            if skill_schema is not None:
+                # Same locked, target-bound client and deadline as native CREATEs.
+                # Only the packaged additive migration may run; never replay the
+                # schema glob or run a historical backfill on the boot path.
+                apply_schema.ensure_versions_table(client)
+                prior = apply_schema.fetch_applied(client).get(skill_schema.path.name)
+                if prior is None:
+                    apply_schema.apply_file(
+                        client,
+                        skill_schema,
+                        "oss-cdc-bootstrap",
+                        ch_user=config.ch_user,
+                        ch_password=config.ch_password,
+                    )
+                elif prior != skill_schema.sha256:
+                    raise InstallError("Skills migration hash drift")
+                if prior is not None and native.inspect_skill_extension(
+                    client, config.destination.database, skill_schema
+                ):
+                    raise InstallError(
+                        "Skills schema incomplete after native apply; inspect before retrying"
+                    )
             return {"ready": True, "created_objects": list(created), "applied": True}
         if wait_for_mirrors:
             # Only inspect until initial snapshots settle. Do not wrap apply in
@@ -570,6 +646,16 @@ def main(argv=None):
     parser.add_argument(
         "--timeout", type=int, default=300, help="Whole-job deadline in seconds"
     )
+    parser.add_argument(
+        "--with-skill-schema",
+        action="store_true",
+        help="Apply the packaged Skills extension after native tables",
+    )
+    parser.add_argument(
+        "--require-skill-schema",
+        action="store_true",
+        help="Check the local Skills extension without applying schema or acquiring the installer lock",
+    )
     parser.add_argument("--phase", choices=("cdc", "native"), default="cdc")
     parser.add_argument(
         "--wait-for-mirrors",
@@ -595,6 +681,8 @@ def main(argv=None):
                 apply=args.apply,
                 timeout=args.timeout,
                 phase=args.phase,
+                with_skill_schema=args.with_skill_schema,
+                require_skill_schema=args.require_skill_schema,
                 wait_for_mirrors=args.wait_for_mirrors,
             )
         print(json.dumps(result))

@@ -1,0 +1,21 @@
+meta {
+  name: Create skill
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{backend_url}}/model-hub/skills/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:json {
+  {"name":"help-desk","description":"Use when a support request needs a clear and verifiable next step.","tags":["support"],"template_id":"blank"}
+}

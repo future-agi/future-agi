@@ -37,6 +37,7 @@ from django.conf import settings  # noqa: E402
 # Import necessary modules AFTER setting up Django
 from django.core.asgi import get_asgi_application  # noqa: E402
 
+from model_hub.views.skills_uploads_asgi import SkillsImportBodyLimit  # noqa: E402
 from sockets.routing import websocket_urlpatterns  # noqa: E402
 from tfc.asgi_startup import warm_http_urlconf, warm_migration_modules  # noqa: E402
 from tfc.middleware.jwt_auth import JWTAuthMiddleware  # noqa: E402
@@ -44,7 +45,7 @@ from tfc.temporal.embedded import get_embedded_worker  # noqa: E402
 from tfc.utils.api_errors import build_error_envelope  # noqa: E402
 
 # Django ASGI app for standard HTTP requests
-_django_app = get_asgi_application()
+_django_app = SkillsImportBodyLimit(get_asgi_application())
 # Granian constructs the middleware stack while importing this module, but
 # Django leaves ROOT_URLCONF lazy until the first HTTP request. Materialize the
 # complete route graph now so a newly spawned worker cannot charge broad view

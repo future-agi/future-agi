@@ -1,0 +1,17 @@
+meta {
+  name: Compare versions
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/compare/?from={{from_version}}&to={{to_version}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}

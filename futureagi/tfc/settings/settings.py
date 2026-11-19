@@ -221,6 +221,8 @@ CORS_ALLOW_HEADERS = (
         # before the POST because this is a non-simple header, so omitting it
         # here prevents the create request from ever reaching Django.
         "idempotency-key",
+        # Immutable Context continuations carry the credential-bound lease.
+        "x-context-resolution",
         "sentry-trace",
         "baggage",
         "traceparent",
@@ -332,6 +334,12 @@ SWAGGER_SETTINGS = {
     "DEFAULT_INFO": "tfc.urls.info_api",
     "DEFAULT_AUTO_SCHEMA_CLASS": "tfc.utils.api_contracts.ManagementAPIAutoSchema",
     "SECURITY_DEFINITIONS": {
+        "ContextCredential": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "Context <credential-id>.<secret>; never combine with API/secret keys.",
+        },
         "X-Api-Key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
         "X-Secret-Key": {
             "type": "apiKey",
@@ -339,6 +347,8 @@ SWAGGER_SETTINGS = {
             "name": "X-Secret-Key",
         },
     },
+    # Keep the existing default schemes; Context is view-opt-in only.
+    "SECURITY_REQUIREMENTS": [{"X-Api-Key": []}, {"X-Secret-Key": []}],
     "USE_SESSION_AUTH": False,
 }
 
@@ -1774,3 +1784,66 @@ INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
 INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = os.getenv(
     "INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA", ""
 ).strip().lower() in ("1", "true", "yes", "on")
+
+
+# Skills v1.1 operational rollout (core OSS, not license gates). Protection
+# always remains enforced, including while paid tests/GitHub are disabled.
+# Before enabling: verify provider transports, provision tasks_l in the same
+# Temporal namespace as the API, and install the model_hub schedules. The
+# standalone supervisor enables FI_EMBEDDED_TEMPORAL_WORKER; embedded.py polls
+# all generic queues including tasks_l and registers schedules on reconnect.
+# Do not exclude tasks_l via TEMPORAL_EXCLUDED_QUEUES or set
+# REGISTER_TEMPORAL_SCHEDULES=false. Distributed deployments need the existing
+# tasks_l worker (start_temporal_worker --queue tasks_l) and schedule registration;
+# default-only workers cannot execute Skills jobs. No new container is required.
+SKILLS_TESTING_ENABLED = os.getenv("SKILLS_TESTING_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+# Independent from model testing: keep paid assistance off until original-key
+# recovery and non-destructive apply/delete journeys are qualified. Enabling
+# text comparisons must never enable paid generation as a side effect.
+SKILLS_ASSIST_ENABLED = os.getenv("SKILLS_ASSIST_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+SKILLS_GITHUB_ENABLED = os.getenv("SKILLS_GITHUB_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+# Enable only after isolated-credential SDK/CLI conformance. Disabling this
+# never disables legacy label protection, quarantine checks or credential revoke.
+SKILLS_CONTEXT_CONSUMPTION_ENABLED = os.getenv(
+    "SKILLS_CONTEXT_CONSUMPTION_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+# Campaign persistence does not qualify the repository executor or enable rollouts.
+SKILLS_CONTEXT_CAMPAIGNS_ENABLED = os.getenv(
+    "SKILLS_CONTEXT_CAMPAIGNS_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+# Approved standard catalog IDs only, after live credential/tool/usage/deadline
+# verification. Empty by default; no managed/global/environment-key fallback.
+SKILLS_VERIFIED_MODELS = _split_env("SKILLS_VERIFIED_MODELS")
+# Exact wire shape is model_hub.services.skills_hub.v11.limits.DEFAULT_LIMITS:
+# profiles.quick/repeated contain integer *_seconds, *_bytes, *_tokens ceilings;
+# global admission ceilings are integers; max_estimated_cost_usd is an 18,8
+# decimal STRING (default "25.00000000"). Overrides lower integer ceilings;
+# repetitions are fixed. Invalid overrides fail closed at local plan validation.
+SKILLS_TEST_LIMITS = json.loads(os.getenv("SKILLS_TEST_LIMITS", "{}"))
+SKILLS_PAYLOAD_RETENTION_DAYS = _bounded_env_int(
+    "SKILLS_PAYLOAD_RETENTION_DAYS", 30, minimum=7, maximum=90
+)
+# Anonymous egress shares harness:gh-calls:<UTC hour>, capped globally at 50.
+# Distributed Redis/Memcached is required; cache failure disables GitHub work.
+SKILLS_GITHUB_HOURLY_BUDGET = _bounded_env_int(
+    "SKILLS_GITHUB_HOURLY_BUDGET", 10, minimum=0, maximum=10
+)
+SKILLS_GITHUB_ORG_HOURLY_BUDGET = _bounded_env_int(
+    "SKILLS_GITHUB_ORG_HOURLY_BUDGET", 3, minimum=0, maximum=3
+)
+# Migration notice: existing Skills retain unprotected labels ([]); only newly
+# created identities default to protected production. Admin opt-in is audited.
+# System keys retain published reads/unprotected pushes, but never inherit the
+# authenticator's synthetic user's private drafts/jobs or protected privileges.

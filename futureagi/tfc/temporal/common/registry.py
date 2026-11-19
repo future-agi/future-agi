@@ -45,6 +45,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "model_hub.tasks.prompt_template_optimizer",
     "model_hub.tasks.develop_dataset",
     "model_hub.tasks.annotation_automation",
+    "model_hub.tasks.skills_hub_v11",
     # model_hub views
     "model_hub.views.run_prompt",
     "model_hub.views.experiment_runner",
@@ -396,6 +397,16 @@ def _ensure_workflows_registered() -> None:
 
         get_logger(__name__).warning("could_not_load_simulate_workflows", error=str(e))
 
+    # Native Skills jobs never share the generic task-workflow execution path.
+    try:
+        from tfc.temporal.skills_hub import get_workflows as get_skills_workflows
+
+        register_for_queues(queues=["tasks_l"], workflows=get_skills_workflows())
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning("could_not_load_skills_workflows", error=str(e))
+
     # Register agent_playground graph execution workflow for tasks_l queue
     try:
         from tfc.temporal.agent_playground import get_workflows as get_ap_workflows
@@ -707,6 +718,14 @@ def _ensure_activities_registered() -> None:
         )
     except Exception as e:
         log.exception("could_not_load_dropin_activities", error=str(e))
+
+    try:
+        from tfc.temporal.skills_hub import get_activities as get_skills_activities
+
+        register_for_queues(queues=["tasks_l"], activities=get_skills_activities())
+        log.info("registered_skills_activities")
+    except ImportError as e:
+        log.warning("could_not_load_skills_activities", error=str(e))
 
     # Register agent_playground graph execution activities for tasks_l queue
     try:

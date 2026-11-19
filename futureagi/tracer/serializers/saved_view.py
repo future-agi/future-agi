@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from tracer.models.saved_view import SavedView
-from tracer.serializers.filters import StrictInputSerializer, filter_list_field
+from tracer.serializers.filters import StrictInputSerializer, skill_filter_list_field
 
 
 class SavedViewCreatorSerializer(serializers.Serializer):
@@ -131,7 +131,7 @@ def validate_saved_view_config(value):
     validated = dict(value)
     for key in FILTER_CONFIG_KEYS:
         if key in validated and validated[key] is not None:
-            validated[key] = filter_list_field().run_validation(validated[key])
+            validated[key] = skill_filter_list_field().run_validation(validated[key])
     return validated
 
 
