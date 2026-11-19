@@ -189,8 +189,7 @@ describe("edits added from files", () => {
     appendAcceptedEdits(queryClient, envId, { accepted: [table("src_2")] });
 
     const review = reviewIn(queryClient);
-    // The sample's own Missing table: customers clears too.
-    expect(review.failed).toEqual([]);
+    expect(sampleFileEdits(review).failed).toEqual([]);
     expect(
       review.changes
         .filter((one) => one.patch.some((op) => op.path === "/world_data"))

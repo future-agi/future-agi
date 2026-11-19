@@ -217,7 +217,6 @@ const FAILED = [
       "orders.customer_id refers to customers.id, which isn't attached. Every row needs it.",
     source_id: "orders-q3-sample.csv",
     scenarios: [],
-    ui: { needs: "customers" },
   },
 ];
 

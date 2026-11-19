@@ -407,7 +407,6 @@ function SourceRow({
   return (
     <Box
       sx={{
-        "&:hover": { bgcolor: "action.hover" },
         "& + &": { borderTop: "1px solid", borderColor: "divider" },
       }}
     >
