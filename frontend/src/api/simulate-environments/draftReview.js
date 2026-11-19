@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   sampleDraftReview,
@@ -48,18 +49,27 @@ export function useDraftReview(envId, { enabled = true } = {}) {
   });
 }
 
+// Review changes' Run checks result, `{ key, state }` with `key` the list it
+// checked, kept per environment so closing the drawer doesn't drop it. UI
+// state, never sent.
+const draftCheckKey = (envId) => ["harness-env-draft-check", envId];
+const NO_CHECK = { key: null, state: "idle" };
+
 // ({ changes, failed, cleared }): edits added from files land in the review,
 // already decided, even when no review was loaded yet. `cleared` failed ids go.
+// New edits can recheck the same scenarios, so the last check no longer counts.
 export const addSampleEdits = (
   queryClient,
   envId,
   { changes = [], failed = [], cleared = [] },
-) =>
-  queryClient.setQueryData(draftReviewKey(envId), (review) => {
+) => {
+  queryClient.setQueryData(draftCheckKey(envId), NO_CHECK);
+  return queryClient.setQueryData(draftReviewKey(envId), (review) => {
     const next = withSampleEdits(review, changes, failed, cleared);
     if (CHECK_CONTRACT) DraftReviewSchema.parse(next);
     return next;
   });
+};
 
 // One at a time, so a slower answer can't overwrite a newer decision.
 export function useDecideChanges(envId) {
@@ -87,4 +97,21 @@ export function useDismissFailedChange(envId) {
     queryClient.setQueryData(draftReviewKey(envId), (review) =>
       review ? withSampleFailureDismissed(review, id, dismissed) : review,
     );
+}
+
+export function useDraftCheck(envId) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: draftCheckKey(envId),
+    queryFn: () => queryClient.getQueryData(draftCheckKey(envId)) ?? NO_CHECK,
+    enabled: Boolean(envId),
+    staleTime: Infinity,
+    // Nothing watches it while the drawer is closed.
+    gcTime: Infinity,
+  });
+  const setCheck = useCallback(
+    (check) => queryClient.setQueryData(draftCheckKey(envId), check),
+    [queryClient, envId],
+  );
+  return [data ?? NO_CHECK, setCheck];
 }

@@ -105,11 +105,13 @@ describe("edits added from files", () => {
     const files = sampleFileEdits(review);
     expect(DraftReviewSchema.safeParse(review).error?.issues).toBe(undefined);
     // They join the sample, so its counts don't jump once it loads.
-    expect(review.counts.total).toBe(sampleDraftReview().counts.total + 4);
+    expect(review.counts.total).toBe(sampleDraftReview().counts.total + 5);
+    // One row per proposed scenario.
     expect(files.changes.map((one) => one.kind)).toEqual([
       "rule",
       "rule",
       "world_state",
+      "scenario",
       "scenario",
     ]);
     expect(files.changes.every((one) => one.decision === "accepted")).toBe(
@@ -122,7 +124,7 @@ describe("edits added from files", () => {
     expect(files.failed.map((one) => one.fix)).toEqual(["supply", "attach"]);
     // A refetch (chat nudge, save) keeps what files added.
     const refetched = freshSampleReview(review);
-    expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 4);
+    expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 5);
     expect(refetched.failed).toHaveLength(
       sampleDraftReview().failed.length + 2,
     );

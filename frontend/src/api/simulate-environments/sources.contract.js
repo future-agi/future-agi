@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-// The environment sources API as PR #4158's serializers and service return
-// it, by hand because its serializers type most of it as plain JSON. Fields
-// under `ui` aren't sent by the backend yet (see UI_ONLY_FEATURES).
+// The environment sources API as its serializers and service return it, by
+// hand because its serializers type most of it as plain JSON. Fields under
+// `ui` aren't sent by the backend yet (see UI_ONLY_FEATURES).
 const ROLES = ["policy", "reference", "seed_records", "evaluation_reference"];
 const STATUSES = [
   "reading",
@@ -35,7 +35,8 @@ export const SourceCapabilitiesSchema = z.object({
   participant_visibility_reason: z.string(),
 });
 
-// #4158's summary sends `{source_id, purpose}`; the rest is the UI's view.
+// The API's summary sends only `source_id` and `purpose` per file. The other
+// top-level fields (name through origin) and `ui` are the stub's view of it.
 const SourceSchema = z.object({
   source_id: z.string().min(1),
   purpose: z.enum(["policy", "reference", "seed_records"]).nullable(),

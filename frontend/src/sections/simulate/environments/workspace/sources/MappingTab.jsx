@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
 import {
   Box,
@@ -24,9 +23,9 @@ import {
   mappingVersionOf,
   relationshipTargets,
   setJoin,
-  standInId,
   toReviewOf,
 } from "./mapping";
+import { standInId } from "./personalData";
 
 const LINE = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 const ROW_SX = {
@@ -591,16 +590,16 @@ Relationships.propTypes = {
  * builder proposes to match, fields it couldn't place, numbers stored as
  * text, each column's type, stable ID and reference, and the relationships
  * with rows that point at missing records. Nothing applies until the person
- * edits it; edits go through `onEdit`.
+ * edits it; edits go through `onEdit`. Supply the records calls `onSupply`.
  */
 export default function MappingTab({
   envId,
   source,
   readOnly = false,
   onEdit,
+  onSupply,
 }) {
   const { data: summary } = useEnvironmentSources(envId);
-  const [, setParams] = useSearchParams();
 
   if (source.status === "reading")
     return (
@@ -619,18 +618,6 @@ export default function MappingTab({
     source.origin?.kind === "knowledge_base"
       ? `${source.name} · ${SOURCES_COPY.yourCopy}`
       : `${source.name} v${source.version}`;
-
-  // The file drawer closes and Sources opens its Add source menu.
-  const supply = () =>
-    setParams(
-      (params) => {
-        const next = new URLSearchParams(params);
-        ["source", "sourceTab", "at"].forEach((key) => next.delete(key));
-        next.set("addSource", "1");
-        return next;
-      },
-      { replace: true },
-    );
 
   return (
     <Stack spacing={1.75}>
@@ -657,7 +644,7 @@ export default function MappingTab({
             sources={sources}
             readOnly={readOnly}
             onEdit={onEdit}
-            onSupply={supply}
+            onSupply={onSupply}
           />
         ))}
 
@@ -690,7 +677,7 @@ export default function MappingTab({
         joins={joinsOf(source, sources)}
         readOnly={readOnly}
         onEdit={onEdit}
-        onSupply={supply}
+        onSupply={onSupply}
       />
     </Stack>
   );
@@ -707,4 +694,6 @@ MappingTab.propTypes = {
   }).isRequired,
   readOnly: PropTypes.bool,
   onEdit: PropTypes.func.isRequired,
+  // Closes the file and opens Sources' Add source menu.
+  onSupply: PropTypes.func,
 };

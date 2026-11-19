@@ -3,14 +3,13 @@ import { useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { Box, Button, Stack, Tab, Typography } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
-import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useEnvironmentSources,
-  useRemoveSource,
   useUpdateSource,
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
 import MappingTab from "./MappingTab";
+import RemoveSourceDialog from "./RemoveSourceDialog";
 import SourceUsage from "./SourceUsage";
 import { PersonalDataTab } from "./PersonalDataChoice";
 import WhatWasRead from "./WhatWasRead";
@@ -25,8 +24,6 @@ const defaultVisibility = (role) => {
 };
 
 const fromKb = (source) => source.origin?.kind === "knowledge_base";
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 function KV({ label, children }) {
   return (
@@ -58,15 +55,10 @@ KV.propTypes = {
   children: PropTypes.node,
 };
 
-function UsedBy({ source, readOnly, onRemove }) {
+function UsedBy({ envId, source, readOnly, onRemoved }) {
   const [confirming, setConfirming] = useState(false);
   const saved = isSaved(source);
   const { rules, scenarios, seeds } = usageOf(source);
-  const users = [
-    rules.length && plural(rules.length, "rule"),
-    scenarios.length && plural(scenarios.length, "scenario"),
-    seeds.length && plural(seeds.length, "seed table"),
-  ].filter(Boolean);
 
   return (
     <Box>
@@ -100,41 +92,22 @@ function UsedBy({ source, readOnly, onRemove }) {
           {saved ? "Remove from this environment" : "Remove this file"}
         </Button>
       )}
-      <ConfirmDialog
+      <RemoveSourceDialog
+        envId={envId}
+        source={source}
         open={confirming}
         onClose={() => setConfirming(false)}
-        title={
-          saved
-            ? `Remove ${source.name} from this environment?`
-            : SOURCES_COPY.removeTitle(source.name)
-        }
-        content={
-          saved
-            ? `New versions won't use it. ${users.length ? `It's used by ${users.join(", ")}. They keep citing it on the versions they were made on. ` : ""}Past runs still show it. You can restore it from Removed.`
-            : "It isn't in the world yet. Its reading and mapping are discarded; add it again from Sources."
-        }
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            onClick={() => {
-              setConfirming(false);
-              onRemove();
-            }}
-          >
-            {SOURCES_COPY.removeConfirm}
-          </Button>
-        }
+        onRemoved={onRemoved}
       />
     </Box>
   );
 }
 
 UsedBy.propTypes = {
+  envId: PropTypes.string,
   source: PropTypes.object.isRequired,
   readOnly: PropTypes.bool,
-  onRemove: PropTypes.func.isRequired,
+  onRemoved: PropTypes.func.isRequired,
 };
 
 const FIRST_NOTE = {
@@ -242,7 +215,7 @@ Versions.propTypes = {
 };
 
 // Each tab's body, by the `sourceTab` id. Every body gets
-// `{ envId, source, at, readOnly, onEdit, onRemove, onReviewRefresh }`.
+// `{ envId, source, at, readOnly, onEdit, onRemoved, onReviewRefresh, onSupply }`.
 const TAB_BODIES = {
   preview: WhatWasRead,
   mapping: MappingTab,
@@ -278,10 +251,10 @@ export default function SourceDrawer({
   readOnly = false,
   onClose,
   onReviewRefresh,
+  onSupply,
 }) {
   const { data: summary } = useEnvironmentSources(envId);
   const updateSource = useUpdateSource(envId);
-  const removeSource = useRemoveSource(envId);
   const [usageOpen, setUsageOpen] = useState(false);
   const [picked, setPicked] = useState(at ? "preview" : tab || "preview");
 
@@ -290,11 +263,6 @@ export default function SourceDrawer({
 
   const onEdit = (change) => updateSource(sourceId, change);
   const saved = isSaved(source);
-  // A saved file goes to Removed; one not saved yet is just dropped.
-  const onRemove = () => {
-    removeSource(source);
-    onClose();
-  };
 
   const tabs = tabsOf(source);
   const current = tabs.some(([id]) => id === picked) ? picked : "preview";
@@ -371,8 +339,9 @@ export default function SourceDrawer({
             at={at}
             readOnly={readOnly}
             onEdit={onEdit}
-            onRemove={onRemove}
+            onRemoved={onClose}
             onReviewRefresh={onReviewRefresh}
+            onSupply={onSupply}
           />
         </Box>
       </Stack>
@@ -391,4 +360,6 @@ SourceDrawer.propTypes = {
   onClose: PropTypes.func.isRequired,
   // Gets the source when its Knowledge base file changed (Versions tab).
   onReviewRefresh: PropTypes.func,
+  // Supply the records (Mapping tab): close the file, open Add source.
+  onSupply: PropTypes.func,
 };

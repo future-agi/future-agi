@@ -11,6 +11,7 @@ import {
   useDecideChanges,
   sampleFileEdits,
   useDismissFailedChange,
+  useDraftCheck,
   useDraftReview,
 } from "src/api/simulate-environments/draftReview";
 import { useEnvironmentVersions } from "src/api/simulate-environments/versions";
@@ -92,7 +93,7 @@ export default function ReviewChangesDrawer({
   const [name, setName] = useState("");
   const [discarding, setDiscarding] = useState(false);
   const [announced, setAnnounced] = useState("");
-  const [check, setCheck] = useState({ key: null, state: "idle" });
+  const [check, setCheck] = useDraftCheck(env?.id);
   const bodyRef = useRef(null);
   const titleRef = useRef(null);
   const saveRef = useRef(null);
@@ -108,6 +109,7 @@ export default function ReviewChangesDrawer({
   const names = recheckedKeys(changes);
   // Changes from files have their affected scenarios checked here before the
   // save, again whenever that list moves. A sample run until the API exists.
+  // The result outlives the drawer, so reopening on the same list keeps it.
   const needsCheck = recheckedKeys(sampleFileEdits(review).changes).length > 0;
   const checkKey = names.join("|");
   const checkState = check.key === checkKey ? check.state : "idle";
@@ -118,7 +120,7 @@ export default function ReviewChangesDrawer({
       SAMPLE_CHECK_MS,
     );
     return () => clearTimeout(timer);
-  }, [checkState, checkKey]);
+  }, [checkState, checkKey, setCheck]);
   const line = saveLine(changes, versions);
   const counts = reviewCounts(changes);
   const piece = pieceOf(changes);
