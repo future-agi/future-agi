@@ -60,16 +60,56 @@ ScenarioCount.propTypes = {
  * Review refresh: a Knowledge base file changed since its copy was added.
  * Each change is accepted unless rejected; Save as vN takes the accepted ones
  * as the file's next version and clears the changed line. Keep my copy
- * leaves it as it is, still waiting to be reviewed.
+ * leaves it as it is, still waiting to be reviewed. Stays mounted so it
+ * slides open and shut; the body, with the picks, unmounts once closed.
  */
-export default function ReviewRefreshDrawer({ envId, sourceId, onClose }) {
+export default function ReviewRefreshDrawer({
+  envId,
+  open = false,
+  sourceId = null,
+  onClose,
+}) {
   const { data: summary } = useEnvironmentSources(envId);
+  const [validating, setValidating] = useState(false);
+  const source = summary?.sources.find((one) => one.source_id === sourceId);
+  return (
+    // Not closable while saving, so the save can't land after a close.
+    <SideDrawer
+      open={open && Boolean(source)}
+      onClose={validating ? () => {} : onClose}
+      width={560}
+    >
+      {source && (
+        <ReviewRefreshBody
+          envId={envId}
+          source={source}
+          validating={validating}
+          onValidating={setValidating}
+          onClose={onClose}
+        />
+      )}
+    </SideDrawer>
+  );
+}
+
+ReviewRefreshDrawer.propTypes = {
+  envId: PropTypes.string,
+  open: PropTypes.bool,
+  // The file to review; kept by the parent while the drawer closes.
+  sourceId: PropTypes.string,
+  onClose: PropTypes.func.isRequired,
+};
+
+function ReviewRefreshBody({
+  envId,
+  source,
+  validating,
+  onValidating,
+  onClose,
+}) {
   const refresh = useRefreshSource(envId);
   const [rejected, setRejected] = useState(() => new Set());
-  const [validating, setValidating] = useState(false);
-
-  const source = summary?.sources.find((one) => one.source_id === sourceId);
-  if (!source) return null;
+  const sourceId = source.source_id;
   // shortcut: the change list is fixture-only; read it from the API once it reports Knowledge base changes.
   const changes = kbChangesOf(source);
   const accepted = changes.filter((change) => !rejected.has(change.id));
@@ -95,172 +135,176 @@ export default function ReviewRefreshDrawer({ envId, sourceId, onClose }) {
   };
 
   const save = () => {
-    setValidating(true);
+    onValidating(true);
     setTimeout(() => {
       refresh(sourceId, accepted);
       enqueueSnackbar(`Saved as ${next} with the current ${source.name}.`, {
         variant: "success",
       });
       onClose();
+      onValidating(false);
     }, VALIDATE_MS);
   };
 
   return (
-    // Not closable while saving, so the save can't land after a close.
-    <SideDrawer open onClose={validating ? () => {} : onClose} width={560}>
-      <Stack sx={{ height: "100%" }}>
-        <Box
-          sx={{
-            px: 2.5,
-            pt: 2,
-            pb: 1.25,
-            pr: 6,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography noWrap sx={{ typography: "m1", minWidth: 0 }}>
-              {`Review refresh · ${source.name}`}
-            </Typography>
-            <UiOnlyFlag feature="environmentSources" />
-          </Stack>
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {`Changed in the Knowledge base since you added it · your copy vs the current file · ${plural(changes.length, "change")}, each accepted unless you reject it, then Save as ${next}`}
+    <Stack sx={{ height: "100%" }}>
+      <Box
+        sx={{
+          px: 2.5,
+          pt: 2,
+          pb: 1.25,
+          pr: 6,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography noWrap sx={{ typography: "m1", minWidth: 0 }}>
+            {`Review refresh · ${source.name}`}
           </Typography>
-        </Box>
+          <UiOnlyFlag feature="environmentSources" />
+        </Stack>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {`Changed in the Knowledge base since you added it · your copy vs the current file · ${plural(changes.length, "change")}, each accepted unless you reject it, then Save as ${next}`}
+        </Typography>
+      </Box>
 
-        <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          {GROUPS.map(([group, label]) => {
-            const list = changes.filter((change) =>
-              change.kind.startsWith(group),
-            );
-            if (!list.length) return null;
-            return (
-              <Box key={group}>
-                <Typography
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {GROUPS.map(([group, label]) => {
+          const list = changes.filter((change) =>
+            change.kind.startsWith(group),
+          );
+          if (!list.length) return null;
+          return (
+            <Box key={group}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.tertiary",
+                  px: 2.5,
+                  pt: 1.5,
+                  pb: 0.25,
+                }}
+              >
+                {`${label} · ${list.length}`}
+              </Typography>
+              {list.map((change) => (
+                <Stack
+                  key={change.id}
+                  direction="row"
+                  spacing={1.5}
                   sx={{
-                    typography: "s3",
-                    fontWeight: 600,
-                    color: "text.tertiary",
                     px: 2.5,
-                    pt: 1.5,
-                    pb: 0.25,
+                    py: 1,
+                    "& + &": {
+                      borderTop: "1px solid",
+                      borderColor: "divider",
+                    },
                   }}
                 >
-                  {`${label} · ${list.length}`}
-                </Typography>
-                {list.map((change) => (
-                  <Stack
-                    key={change.id}
-                    direction="row"
-                    spacing={1.5}
-                    sx={{
-                      px: 2.5,
-                      py: 1,
-                      "& + &": {
-                        borderTop: "1px solid",
-                        borderColor: "divider",
-                      },
-                    }}
-                  >
-                    <Stack spacing={0.25} sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                        {change.label}
-                        <Box
-                          component="span"
-                          sx={{ fontWeight: 400, color: "text.tertiary" }}
-                        >
-                          {` · ${[KIND_LABEL[change.kind], change.ref].filter(Boolean).join(" · ")}`}
-                        </Box>
+                  <Stack spacing={0.25} sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                      {change.label}
+                      <Box
+                        component="span"
+                        sx={{ fontWeight: 400, color: "text.tertiary" }}
+                      >
+                        {` · ${[KIND_LABEL[change.kind], change.ref].filter(Boolean).join(" · ")}`}
+                      </Box>
+                    </Typography>
+                    {change.from && (
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "text.tertiary",
+                          textDecoration: "line-through",
+                        }}
+                      >
+                        {change.from}
                       </Typography>
-                      {change.from && (
-                        <Typography
-                          sx={{
-                            typography: "s3",
-                            color: "text.tertiary",
-                            textDecoration: "line-through",
-                          }}
-                        >
-                          {change.from}
-                        </Typography>
-                      )}
-                      {change.to && (
-                        <Typography sx={{ typography: "s3" }}>
-                          {change.to}
-                        </Typography>
-                      )}
-                      {change.detail && (
-                        <Typography
-                          sx={{ typography: "s3", color: "text.secondary" }}
-                        >
-                          {change.detail}
-                        </Typography>
-                      )}
-                      {change.scenarios.length > 0 && (
-                        <ScenarioCount names={change.scenarios} />
-                      )}
-                    </Stack>
-                    <ToggleButtonGroup
-                      size="small"
-                      exclusive
-                      value={rejected.has(change.id) ? "reject" : "accept"}
-                      onChange={(_, value) => decide(change.id, value)}
-                      aria-label={`${change.label}: accept or reject`}
-                      sx={{ alignSelf: "flex-start", flexShrink: 0 }}
-                    >
-                      <ToggleButton value="accept">Accept</ToggleButton>
-                      <ToggleButton value="reject">Reject</ToggleButton>
-                    </ToggleButtonGroup>
+                    )}
+                    {change.to && (
+                      <Typography sx={{ typography: "s3" }}>
+                        {change.to}
+                      </Typography>
+                    )}
+                    {change.detail && (
+                      <Typography
+                        sx={{ typography: "s3", color: "text.secondary" }}
+                      >
+                        {change.detail}
+                      </Typography>
+                    )}
+                    {change.scenarios.length > 0 && (
+                      <ScenarioCount names={change.scenarios} />
+                    )}
                   </Stack>
-                ))}
-              </Box>
-            );
-          })}
-        </Box>
+                  <ToggleButtonGroup
+                    size="small"
+                    exclusive
+                    value={rejected.has(change.id) ? "reject" : "accept"}
+                    onChange={(_, value) => decide(change.id, value)}
+                    aria-label={`${change.label}: accept or reject`}
+                    sx={{ alignSelf: "flex-start", flexShrink: 0 }}
+                  >
+                    <ToggleButton value="accept">Accept</ToggleButton>
+                    <ToggleButton value="reject">Reject</ToggleButton>
+                  </ToggleButtonGroup>
+                </Stack>
+              ))}
+            </Box>
+          );
+        })}
+      </Box>
 
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            px: 2.5,
-            py: 1.25,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Stack direction="row" alignItems="center" spacing={1.5} flex={1}>
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {`${accepted.length} of ${changes.length} accepted`}
-            </Typography>
-            {touched.length > 0 && <ScenarioCount names={touched} />}
-          </Stack>
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={validating}
-            onClick={keepCopy}
-          >
-            Keep my copy
-          </Button>
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            disabled={validating || !accepted.length}
-            onClick={save}
-          >
-            {validating ? "Validating…" : `Save as ${next}`}
-          </Button>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 2.5,
+          py: 1.25,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Stack direction="row" alignItems="center" spacing={1.5} flex={1}>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {`${accepted.length} of ${changes.length} accepted`}
+          </Typography>
+          {touched.length > 0 && <ScenarioCount names={touched} />}
         </Stack>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={validating}
+          onClick={keepCopy}
+        >
+          Keep my copy
+        </Button>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          disabled={validating || !accepted.length}
+          onClick={save}
+        >
+          {validating ? "Validating…" : `Save as ${next}`}
+        </Button>
       </Stack>
-    </SideDrawer>
+    </Stack>
   );
 }
 
-ReviewRefreshDrawer.propTypes = {
+ReviewRefreshBody.propTypes = {
   envId: PropTypes.string,
-  sourceId: PropTypes.string.isRequired,
+  source: PropTypes.shape({
+    source_id: PropTypes.string.isRequired,
+    name: PropTypes.string.isRequired,
+    version: PropTypes.number,
+  }).isRequired,
+  validating: PropTypes.bool,
+  onValidating: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
 };

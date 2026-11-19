@@ -5,6 +5,7 @@ import {
   Button,
   ButtonBase,
   Checkbox,
+  Collapse,
   IconButton,
   Stack,
   TextField,
@@ -12,6 +13,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import { neutralCheckboxSx } from "../runs/detail/trace/traceTable.constants";
 import PersonalDataChoice from "./PersonalDataChoice";
 import {
@@ -50,6 +52,7 @@ export default function ProposalItem({
   personalReplaced,
 }) {
   const [editing, setEditing] = useState(false);
+  const timeout = usePrefersReducedMotion() ? 0 : "auto";
   const pickable = isPickable(item);
   const kind = PROPOSAL_KINDS[item.kind];
   const rule = item.kind === "rule";
@@ -171,25 +174,29 @@ export default function ProposalItem({
               : COPY.missingKept}
           </Typography>
         )}
-        {!rule && edit != null && !editing && (
+        <Collapse
+          in={!rule && edit != null && !editing}
+          timeout={timeout}
+          unmountOnExit
+        >
           <Typography
             sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
           >
             {COPY.edited(item.editable?.label, edit)}
           </Typography>
-        )}
-        {editing && (
+        </Collapse>
+        <Collapse in={editing} timeout={timeout} unmountOnExit>
           <TextField
             size="small"
             fullWidth
             autoFocus
-            label={rule ? COPY.ruleLabel : item.editable.label}
+            label={rule ? COPY.ruleLabel : item.editable?.label}
             value={editValue}
             onChange={(event) => onEdit(event.target.value)}
             onKeyDown={(event) => event.key === "Enter" && setEditing(false)}
             sx={{ mt: 0.75 }}
           />
-        )}
+        </Collapse>
         {personalReplaced && (
           <Typography
             sx={{ mt: 0.5, typography: "s3", color: "text.tertiary" }}
@@ -333,10 +340,45 @@ ProposalItem.propTypes = {
   A whole file joining as background: what it is and how it's used, then
   what it says by section. No checkbox: Add and Reject decide it.
 */
+// Passages shown before "Show all".
+const SHOWN = 6;
+const PASSAGES_SX = {
+  display: "grid",
+  gridTemplateColumns: "80px minmax(0, 1fr)",
+  borderColor: "divider",
+  "& > *": { borderBottom: "1px solid", borderColor: "divider", py: 0.75 },
+};
+
 function ReferenceItem({ item, inset, onOpen }) {
   const [all, setAll] = useState(false);
+  const timeout = usePrefersReducedMotion() ? 0 : "auto";
   const read = item.read || { sections: 0, words: 0, passages: [] };
-  const rows = all ? read.passages : read.passages.slice(0, 6);
+  const rows = read.passages;
+  // A passage's section shows only where it changes from the one before.
+  const cells = (from, to) =>
+    rows.slice(from, to).map((passage, i) => {
+      const n = from + i;
+      return [
+        <Typography
+          key={`${passage.id}-where`}
+          sx={{
+            typography: "s1",
+            color: "text.tertiary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {n === 0 || rows[n - 1].where !== passage.where
+            ? passage.where.replace(/^section /, "")
+            : ""}
+        </Typography>,
+        <Typography
+          key={`${passage.id}-text`}
+          sx={{ typography: "s1", color: "text.secondary" }}
+        >
+          {passage.text}
+        </Typography>,
+      ];
+    });
   const facts = [
     [
       COPY.reference.file,
@@ -391,47 +433,20 @@ function ReferenceItem({ item, inset, onOpen }) {
       </Box>
       {read.passages.length > 0 && (
         <>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: "80px minmax(0, 1fr)",
-              borderTop: "1px solid",
-              borderColor: "divider",
-              "& > *": {
-                borderBottom: "1px solid",
-                borderColor: "divider",
-                py: 0.75,
-              },
-            }}
-          >
+          <Box sx={{ ...PASSAGES_SX, borderTop: "1px solid" }}>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {COPY.reference.section}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {COPY.reference.says}
             </Typography>
-            {rows.map((passage, n) => [
-              <Typography
-                key={`${passage.id}-where`}
-                sx={{
-                  typography: "s1",
-                  color: "text.tertiary",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {n === 0 || rows[n - 1].where !== passage.where
-                  ? passage.where.replace(/^section /, "")
-                  : ""}
-              </Typography>,
-              <Typography
-                key={`${passage.id}-text`}
-                sx={{ typography: "s1", color: "text.secondary" }}
-              >
-                {passage.text}
-              </Typography>,
-            ])}
+            {cells(0, SHOWN)}
           </Box>
-          {read.passages.length > 6 && (
+          {/* The rest slide open under the first six. */}
+          <Collapse in={all} timeout={timeout} unmountOnExit>
+            <Box sx={PASSAGES_SX}>{cells(SHOWN)}</Box>
+          </Collapse>
+          {read.passages.length > SHOWN && (
             <ButtonBase
               onClick={() => setAll((value) => !value)}
               sx={{

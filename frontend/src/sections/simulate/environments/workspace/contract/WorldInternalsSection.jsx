@@ -1,10 +1,19 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Typography, Collapse, Tooltip } from "@mui/material";
+import {
+  Box,
+  Button,
+  Stack,
+  Typography,
+  Collapse,
+  Tooltip,
+} from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import {
   TOOLS_CARD_COPY as T,
   returnLine,
@@ -14,23 +23,93 @@ import {
 
 const MONO = "ui-monospace, Menlo, monospace";
 
+const COPY = {
+  tablesTitle: "World state · database schema",
+  tablesSubtitle: "The tables this environment's world holds",
+  noTables:
+    "No tables yet. Add a records file in Sources, or describe them in the builder chat.",
+  toolsTitle: (count) => `Tools · ${count}`,
+  noTools: (agent) =>
+    agent
+      ? `${agent} declares no tools, so the world has none to answer.`
+      : "None yet. The agent's tools are read when it's connected.",
+  // An environment without contract detail still names its tools.
+  notRecorded:
+    "Where each tool runs isn't recorded for this environment version.",
+  addFromMcp: "Add tools from an MCP server",
+};
+
+// A row's chevron points right and turns down as the row opens.
+const chevronSx = (open) => ({
+  flexShrink: 0,
+  transform: open ? "rotate(90deg)" : "none",
+  transition: (theme) =>
+    theme.transitions.create("transform", {
+      duration: theme.transitions.duration.shorter,
+    }),
+  "@media (prefers-reduced-motion: reduce)": { transition: "none" },
+});
+
 /**
  * "World" internals on the World & tools tab: the tables the world holds and the
- * tools the agent has, as the environment's detail states them. Nothing is derived here.
+ * tools the agent has, as the environment's detail states them. Nothing is derived
+ * here. Both cards always show, with an empty line when the detail sends none.
  */
-export default function WorldInternalsSection({ env }) {
-  const tables = env?.worldTables;
+export default function WorldInternalsSection({ env, envState }) {
+  const tables = env?.worldTables || [];
   const tools = env?.toolStatus || [];
+  const named = env?.tools?.length || 0;
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
-      {tables?.length > 0 && (
-        <SchemaCard schema={tables} totalRows={env.worldTotalRows} />
+      {tables.length > 0 ? (
+        <SchemaCard schema={tables} totalRows={env.worldTotalRows || 0} />
+      ) : (
+        <SectionCard title={COPY.tablesTitle} subtitle={COPY.tablesSubtitle}>
+          <EmptyLine>{COPY.noTables}</EmptyLine>
+        </SectionCard>
       )}
-      {tools.length > 0 && <ToolsCard tools={tools} />}
+      {tools.length > 0 ? (
+        <ToolsCard tools={tools} />
+      ) : (
+        <SectionCard
+          title={COPY.toolsTitle(named)}
+          subtitle={T.subtitle}
+          action={
+            <Stack direction="row" spacing={1} alignItems="center">
+              <UiOnlyFlag feature="mcpTools" />
+              <Button
+                size="small"
+                variant="outlined"
+                disabled
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+              >
+                {COPY.addFromMcp}
+              </Button>
+            </Stack>
+          }
+        >
+          <EmptyLine>
+            {named ? COPY.notRecorded : COPY.noTools(envState?.agent?.name)}
+          </EmptyLine>
+        </SectionCard>
+      )}
     </Stack>
   );
 }
+
+function EmptyLine({ children }) {
+  return (
+    <Typography
+      sx={{ typography: "s1", color: "text.secondary", px: 1.5, py: 1.25 }}
+    >
+      {children}
+    </Typography>
+  );
+}
+EmptyLine.propTypes = { children: PropTypes.node };
 WorldInternalsSection.propTypes = {
   env: PropTypes.object.isRequired,
   envState: PropTypes.object,
@@ -42,13 +121,14 @@ WorldInternalsSection.propTypes = {
 
 function SchemaCard({ schema, totalRows }) {
   const [openTable, setOpenTable] = useState(null);
+  const reduce = usePrefersReducedMotion();
   // The chevron's slot only exists when some table can open; otherwise the
   // icons would sit indented from the header for a chevron nobody sees.
   const anyExpandable = schema.some((t) => t.fields.length);
   return (
     <SectionCard
-      title="World state · database schema"
-      subtitle="The tables this environment's world holds"
+      title={COPY.tablesTitle}
+      subtitle={COPY.tablesSubtitle}
       action={
         <Typography
           sx={{
@@ -89,15 +169,11 @@ function SchemaCard({ schema, totalRows }) {
               >
                 {anyExpandable && (
                   <Iconify
-                    icon={
-                      open
-                        ? "solar:alt-arrow-down-linear"
-                        : "solar:alt-arrow-right-linear"
-                    }
+                    icon="solar:alt-arrow-right-linear"
                     width={13}
                     sx={{
+                      ...chevronSx(open),
                       color: "text.subtitle",
-                      flexShrink: 0,
                       visibility: expandable ? "visible" : "hidden",
                     }}
                   />
@@ -142,7 +218,7 @@ function SchemaCard({ schema, totalRows }) {
                 </Typography>
               </Stack>
               {expandable && (
-                <Collapse in={open}>
+                <Collapse in={open} timeout={reduce ? 0 : "auto"}>
                   <Box
                     sx={{
                       px: 1.5,
@@ -230,6 +306,7 @@ const STATUS_CHIP = {
 
 function ToolsCard({ tools }) {
   const [openTool, setOpenTool] = useState(null);
+  const reduce = usePrefersReducedMotion();
   return (
     <SectionCard
       title="Tools"
@@ -272,13 +349,9 @@ function ToolsCard({ tools }) {
                 }}
               >
                 <Iconify
-                  icon={
-                    open
-                      ? "solar:alt-arrow-down-linear"
-                      : "solar:alt-arrow-right-linear"
-                  }
+                  icon="solar:alt-arrow-right-linear"
                   width={16}
-                  sx={{ color: "text.secondary", flexShrink: 0 }}
+                  sx={{ ...chevronSx(open), color: "text.secondary" }}
                 />
                 <Typography
                   sx={{
@@ -352,7 +425,7 @@ function ToolsCard({ tools }) {
                   </Tooltip>
                 )}
               </Stack>
-              <Collapse in={open}>
+              <Collapse in={open} timeout={reduce ? 0 : "auto"}>
                 <ToolDetail tool={tool} />
               </Collapse>
             </Box>

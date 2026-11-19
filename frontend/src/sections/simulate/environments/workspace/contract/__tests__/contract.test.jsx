@@ -4,6 +4,8 @@ import RlContractPanel from "../RlContractPanel";
 import WorldToolsPanel from "../../world/WorldToolsPanel";
 
 vi.mock("../../sources/SourcesSection", () => ({ default: () => null }));
+vi.mock("../../sources/SourceDrawer", () => ({ default: () => null }));
+vi.mock("../../sources/ReviewRefreshDrawer", () => ({ default: () => null }));
 vi.mock("../../sources/useKnowledgeBaseChanges", () => ({
   default: () => {},
   useKnowledgeBaseChanges: () => {},
