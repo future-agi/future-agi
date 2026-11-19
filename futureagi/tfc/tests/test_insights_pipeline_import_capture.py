@@ -7,6 +7,7 @@ real Sentry client that records the envelopes it would send.
 import builtins
 import json
 import logging
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from temporalio.exceptions import ApplicationError
 
 from tfc import ee_loader
-from tfc.capabilities import service
+from tfc.capabilities import _bootstrap, service
 from tfc.licensing.types import DeploymentFlavor
 from tfc.temporal.common import sentry_interceptor
 from tfc.temporal.insights import activities
@@ -69,6 +70,7 @@ async def test_a_build_without_the_pipeline_is_a_quiet_refusal(
 ):
     monkeypatch.setattr(service, "is_configured", lambda: True)
     monkeypatch.setattr(service, "get_deployment_flavor", lambda: DeploymentFlavor.OSS)
+    monkeypatch.delenv("EE_LICENSE_KEY", raising=False)
     monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
     monkeypatch.setattr(ee_loader, "has_ee", lambda module: False)
     _import_raising(
@@ -134,3 +136,42 @@ async def test_missing_stage_in_expected_install_is_reported(transport, monkeypa
     assert [v["type"] for v in event["exception"]["values"]] == [
         "ModuleNotFoundError", "ApplicationError",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("licensed", [False, True], ids=["oss", "licensed"])
+async def test_self_hosted_startup_without_optional_packages(
+    transport, monkeypatch, licensed
+):
+    monkeypatch.setenv("CLOUD_DEPLOYMENT", "false")
+    monkeypatch.setenv("EE_LICENSE_KEY", "synthetic-license" if licensed else "")
+    for name in (
+        "ee", "ee.usage", "ee.agenthub", "ee.agenthub.insights", "ee.agenthub.insights.pipeline",
+    ):
+        monkeypatch.setitem(sys.modules, name, None)
+
+    # Exercise startup selection and restore the process-wide wiring afterward.
+    for attr in (
+        "_configured", "_deployment_flavor", "_deployment_location",
+        "_license_resolver", "_cloud_plan_resolver",
+    ):
+        monkeypatch.setattr(service, attr, getattr(service, attr))
+    _bootstrap.wire_resolvers()
+    assert service.is_configured()
+    assert service.get_deployment_flavor() == DeploymentFlavor.OSS
+
+    error = await _run_stage()
+    assert error.non_retryable
+    if not licensed:
+        assert error.type == "CapabilityDenied"
+        assert transport.events == []
+        return
+
+    assert error.type == "InsightsPipelineImportError"
+    assert isinstance(error.__cause__, ModuleNotFoundError)
+    [event] = transport.events
+    original, reported = event["exception"]["values"]
+    assert original["type"] == "ModuleNotFoundError"
+    assert original["value"] == str(error.__cause__)
+    assert reported["type"] == "ApplicationError"
+    assert activities.PIPELINE_IMPORT_FAILED in reported["value"]

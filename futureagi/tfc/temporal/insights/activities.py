@@ -110,7 +110,7 @@ def _pipeline(name: str):
     """
     from tfc.capabilities import service
     from tfc.capabilities.registry import FEATURE_INSIGHTS
-    from tfc.ee_loader import has_ee, is_cloud_env
+    from tfc.ee_loader import _is_oss_mode, has_ee
     from tfc.licensing.types import DeploymentFlavor
 
     try:
@@ -123,7 +123,7 @@ def _pipeline(name: str):
             and exc.name in _PIPELINE_MODULES
             and service.is_configured()
             and service.get_deployment_flavor() == DeploymentFlavor.OSS
-            and not is_cloud_env()
+            and _is_oss_mode()
             and FEATURE_INSIGHTS.oss_locked
         ):
             try:
