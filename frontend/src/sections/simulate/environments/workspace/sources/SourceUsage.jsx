@@ -1,5 +1,13 @@
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Radio, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  ButtonBase,
+  Collapse,
+  Radio,
+  Stack,
+  Typography,
+} from "@mui/material";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import { ROLES } from "./sources.constants";
 
 const READS = [
@@ -112,6 +120,7 @@ export default function SourceUsage({
   onToggle,
   disabled = false,
 }) {
+  const reduce = usePrefersReducedMotion();
   const toggle = onToggle && !disabled && (
     <ButtonBase
       onClick={onToggle}
@@ -129,18 +138,51 @@ export default function SourceUsage({
     </ButtonBase>
   );
 
-  if (compact) {
-    const use = ROLES.find((one) => one.id === role);
-    const read =
-      READ_FACT[role] || READS.find((one) => one.id === visibility)?.label;
-    return (
-      <Box>
+  const use = ROLES.find((one) => one.id === role);
+  const read =
+    READ_FACT[role] || READS.find((one) => one.id === visibility)?.label;
+  const timeout = reduce ? 0 : "auto";
+
+  // Change and Done swap the answers and the questions with a slide.
+  return (
+    <Box>
+      <Collapse in={compact} timeout={timeout} unmountOnExit>
         <Line label="Used as" value={use?.option || "—"} extra={toggle} />
         <Line label="Agent reads it" value={read || "—"} />
-      </Box>
-    );
-  }
+      </Collapse>
+      <Collapse in={!compact} timeout={timeout} unmountOnExit>
+        <Questions
+          role={role}
+          visibility={visibility}
+          onRole={onRole}
+          onVisibility={onVisibility}
+          disabled={disabled}
+          toggle={toggle}
+        />
+      </Collapse>
+    </Box>
+  );
+}
 
+SourceUsage.propTypes = {
+  role: PropTypes.string,
+  visibility: PropTypes.string,
+  onRole: PropTypes.func.isRequired,
+  onVisibility: PropTypes.func.isRequired,
+  // Two answer lines instead of the questions; onToggle switches.
+  compact: PropTypes.bool,
+  onToggle: PropTypes.func,
+  disabled: PropTypes.bool,
+};
+
+function Questions({
+  role,
+  visibility,
+  onRole,
+  onVisibility,
+  disabled,
+  toggle,
+}) {
   return (
     <Stack spacing={1.5}>
       <Box role="radiogroup" aria-label="How the builder uses this file">
@@ -185,13 +227,11 @@ export default function SourceUsage({
   );
 }
 
-SourceUsage.propTypes = {
+Questions.propTypes = {
   role: PropTypes.string,
   visibility: PropTypes.string,
   onRole: PropTypes.func.isRequired,
   onVisibility: PropTypes.func.isRequired,
-  // Two answer lines instead of the questions; onToggle switches.
-  compact: PropTypes.bool,
-  onToggle: PropTypes.func,
   disabled: PropTypes.bool,
+  toggle: PropTypes.node,
 };

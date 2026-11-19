@@ -5,12 +5,15 @@ import {
   Box,
   Button,
   Checkbox,
+  Collapse,
   MenuItem,
   Select,
   Stack,
   Typography,
 } from "@mui/material";
 import { useEnvironmentSources } from "src/api/simulate-environments/sources";
+import ShimmerText from "../../components/ShimmerText";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import { MONO_FONT } from "../contract/contract.constants";
 import { SOURCES_COPY, isSaved } from "./sources.constants";
 import {
@@ -90,6 +93,7 @@ Heading.propTypes = { children: PropTypes.node, note: PropTypes.string };
 function IdProposal({ source, column, sources, readOnly, onEdit, onSupply }) {
   // Replacing IDs is suggested; the person unticks it to keep them.
   const [replace, setReplace] = useState(true);
+  const reduce = usePrefersReducedMotion();
   const { table, rejected } = source.ui.parsed;
   const check = idCheckOf(column, sources);
   const done = column.proposal.approved;
@@ -133,7 +137,12 @@ function IdProposal({ source, column, sources, readOnly, onEdit, onSupply }) {
           </Row>
         )}
       </Box>
-      {!done && !readOnly && (
+      {/* Approving folds the actions away. */}
+      <Collapse
+        in={!done && !readOnly}
+        timeout={reduce ? 0 : "auto"}
+        unmountOnExit
+      >
         <Stack spacing={1} sx={{ mt: 1 }}>
           <Stack
             component="label"
@@ -184,7 +193,7 @@ function IdProposal({ source, column, sources, readOnly, onEdit, onSupply }) {
             )}
           </Stack>
         </Stack>
-      )}
+      </Collapse>
     </Box>
   );
 }
@@ -602,11 +611,7 @@ export default function MappingTab({
   const { data: summary } = useEnvironmentSources(envId);
 
   if (source.status === "reading")
-    return (
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-        {SOURCES_COPY.state.reading}
-      </Typography>
-    );
+    return <ShimmerText>{SOURCES_COPY.state.reading}</ShimmerText>;
 
   const sources = summary?.sources || [source];
   const parsed = source.ui.parsed;

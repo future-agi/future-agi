@@ -3,6 +3,7 @@ import { Box, Button, LinearProgress, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useEnvironmentSources } from "src/api/simulate-environments/sources";
 import { CONSOLE_COPY } from "../../buildEnvironment/build.constants";
+import ShimmerText from "../../components/ShimmerText";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { CHAT_FILES_COPY as COPY } from "./chatFiles";
 import { PROPOSALS_COPY } from "./proposals";
@@ -91,17 +92,26 @@ export default function AttachmentsCard({ envId, files, prepared, failed }) {
                 >
                   {file.name}
                 </Typography>
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: TONE[row.status] || "text.secondary",
-                    flexShrink: 0,
-                  }}
-                >
-                  {COPY.status[row.status]}
-                </Typography>
+                {busy ? (
+                  <ShimmerText sx={{ typography: "s3", flexShrink: 0 }}>
+                    {COPY.status[row.status]}
+                  </ShimmerText>
+                ) : (
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: TONE[row.status] || "text.secondary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {COPY.status[row.status]}
+                  </Typography>
+                )}
               </Stack>
-              {busy && <LinearProgress sx={{ mt: 0.75, height: 2 }} />}
+              {/* Upload progress stays a bar; reading is the shimmer above. */}
+              {row.status === "uploading" && (
+                <LinearProgress sx={{ mt: 0.75, height: 2 }} />
+              )}
               {row.note && (
                 <Typography
                   sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}

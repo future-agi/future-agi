@@ -3,12 +3,14 @@ import { useId } from "react";
 import { useSetPersonalData } from "src/api/simulate-environments/sources";
 import {
   Box,
+  Collapse,
   MenuItem,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import { MONO_FONT } from "../contract/contract.constants";
 import { Option } from "./SourceUsage";
 import {
@@ -101,6 +103,7 @@ export default function PersonalDataChoice({
   compact = false,
 }) {
   const name = useId();
+  const timeout = usePrefersReducedMotion() ? 0 : "auto";
   if (compact) {
     return (
       <Stack
@@ -161,18 +164,27 @@ export default function PersonalDataChoice({
             />
           ))}
         </Box>
-        {choice !== "none" && found.length > 0 && (
+        <Collapse
+          in={choice !== "none" && found.length > 0}
+          timeout={timeout}
+          unmountOnExit
+        >
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
           >
             {`The builder found: ${found.map((column) => column.name).join(", ")}.`}
           </Typography>
-        )}
+        </Collapse>
         <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}>
           The agent and simulated people see the result.
         </Typography>
       </Box>
-      {choice !== "none" && columns.length > 0 && onColumn && (
+      {/* No personal data folds the column list away. */}
+      <Collapse
+        in={choice !== "none" && columns.length > 0 && Boolean(onColumn)}
+        timeout={timeout}
+        unmountOnExit
+      >
         <Stack spacing={1}>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             Mark any column the builder missed. Replace consistently keeps
@@ -187,7 +199,7 @@ export default function PersonalDataChoice({
             />
           ))}
         </Stack>
-      )}
+      </Collapse>
     </Stack>
   );
 }

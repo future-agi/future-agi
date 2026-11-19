@@ -1,13 +1,14 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { Box, Button, Stack, Tab, Typography } from "@mui/material";
+import { Box, Button, Fade, Stack, Tab, Typography } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
 import {
   useEnvironmentSources,
   useUpdateSource,
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import MappingTab from "./MappingTab";
 import RemoveSourceDialog from "./RemoveSourceDialog";
 import SourceUsage from "./SourceUsage";
@@ -239,13 +240,15 @@ const tabsOf = (source) => {
 
 /**
  * One file of the environment: what reading it found, how it's used, what
- * uses it and its versions. `tab` and `at` are read once, so the parent keys
- * the drawer on them; `at` opens What was read at the cited passage or row.
- * Edits go to the sources summary cache.
+ * uses it and its versions. Stays mounted so it slides open and shut; the
+ * body unmounts once closed and is keyed on `tab` and `at`, which it reads
+ * once. `at` opens What was read at the cited passage or row. Edits go to
+ * the sources summary cache.
  */
 export default function SourceDrawer({
   envId,
-  sourceId,
+  open = false,
+  sourceId = null,
   tab = null,
   at = null,
   readOnly = false,
@@ -254,14 +257,66 @@ export default function SourceDrawer({
   onSupply,
 }) {
   const { data: summary } = useEnvironmentSources(envId);
+  const source = summary?.sources.find((one) => one.source_id === sourceId);
+  return (
+    // A removed file stays in the summary, so the drawer slides shut with it.
+    <SideDrawer
+      open={open && Boolean(source) && !source.ui?.removed}
+      onClose={onClose}
+      width={560}
+    >
+      {source && (
+        <SourceDrawerBody
+          key={`${sourceId}:${tab}:${at}`}
+          envId={envId}
+          summary={summary}
+          source={source}
+          tab={tab}
+          at={at}
+          readOnly={readOnly}
+          onClose={onClose}
+          onReviewRefresh={onReviewRefresh}
+          onSupply={onSupply}
+        />
+      )}
+    </SideDrawer>
+  );
+}
+
+SourceDrawer.propTypes = {
+  envId: PropTypes.string,
+  open: PropTypes.bool,
+  // The file to show; kept by the parent while the drawer closes.
+  sourceId: PropTypes.string,
+  // The tab to open on: preview, mapping, privacy, usage or versions.
+  tab: PropTypes.string,
+  // The cited passage id or sample-row value to show in What was read.
+  at: PropTypes.string,
+  readOnly: PropTypes.bool,
+  onClose: PropTypes.func.isRequired,
+  // Gets the source when its Knowledge base file changed (Versions tab).
+  onReviewRefresh: PropTypes.func,
+  // Supply the records (Mapping tab): close the file, open Add source.
+  onSupply: PropTypes.func,
+};
+
+function SourceDrawerBody({
+  envId,
+  summary,
+  source,
+  tab,
+  at,
+  readOnly,
+  onClose,
+  onReviewRefresh,
+  onSupply,
+}) {
   const updateSource = useUpdateSource(envId);
+  const reduce = usePrefersReducedMotion();
   const [usageOpen, setUsageOpen] = useState(false);
   const [picked, setPicked] = useState(at ? "preview" : tab || "preview");
 
-  const source = summary?.sources.find((one) => one.source_id === sourceId);
-  if (!source || source.ui?.removed) return null;
-
-  const onEdit = (change) => updateSource(sourceId, change);
+  const onEdit = (change) => updateSource(source.source_id, change);
   const saved = isSaved(source);
 
   const tabs = tabsOf(source);
@@ -272,94 +327,92 @@ export default function SourceDrawer({
     .slice(0, 12);
 
   return (
-    <SideDrawer open onClose={onClose} width={560}>
-      <Stack sx={{ height: "100%" }}>
-        <Box sx={{ px: 2.5, pt: 2, pb: 1.25, pr: 6 }}>
-          <Typography noWrap sx={{ typography: "m1" }}>
-            {source.name}
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {[
-              source.ext.toUpperCase(),
-              fromKb(source)
-                ? SOURCES_COPY.yourCopy
-                : SOURCES_COPY.version(source.version),
-              source.ui?.owner,
-              saved && snapshot
-                ? `in snapshot ${snapshot}`
-                : "not in the environment yet",
-              source.status_note,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </Typography>
-        </Box>
+    <Stack sx={{ height: "100%" }}>
+      <Box sx={{ px: 2.5, pt: 2, pb: 1.25, pr: 6 }}>
+        <Typography noWrap sx={{ typography: "m1" }}>
+          {source.name}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {[
+            source.ext.toUpperCase(),
+            fromKb(source)
+              ? SOURCES_COPY.yourCopy
+              : SOURCES_COPY.version(source.version),
+            source.ui?.owner,
+            saved && snapshot
+              ? `in snapshot ${snapshot}`
+              : "not in the environment yet",
+            source.status_note,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Typography>
+      </Box>
 
-        <Box sx={{ px: 2.5, pb: 1.5 }}>
-          <SourceUsage
-            compact={!usageOpen}
-            onToggle={() => setUsageOpen((open) => !open)}
-            role={source.role}
-            visibility={source.visibility}
-            disabled={readOnly || source.status === "unsupported"}
-            onRole={(role) =>
-              onEdit((one) => ({
-                ...one,
-                role,
-                purpose: PURPOSES.includes(role) ? role : null,
-                visibility: defaultVisibility(role),
-              }))
-            }
-            onVisibility={(visibility) =>
-              onEdit((one) => ({ ...one, visibility }))
-            }
-          />
-        </Box>
+      <Box sx={{ px: 2.5, pb: 1.5 }}>
+        <SourceUsage
+          compact={!usageOpen}
+          onToggle={() => setUsageOpen((open) => !open)}
+          role={source.role}
+          visibility={source.visibility}
+          disabled={readOnly || source.status === "unsupported"}
+          onRole={(role) =>
+            onEdit((one) => ({
+              ...one,
+              role,
+              purpose: PURPOSES.includes(role) ? role : null,
+              visibility: defaultVisibility(role),
+            }))
+          }
+          onVisibility={(visibility) =>
+            onEdit((one) => ({ ...one, visibility }))
+          }
+        />
+      </Box>
 
-        <Box
-          sx={{ px: 2.5, borderBottom: "1px solid", borderColor: "divider" }}
+      <Box sx={{ px: 2.5, borderBottom: "1px solid", borderColor: "divider" }}>
+        <CustomTabs
+          value={current}
+          onChange={(_, id) => setPicked(id)}
+          variant="scrollable"
+          scrollButtons={false}
+          sx={{ boxShadow: "none" }}
         >
-          <CustomTabs
-            value={current}
-            onChange={(_, id) => setPicked(id)}
-            variant="scrollable"
-            scrollButtons={false}
-            sx={{ boxShadow: "none" }}
-          >
-            {tabs.map(([id, label]) => (
-              <Tab key={id} value={id} label={label} />
-            ))}
-          </CustomTabs>
-        </Box>
+          {tabs.map(([id, label]) => (
+            <Tab key={id} value={id} label={label} />
+          ))}
+        </CustomTabs>
+      </Box>
 
-        <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 1.5 }}>
-          <Body
-            envId={envId}
-            source={source}
-            at={at}
-            readOnly={readOnly}
-            onEdit={onEdit}
-            onRemoved={onClose}
-            onReviewRefresh={onReviewRefresh}
-            onSupply={onSupply}
-          />
-        </Box>
-      </Stack>
-    </SideDrawer>
+      <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 1.5 }}>
+        {/* Keyed on the tab, so each tab's content fades in. */}
+        <Fade key={current} in timeout={reduce ? 0 : undefined}>
+          <Box>
+            <Body
+              envId={envId}
+              source={source}
+              at={at}
+              readOnly={readOnly}
+              onEdit={onEdit}
+              onRemoved={onClose}
+              onReviewRefresh={onReviewRefresh}
+              onSupply={onSupply}
+            />
+          </Box>
+        </Fade>
+      </Box>
+    </Stack>
   );
 }
 
-SourceDrawer.propTypes = {
+SourceDrawerBody.propTypes = {
   envId: PropTypes.string,
-  sourceId: PropTypes.string.isRequired,
-  // The tab to open on: preview, mapping, privacy, usage or versions.
+  summary: PropTypes.object.isRequired,
+  source: PropTypes.object.isRequired,
   tab: PropTypes.string,
-  // The cited passage id or sample-row value to show in What was read.
   at: PropTypes.string,
   readOnly: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
-  // Gets the source when its Knowledge base file changed (Versions tab).
   onReviewRefresh: PropTypes.func,
-  // Supply the records (Mapping tab): close the file, open Add source.
   onSupply: PropTypes.func,
 };

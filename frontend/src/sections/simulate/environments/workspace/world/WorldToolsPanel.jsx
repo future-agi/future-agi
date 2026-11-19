@@ -22,13 +22,20 @@ export default function WorldToolsPanel({
   onReviewChanges,
 }) {
   const { sourceId, sourceTab, at, closeSource } = useSourceParams();
-  const [refreshing, setRefreshing] = useState(null);
+  // The last file opened stays after the URL drops it, so its drawer slides shut.
+  const [file, setFile] = useState(null);
+  if (
+    sourceId &&
+    (file?.sourceId !== sourceId || file.tab !== sourceTab || file.at !== at)
+  )
+    setFile({ sourceId, tab: sourceTab, at });
+  const [refreshing, setRefreshing] = useState({ id: null, open: false });
   // Supply the records closes the file and opens Sources' Add source menu.
   const [supplying, setSupplying] = useState(false);
   useKnowledgeBaseChanges(env.id);
   const reviewRefresh = locked
     ? undefined
-    : (source) => setRefreshing(source.source_id);
+    : (source) => setRefreshing({ id: source.source_id, open: true });
   const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
   return (
     <Box sx={{ p: 2 }}>
@@ -56,30 +63,27 @@ export default function WorldToolsPanel({
         patch={patch}
         locked={locked}
       />
-      {/* Keyed so a new file, tab or citation opens fresh. */}
-      {sourceId && (
-        <SourceDrawer
-          key={`${sourceId}:${sourceTab}:${at}`}
-          envId={env.id}
-          sourceId={sourceId}
-          tab={sourceTab}
-          at={at}
-          readOnly={locked}
-          onClose={closeSource}
-          onReviewRefresh={reviewRefresh}
-          onSupply={() => {
-            closeSource();
-            setSupplying(true);
-          }}
-        />
-      )}
-      {refreshing && (
-        <ReviewRefreshDrawer
-          envId={env.id}
-          sourceId={refreshing}
-          onClose={() => setRefreshing(null)}
-        />
-      )}
+      {/* Always mounted so opening and closing both slide. */}
+      <SourceDrawer
+        envId={env.id}
+        open={Boolean(sourceId)}
+        sourceId={file?.sourceId}
+        tab={file?.tab}
+        at={file?.at}
+        readOnly={locked}
+        onClose={closeSource}
+        onReviewRefresh={reviewRefresh}
+        onSupply={() => {
+          closeSource();
+          setSupplying(true);
+        }}
+      />
+      <ReviewRefreshDrawer
+        envId={env.id}
+        open={refreshing.open}
+        sourceId={refreshing.id}
+        onClose={() => setRefreshing((one) => ({ ...one, open: false }))}
+      />
     </Box>
   );
 }
