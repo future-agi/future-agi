@@ -215,8 +215,34 @@ def test_fixing_one_case_through_the_builder_lists_only_that_case():
         **{f"scenarios/{key}/scenario.json": {**case, "name": key} for key in keys[1:]},
     )
 
-    assert [(one["id"], one["fields"]) for one in compute_changes(default, draft)] == [
-        ("scenario:refund", ["_index", "tests"])
+    assert [
+        (one["id"], one["fields"], one["summary"])
+        for one in compute_changes(default, draft)
+    ] == [("scenario:refund", ["_index", "tests"], "Change tests of scenario refund")]
+
+
+def test_a_scenario_summary_names_its_check_files_in_words_and_never_its_index_entry():
+    case = {"name": "refund", "tests": "refunds once"}
+    default = _tree(
+        {},
+        **{
+            "scenarios.json": [case, {"name": "ghost"}],
+            "scenarios/refund/scenario.json": case,
+            "scenarios/refund/checks/refunds.py": b"ok = True",
+        },
+    )
+    draft = _tree(
+        {},
+        **{
+            "scenarios.json": [case, {"name": "ghost", "tests": "x"}],
+            "scenarios/refund/scenario.json": case,
+            "scenarios/refund/checks/refunds.py": b"ok = False",
+        },
+    )
+
+    assert [one["summary"] for one in compute_changes(default, draft)] == [
+        "Change scenario ghost",
+        "Change files of scenario refund",
     ]
 
 
