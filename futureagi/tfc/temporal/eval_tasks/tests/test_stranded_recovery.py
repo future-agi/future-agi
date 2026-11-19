@@ -300,6 +300,122 @@ class TestSweepRecoversFreshlyAbandonedClaims:
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.usefixtures("no_leftover_workflow")
+class TestRecoveryHandoff:
+    @pytest.mark.parametrize("status", [EvalTaskStatus.RUNNING, EvalTaskStatus.PENDING])
+    async def test_late_failure_from_closed_run_cannot_stop_recovery(
+        self, temporal_env, eval_task, make_pending_entries, monkeypatch, status
+    ):
+        from tfc.temporal.eval_tasks.activities import _set_task_status_sync
+
+        env = temporal_env
+        _point_the_client_at(monkeypatch, env)
+        _patch_noop_reconcile(monkeypatch)
+        _patch_completing_run_entry(monkeypatch)
+        task_id = str(eval_task.id)
+        old = str(uuid.uuid4()) if status == EvalTaskStatus.RUNNING else None
+        await _set_task(task_id, status=status, workflow_generation=old)
+        await sync_to_async(make_pending_entries)(eval_task, 1)
+
+        assert (await _recover(task_id))["restarted"]
+        late = await sync_to_async(_set_task_status_sync)(
+            task_id, "failed", failure_reason="old failure", workflow_generation=old
+        )
+        assert not late["changed"]
+        async with _worker(env, _SWEEP_QUEUE):
+            assert (
+                await _historical_handle(env, task_id).result()
+            ).status == "completed"
+        assert await _task_status(task_id) == EvalTaskStatus.COMPLETED
+
+    @pytest.mark.parametrize("lost_ack", [False, True])
+    async def test_manual_start_between_closed_describe_and_recovery(
+        self,
+        temporal_env,
+        eval_task,
+        auth_client,
+        make_pending_entries,
+        monkeypatch,
+        lost_ack,
+    ):
+        from tfc.temporal.eval_tasks import client
+        from tfc.temporal.eval_tasks.types import EvalTaskWorkflowInput
+        from tfc.temporal.eval_tasks.workflows import HistoricalEvalTaskWorkflow
+
+        env = temporal_env
+        _point_the_client_at(monkeypatch, env)
+        _patch_noop_reconcile(monkeypatch)
+        _patch_completing_run_entry(monkeypatch)
+        task_id = str(eval_task.id)
+        reason = "Evaluation task row selection exceeded its read budget."
+        await _set_task(task_id, status=EvalTaskStatus.FAILED, failure_reason=reason)
+        await sync_to_async(make_pending_entries)(eval_task, 1)
+        closed = await env.client.start_workflow(
+            HistoricalEvalTaskWorkflow.run,
+            EvalTaskWorkflowInput(task_id=task_id),
+            id=f"eval-task-{task_id}",
+            task_queue=_SWEEP_QUEUE,
+        )
+        await closed.terminate("previous run closed")
+        describe = client.describe_eval_task_workflow_sync
+        resume_generation = []
+
+        def manual_start(task, **kwargs):
+            client.start_eval_task_workflow_sync(task, **kwargs)
+            resume_generation.append(task.workflow_generation)
+            if lost_ack:
+                raise TimeoutError("start accepted but acknowledgement lost")
+
+        def describe_then_resume(task_id):
+            answer = describe(task_id)
+            assert answer == client.WF_CLOSED
+            monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+            response = auth_client.post(
+                f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task_id}", {}
+            )
+            assert response.status_code == (400 if lost_ack else 200), response.content
+            return answer
+
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync", manual_start
+        )
+        monkeypatch.setattr(
+            client, "describe_eval_task_workflow_sync", describe_then_resume
+        )
+        outcome = await _recover(task_id)
+        assert not outcome["restarted"]
+        await sync_to_async(eval_task.refresh_from_db)()
+        handle = _historical_handle(env, task_id)
+        if lost_ack:
+            assert outcome["deferred"]
+            assert (
+                eval_task.status,
+                eval_task.failure_reason,
+                eval_task.workflow_generation,
+            ) == (
+                EvalTaskStatus.FAILED,
+                reason,
+                None,
+            )
+            # The unacknowledged execution is not an admitted owner. Let it
+            # exit at its fence; no termination or second live drain is needed.
+            async with _worker(env, _SWEEP_QUEUE):
+                await handle.result()
+            assert await _entries(task_id) == [(EvalEntryStatus.PENDING, 0)]
+            assert (await _recover(task_id))["restarted"]
+            await sync_to_async(eval_task.refresh_from_db)()
+            assert eval_task.workflow_generation not in (None, resume_generation[0])
+        else:
+            assert eval_task.workflow_generation == resume_generation[0]
+        assert eval_task.status == EvalTaskStatus.PENDING
+        assert eval_task.failure_reason is None
+        async with _worker(env, _SWEEP_QUEUE):
+            assert (await handle.result()).status == "completed"
+        assert await _task_status(task_id) == EvalTaskStatus.COMPLETED
+        assert await _entries(task_id) == [(EvalEntryStatus.COMPLETED, 0)]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("no_leftover_workflow")
 class TestContinuousRestartReapsClaimsThatAge:
     async def test_a_claim_too_fresh_for_the_first_reap_is_reaped_later(
         self, temporal_env, eval_task, make_pending_entries, monkeypatch

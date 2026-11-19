@@ -7,6 +7,8 @@ is the policy. Candidates come from ``tracer.selectors.eval_tasks.stranded``.
 from __future__ import annotations
 
 import structlog
+from django.db import transaction
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tfc.temporal.eval_tasks.types import ReapInput
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
@@ -15,8 +17,8 @@ from tracer.selectors.eval_tasks.stranded import (
     only_unreclaimable_claims_remain,
 )
 from tracer.services.eval_tasks.reaper import (
+    StaleRunningClaims,
     effective_stale_seconds,
-    reap_stale_running,
 )
 
 logger = structlog.get_logger(__name__)
@@ -95,22 +97,15 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
     sweepable, nothing written — and a later tick restarts it once a claim is
     reclaimable. ``deferred`` reports it.
 
-    The restart coalesces (``replace_existing=False``) rather than terminating:
-    the workflow id is per task, so the Temporal server decides atomically
-    whether a live execution already owns it. A describe is a read taken a
-    moment earlier, so terminating on it would kill a workflow a user started
-    in between — the exact failure this whole change exists to prevent. For the
-    same reason ``restarted`` counts starts *issued*: one that coalesced onto an
-    execution started in the gap is counted too, because the server resolves
-    that and does not report which way it went. Coalescing is also what lets
-    the describe's answer travel with the start: a start absorbed by an
-    execution begun in the gap is discarded with its input, so the answer only
-    reaches a run that started with nothing draining.
+    A restart must both fence the closed run's late writes and leave a racing
+    live owner alone. Rotate the generation under the task lock and ask Temporal
+    to fail on conflict. Only a new start can then acknowledge our generation;
+    a conflict defers the task without committing the handoff.
     """
     from tfc.temporal.eval_tasks.client import (
         WF_PROGRESSING,
         describe_eval_task_workflow_sync,
-        start_eval_task_workflow_sync,
+        start_recovery_workflow_sync,
     )
 
     outcome = {
@@ -128,7 +123,7 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         outcome["progressing"] = True
         return outcome
 
-    outcome["requeued"], outcome["failed"] = reap_stale_running(
+    claims = StaleRunningClaims(
         task,
         # Through the same helper as the workflow's own reap, carrying the
         # same evidence: the describe above just answered that no execution
@@ -143,40 +138,48 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         max_attempts=_MAX_ENTRY_ATTEMPTS,
     )
 
+    # A requeue remains selectable even if the start fails; it is real work
+    # done by this tick. Poisoning the last claim instead removes the task from
+    # the selector, so commit terminal entry writes with the generation handoff.
+    outcome["requeued"] = claims.requeue_retryable()
     try:
-        # Checked before the FAILED flip below, so an opted-in failed task that
-        # has to wait is left failed rather than made pending with nothing to
-        # run.
-        if only_unreclaimable_claims_remain(
-            task, reclaimable_after_seconds=RESTART_REAP_SECONDS
-        ):
-            outcome["deferred"] = True
-            return outcome
-
-        if task.status == EvalTaskStatus.FAILED:
-            # A failed row makes ``get_eval_task_state_activity`` report the
-            # task inactive, so a restart would exit on its first state check.
-            # Clear it the way Resume does, guarded so a concurrent pause or
-            # delete wins.
-            changed = EvalTask.objects.filter(
-                id=task.id, status=EvalTaskStatus.FAILED
-            ).update(status=EvalTaskStatus.PENDING)
-            if not changed:
-                return outcome
-            task.status = EvalTaskStatus.PENDING
-
-        # The describe above is the evidence the restarted run's first reap
-        # needs, and it has answered: nothing owns the task. Handed over
-        # rather than asked again, so the deferral check's 600 s is the
-        # threshold the run really applies — a second describe that failed
-        # would drop it to the blind floor after this tick had admitted the
-        # restart on 600 s.
-        start_eval_task_workflow_sync(
-            task, replace_existing=False, workflow_confirmed_stopped=True
-        )
+        with transaction.atomic():
+            current = (
+                EvalTask.no_workspace_objects.select_for_update()
+                .filter(
+                    pk=task.pk,
+                    status=task.status,
+                    workflow_generation=task.workflow_generation,
+                )
+                .first()
+            )
+            if current is None:
+                return outcome  # A committed handoff, pause or delete won the race.
+            failed = claims.fail_exhausted()
+            if only_unreclaimable_claims_remain(
+                current, reclaimable_after_seconds=RESTART_REAP_SECONDS
+            ):
+                # At least one fresh RUNNING entry remains for a later tick.
+                outcome["deferred"] = True
+            else:
+                # Preserve a running task's activation time: this repairs its drain,
+                # not its lifecycle. Failed tasks, like manual Resume, return to pending.
+                current.prepare_workflow_replacement(
+                    status=EvalTaskStatus.RUNNING
+                    if current.status == EvalTaskStatus.RUNNING
+                    else EvalTaskStatus.PENDING
+                )
+                start_recovery_workflow_sync(current)
+    except WorkflowAlreadyStartedError:
+        # Outside atomic: keep the previous generation and diagnostic. If the
+        # existing execution lost its start ack it will exit at admission; the
+        # next tick can then start a fresh owner. Never terminate it here.
+        outcome["deferred"] = True
+        return outcome
     except Exception as exc:
         raise RecoveryInterrupted(outcome, exc) from exc
-    outcome["restarted"] = True
+    outcome["failed"] = failed
+    outcome["restarted"] = not outcome["deferred"]
     return outcome
 
 

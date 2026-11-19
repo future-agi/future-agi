@@ -3048,7 +3048,8 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     async def nothing(*args, **kwargs):
         return None
 
-    async def active(task_id):
+    async def active(task_id, generation):
+        assert generation == "accepted-generation"
         return {"active": True, "status": "running", "has_undrained_work": True}
 
     async def claim(task_id, n):
@@ -3082,20 +3083,30 @@ def test_a_lost_entry_is_given_back_once_across_continue_as_new(
     monkeypatch.setattr(workflows, "_set_status", lambda status: None)
     monkeypatch.setattr(workflows, "_should_continue_as_new", lambda *a: True)
     monkeypatch.setattr(workflows.workflow, "continue_as_new", continue_as_new)
+    # A new execution: every patch marker is recorded (and so returns True).
+    monkeypatch.setattr(workflows.workflow, "patched", lambda patch_id: True)
     if continuous:
         run = workflows.ContinuousEvalTaskWorkflow()._run(
-            ContinuousDrainState(task_id="t", lost_entry_ids=["e1"])
+            ContinuousDrainState(
+                task_id="t",
+                lost_entry_ids=["e1"],
+                workflow_generation="accepted-generation",
+            )
         )
     else:
         run = workflows.HistoricalEvalTaskWorkflow()._run(
             EvalTaskWorkflowInput(
-                task_id="t", already_reconciled=True, lost_entry_ids=["e1"]
+                task_id="t",
+                already_reconciled=True,
+                lost_entry_ids=["e1"],
+                workflow_generation="accepted-generation",
             )
         )
     with pytest.raises(Hop) as hop:
         asyncio.run(run)
     assert given == [{"e1"}]
     assert hop.value.args[0].lost_entry_ids == ["e1", "e2"]
+    assert hop.value.args[0].workflow_generation == "accepted-generation"
 
 
 def test_the_worker_counts_a_finished_run_without_the_views():

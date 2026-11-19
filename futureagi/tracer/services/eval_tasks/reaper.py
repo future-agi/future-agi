@@ -70,35 +70,47 @@ def effective_stale_seconds(
     return max(int(requested), MIN_STALE_RUNNING_SECONDS)
 
 
+class StaleRunningClaims:
+    """One cutoff for a reap; retryable and terminal writes can commit separately."""
+
+    def __init__(self, task: EvalTask, *, older_than_seconds: int, max_attempts: int):
+        self.task = task
+        self.max_attempts = max_attempts
+        self.now = timezone.now()
+        self.stale = EvalLogger.objects.filter(
+            eval_task_id=str(task.id),
+            status=EvalEntryStatus.RUNNING,
+            updated_at__lt=self.now - timedelta(seconds=older_than_seconds),
+        )
+
+    def fail_exhausted(self) -> int:
+        failed = self.stale.filter(attempts__gte=self.max_attempts).update(
+            status=EvalEntryStatus.ERRORED,
+            error=True,
+            error_message=_GAVE_UP,
+            updated_at=self.now,
+        )
+        if failed:
+            _record_instant_answers(self.task, self.now)
+        return failed
+
+    def requeue_retryable(self) -> int:
+        return self.stale.filter(attempts__lt=self.max_attempts).update(
+            status=EvalEntryStatus.PENDING,
+            attempts=F("attempts") + 1,
+            updated_at=self.now,
+        )
+
+
 def reap_stale_running(
     task: EvalTask, *, older_than_seconds: int, max_attempts: int
 ) -> tuple[int, int]:
-    """Reclaim entries stuck in ``running`` longer than ``older_than_seconds``.
-
-    Returns ``(requeued, failed)``: under the cap → back to ``pending``
-    (attempts incremented); at/over the cap → ``errored`` permanently.
-    """
-    now = timezone.now()
-    cutoff = now - timedelta(seconds=older_than_seconds)
-    stale = EvalLogger.objects.filter(
-        eval_task_id=str(task.id),
-        status=EvalEntryStatus.RUNNING,
-        updated_at__lt=cutoff,
+    """Return (requeued, failed) for a workflow's startup or periodic reap."""
+    claims = StaleRunningClaims(
+        task, older_than_seconds=older_than_seconds, max_attempts=max_attempts
     )
-    failed = stale.filter(attempts__gte=max_attempts).update(
-        status=EvalEntryStatus.ERRORED,
-        error=True,
-        error_message=_GAVE_UP,
-        updated_at=now,
-    )
-    if failed:
-        _record_instant_answers(task, now)
-    requeued = stale.filter(attempts__lt=max_attempts).update(
-        status=EvalEntryStatus.PENDING,
-        attempts=F("attempts") + 1,
-        updated_at=now,
-    )
-    return requeued, failed
+    failed = claims.fail_exhausted()
+    return claims.requeue_retryable(), failed
 
 
 def _record_instant_answers(task: EvalTask, at) -> None:

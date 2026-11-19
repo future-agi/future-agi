@@ -65,23 +65,21 @@ def test_converted_route_resume_excludes_pre_conversion_spans(
         assert response.status_code == 200, response.content
         clock["now"] += timedelta(hours=1)
 
-        def start(task, **kwargs):
-            _set_task_status_sync(
-                str(task.pk), EvalTaskStatus.RUNNING, EvalTaskStatus.PENDING
-            )
-
-        monkeypatch.setattr(
-            "tracer.views.eval_task.start_eval_task_workflow_sync", start
-        )
-        if route == "edit_rerun":
-            start(eval_task)
-        else:
+        if route != "edit_rerun":
             response = auth_client.post(
                 f"/tracer/eval-task/unpause_eval_task/?eval_task_id={eval_task.pk}",
                 {},
                 format="json",
             )
             assert response.status_code == 200, response.content
+        # Worker activation happens outside the request transaction.
+        eval_task.refresh_from_db(fields=["workflow_generation"])
+        assert _set_task_status_sync(
+            str(eval_task.pk),
+            EvalTaskStatus.RUNNING,
+            EvalTaskStatus.PENDING,
+            workflow_generation=eval_task.workflow_generation,
+        )["changed"]
         _reconcile_sync(str(eval_task.pk))
         eval_task.refresh_from_db()
         assert eval_task.start_time == activation

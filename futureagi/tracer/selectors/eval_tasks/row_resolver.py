@@ -31,6 +31,7 @@ from tracer.services.clickhouse.read_budget import (
 )
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_MIN_PROOF_WINDOW
+from tracer.services.eval_tasks.selection_failure import SelectionFailure
 from tracer.utils.filter_operators import split_comma_joined_uuid_members
 
 if TYPE_CHECKING:
@@ -112,28 +113,12 @@ _EVAL_TASK_FILTER_CLASSIFY_READ_SETTINGS = {
     "result_overflow_mode": "throw",
 }
 _EVAL_TASK_TRACE_WITNESS_EXTRA_READ_SETTINGS: dict[str, int] = {}
-_SAFE_READ_BUDGET_MESSAGE = (
-    "Evaluation task row selection exceeded its read budget. "
-    "Narrow the time range and retry."
-)
-_SAFE_ROW_LIMIT_MESSAGE = (
-    "This evaluation task is too large for safe row selection. "
-    "Reduce the row limit and retry."
-)
-_SAFE_AMBIGUOUS_SPAN_MESSAGE = (
-    "Evaluation task row selection could not safely distinguish one or more "
-    "spans. Narrow the filters and retry."
-)
-_SAFE_UNSUPPORTED_FILTER_MESSAGE = (
-    "Evaluation task row selection contains a filter that cannot be resolved "
-    "safely. Update the filters and retry."
-)
-_SAFE_ANNOTATION_METADATA_MESSAGE = (
-    "Evaluation task annotation metadata is temporarily unavailable. Retry."
-)
-_SAFE_EVAL_METADATA_MESSAGE = (
-    "Evaluation task evaluation metadata is temporarily unavailable. Retry."
-)
+_SAFE_READ_BUDGET_MESSAGE = SelectionFailure.READ_BUDGET
+_SAFE_ROW_LIMIT_MESSAGE = SelectionFailure.ROW_LIMIT
+_SAFE_AMBIGUOUS_SPAN_MESSAGE = SelectionFailure.AMBIGUOUS_SPAN
+_SAFE_UNSUPPORTED_FILTER_MESSAGE = SelectionFailure.UNSUPPORTED_FILTER
+_SAFE_ANNOTATION_METADATA_MESSAGE = SelectionFailure.ANNOTATION_METADATA
+_SAFE_EVAL_METADATA_MESSAGE = SelectionFailure.EVAL_METADATA
 
 
 class EvalTaskReadBudgetExceeded(RuntimeError):

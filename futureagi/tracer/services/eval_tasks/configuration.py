@@ -57,6 +57,8 @@ def update_task_configuration(task: EvalTask, changes: dict) -> EvalTask:
             .get(pk=task.pk)
         )
         updates = dict(changes)
+        if "status" in updates and updates["status"] != current.status:
+            updates["failure_reason"] = None
         evals = updates.pop("evals", None)
         run_type = updates.get("run_type", current.run_type)
         if run_type == RunType.CONTINUOUS:
