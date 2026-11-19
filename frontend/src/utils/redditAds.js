@@ -1,3 +1,6 @@
+// Disabled: no module imports this file, so the Reddit pixel never loads.
+// Kept so it can be restored by uncommenting its calls in main.jsx,
+// auth-guard.jsx and jwt-register-view.jsx.
 import {
   REDDIT_PIXEL_ID,
   REDDIT_ADS_ENABLED,

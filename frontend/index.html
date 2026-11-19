@@ -110,11 +110,37 @@
     <!-- Load global styles outside the guarded application import. A blocked
          optional font must not reject main's CSS preload and loop on reload. -->
     <link rel="stylesheet" href="/src/global.css" />
+    <!-- Analytics tags (Google Tag Manager, Google Analytics) stay off for a
+         page load whose address is a one-time link or carries sign-in
+         parameters. src/utils/googleAnalytics.js reuses the same check for
+         later in-app navigation. -->
+    <script id="analytics-url-policy">
+      (function () {
+        var params = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth", "token", "code"];
+        var paths = /^\/(?:auth\/jwt\/(?:verify|invitation\/accept|invitation\/set-password)\/|shared\/|sos(?:\/|$))/i;
+        function allowed(value) {
+          try {
+            var url = new URL(value, document.baseURI);
+            if (paths.test(url.pathname)) return false;
+            var fragment = new URLSearchParams(url.hash.slice(1));
+            for (var i = 0; i < params.length; i++) {
+              if (url.searchParams.has(params[i]) || fragment.has(params[i])) return false;
+            }
+            return true;
+          } catch (error) {
+            return false;
+          }
+        }
+        Object.defineProperty(window, "__analyticsUrlAllowed", { value: allowed });
+        Object.defineProperty(window, "__analyticsAllowedAtLoad", { value: allowed(window.location.href) });
+      })();
+    </script>
     <!-- Google Tag Manager (gated on VITE_GTM_ID at build time so OSS
          builds don't load third-party tracking) -->
     <script>(function(){
       var GTM_ID = "%VITE_GTM_ID%";
       if (!GTM_ID || GTM_ID === "%" + "VITE_GTM_ID%") return;
+      if (window.__analyticsAllowedAtLoad !== true) return;
       (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
         new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
         j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=

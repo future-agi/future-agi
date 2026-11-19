@@ -90,6 +90,12 @@ export const getSetupMeta = (setup) =>
 // `collector_http_url`): the default FI_COLLECTOR_OTLP_HTTP_PORT.
 export const LOCAL_COLLECTOR_URL = "http://localhost:4318";
 
+// The API's default address, for the SDK's FI_BASE_URL when the screen is not
+// given the URL it reached the API on.
+export const LOCAL_API_URL = "http://localhost:8000";
+
+const withoutTrailingSlash = (url) => url.replace(/\/+$/, "");
+
 export const TRACING_DOCS_URL = "https://docs.futureagi.com/docs/observe";
 
 // Shown once pre-flight clears. Backticks render as inline code.
@@ -100,7 +106,13 @@ const accountStep = ({ authenticated, accountExists }) => {
   return "Create your account on the next screen. You become the owner of a new workspace.";
 };
 
-export const nextSteps = ({ authenticated, accountExists, collectorUrl }) => [
+// FI_BASE_URL is the API (API calls), FI_TRACES_URL the collector (spans).
+export const nextSteps = ({
+  authenticated,
+  accountExists,
+  apiUrl,
+  collectorUrl,
+}) => [
   {
     id: "account",
     icon: "solar:user-id-bold",
@@ -114,7 +126,7 @@ export const nextSteps = ({ authenticated, accountExists, collectorUrl }) => [
   {
     id: "trace",
     icon: "solar:code-square-linear",
-    text: `Send your first trace from this machine: \`pip install fi-instrumentation-otel\`, set \`FI_API_KEY\`, \`FI_SECRET_KEY\` and \`FI_BASE_URL=${collectorUrl || LOCAL_COLLECTOR_URL}\`, then call \`register()\`.`,
+    text: `Send your first trace from this machine: \`pip install -U "fi-instrumentation-otel>=1.5.0"\`, set \`FI_API_KEY\`, \`FI_SECRET_KEY\`, \`FI_BASE_URL=${withoutTrailingSlash(apiUrl || LOCAL_API_URL)}\` and \`FI_TRACES_URL=${withoutTrailingSlash(collectorUrl || LOCAL_COLLECTOR_URL)}\`, then call \`register()\`.`,
     link: { href: TRACING_DOCS_URL, label: "Tracing guide" },
   },
 ];
