@@ -1,3 +1,5 @@
+import { parse } from "acorn";
+
 // Parser for the user-typed `evaluate(...)` signature in code evals.
 // Used by the variable-mapping UI so new params surface live as the user types.
 
@@ -67,19 +69,51 @@ export const extractCodeEvaluateParams = (code, language) => {
 // can't describe. Mask comments and string contents before reading syntax;
 // neither a docstring nor a commented example is an executable definition.
 const pythonTrivia = /'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|#[^\n]*/g;
-const jsTrivia = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g;
+// Both JS runners pass one object to the top-level evaluate (or main).
+// Read the program's declarations, never nested declarations or source text.
+function javascriptTaskInputs(code) {
+  let body;
+  try {
+    ({ body } = parse(code, { ecmaVersion: "latest", sourceType: "script" }));
+  } catch {
+    return null;
+  }
+  const entries = new Map();
+  for (const node of body) {
+    if (node.type === "FunctionDeclaration") entries.set(node.id.name, node);
+    if (node.type === "VariableDeclaration") {
+      for (const { id, init } of node.declarations) {
+        if (id.type === "Identifier" && init) entries.set(id.name, init);
+      }
+    }
+  }
+  const fn = entries.get("evaluate") ?? entries.get("main");
+  if (!fn?.params) return null;
+  if (!fn.params.length) return [];
+  const [arg] = fn.params;
+  const pattern = arg.type === "AssignmentPattern" ? arg.left : arg;
+  if (fn.params.length !== 1 || pattern.type !== "ObjectPattern") return null;
+  const inputs = [];
+  for (const property of pattern.properties) {
+    if (property.type === "RestElement") continue;
+    const key = property.key;
+    const name = key.type === "Literal" ? key.value : !property.computed && key.name;
+    if (typeof name !== "string") return null;
+    // settings: {cutoff = 0.5} still requires the settings object. Only an
+    // assignment on the property itself supplies a default for that key.
+    inputs.push({ name, required: property.value.type !== "AssignmentPattern" });
+  }
+  return inputs;
+}
 
 export function taskCodeInputs(code, language = "python") {
-  const python = language === "python";
-  if (!code || (!python && language !== "javascript")) return null;
-  const text = code.replace(python ? pythonTrivia : jsTrivia, (token) =>
-    token.replace(/[^\n]/g, /^['"`]/.test(token) ? "~" : " "),
+  if (!code) return null;
+  if (language === "javascript") return javascriptTaskInputs(code);
+  if (language !== "python") return null;
+  const text = code.replace(pythonTrivia, (token) =>
+    token.replace(/[^\n]/g, /^['"]/.test(token) ? "~" : " "),
   );
-  // Both executors look up evaluate first and fall back to main. A later
-  // definition of the same name replaces an earlier one in the namespace.
-  const definitions = python
-    ? /^def[ \t]+(evaluate|main)\s*\(/gm
-    : /^[ \t]*(?:async\s+)?function\s+(evaluate|main)\s*\(/gm;
+  const definitions = /^def[ \t]+(evaluate|main)\s*\(/gm;
   const starts = {};
   for (const m of text.matchAll(definitions)) {
     starts[m[1]] = m.index + m[0].length;
@@ -93,14 +127,7 @@ export function taskCodeInputs(code, language = "python") {
     else if (text[end] === ")") depth--;
   }
   if (depth) return null;
-  let args = text.slice(start, end - 1).trim();
-  if (!args) return [];
-  if (!python) {
-    // JavaScript receives one object, not one positional argument per key.
-    const object = /^\{([\s\S]*)\}$/.exec(args.replace(/\s*=\s*\{\s*\}$/, ""));
-    if (!object) return null;
-    args = object[1];
-  }
+  const args = text.slice(start, end - 1).trim();
   const inputs = [];
   for (const raw of splitTopLevelCommas(args)) {
     const param = raw.trim();
@@ -109,12 +136,12 @@ export function taskCodeInputs(code, language = "python") {
     if (param === "/") return null;
     const name = /^([A-Za-z_$][\w$]*)\s*(?=[:=]|$)/.exec(param)?.[1];
     if (!name) return null;
-    if (python && name === "context") continue; // supplied by both runners
+    if (name === "context") continue; // supplied by both runners
     // Both Python runners supply standard row arguments (even when missing)
     // rather than relying on their signature defaults. For a nonstandard
     // default the local runner omits the argument, the HTTP runner passes
     // None; allow an explicit override without promising identical results.
-    const rowArg = python && ["input", "output", "expected"].includes(name);
+    const rowArg = ["input", "output", "expected"].includes(name);
     inputs.push({ name, required: rowArg || !param.includes("=") });
   }
   return inputs;
