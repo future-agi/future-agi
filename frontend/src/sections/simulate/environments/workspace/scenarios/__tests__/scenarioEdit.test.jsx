@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { configure, within } from "@testing-library/react";
+import { configure } from "@testing-library/react";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 // Heavy ScenariosStep render — give async utils headroom so these assertions
@@ -7,7 +7,10 @@ import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 configure({ asyncUtilTimeout: 5000 });
 afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 
+import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
+import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import ScenariosStep from "../ScenariosStep";
+import AddScenariosDrawer from "../AddScenariosDrawer";
 import {
   TEST_ENV,
   SERVER_ROWS,
@@ -42,6 +45,11 @@ const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
 
+const env = MOCK_WORLD;
+// The Add drawer offers scenarios not already on the environment; it is rendered
+// directly (the trigger is disabled), so it keeps its own pooled candidates.
+const pooled = generatedPool(env).slice(0, 12);
+
 // The first displayed row (default goal-grouped view) — the one the edit pencil
 // opens.
 const firstRow = () => queryScenarioFixture({ limit: 25 }).results[0];
@@ -65,15 +73,37 @@ beforeEach(() => {
 });
 
 describe("ScenariosStep — add", () => {
-  it("opens Add scenarios from the toolbar", async () => {
+  it("disables the Add scenarios button (coming soon) — the drawer stays built", () => {
     renderStep();
-    await screen.findByRole("table");
-    const add = screen.getByRole("button", { name: "Add scenarios" });
-    expect(add).toBeEnabled();
-    fireEvent.click(add);
     expect(
-      await screen.findByTestId("add-scenarios-drawer"),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "Add scenarios" }),
+    ).toBeDisabled();
+  });
+
+  // The drawer is kept fully wired even though the Add button is disabled for
+  // now, so it is exercised directly here rather than through the trigger.
+  it("the add drawer appends the chosen scenarios through onAdd", () => {
+    const onAdd = vi.fn();
+    render(
+      <AddScenariosDrawer
+        open
+        env={env}
+        selected={pooled}
+        onAdd={onAdd}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByText(/could not know to write/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /select all/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Add \d+ scenarios?$/ }),
+    );
+
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    const added = onAdd.mock.calls[0][0];
+    expect(added.length).toBeGreaterThan(0);
   });
 });
 
@@ -168,94 +198,5 @@ describe("ScenarioEditor persona choices", () => {
     expect(onSave.mock.calls[0][0].changes).toEqual([
       { op: "set_persona", scenario: "s1", persona: { accent: "Indian" } },
     ]);
-  });
-});
-
-describe("ScenarioEditor negative controls and must pass", () => {
-  const editing = {
-    editable_fields: ["tests", "must_pass", "negative_controls"],
-    persona_fields: [],
-    rework_fields: ["negative_controls"],
-  };
-
-  it("adds a control and sends it as a re-proof edit", async () => {
-    const { default: ScenarioEditor } = await import("../ScenarioEditor");
-    const onSave = vi.fn().mockResolvedValue({ refused: [], failed: false });
-    render(
-      <ScenarioEditor
-        open
-        onClose={() => {}}
-        onSave={onSave}
-        row={{
-          id: "r1",
-          name: "s1",
-          subTasks: ["refund_once"],
-          _raw: {},
-          lifecycle: { negative_controls: [] },
-        }}
-        scenarioEditing={editing}
-      />,
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add a negative control" }),
-    );
-    const controls = within(screen.getByTestId("controls-editor"));
-    fireEvent.change(controls.getByLabelText("Name"), {
-      target: { value: "refunds_twice" },
-    });
-    fireEvent.change(controls.getByLabelText("Why it is wrong"), {
-      target: { value: "refunds the order twice" },
-    });
-    fireEvent.change(controls.getByLabelText("Steps (JSON)"), {
-      target: {
-        value: '[{"tool": "refund", "arguments": {"order_id": "O-10"}}]',
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
-
-    const sent = onSave.mock.calls[0][0];
-    expect(sent.rework).toBe(true);
-    expect(sent.changes).toEqual([
-      {
-        op: "set_field",
-        scenario: "s1",
-        field: "negative_controls",
-        value: [
-          {
-            name: "refunds_twice",
-            why: "refunds the order twice",
-            steps: [{ tool: "refund", arguments: { order_id: "O-10" } }],
-            must_fail: [],
-          },
-        ],
-      },
-    ]);
-  });
-
-  it("sends must_pass without a re-proof", async () => {
-    const { default: ScenarioEditor } = await import("../ScenarioEditor");
-    const onSave = vi.fn().mockResolvedValue({ refused: [], failed: false });
-    render(
-      <ScenarioEditor
-        open
-        onClose={() => {}}
-        onSave={onSave}
-        row={{
-          id: "r1",
-          name: "s1",
-          _raw: {},
-          lifecycle: { must_pass: false },
-        }}
-        scenarioEditing={editing}
-      />,
-    );
-    fireEvent.click(screen.getByTestId("must-pass-toggle"));
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    expect(onSave.mock.calls[0][0]).toEqual({
-      changes: [
-        { op: "set_field", scenario: "s1", field: "must_pass", value: true },
-      ],
-      rework: false,
-    });
   });
 });

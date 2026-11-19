@@ -37,7 +37,6 @@ describe("RunCompare", () => {
       pair({
         scenario_key: "steady",
         scenario: "Steady refund",
-        changed_test: true,
         verdict: "no_meaningful_change",
         difference: 0,
         interval: { low: -56.14, high: 56.14 },
@@ -210,9 +209,6 @@ describe("RunCompare", () => {
     expect(
       within(moved).getByText("Sub-goal changed: refunded"),
     ).toBeInTheDocument();
-    // A case edited between the two runs says so; an unchanged one does not.
-    expect(within(row("Steady refund")).getByTestId("changed-test")).toHaveTextContent("Changed test");
-    expect(within(row("Card dispute")).queryByTestId("changed-test")).toBeNull();
     // The worst change comes first.
     const rows = within(section()).getAllByRole("row");
     expect(within(rows[1]).getByText("Card dispute")).toBeInTheDocument();

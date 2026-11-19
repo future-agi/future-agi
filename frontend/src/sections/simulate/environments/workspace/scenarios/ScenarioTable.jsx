@@ -29,7 +29,6 @@ import {
   ClampCell,
   SubTasksCell,
   TruncTooltip,
-  LifecycleBadge,
   UnsavedMark,
 } from "./ScenarioTableCells";
 import {
@@ -536,7 +535,6 @@ export default function ScenarioTable({
                         </Tooltip>
                       )}
                       <UnsavedMark row={row} />
-                      <LifecycleBadge row={row} />
                     </Stack>
                     <TruncTooltip title={row.summary || row.title}>
                       <Typography

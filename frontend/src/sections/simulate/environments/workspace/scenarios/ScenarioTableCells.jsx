@@ -7,71 +7,10 @@ import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import {
-  LIFECYCLE_ROLES,
-  RUN_TIME_WARNINGS,
-  SCENARIOS_COPY,
   hasUnsavedChange,
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
-
-// The case's lifecycle on the versions in view: Draft, Validated, Active, Kept as written or
-// Archived, with why on hover. Kept as written runs, but nothing proved its checks hold. A proved
-// case whose check reads evidence this agent does not give carries a "Not measured" chip.
-export function LifecycleBadge({ row }) {
-  const lifecycle = row?.lifecycle ?? row?._raw?.lifecycle;
-  if (!lifecycle) return null;
-  const label = SCENARIOS_COPY.lifecycle[lifecycle.state] ?? lifecycle.state;
-  const tooltip =
-    lifecycle.reason_text ||
-    (lifecycle.state === "kept_as_written" ? lifecycle.warning_text : "") ||
-    (lifecycle.legacy ? SCENARIOS_COPY.legacyTooltip : "");
-  const notMeasured = RUN_TIME_WARNINGS.includes(lifecycle.warning);
-  return (
-    <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
-      <Tooltip title={tooltip} disableHoverListener={!tooltip}>
-        <span data-testid="lifecycle-badge">
-          <StatusBadge
-            status={lifecycle.state}
-            role={LIFECYCLE_ROLES[lifecycle.state] ?? "neutral"}
-            label={lifecycle.legacy ? `${label} ·` : label}
-            size="sm"
-            dot={false}
-          />
-        </span>
-      </Tooltip>
-      {lifecycle.reason === "apply_failed" && (
-        <Tooltip title={lifecycle.reason_text || ""}>
-          <span data-testid="lifecycle-apply-failed-chip">
-            <StatusBadge
-              status="apply_failed"
-              role="danger"
-              label={SCENARIOS_COPY.couldNotApply}
-              size="sm"
-              dot={false}
-            />
-          </span>
-        </Tooltip>
-      )}
-      {notMeasured && (
-        <Tooltip title={lifecycle.warning_text || ""}>
-          <span data-testid="lifecycle-not-measured-chip">
-            <StatusBadge
-              status="not_measured"
-              role="warning"
-              label={SCENARIOS_COPY.notMeasured}
-              size="sm"
-              dot={false}
-            />
-          </span>
-        </Tooltip>
-      )}
-    </Stack>
-  );
-}
-LifecycleBadge.propTypes = {
-  row: PropTypes.shape({ lifecycle: PropTypes.object, _raw: PropTypes.object }),
-};
 
 // "Unsaved" on a row the unsaved changes add or change; an added row also says
 // why it can't be selected.

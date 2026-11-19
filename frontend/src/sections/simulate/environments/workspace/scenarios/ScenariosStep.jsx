@@ -17,14 +17,11 @@ import {
   runnableScenarioKey,
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
-import { useEnvironmentVersions } from "src/api/simulate-environments/versions";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
 import AddScenariosDrawer from "./AddScenariosDrawer";
-import ValidateScenariosButton from "./ValidateScenariosButton";
-import { clampCount, missingCasesGuidance } from "./addScenarios.constants";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
@@ -36,7 +33,7 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { SCENARIOS_COPY, versionPairs } from "./scenarios.constants";
+import { SCENARIOS_COPY } from "./scenarios.constants";
 import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
@@ -55,9 +52,11 @@ import PagedScenarioViews from "./PagedScenarioViews";
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 // The add CTA. Rendered in two places (the toolbar when the list is populated, and
-// the empty placeholder), so it lives here as one node. It opens Add scenarios; on
-// a locked template it is disabled with the fork tooltip, wrapped in a span so the
-// tooltip still fires over the disabled button.
+// the empty placeholder), so it lives here as one node. Disabled with a
+// coming-soon tooltip for now — the drawer it opens is built and wired, just
+// not surfaced yet. On a locked template the same disabled button reads the
+// fork tooltip instead. Wrapped in a span so the tooltip still fires over the
+// disabled button.
 // `short` is the toolbar form: the list it sits on says what gets added, so the
 // visible label drops the noun and the accessible name keeps it.
 function AddButton({
@@ -67,13 +66,18 @@ function AddButton({
   short = false,
 }) {
   return (
-    <CustomTooltip show={locked} arrow size="small" title={LOCK_TOOLTIP}>
+    <CustomTooltip
+      show
+      arrow
+      size="small"
+      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}
+    >
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
         <Button
           variant={contained ? "contained" : "outlined"}
           color="primary"
           size="small"
-          disabled={locked}
+          disabled
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
@@ -113,6 +117,7 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({
   env,
   envState,
+  patch,
   locked = false,
   onStartRun,
   runDialogOpen = false,
@@ -143,15 +148,6 @@ export default function ScenariosStep({
   const [trials, setTrials] = useState(1);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
-  // The lifecycle filter rides with the filters, so a page or grouping change keeps it.
-  const [lifecycleFilter, setLifecycleFilter] = useState("");
-  // The version pair in view: "" is the saved one; a candidate's cases read Validated.
-  const [versionPair, setVersionPair] = useState("");
-  const versions = useEnvironmentVersions(env?.id);
-  const pairs = versionPairs(versions.data);
-  const pairInView = pairs.find((one) => one.value === versionPair);
-  // "Add missing cases" opens Add scenarios prefilled for the uncovered levels.
-  const [addPreset, setAddPreset] = useState(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   // The row opened in full from the table (the scenario drawer).
@@ -204,16 +200,7 @@ export default function ScenariosStep({
   const pageData = useScenarioPage({
     jobId: env?.id,
     search: debouncedQuery,
-    filters: {
-      ...filters,
-      ...(lifecycleFilter ? { lifecycle: lifecycleFilter } : {}),
-      ...(pairInView
-        ? {
-            suite_version_id: pairInView.suiteVersionId,
-            environment_version_id: pairInView.environmentVersionId,
-          }
-        : {}),
-    },
+    filters,
     groupBy,
     page,
     pageSize,
@@ -485,6 +472,14 @@ export default function ScenariosStep({
     );
   };
 
+  // Adds dedupe against what is already on the environment, so re-adding a row
+  // the drawer still had selected is a no-op rather than a duplicate.
+  const addScenarios = (rows) => {
+    const existing = new Set(selected.map((s) => s.id));
+    const fresh = (rows || []).filter((r) => !existing.has(r.id));
+    if (fresh.length) patch({ scenarios: [...selected, ...fresh] });
+  };
+
   // Edits route through the amend route as set_field / set_persona ops (the
   // editor emits only the changed writable fields). A refused receipt surfaces
   // its `why`; a success invalidates the list + coverage so the row updates.
@@ -571,47 +566,12 @@ export default function ScenariosStep({
                   filters={filters}
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
-                  proofCounts={pageData.proofCounts}
-                  lifecycleFilter={lifecycleFilter}
-                  onLifecycleFilterChange={(value) => {
-                    setLifecycleFilter(value);
-                    setPage(0);
-                  }}
-                  versionPair={pairInView ? versionPair : ""}
-                  versionPairs={pairs}
-                  onVersionPairChange={(value) => {
-                    setVersionPair(value);
-                    setPage(0);
-                  }}
                   actions={
                     <>
-                      {!locked && <ValidateScenariosButton jobId={env?.id} />}
                       <CoverageMatrix
                         jobId={env?.id}
                         search={debouncedQuery}
                         filters={filters}
-                        onAddMissing={
-                          locked
-                            ? undefined
-                            : (uncovered) => {
-                                setAddPreset({
-                                  guidance: missingCasesGuidance(uncovered),
-                                  count: clampCount(uncovered.length),
-                                });
-                                setAdding(true);
-                              }
-                        }
-                        onAddGuidance={
-                          locked
-                            ? undefined
-                            : (guidance, count) => {
-                                setAddPreset({
-                                  guidance,
-                                  count: clampCount(count),
-                                });
-                                setAdding(true);
-                              }
-                        }
                       />
                       {!locked && env?.id && (
                         <ImportEvidenceButton
@@ -628,15 +588,6 @@ export default function ScenariosStep({
                     </>
                   }
                 />
-                {pairInView && (
-                  <Alert
-                    severity="info"
-                    sx={{ mt: 1 }}
-                    data-testid="versions-in-view"
-                  >
-                    {SCENARIOS_COPY.versionsInView}
-                  </Alert>
-                )}
               </Box>
               {!locked && sel.count > 0 && (
                 <Box
@@ -733,19 +684,14 @@ export default function ScenariosStep({
         />
       ) : null}
       <AddScenariosDrawer
-        key={addPreset ? addPreset.guidance : "add"}
         open={adding}
-        onClose={() => {
-          setAdding(false);
-          setAddPreset(null);
-        }}
+        onClose={() => setAdding(false)}
         env={env}
-        initialGuidance={addPreset?.guidance ?? ""}
-        initialCount={addPreset?.count}
+        selected={selected}
+        onAdd={addScenarios}
       />
       <ScenarioDrawer
         row={openRow}
-        env={env}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {
           setOpenRow(null);

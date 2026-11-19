@@ -294,7 +294,7 @@ describe("ScenariosStep", () => {
     });
   });
 
-  it("shows the empty placeholder with Add scenarios when there are no scenarios", async () => {
+  it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
     // The empty-state gate reads the server's unfiltered suite total now, so the
     // list source must report an empty suite (not just an empty envState).
     listScenarios.mockImplementation((jobId, params) =>
@@ -302,8 +302,9 @@ describe("ScenariosStep", () => {
     );
     renderStep([]);
     expect(await screen.findByText("No scenarios yet")).toBeInTheDocument();
-    // Add scenarios opens the real routes now; only a locked template disables it.
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Add scenarios" }),
+    ).toBeDisabled();
   });
 
   it("enables the edit pencil", async () => {

@@ -178,8 +178,6 @@ export const NUDGE_COPY = {
   },
   reused: (label) => `Same as ${label}, which is the default again.`,
   leftOut: "Left out",
-  restored: "Restored",
-  restoreFailed: "Not restored",
   notChecked: (keys) => `Not checked: ${keys.join(", ")}`,
   agentMoved: (label) => `Agent ${label} is now the default.`,
   agentNotMoved: {

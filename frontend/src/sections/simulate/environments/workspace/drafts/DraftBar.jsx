@@ -8,20 +8,20 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useSnackbar } from "notistack";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
 import {
   useDiscardDraft,
+  useDraftReview,
+  useDrafts,
+  useSaveCandidates,
   useSaveDrafts,
+  useValidateDrafts,
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY } from "../workspace.constants";
 import { changeCount } from "./changeCount";
-import { SCENARIOS_COPY } from "../scenarios/scenarios.constants";
-import { draftSaveRequests } from "./draftSave";
-import { useDraftsValidation, validationStateNote } from "./useDraftsValidation";
 
 const pieceLine = (piece, draft) =>
   `${COPY.pieces[piece]} · ${
@@ -61,20 +61,14 @@ export default function DraftBar({
   onViewChanges,
 }) {
   const enabled = Boolean(env?.versioning?.enabled);
-  const {
-    drafts,
-    review,
-    validate,
-    saveValidated,
-    state: validationState,
-    validating,
-    canSaveValidated,
-    startValidation,
-    saveCandidates,
-  } = useDraftsValidation(env?.id, { enabled });
+  const { data: drafts } = useDrafts(env?.id, { enabled });
   const save = useSaveDrafts(env?.id);
-  const { enqueueSnackbar } = useSnackbar();
   const discard = useDiscardDraft(env?.id);
+  const validate = useValidateDrafts(env?.id);
+  const saveValidated = useSaveCandidates(env?.id);
+  const { data: review } = useDraftReview(env?.id, {
+    enabled: enabled && Boolean(drafts?.any),
+  });
   const [confirming, setConfirming] = useState(false);
   // A validated save makes a new version, and the server asks for its name.
   const [versionName, setVersionName] = useState("");
@@ -114,6 +108,11 @@ export default function DraftBar({
     decided ||
     save.error?.error === "validation_required" ||
     Boolean(validation);
+  const validationState = validation?.state ?? null;
+  const validating = validationState === "validating" || validate.isPending;
+  const canSaveValidated =
+    ["ready", "check_unavailable"].includes(validationState) &&
+    Boolean(drafts.candidates);
   const pending =
     save.isPending ||
     discard.isPending ||
@@ -126,21 +125,30 @@ export default function DraftBar({
   const onValidate = () => {
     discard.reset();
     save.reset();
-    startValidation();
+    validate.mutate({
+      expectedRevisions: Object.fromEntries(
+        drafts.pieces.map((piece) => [piece, drafts[piece].revision]),
+      ),
+      expectedReviewDigest: review?.review_digest,
+    });
   };
   const onSaveValidated = () => {
     discard.reset();
-    saveCandidates(versionName);
+    saveValidated.mutate({
+      candidates: drafts.candidates,
+      expectedReviewDigest: review?.review_digest,
+      name: versionName.trim(),
+    });
   };
   const onSave = () => {
     discard.reset();
-    save.mutate(draftSaveRequests(drafts), {
-        // Saving never activates an unvalidated case: it is saved as Draft and does not run.
-        onSuccess: (saved) => {
-          const drafted = saved?.not_active?.length ?? 0;
-          if (drafted) enqueueSnackbar(SCENARIOS_COPY.savedAsDraft(drafted), { variant: "info" });
-        },
-    });
+    save.mutate(
+      drafts.pieces.map((piece) => ({
+        piece,
+        parentId: drafts[piece].parentId,
+        revision: drafts[piece].revision,
+      })),
+    );
   };
   const onDiscard = () => {
     setConfirming(false);
@@ -163,8 +171,10 @@ export default function DraftBar({
   let validationNote = null;
   if (needsValidate && !validationState && !error) {
     validationNote = COPY.errors.validation_required;
-  } else {
-    validationNote = validationStateNote(validation);
+  } else if (validationState === "failed") {
+    validationNote = COPY.validation.failed(failedScenarios.length);
+  } else if (COPY.validation[validationState]) {
+    validationNote = COPY.validation[validationState];
   }
 
   let primary;

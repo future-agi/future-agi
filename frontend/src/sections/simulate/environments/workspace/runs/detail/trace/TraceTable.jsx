@@ -33,8 +33,6 @@ import {
   CLOSED_GROUP_VIEW,
   neutralCheckboxSx,
   pinnedLeftSx,
-  CHECK_KINDS,
-  checkKind,
   subGoalLabel,
 } from "./traceTable.constants";
 import {
@@ -386,14 +384,6 @@ export default function TraceTable({
                             sx={{ typography: "s3", color: "text.disabled" }}
                           >
                             {evidenceLabel(goal.evidence)}
-                          </Typography>
-                        )}
-                        {checkKind(goal, t) && (
-                          <Typography
-                            data-testid="check-kind"
-                            sx={{ typography: "s3", color: "text.subtitle" }}
-                          >
-                            {CHECK_KINDS[checkKind(goal, t)]}
                           </Typography>
                         )}
                         {goal.result === "unmeasured" && goal.reason ? (

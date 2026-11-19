@@ -8,8 +8,6 @@
 // Runs badge the length of their matching env-state slice. Settings is last.
 // The Overview tab id is "overview" (URL reads ?tab=overview), and its panel
 // component/folder keep the OverviewPanel name.
-import { formatDuration } from "src/utils/format-time";
-
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
   {
@@ -263,7 +261,6 @@ export const VERSIONS_COPY = {
     removed: "Removed",
     changed: "Changed",
     scenariosAdded: "Scenarios added",
-    scenariosRestored: "Scenarios restored",
     scenariosRemoved: "Scenarios removed",
     scenariosChanged: "Scenarios changed",
     source: "Source changed",
@@ -433,15 +430,6 @@ export const AGENT_VERSIONS_COPY = {
 };
 
 export const RUN_DIALOG_COPY = {
-  willRun: (running, requested) => `${running} of ${requested} cases will run.`,
-  heldBackBy: (count, reason) => `${count} held back: ${reason}`,
-  // What the run does when every case is held back only for not being validated on these versions.
-  validateFirst:
-    "These versions are validated first: Run starts the validation, then run again once it finishes.",
-  runUnvalidated: (count) =>
-    `${count} ${count === 1 ? "case runs" : "cases run"} unvalidated: the check can't run here.`,
-  showCases: "Show cases",
-  hideCases: "Hide cases",
   title: "Run simulation",
   seed: "Seed (optional)",
   seedLine: "Seed",
@@ -472,9 +460,6 @@ export const RUN_DIALOG_COPY = {
     pair_failed:
       "These versions failed their check together. Fix them and check again.",
   },
-  tryAgain: "Try again",
-  tryAgainIn: (seconds) => `Try again in ${formatDuration(seconds)}`,
-  validateScenarios: "Validate scenarios",
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
   rerunAgentFallback:
@@ -535,7 +520,6 @@ export const DRAFTS_COPY = {
   validating: "Validating changes",
   validateError: "Couldn't start validating. Try again in a moment.",
   validation: {
-    ready: "Validated. Name this version to save it.",
     retry: "Validation did not start. Try again",
     superseded: "The environment changed while validating. Validate again",
     failed: (n) =>
@@ -613,8 +597,6 @@ export const COMPARE_COPY = {
     return reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : null;
   },
   criteriaHint: (names) => `Sub-goal changed: ${names.join(", ")}`,
-  changedTest: "Changed test",
-  changedTestHint: "This case changed between the two runs; compare with care.",
   columns: {
     scenario: "Scenario",
     current: "This run",

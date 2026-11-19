@@ -1,30 +1,5 @@
 import { STATUS_META } from "../../runs.constants";
 
-// Why a sub-goal did not pass, told apart: the agent failed it, its evidence was missing, the
-// grader could not decide, or the run broke before it was graded.
-const INFRASTRUCTURE_DOMAINS = [
-  "infrastructure",
-  "connectivity",
-  "platform_sync",
-  "simulator",
-  "environment",
-];
-export const CHECK_KINDS = {
-  task: "Failed by the agent",
-  evidence: "Not measured: evidence missing",
-  grader: "Grader problem",
-  infrastructure: "Not graded: the run broke",
-};
-
-export const checkKind = (goal, call) => {
-  const result = goal?.result ?? (goal?.passed === false ? "fail" : goal?.passed === true ? "pass" : null);
-  if (result === "fail") return "task";
-  if (result === "unmeasured") return "evidence";
-  if (result === "inconclusive" || (result == null && call?.failureCode === "check_broken")) return "grader";
-  if (result == null && INFRASTRUCTURE_DOMAINS.includes(call?.failureDomain)) return "infrastructure";
-  return null;
-};
-
 // Trace-table vocabulary and grouping logic, ported from the designer's
 // TraceTable. Kept colour-free (colours are theme tokens named by status role,
 // resolved in the components); this module is pure data + pure functions so the pickers,

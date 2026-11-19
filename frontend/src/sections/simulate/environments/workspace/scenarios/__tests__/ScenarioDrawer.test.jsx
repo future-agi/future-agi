@@ -1,12 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { render } from "src/utils/test-utils";
-
-// The drawer's archive action and revisions read the server; these tests are about the sheet.
-vi.mock("src/api/harness/scenarios", () => ({
-  useArchiveScenario: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useScenarioRevisions: () => ({ data: { revisions: [] } }),
-}));
 import { scenarioFromApi } from "src/api/simulate-environments/scenarios";
 import ScenarioDrawer from "../ScenarioDrawer";
 

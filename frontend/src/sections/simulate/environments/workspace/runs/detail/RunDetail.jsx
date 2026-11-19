@@ -14,7 +14,6 @@ import {
   Tab,
   Tooltip,
 } from "@mui/material";
-import MustPassBanner from "./MustPassBanner";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -341,8 +340,6 @@ export default function RunDetail({
             </Alert>
           )}
         </Box>
-
-        <MustPassBanner names={identity?.mustPassFailed} />
 
         <ReliabilityHeadline
           executionId={executionId}

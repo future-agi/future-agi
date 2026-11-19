@@ -25,25 +25,6 @@ import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
-import HeldBackList from "./HeldBackList";
-import { useValidateScenarios } from "src/api/harness/scenarios";
-
-// Seconds left before a refused run may be tried again; re-read on each new error.
-function useCountdown(error) {
-  const seconds =
-    error?.error === "pair_validating" ? Number(error.retry_after) || 0 : 0;
-  const [left, setLeft] = useState(seconds);
-  useEffect(() => {
-    setLeft(seconds);
-    if (!seconds) return undefined;
-    const timer = setInterval(
-      () => setLeft((value) => Math.max(0, value - 1)),
-      1000,
-    );
-    return () => clearInterval(timer);
-  }, [error, seconds]);
-  return left;
-}
 
 // Only versions a run can take are offered: an active environment or scenario
 // version, an agent version the server marks pickable (its check passed), and
@@ -75,8 +56,6 @@ export default function RunDialog({
   error = null,
 }) {
   const versions = useEnvironmentVersions(env?.id, { enabled: open });
-  const retryLeft = useCountdown(error);
-  const validate = useValidateScenarios(env?.id);
   const { data } = versions;
   const { data: drafts } = useDrafts(env?.id, {
     enabled: open && Boolean(env?.versioning?.enabled),
@@ -409,12 +388,6 @@ export default function RunDialog({
               {warning.message}
             </Alert>
           ))}
-          <HeldBackList
-            envId={env?.id}
-            picks={picks}
-            keys={runIds}
-            enabled={open && Boolean(data) && !blocked}
-          />
         </Stack>
       </>
     );
@@ -435,34 +408,7 @@ export default function RunDialog({
         <Stack spacing={2} sx={{ pt: 1 }}>
           {body()}
           {dialogError && (
-            <Alert
-              severity="error"
-              data-testid="run-error"
-              action={
-                dialogError.error === "pair_validating" ? (
-                  <Button
-                    size="small"
-                    color="inherit"
-                    data-testid="run-try-again"
-                    disabled={retryLeft > 0 || submitting}
-                    onClick={submit}
-                  >
-                    {retryLeft > 0 ? COPY.tryAgainIn(retryLeft) : COPY.tryAgain}
-                  </Button>
-                ) : dialogError.error === "all_cases_blocked" &&
-                  dialogError.action === "validate_scenarios" ? (
-                  <Button
-                    size="small"
-                    color="inherit"
-                    data-testid="run-validate-scenarios"
-                    disabled={validate.isPending || validate.isSuccess}
-                    onClick={() => validate.mutate({})}
-                  >
-                    {COPY.validateScenarios}
-                  </Button>
-                ) : null
-              }
-            >
+            <Alert severity="error" data-testid="run-error">
               {errorText}
             </Alert>
           )}

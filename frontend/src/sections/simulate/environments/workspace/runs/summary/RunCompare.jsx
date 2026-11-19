@@ -9,7 +9,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import { useCompareRuns } from "src/api/simulate-environments/compareRuns";
@@ -103,11 +102,6 @@ function Verdict({ pair }) {
     <Stack spacing={0.25} alignItems="flex-start">
       {pair.band !== "paired" && (
         <Chip size="small" label={COPY.bands[pair.band]} />
-      )}
-      {pair.changed_test && (
-        <Tooltip title={COPY.changedTestHint}>
-          <Chip size="small" color="warning" label={COPY.changedTest} data-testid="changed-test" />
-        </Tooltip>
       )}
       {verdict}
       {[interval, hint].filter(Boolean).map((text) => (

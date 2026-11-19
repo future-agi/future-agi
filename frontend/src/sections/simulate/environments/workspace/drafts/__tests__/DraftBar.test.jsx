@@ -132,13 +132,10 @@ describe("DraftBar", () => {
   it("saves every open piece with the parent and revision it shows", async () => {
     render(<DraftBar env={ENV} />);
     await userEvent.click(saveButton());
-    expect(saveMutate).toHaveBeenCalledWith(
-      [
-        { piece: "environment", parentId: "e2", revision: 3 },
-        { piece: "suite", parentId: "s3", revision: 1 },
-      ],
-      { onSuccess: expect.any(Function) },
-    );
+    expect(saveMutate).toHaveBeenCalledWith([
+      { piece: "environment", parentId: "e2", revision: 3 },
+      { piece: "suite", parentId: "s3", revision: 1 },
+    ]);
   });
 
   it("keeps Save off with the reason in view when the drafts are out of date", async () => {
@@ -293,20 +290,6 @@ describe("DraftBar", () => {
         name: "Finance controller",
       });
       expect(saveMutate).not.toHaveBeenCalled();
-    });
-
-    it("says a validated change needs a name before Save", () => {
-      decided();
-      withValidation(
-        { state: "ready" },
-        { environment_version_id: "e9", suite_version_id: "s9" },
-      );
-      render(<DraftBar env={ENV} />);
-
-      expect(saveButton()).toBeDisabled();
-      expect(screen.getByRole("status")).toHaveTextContent(
-        DRAFTS_COPY.validation.ready,
-      );
     });
 
     it("names the scenarios a failed validation needs changed and keeps Save off", () => {
