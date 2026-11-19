@@ -71320,6 +71320,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           maxItems: 50,
         },
+        reprove_all: {
+          title: "Reprove all",
+          description:
+            "Prove every case again. Without it, only the cases with no proof of their own on these versions for this agent version are proved, so a validation the window stopped carries on.",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     HarnessScenarioValidateResponse: {
@@ -71365,6 +71372,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "finished_at",
         "proofs_recorded",
         "message",
+        "proved",
+        "total",
       ],
       type: "object",
       properties: {
@@ -71399,6 +71408,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+        proved: {
+          title: "Proved",
+          description:
+            "How many of the pair's cases hold a proof made with this agent version on these versions.",
+          type: "integer",
+          minimum: 0,
+        },
+        total: {
+          title: "Total",
+          description: "How many cases the pair holds, archived ones aside.",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

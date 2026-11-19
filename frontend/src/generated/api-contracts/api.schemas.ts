@@ -23324,6 +23324,16 @@ export interface HarnessScenarioValidationStatusApi {
   proofs_recorded: boolean;
   /** @minLength 1 */
   message: string;
+  /**
+   * How many of the pair's cases hold a proof made with this agent version on these versions.
+   * @minimum 0
+   */
+  proved: number;
+  /**
+   * How many cases the pair holds, archived ones aside.
+   * @minimum 0
+   */
+  total: number;
 }
 
 export interface HarnessScenarioValidateApi {
@@ -23337,6 +23347,8 @@ export interface HarnessScenarioValidateApi {
    * @maxItems 50
    */
   keys?: string[];
+  /** Prove every case again. Without it, only the cases with no proof of their own on these versions for this agent version are proved, so a validation the window stopped carries on. */
+  reprove_all?: boolean;
 }
 
 export type HarnessScenarioValidateResponseApiState =

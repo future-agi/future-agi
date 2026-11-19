@@ -2974,7 +2974,13 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
-            deadline_at = check_deadline(job).timestamp() if validation else None
+            # ALK stops proving before the outer stop and the check's own end, so what it proved is written and read.
+            deadline_at = (
+                check_deadline(job).timestamp()
+                - bundle_cache.ALK_DEADLINE_MARGIN_SECONDS
+                if validation
+                else None
+            )
             if certify:
                 # A run's own certify on a cache miss never proves: its proofs would be discarded.
                 bundle_command = bundle_cache.certify_command(

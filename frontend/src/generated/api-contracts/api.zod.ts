@@ -50986,6 +50986,10 @@ export const SimulateApiHarnessEnvironmentsValidationStatusQueryParams =
     job_id: zod.string().uuid(),
   });
 
+export const simulateApiHarnessEnvironmentsValidationStatusResponseProvedMin = 0;
+
+export const simulateApiHarnessEnvironmentsValidationStatusResponseTotalMin = 0;
+
 export const SimulateApiHarnessEnvironmentsValidationStatusResponse =
   zod.object({
     state: zod.enum(["validating", "finished", "failed", "unavailable"]),
@@ -50994,6 +50998,16 @@ export const SimulateApiHarnessEnvironmentsValidationStatusResponse =
     finished_at: zod.string().min(1),
     proofs_recorded: zod.boolean(),
     message: zod.string().min(1),
+    proved: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsValidationStatusResponseProvedMin)
+      .describe(
+        "How many of the pair's cases hold a proof made with this agent version on these versions.",
+      ),
+    total: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsValidationStatusResponseTotalMin)
+      .describe("How many cases the pair holds, archived ones aside."),
   });
 
 /**
@@ -51010,6 +51024,9 @@ export const simulateApiHarnessEnvironmentsValidateScenariosBodyIfFreshDefault =
 export const simulateApiHarnessEnvironmentsValidateScenariosBodyKeysItemMax = 255;
 
 export const simulateApiHarnessEnvironmentsValidateScenariosBodyKeysMax = 50;
+
+export const simulateApiHarnessEnvironmentsValidateScenariosBodyReproveAllDefault =
+  false;
 
 export const SimulateApiHarnessEnvironmentsValidateScenariosBody = zod.object({
   agent_version_id: zod.string().uuid().optional(),
@@ -51032,6 +51049,14 @@ export const SimulateApiHarnessEnvironmentsValidateScenariosBody = zod.object({
     .optional()
     .describe(
       "Prove only these scenario keys; the other cases keep their proofs.",
+    ),
+  reprove_all: zod
+    .boolean()
+    .default(
+      simulateApiHarnessEnvironmentsValidateScenariosBodyReproveAllDefault,
+    )
+    .describe(
+      "Prove every case again. Without it, only the cases with no proof of their own on these versions for this agent version are proved, so a validation the window stopped carries on.",
     ),
 });
 

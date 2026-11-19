@@ -2446,7 +2446,11 @@ class TestScenarioProving:
         assert started.state == "validating"
         assert _job_metadata(started.job)["scenario_proving"] == "only"
         command = gateway.client.sandbox.process.session_request.command
-        deadline = int(validation.check_deadline(attempt.job).timestamp())
+        # ALK stops before the outer stop and the check's end, so what it proved is written and read.
+        deadline = int(
+            validation.check_deadline(attempt.job).timestamp()
+            - assembly.ALK_DEADLINE_MARGIN_SECONDS
+        )
         assert assembly.prove_suite_command(deadline_at=deadline) + "true" in command
         # ALK's live prover on the sealed runtime, the way a build proves: never the offline-only module.
         assert (

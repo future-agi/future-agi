@@ -1299,6 +1299,8 @@ def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
 SCENARIO_PROOFS_PATH = "/work/authoring/scenario-proofs.json"
 # How long before the check's window ends the prove command is stopped, so its proofs are read before the check is.
 PROVE_MARGIN_SECONDS = 300
+# How long before the check's window ends ALK itself stops proving and writes what it proved: inside the outer stop.
+ALK_DEADLINE_MARGIN_SECONDS = 2 * PROVE_MARGIN_SECONDS
 SCENARIO_PROOFS_MAX_KEYS = 5000
 
 

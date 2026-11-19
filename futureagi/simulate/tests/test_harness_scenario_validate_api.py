@@ -37,7 +37,8 @@ def _get(client, environment, job_id):
 @pytest.fixture
 def certified(user, workspace, storage):
     environment = _environment(user, workspace, storage, "va-certified")
-    _suite(environment, _ten())
+    # No case proved yet, so a Validate proves them all.
+    _suite(environment, _ten(), proved=False)
     return environment
 
 
@@ -327,3 +328,82 @@ def test_another_environments_version_gets_one_answer_from_every_endpoint(
             False,
             "environment",
         ), (where, response.content)
+
+
+def _proving(environment, proofs, *, body=None):
+    """Validate scenarios on the default pair, with the job it would start replaced by the keys it was asked for."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_scenario_actions import validate_scenarios
+    from simulate.tests.test_harness_scenario_lifecycle import _proofs
+
+    _proofs(environment, proofs)
+    asked = {}
+
+    def start(*_args, scenario_keys=None, **_kwargs):
+        asked["keys"] = scenario_keys
+        return SimpleNamespace(state="validating", job=None)
+
+    with (
+        patch.object(validation, "can_validate", lambda *_a: True),
+        patch.object(validation, "start_validation", start),
+    ):
+        answer, status = validate_scenarios(environment, body or {})
+    return answer, status, asked
+
+
+def test_validate_proves_only_the_cases_without_a_proof_of_their_own_and_resumes_after_a_stop(
+    user, workspace, storage
+):
+    from simulate.tests.test_harness_affected_scenarios import (
+        LOOKUP_KEYS,
+        PROVED,
+        REFUND_KEYS,
+    )
+
+    environment = _environment(user, workspace, storage, "sv-incremental")
+    _suite(environment, _ten(), proved=False)
+    unreached = {
+        "format": 2,
+        "proved": False,
+        "blocked_reason": "validation_incomplete",
+    }
+    # Stopped by the window: the refunds were proved, the lookups never reached.
+    stopped = {
+        **dict.fromkeys(REFUND_KEYS, PROVED),
+        **dict.fromkeys(LOOKUP_KEYS, unreached),
+    }
+
+    _answer, status, asked = _proving(environment, stopped)
+    _, _, everything = _proving(environment, stopped, body={"reprove_all": True})
+    ready, ready_status, nothing = _proving(
+        environment, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED)
+    )
+
+    assert (status, sorted(asked["keys"])) == (202, sorted(LOOKUP_KEYS))
+    assert everything["keys"] is None
+    assert (ready["state"], ready_status, nothing) == ("ready", 200, {})
+
+
+def test_the_validation_status_says_how_many_cases_are_proved_of_how_many(
+    auth_client, user, workspace, storage
+):
+    from simulate.tests.test_harness_affected_scenarios import (
+        LOOKUP_KEYS,
+        PROVED,
+        REFUND_KEYS,
+    )
+    from simulate.tests.test_harness_scenario_lifecycle import _proofs
+
+    environment = _environment(user, workspace, storage, "sv-progress")
+    _suite(environment, _ten(), proved=False)
+    _proofs(environment, dict.fromkeys(REFUND_KEYS, PROVED))
+    started = _post(auth_client, environment)
+
+    status = _get(auth_client, environment, started.json()["job_id"]).json()
+
+    assert started.status_code == 202, started.content
+    assert (status["proved"], status["total"]) == (
+        len(REFUND_KEYS),
+        len(REFUND_KEYS + LOOKUP_KEYS),
+    )

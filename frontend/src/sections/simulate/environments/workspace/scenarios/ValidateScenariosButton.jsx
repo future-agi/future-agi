@@ -9,8 +9,8 @@ import {
 } from "src/api/harness/scenarios";
 import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 
-// "Validate all against the environment": proves every case of the default pair again; with
-// `keys`, only those cases, and the others keep their proofs. The button stays disabled while the
+// "Validate all against the environment": proves the default pair's cases that have no proof of their own yet, so a
+// validation the window stopped carries on; with `keys`, only those cases, and the others keep their proofs. The button stays disabled while the
 // validation runs and the list refreshes when it ends, so each case shows its new state.
 export default function ValidateScenariosButton({
   jobId,
@@ -57,7 +57,11 @@ export default function ValidateScenariosButton({
         startIcon={<Iconify icon="solar:shield-check-linear" width={16} />}
         sx={scenarioToolbarButtonSx}
       >
-        {running ? SCENARIOS_COPY.validating : label}
+        {running
+          ? Number.isInteger(status.data?.total) && status.data.total > 0
+            ? SCENARIOS_COPY.validatingProgress(status.data.proved, status.data.total)
+            : SCENARIOS_COPY.validating
+          : label}
       </Button>
       {(message || ended) && (
         <Typography role="status" sx={{ typography: "s3", color: "text.subtitle" }}>

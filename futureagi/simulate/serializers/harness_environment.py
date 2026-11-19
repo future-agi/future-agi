@@ -2631,6 +2631,12 @@ class HarnessScenarioValidateSerializer(serializers.Serializer):
         max_length=50,
         help_text="Prove only these scenario keys; the other cases keep their proofs.",
     )
+    reprove_all = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Prove every case again. Without it, only the cases with no proof of their own on these versions "
+        "for this agent version are proved, so a validation the window stopped carries on.",
+    )
 
 
 class HarnessScenarioValidateResponseSerializer(serializers.Serializer):
@@ -2654,6 +2660,13 @@ class HarnessScenarioValidationStatusSerializer(serializers.Serializer):
     finished_at = serializers.CharField(allow_null=True)
     proofs_recorded = serializers.BooleanField()
     message = serializers.CharField(allow_null=True)
+    proved = serializers.IntegerField(
+        min_value=0,
+        help_text="How many of the pair's cases hold a proof made with this agent version on these versions.",
+    )
+    total = serializers.IntegerField(
+        min_value=0, help_text="How many cases the pair holds, archived ones aside."
+    )
 
 
 class HarnessScenarioArchiveSerializer(serializers.Serializer):
