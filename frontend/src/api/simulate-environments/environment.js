@@ -28,7 +28,7 @@ import { environmentVersionsKey, refreshDrafts } from "./versions";
 // merge + real scenarios/evals/amendments/end_conditions/stores) turns on with it.
 export const HARNESS_DETAIL_ENABLED = true;
 
-// The harness detail poll cadence, matching HarnessDetail's own 2s tick, with a
+// The harness detail poll cadence: a 2s tick, with a
 // faster 1s tick while a conversation turn is in flight so a reply lands promptly.
 const REFETCH_MS = 2000;
 const REFETCH_ACTIVE_MS = 1000;
@@ -116,8 +116,8 @@ function seedTablesFromEnvironment(environment = {}) {
     .filter((table) => table.name);
 }
 
-// Parse the run's stage_outputs (kinds contract / environment / scenarios — see
-// HarnessDetail's StageOutput) into world fields. Returns null when nothing is
+// Parse the run's stage_outputs (kinds contract / environment / scenarios) into
+// world fields. Returns null when nothing is
 // parseable. Only non-empty fields are set, so a field the run has not produced
 // yet stays absent and its panel renders its own empty state — a real
 // environment is never filled in from a fixture.

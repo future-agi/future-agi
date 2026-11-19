@@ -104175,7 +104175,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     FeedDetailCore: {
-      required: ["row", "description", "success_trace", "representative_trace"],
+      required: [
+        "row",
+        "description",
+        "fix_hypothesis",
+        "falsifier",
+        "success_trace",
+        "representative_trace",
+      ],
       type: "object",
       properties: {
         row: {
@@ -104183,6 +104190,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         description: {
           title: "Description",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        fix_hypothesis: {
+          title: "Fix hypothesis",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        falsifier: {
+          title: "Falsifier",
           type: "string",
           minLength: 1,
           "x-nullable": true,

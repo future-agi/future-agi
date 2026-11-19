@@ -21,7 +21,10 @@ import json
 import os
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from sentry_sdk.types import Event
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
@@ -150,6 +153,21 @@ _VERTEX_LOAD_MESSAGE = (
 _VERTEX_SAFE_MESSAGE = "Vertex credential loading failed"
 _REDACTED = "[Filtered]"
 
+# Modules whose stack frames hold a raw span batch: the gRPC OTLP receiver, the
+# Langfuse-compatible ingestion view, the payload store, the ingestion task and
+# the span helpers that catch and log their own errors. Span
+# content sits under ordinary names (data, raw, attributes), so the key-name
+# scrubbers miss it. An event with one of these frames in any stack sends no
+# frame variables. Matched on a dot boundary.
+RAW_SPAN_MODULES = (
+    "tfc.utils.payload_storage",
+    "tracer.services.grpc",
+    "tracer.utils.otel",
+    "tracer.utils.pii_scrubber",
+    "tracer.utils.trace_ingestion",
+    "tracer.views.langfuse_ingestion",
+)
+
 # Sample rates - configurable via env, lower in production to reduce costs
 # Production: 10% sampling, Staging: 100% sampling
 TRACES_SAMPLE_RATE = float(
@@ -216,7 +234,27 @@ def _vertex_auth_frame(module: object, function: object) -> bool:
     )
 
 
-def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
+def _before_breadcrumb(
+    crumb: dict[str, Any], hint: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Clean a breadcrumb before the scope stores it: it rides on later events.
+
+    Two scrubs, in order:
+    1. The gRPC framework's loggers record a failed call with
+       extra={"request": GRPCRequestContainer}, which the logging integration
+       copies into the crumb's data. The container's repr holds the whole
+       protobuf request, and the gRPC server's calls share one isolation scope,
+       so the crumb would reach unrelated events. Drop data.request and keep the
+       record. A framework crumb whose data is not a mapping cannot be cleaned,
+       so it is dropped.
+    2. Vertex credentials, then a key-name scrub of every other crumb.
+    """
+    if _is_grpc_framework_logger(crumb.get("category")):
+        data = crumb.get("data")
+        if data is not None and not isinstance(data, dict):
+            return None
+        if isinstance(data, dict):
+            data.pop("request", None)
     # A dropped log event still creates a breadcrumb on the *next* event.
     # Strip the rendered message and its arguments before storing it in scope.
     record = hint.get("log_record")
@@ -425,6 +463,69 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     return event
 
 
+def _is_raw_span_frame(frame: Any) -> bool:
+    """True for a frame of RAW_SPAN_MODULES, or for one whose module is unknown.
+
+    Code compiled without ``__name__`` in its globals has no module: a live
+    Jinja2 template frame is one. So an error logged while a template renders
+    loses its frame variables too. A template exception keeps them, because
+    Jinja2 rewrites its frames to the module ``<template>``.
+    """
+    module = frame.get("module") if isinstance(frame, dict) else None
+    if not isinstance(module, str) or not module:
+        return True  # Cannot tell where it ran, so assume it holds a batch.
+    return any(m == module or module.startswith(f"{m}.") for m in RAW_SPAN_MODULES)
+
+
+# django_socio_grpc's loggers. Its request logger reports each finished call
+# with extra={"request": GRPCRequestContainer}, whose repr holds the whole
+# protobuf request, spans included. The only gRPC service is trace ingestion,
+# so every event from these loggers is an ingestion event, even when the call
+# failed in the framework, before any ingestion frame ran. Matched as a prefix,
+# so a sibling logger cannot carry the container past the rule.
+_GRPC_FRAMEWORK_LOGGER = "django_socio_grpc"
+
+
+def _is_grpc_framework_logger(name: Any) -> bool:
+    return isinstance(name, str) and (
+        name == _GRPC_FRAMEWORK_LOGGER or name.startswith(f"{_GRPC_FRAMEWORK_LOGGER}.")
+    )
+
+
+def _strip_raw_span_content(event: dict) -> dict | None:
+    """Drop every frame's variables, and ``extra.request``, from an ingestion
+    event: one with a trace-ingestion frame, or one from the gRPC framework's
+    loggers.
+
+    Exceptions, logged errors (attach_stacktrace) and a top-level stacktrace
+    each carry frames, and ``iter_event_frames`` walks all three. The other
+    frames go too: callers and library frames hold the same batch. Changes
+    the event in place and returns it. Returns None, which drops the event,
+    when the stacks cannot be walked, because they may hold a batch that
+    cannot be removed.
+    """
+    # Inline, like every sentry_sdk import here: settings imports this module in
+    # every process, and the SDK (~75 ms) loads only when Sentry is on.
+    from sentry_sdk.utils import iter_event_frames
+
+    try:
+        frames = list(iter_event_frames(cast("Event", event)))
+    except (AttributeError, TypeError):
+        # What the walker raises on a malformed stack: .get on a non-mapping,
+        # or iterating a value that is not a list.
+        return None
+    if _is_grpc_framework_logger(event.get("logger")) or any(
+        _is_raw_span_frame(frame) for frame in frames
+    ):
+        for frame in frames:
+            if isinstance(frame, dict):
+                frame.pop("vars", None)
+        extra = event.get("extra")
+        if isinstance(extra, dict):
+            extra.pop("request", None)
+    return event
+
+
 def _expected_vertex_credential_error(error: object) -> bool:
     # Import only for the matching LiteLLM record; Sentry startup does not
     # require the optional provider SDK.
@@ -516,7 +617,10 @@ def _get_before_send() -> Callable:
         if _expected_feature_denial(hint) or _expected_log_outcome(event, hint):
             return None
 
-        # 3. Scrub secrets/PII from the surviving event.
+        # 3. Scrub secrets/PII from the surviving event. Raw span content goes
+        # first, outside the try below: it fails closed, not open.
+        if _strip_raw_span_content(event) is None:
+            return None
         try:
             _scrub_event(
                 event,

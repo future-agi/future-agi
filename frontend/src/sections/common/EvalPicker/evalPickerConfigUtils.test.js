@@ -1,3 +1,4 @@
+import { taskCodeInputs } from "src/utils/codeEvalParams";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -58,6 +59,25 @@ describe("buildDataInjection", () => {
       span_context: true,
       call_context: true,
     });
+  });
+});
+
+describe("task JavaScript entry point selection", () => {
+  const main = "function main({ vote }) { return evaluate[vote]; }";
+
+  it("uses main when evaluate is a constant lookup object", () => {
+    expect(taskCodeInputs(`const evaluate = { yes: 1, no: 0 }; ${main}`, "javascript"))
+      .toEqual([{ name: "vote", required: true }]);
+  });
+
+  it("prefers callable evaluate over main", () => {
+    expect(taskCodeInputs(`${main} const evaluate = ({ choice }) => choice;`, "javascript"))
+      .toEqual([{ name: "choice", required: true }]);
+  });
+
+  it("does not guess main for an evaluate initializer of unknown type", () => {
+    expect(taskCodeInputs(`const evaluate = getEvaluator(); ${main}`, "javascript"))
+      .toBeNull();
   });
 });
 

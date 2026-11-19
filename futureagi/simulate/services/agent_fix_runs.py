@@ -287,7 +287,10 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if not is_retryable(failed):
         raise HostedHarnessError(
             "fix_not_retryable",
-            "Only a failed epoch can be retried, and only once.",
+            "Only a failed epoch can be retried."
+            if failed.state != AgentFixRun.State.FAILED
+            else "This epoch was retried once already."
+            " Run a new epoch from the run's Debug failures.",
             status_code=409,
         )
     source_run = failed.source_run
