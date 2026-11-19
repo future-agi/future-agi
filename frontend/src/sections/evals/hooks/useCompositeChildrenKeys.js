@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
+import { taskCodeInputs } from "src/utils/codeEvalParams";
 import {
   getEvalCode,
   getEvalCodeLanguage,
@@ -42,28 +42,35 @@ function combineDeclaredInputs(results) {
   return { keys: [...keys] };
 }
 
-function combineTaskInputs(results) {
+function combineTaskInputs(results, children) {
   const keys = new Set();
-  for (const { data } of results) {
-    if (!data) continue;
-    // Custom code templates store required_keys: []; the individual picker
-    // gets their mappable inputs from evaluate(...). System wrappers have a
-    // generic signature, so only their declared keys are meaningful.
+  const required = new Set();
+  let unknown = false;
+  results.forEach(({ data }, i) => {
+    if (!data) return;
+    const link = children[i];
+    const bound = link.config?.params || {};
+    const add = (name, needed) => {
+      if (Object.hasOwn(bound, name)) return;
+      keys.add(name);
+      if (needed) required.add(name);
+    };
+    const declared = getEvalRequiredKeys(data);
     if (getEvalType(data) === "code" && data.owner !== "system") {
-      const params = extractCodeEvaluateParams(
-        getEvalCode(data),
-        getEvalCodeLanguage(data),
-      );
-      for (const key of params) keys.add(key);
+      const inputs = taskCodeInputs(getEvalCode(data), getEvalCodeLanguage(data));
+      if (!inputs && !declared.length) unknown = true;
+      for (const { name, required: needed } of inputs || []) add(name, needed);
     }
-    for (const key of getEvalRequiredKeys(data)) keys.add(key);
-  }
+    for (const key of declared) add(key, true);
+  });
   return {
     keys: [...keys],
-    isLoading: results.some((query) => query.isPending),
-    isError: results.some(
-      (query) => query.isError || (query.isSuccess && !query.data),
-    ),
+    required: [...required],
+    unknown,
+    hasData: results.every((q) => Boolean(q.data)),
+    isLoading: results.some((q) => q.isPending || q.isFetching || q.isPaused),
+    isError: results.some((q) => q.isError || (q.isSuccess && !q.data)),
+    retry: () => results.filter((q) => q.isError).forEach((q) => q.refetch()),
   };
 }
 
@@ -71,9 +78,13 @@ export function useCompositeChildrenInputs(
   children = [],
   { taskComposite = false } = {},
 ) {
+  const combine = useCallback(
+    (results) => combineTaskInputs(results, children.filter((c) => c?.child_id)),
+    [children],
+  );
   return useCompositeChildrenDetailResults(
     children,
-    taskComposite ? combineTaskInputs : combineDeclaredInputs,
+    taskComposite ? combine : combineDeclaredInputs,
   );
 }
 

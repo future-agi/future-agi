@@ -62,3 +62,60 @@ export const extractCodeEvaluateParams = (code, language) => {
   }
   return names;
 };
+
+// Task bindings must distinguish a verified empty entry point from code we
+// can't describe. Mask comments and string contents before reading syntax;
+// neither a docstring nor a commented example is an executable definition.
+const pythonTrivia = /'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|#[^\n]*/g;
+const jsTrivia = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g;
+
+export function taskCodeInputs(code, language = "python") {
+  const python = language === "python";
+  if (!code || (!python && language !== "javascript")) return null;
+  const text = code.replace(python ? pythonTrivia : jsTrivia, (token) =>
+    token.replace(/[^\n]/g, /^['"`]/.test(token) ? "~" : " "),
+  );
+  // Both executors look up evaluate first and fall back to main. A later
+  // definition of the same name replaces an earlier one in the namespace.
+  const definitions = python
+    ? /^def[ \t]+(evaluate|main)\s*\(/gm
+    : /^[ \t]*(?:async\s+)?function\s+(evaluate|main)\s*\(/gm;
+  const starts = {};
+  for (const m of text.matchAll(definitions)) {
+    starts[m[1]] = m.index + m[0].length;
+  }
+  const start = starts.evaluate ?? starts.main;
+  if (start === undefined) return null;
+  let end = start;
+  let depth = 1;
+  for (; end < text.length && depth; end++) {
+    if (text[end] === "(") depth++;
+    else if (text[end] === ")") depth--;
+  }
+  if (depth) return null;
+  let args = text.slice(start, end - 1).trim();
+  if (!args) return [];
+  if (!python) {
+    // JavaScript receives one object, not one positional argument per key.
+    const object = /^\{([\s\S]*)\}$/.exec(args.replace(/\s*=\s*\{\s*\}$/, ""));
+    if (!object) return null;
+    args = object[1];
+  }
+  const inputs = [];
+  for (const raw of splitTopLevelCommas(args)) {
+    const param = raw.trim();
+    if (!param || param.startsWith("*") || param.startsWith("...")) continue;
+    // Positional-only Python parameters can't be supplied via fn(**args).
+    if (param === "/") return null;
+    const name = /^([A-Za-z_$][\w$]*)\s*(?=[:=]|$)/.exec(param)?.[1];
+    if (!name) return null;
+    if (python && name === "context") continue; // supplied by both runners
+    // Both Python runners supply standard row arguments (even when missing)
+    // rather than relying on their signature defaults. For a nonstandard
+    // default the local runner omits the argument, the HTTP runner passes
+    // None; allow an explicit override without promising identical results.
+    const rowArg = python && ["input", "output", "expected"].includes(name);
+    inputs.push({ name, required: rowArg || !param.includes("=") });
+  }
+  return inputs;
+}
