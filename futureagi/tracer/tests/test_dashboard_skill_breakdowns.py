@@ -544,3 +544,32 @@ def test_split_rejects_excluded_second_group_and_preserves_microsecond_end(
         for r in skill_query_client.query(sql, parameters=params).named_results()
     }
     assert got == {VERSION: 1, OTHER_VERSION: 1}
+
+
+@pytest.mark.integration
+def test_explicit_dashboard_window_intersects_canonical_date_filter(
+    skill_query_client, cohort_catalog
+):
+    project = str(uuid4())
+    left, right = START + timedelta(minutes=20), START + timedelta(minutes=30)
+    insert_rows(
+        skill_query_client,
+        [
+            span_row(project, "early", start_time=START),
+            span_row(project, "inside", start_time=left),
+        ],
+    )
+    item = {
+        "column_id": "start_time",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": [left.isoformat(), right.isoformat()],
+        },
+    }
+    sql, params = dashboard(project_ids=[project], filters=[item]).build_metric_query(
+        {"id": "trace_count", "aggregation": "count_distinct"}
+    )
+    (row,) = skill_query_client.query(sql, parameters=params).named_results()
+    assert row["value"] == 1

@@ -104,15 +104,30 @@ class SkillEvidenceWindow:
             _unix_microseconds,
         )
 
+        # Widgets pass the chart's explicit display range separately from its
+        # canonical filters. Intersect them before admitting a load or witness;
+        # the caller can still display the full axis and replay entire traces.
+        bounded_filters = [
+            *filters,
+            {
+                "column_id": "start_time",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [start.isoformat(), end.isoformat()],
+                },
+            },
+        ]
+        window = BaseQueryBuilder.analyze_bounded_datetime_filters(bounded_filters)
         excluded, params = BaseQueryBuilder.bounded_datetime_exclusion_sql(
-            filters, param_prefix="graph_datetime"
+            bounded_filters, param_prefix="graph_datetime"
         )
         return cls(
             cls.bounds + (f" AND ({excluded})" if excluded else ""),
             {
                 **params,
-                "skill_window_start_us": _unix_microseconds(start),
-                "skill_window_end_us": _unix_microseconds(end),
+                "skill_window_start_us": _unix_microseconds(window.start),
+                "skill_window_end_us": _unix_microseconds(window.end),
             },
         )
 
