@@ -27,7 +27,22 @@ function useCompositeChildrenDetailResults(children, combine) {
   });
 }
 
-function combineChildInputs(results) {
+// Default for existing picker hosts: an explicitly empty top-level list wins
+// over nested keys. Do not infer inputs from code signatures on these paths.
+function combineDeclaredInputs(results) {
+  const keys = new Set();
+  for (const { data } of results) {
+    const declared =
+      data?.required_keys ||
+      data?.config?.required_keys ||
+      data?.config?.requiredKeys ||
+      [];
+    for (const key of declared) keys.add(key);
+  }
+  return { keys: [...keys] };
+}
+
+function combineTaskInputs(results) {
   const keys = new Set();
   for (const { data } of results) {
     if (!data) continue;
@@ -52,8 +67,14 @@ function combineChildInputs(results) {
   };
 }
 
-export function useCompositeChildrenInputs(children = []) {
-  return useCompositeChildrenDetailResults(children, combineChildInputs);
+export function useCompositeChildrenInputs(
+  children = [],
+  { taskComposite = false } = {},
+) {
+  return useCompositeChildrenDetailResults(
+    children,
+    taskComposite ? combineTaskInputs : combineDeclaredInputs,
+  );
 }
 
 export function useCompositeChildrenUnionKeys(children = []) {

@@ -365,11 +365,13 @@ const EvalPickerConfigFull = ({
   // is the state that flows into `composite_weight_overrides` on save.
   const compositeQuery = useCompositeDetail(templateId, isComposite);
   const compositeDetail = compositeQuery.data;
-  const childInputs = useCompositeChildrenInputs(compositeDetail?.children);
+  const taskComposite = source === "task" && isComposite;
+  const childInputs = useCompositeChildrenInputs(compositeDetail?.children, {
+    taskComposite,
+  });
   const compositeUnionKeys = childInputs.keys;
   // TracingTestMode treats zero variables as fully mapped. Don't mount it
   // with a partial schema: a pending child isn't an input-free child.
-  const taskComposite = source === "task" && isComposite;
   const childInputsFailed =
     taskComposite && (compositeQuery.isError || childInputs.isError);
   const waitingForChildInputs =
