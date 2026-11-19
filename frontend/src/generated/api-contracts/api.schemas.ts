@@ -25764,6 +25764,8 @@ export interface HarnessConversationScenarioQueryApi {
    */
   page_size?: number;
   full?: boolean;
+  /** Read instead the cases the environment had and no longer holds, to restore or copy one. */
+  removed?: boolean;
 }
 
 export type HarnessConversationTranscriptAppendApiEntriesItem = {

@@ -56095,6 +56095,7 @@ export const simulateApiHarnessConversationsScenariosBodySearchMax = 500;
 export const simulateApiHarnessConversationsScenariosBodyPageSizeMax = 100;
 
 export const simulateApiHarnessConversationsScenariosBodyFullDefault = false;
+export const simulateApiHarnessConversationsScenariosBodyRemovedDefault = false;
 
 export const SimulateApiHarnessConversationsScenariosBody = zod.object({
   numbers: zod
@@ -56137,6 +56138,12 @@ export const SimulateApiHarnessConversationsScenariosBody = zod.object({
   full: zod
     .boolean()
     .default(simulateApiHarnessConversationsScenariosBodyFullDefault),
+  removed: zod
+    .boolean()
+    .default(simulateApiHarnessConversationsScenariosBodyRemovedDefault)
+    .describe(
+      "Read instead the cases the environment had and no longer holds, to restore or copy one.",
+    ),
 });
 
 export const SimulateApiHarnessConversationsSessionStoreParams = zod.object({

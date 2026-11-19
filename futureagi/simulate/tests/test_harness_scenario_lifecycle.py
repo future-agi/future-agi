@@ -160,6 +160,119 @@ def test_an_older_complete_proof_is_carried_past_a_newer_unreached_one(
     assert carried == dict.fromkeys(KEYS, PROVED)
 
 
+def _removed_case(user, workspace, storage, name):
+    """S1 held every case; S2, now the default, dropped CASE, and its row is removed."""
+    from simulate.models import HostedHarnessJob
+
+    environment = _environment(user, workspace, storage, name)
+    _suite(environment, _ten())
+    older = environment.suite_version
+    case = REFUND_KEYS[0]
+    kept = [one for one in older.documents["scenarios"] if one["scenario_key"] != case]
+    newer = _copy(
+        older, HarnessSuiteVersion, documents={**older.documents, "scenarios": kept}
+    )
+    _members_of(older, newer)
+    HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version=newer, scenario_key=case
+    ).delete()
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        suite_version=newer
+    )
+    row = HostedHarnessScenario.no_workspace_objects.get(
+        job=environment, scenario_key=case
+    )
+    HostedHarnessScenario.all_objects.filter(id=row.id).update(
+        deleted=True, deleted_at=timezone.now()
+    )
+    environment.refresh_from_db()
+    content = HarnessSuiteMember.no_workspace_objects.get(
+        suite_version=older, scenario_key=case
+    ).content
+    return environment, older, row, {**content, "scenario_key": case}
+
+
+def test_the_chat_reads_the_removed_cases_and_a_restore_takes_back_its_key_and_row(
+    user, workspace, storage
+):
+    from simulate.services.harness_scenarios import plan_pairs
+    from simulate.services.harness_versioning.versions import retired_keys
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment, older, row, document = _removed_case(
+        user, workspace, storage, "lc-restore"
+    )
+    key = row.scenario_key
+    restore = {
+        **document,
+        "restored_from": {"key": key, "suite_version": str(older.id)},
+    }
+    mismatched = {**document, "restored_from": {"key": "another-case"}}
+
+    [removed] = removed_scenarios(environment)
+    [restored] = plan_pairs(environment, [restore], exact=True)
+    # A new case whose key happens to be the removed one's: never its row or history.
+    [copied] = plan_pairs(
+        environment, [{**document, "tests": "a different case"}], exact=True
+    )
+    [returned] = plan_pairs(environment, [document], exact=True)
+
+    assert (removed["scenario_key"], removed["suite_version"]) == (key, str(older.id))
+    assert (restored.row.id, restored.key, restored.number) == (row.id, key, row.number)
+    assert copied.row is None and copied.key != key
+    # The same case back exactly as it was, as a rebuild restores one: its row.
+    assert returned.row.id == row.id
+    assert retired_keys(environment, [restore]) == []
+    assert retired_keys(environment, [mismatched]) == [key]
+
+
+def test_a_restore_with_changes_says_so_and_its_older_results_read_changed_test(
+    user, workspace, storage
+):
+    from simulate.services.harness_versioning.review import _restore_summary
+    from simulate.services.run_compare import changed_tests
+
+    environment, older, row, document = _removed_case(
+        user, workspace, storage, "lc-restore-changed"
+    )
+    key = row.scenario_key
+    restore = {
+        **document,
+        "restored_from": {"key": key, "suite_version": str(older.id)},
+    }
+
+    def summary(value):
+        change = {
+            "kind": "scenario",
+            "action": "added",
+            "key": key,
+            "patch": [{"op": "add", "path": "", "value": value}],
+        }
+        return _restore_summary(environment, change)
+
+    restored_suite = _copy(
+        environment.suite_version,
+        HarnessSuiteVersion,
+        version_number=300,
+        hash=older.hash[:-8] + "restored",
+    )
+    HarnessSuiteMember.no_workspace_objects.create(
+        suite_version=restored_suite,
+        scenario_id=row.id,
+        scenario_key=key,
+        number=row.number,
+        content={**document, "tests": "a new check"},
+    )
+
+    assert summary(restore) == f"Restore scenario {key}"
+    assert (
+        summary({**restore, "tests": "a new check"})
+        == f"Restore scenario {key} with changes: tests"
+    )
+    assert summary({**document, "tests": "a new check"}) is None
+    assert changed_tests(restored_suite.id, older.id, None, None, [key]) == {key}
+
+
 def test_states_in_order(user, workspace, storage):
     environment = _environment(user, workspace, storage, "lc-order")
     _suite(environment, _ten())

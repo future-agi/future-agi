@@ -2412,7 +2412,12 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
-                    _with_simulation_mark(guest_job_document(payload), simulation_mark),
+                    _with_used_scenario_keys(
+                        _with_simulation_mark(
+                            guest_job_document(payload), simulation_mark
+                        ),
+                        job,
+                    ),
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode(),

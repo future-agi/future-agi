@@ -69295,6 +69295,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        removed: {
+          title: "Removed",
+          description:
+            "Read instead the cases the environment had and no longer holds, to restore or copy one.",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     HarnessConversationTranscriptAppend: {

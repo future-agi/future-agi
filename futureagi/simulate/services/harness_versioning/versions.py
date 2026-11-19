@@ -481,13 +481,15 @@ def _refuse_retired_keys(
 
 
 def retired_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[str]:
-    """The dropped scenarios' keys that documents new to the default suite reuse."""
+    """The dropped scenarios' keys that documents new to the default suite reuse; a removed scenario restored under
+    its own key (`restored_from`) reuses its key by right."""
+    from simulate.services.harness_scenarios import restores_own_key
     from simulate.services.harness_starting_records import scenario_token
 
     keys = {
         scenario_token(doc.get("scenario_key"))
         for doc in documents
-        if str(doc.get("scenario_key") or "").strip()
+        if str(doc.get("scenario_key") or "").strip() and not restores_own_key(doc)
     } - {""}
     if job.suite_version_id is not None:
         keys -= {
