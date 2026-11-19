@@ -1,7 +1,8 @@
 import { create } from "src/utils/zustand";
 import { createJSONStorage, devtools, persist } from "zustand/middleware";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
-import { READ_MS, draftNameOf, mergeDesignFiles } from "./design";
+import { mergeFileRows } from "../buildDrawer/forms/shared/buildFiles";
+import { READ_MS, draftNameOf } from "./design";
 
 // Drafts kept in this browser; creating one drops the oldest past this.
 export const MAX_DESIGN_DRAFTS = 20;
@@ -63,7 +64,7 @@ export const useDesignDraftStore = create(
         addFilesToDesign: (draftId, files) => {
           const draft = get().drafts[draftId];
           if (!draft) return null;
-          const { files: next, note } = mergeDesignFiles(draft.files, files);
+          const { files: next, note } = mergeFileRows(draft.files, files);
           if (note.added.length || note.replaced.length)
             set(
               (s) => ({

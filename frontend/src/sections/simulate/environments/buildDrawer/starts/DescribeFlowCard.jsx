@@ -24,7 +24,6 @@ function iconForFile(name) {
   if (["json"].includes(ext)) return "solar:code-square-linear";
   if (["md", "txt"].includes(ext)) return "solar:document-linear";
   if (["pdf"].includes(ext)) return "solar:document-medicine-linear";
-  if (["docx", "doc"].includes(ext)) return "solar:document-add-linear";
   return "solar:paperclip-linear";
 }
 

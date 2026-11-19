@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { formatFileSize } from "src/utils/utils";
 import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import { OUTLINED_BTN_SX, ROW_BOX_SX, T12, T13 } from "../../drawerStyles";
 import {
@@ -11,11 +12,6 @@ import {
   mergeBuildFiles,
   readAsOf,
 } from "./buildFiles";
-
-const kb = (n) =>
-  n >= 1024 * 1024
-    ? `${(n / (1024 * 1024)).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(n / 1024))} KB`;
 
 /**
  * Files for the environment a form builds: a policy becomes rules, a CSV the
@@ -166,7 +162,7 @@ export default function BuildFilesField({
                   noWrap
                   sx={{ ...T12, color: "text.tertiary", flex: 1, minWidth: 0 }}
                 >
-                  {role ? `Read as ${role}` : "Can't be read"}
+                  {role ? `Likely read as ${role}` : "Can't be read"}
                 </Typography>
                 <Typography
                   sx={{
@@ -176,7 +172,7 @@ export default function BuildFilesField({
                     flexShrink: 0,
                   }}
                 >
-                  {kb(f.size)}
+                  {formatFileSize(f.size, { wholeKb: true })}
                 </Typography>
                 <IconButton
                   size="small"
