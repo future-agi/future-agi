@@ -699,7 +699,7 @@ class TestRefusals:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_an_unknown_source_kind_is_refused(self, client, environment, project):
-        response = _create(client, environment, project, source_kind="trace")
+        response = _create(client, environment, project, source_kind="screenshot")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
