@@ -102,13 +102,31 @@ export default function SourcesSection({
   const { openSource, showing, closeSource } = useSourceParams();
   const addRef = useRef(null);
   // Open Sources from the chat: bring this card into view, then drop the ask.
+  // The tab is still opening when this mounts, so it waits for the card to
+  // stop moving (at most 1.5 s) before scrolling.
   useEffect(() => {
-    if (showing !== "sources") return;
-    document.getElementById(SOURCES_CARD_ID)?.scrollIntoView?.({
-      block: "start",
-      behavior: reduce ? "auto" : "smooth",
-    });
-    closeSource();
+    if (showing !== "sources") return undefined;
+    const until = Date.now() + 1500;
+    let frame;
+    let last;
+    let still = 0;
+    const step = () => {
+      const card = document.getElementById(SOURCES_CARD_ID);
+      const top = card?.getBoundingClientRect().top;
+      still = top === last ? still + 1 : 0;
+      last = top;
+      if (card && (still >= 5 || Date.now() > until)) {
+        card.scrollIntoView?.({
+          block: "start",
+          behavior: reduce ? "auto" : "smooth",
+        });
+        closeSource();
+        return;
+      }
+      frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
   }, [showing]); // eslint-disable-line react-hooks/exhaustive-deps
   // `supplying`, from a file's Supply the records, opens the Add source menu.
   useEffect(() => {
