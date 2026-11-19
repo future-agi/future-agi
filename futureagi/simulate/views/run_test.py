@@ -137,6 +137,10 @@ from simulate.serializers.test_execution import (
     TestExecutionStatusSerializer,
 )
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.call_provider import (
+    call_agent_provider_expression,
+    execution_agent_provider,
+)
 from simulate.services.call_rerun import (
     call_snapshot,
     clear_call_for_rerun,
@@ -1872,13 +1876,16 @@ def _flat_kpi_evals(
     values: dict[tuple[str, str, str], object], system_keys: set[str]
 ) -> dict[str, object]:
     """Keep each binding's preferred key unless a system KPI or another eval owns it."""
-    natural = {name for name, _, _ in values}
-    if len(natural) == len(values) and natural.isdisjoint(system_keys):
-        return {name: value for (name, _, _), value in values.items()}
 
     def project(key: str) -> str:
         # Run detail's canonicalKeys hides the underscore-to-camel projection of each key.
         return re.sub(r"_([a-z0-9])", lambda match: match[1].upper(), key)
+
+    natural = {name for name, _, _ in values}
+    # A name equal to another name's projection (tier1 for tier_1) would be hidden.
+    hidden = {project(key) for key in natural if project(key) != key} & natural
+    if len(natural) == len(values) and natural.isdisjoint(system_keys) and not hidden:
+        return {name: value for (name, _, _), value in values.items()}
 
     reserved = natural | system_keys
     reserved_projections = {project(key) for key in reserved}
@@ -1888,7 +1895,7 @@ def _flat_kpi_evals(
     for metric in sorted(values, key=lambda m: (priority[m[2]], m[1], m[0])):
         name, binding_id, _ = metric
         key = name
-        if key in used:
+        if key in used or key in hidden:
             key = f"{name}__{binding_id}"
             while (
                 key in reserved
@@ -2329,6 +2336,7 @@ class RunTestCallExecutionsView(APIView):
             if call_exec_ids:
                 call_execs = (
                     CallExecution.objects.filter(id__in=call_exec_ids)
+                    .annotate(result_provider=call_agent_provider_expression())
                     .select_related(
                         "scenario",
                         "test_execution",
@@ -2352,6 +2360,8 @@ class RunTestCallExecutionsView(APIView):
                     "call_execution__test_execution",
                     "call_execution__test_execution__simulator_agent",
                     "call_execution__test_execution__agent_definition",
+                    "call_execution__test_execution__agent_version",
+                    "call_execution__agent_version",
                 )
 
                 for snapshot in snapshots:
@@ -2624,6 +2634,7 @@ class TestExecutionDetailView(APIView):
             # Get call executions for this test execution
             call_executions = (
                 CallExecution.objects.filter(test_execution=test_execution)
+                .annotate(result_provider=call_agent_provider_expression())
                 .select_related(
                     "scenario",
                     "test_execution",
@@ -3102,8 +3113,8 @@ class TestExecutionDetailView(APIView):
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
             response_data["provider"] = (
-                test_execution.agent_definition.provider
-                if test_execution.agent_definition
+                execution_agent_provider(test_execution)
+                if test_execution.agent_definition_id or test_execution.agent_version_id
                 else "prompt"
             )
             response_data["agent_type"] = agent_type

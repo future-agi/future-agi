@@ -35,5 +35,49 @@
       "Flat": 1,
       "choices": ["Fine", "Flat"]
     }
+  },
+  "projection": {
+    "projection": {
+      "tier_1": { "Warm": 2, "Cold": 1, "choices": ["Warm", "Cold"] },
+      "tier1__00000000-0000-0000-0000-000000000002": {
+        "Calm": 1,
+        "Rough": 1,
+        "choices": ["Calm", "Rough"]
+      }
+    },
+    "cross_type": {
+      "avg_1": 50,
+      "avg1__00000000-0000-0000-0000-000000000002": {
+        "Yes": 1,
+        "No": 0,
+        "choices": ["Yes", "No"]
+      }
+    },
+    "mixed": {
+      "tier_1": { "Warm": 2, "Cold": 1, "choices": ["Warm", "Cold"] },
+      "tier_1__00000000-0000-0000-0000-000000000002": {
+        "Calm": 1,
+        "Rough": 1,
+        "choices": ["Calm", "Rough"]
+      },
+      "tier1__00000000-0000-0000-0000-000000000003": {
+        "Fine": 3,
+        "Flat": 1,
+        "choices": ["Fine", "Flat"]
+      },
+      "avg_score__00000000-0000-0000-0000-000000000004": 20
+    },
+    "chain": {
+      "a__1": { "One": 1, "Two": 0, "choices": ["One", "Two"] },
+      "a_1__00000000-0000-0000-0000-000000000002": {
+        "Three": 1,
+        "choices": ["Three"]
+      },
+      "a1__00000000-0000-0000-0000-000000000003": {
+        "Four": 1,
+        "Five": 1,
+        "choices": ["Four", "Five"]
+      }
+    }
   }
 }
