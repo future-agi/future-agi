@@ -141,7 +141,7 @@ class TestSetupChecksResponseShape:
         }
 
     def test_hands_out_the_public_collector_url(self, api_client, monkeypatch):
-        """What an SDK outside the stack sets as FI_BASE_URL; the installer
+        """What an SDK outside the stack sets as FI_TRACES_URL; the installer
         moves the port when 4318 is taken."""
         monkeypatch.setattr(
             setup_checks.settings, "FI_COLLECTOR_PUBLIC_URL", "http://localhost:4319"
