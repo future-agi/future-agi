@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from model_hub.models.eval_groups import EvalGroup
 from model_hub.schema.eval_group import PageType
-from tracer.serializers.filters import StrictInputSerializer, filter_list_field
+from tracer.serializers.filters import StrictInputSerializer, skill_filter_list_field
 
 
 class EvalGroupSerializer(serializers.ModelSerializer):
@@ -42,7 +42,7 @@ class ApplyEvalGroupFiltersSerializer(StrictInputSerializer):
     kb_id = serializers.UUIDField(required=False, allow_null=True)
     model = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     error_localizer = serializers.BooleanField(required=False, default=False)
-    filters = filter_list_field(required=False, default=list)
+    filters = skill_filter_list_field(required=False, default=list)
 
 
 class ApplyEvalGroupRequestSerializer(StrictInputSerializer):

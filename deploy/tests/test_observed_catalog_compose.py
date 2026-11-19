@@ -413,6 +413,7 @@ class ComposeContractTests(unittest.TestCase):
                 "mock-llm",
                 "mock-slack",
                 "mock-google",
+                "skills-fakes",
                 "peerdb-server",
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",
@@ -552,7 +553,7 @@ class ProductionCatalogContractTests(unittest.TestCase):
         expected = {
             "postgres-schema-bootstrap": ["manage.py", "migrate", "--check", "--noinput"],
             "property-catalog-clickhouse-bootstrap": ["--check"],
-            "clickhouse-native-bootstrap": ["--phase", "native"],
+            "clickhouse-native-bootstrap": ["--phase", "native", "--require-skill-schema"],
             "peerdb-temporal-init": [],
             "peerdb-init": ["--wait-for-mirrors", "--timeout", "900"],
             "clickhouse-cdc-bootstrap": ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"],

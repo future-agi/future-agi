@@ -6,7 +6,7 @@ import React, {
   useMemo,
   useCallback,
 } from "react";
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, FormControlLabel, Switch, Typography, useTheme } from "@mui/material";
 import ReactApexChart from "react-apexcharts";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
@@ -27,6 +27,22 @@ import LeftControl from "./LeftControl";
 import Legend from "./Legend";
 import GraphSkeleton from "./GraphSkeleton";
 import { formatYAxisValue, getYAxisUnit, getLineSeriesName } from "./common";
+import { hasSkillFilter } from "../skillFilters";
+
+import SkillVersionGraph, { skillVersionSeries } from "./SkillVersionGraph";
+
+// Shared trace graph validation, dispatch, cache and typed series are mounted.
+export const SKILL_VERSION_SPLIT_SUPPORTED = true;
+
+/** Extra graph request fields for "Split by skill version", or none. */
+export const skillVersionSplitParams = ({
+  enabled,
+  filters,
+  supported = SKILL_VERSION_SPLIT_SUPPORTED,
+}) =>
+  enabled && supported && hasSkillFilter(filters)
+    ? { split_by: "skill_version" }
+    : {};
 import SVGColor from "src/components/svg-color";
 import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";
@@ -103,6 +119,11 @@ const GraphSection = ({
   const [_height, setHeight] = useState(320);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedGraphConfig, setSelectedGraphConfig] = useState(null);
+  const [splitRequested, setSplitRequested] = useState(false);
+  const splitAvailable = selectedTab === "trace" && hasSkillFilter(filters) &&
+    selectedGraphConfig?.type === "SYSTEM_METRIC" &&
+    ["latency", "cost", "tokens", "total_tokens", "traffic", "error_rate"].includes(String(selectedGraphConfig?.id).toLowerCase());
+  const splitEnabled = splitAvailable && splitRequested;
   const boxRef = useRef(null);
   const llmTracingStore = useLLMTracingStoreShallow((s) => ({
     [`${compareType}Collapsed`]: s[`${compareType}Collapsed`],
@@ -281,6 +302,7 @@ const GraphSection = ({
       selectedGraphEvals,
       combinedFilters,
       graphRequestConfig,
+      splitEnabled,
     ],
     queryFn: async ({ queryKey, signal }) => {
       const refresh = forceRefreshRef.current;
@@ -299,6 +321,7 @@ const GraphSection = ({
                 property: "average",
                 req_data_config: graphRequestConfig,
                 project_id: observeId,
+                ...skillVersionSplitParams({ enabled: splitEnabled, filters: combinedFilters }),
               },
               {
                 params: refresh ? { refresh: true } : undefined,
@@ -479,6 +502,7 @@ const GraphSection = ({
         selectedInterval,
         combinedFilters,
         selectedGraphConfig,
+        splitEnabled,
       ]),
     [
       combinedFilters,
@@ -486,6 +510,7 @@ const GraphSection = ({
       selectedGraphConfig,
       selectedInterval,
       selectedTab,
+      splitEnabled,
     ],
   );
   const [lastExactSnapshot, setLastExactSnapshot] = useState(null);
@@ -824,9 +849,10 @@ const GraphSection = ({
     isCollapsed,
     isDark,
   ]);
-  const hasExactGraphPoints = chartData.series.some((series) =>
-    series.data.some((point) => point.y != null),
-  );
+  const splitSeries = skillVersionSeries(exactGraphData);
+  const hasExactGraphPoints = splitEnabled
+    ? splitSeries.length > 0
+    : chartData.series.some((series) => series.data.some((point) => point.y != null));
 
   const handleZoomIn = () => {
     const chart = chartRef.current?.chart;
@@ -999,7 +1025,13 @@ const GraphSection = ({
                   justifyContent: "space-between",
                 }}
               >
-                <Legend series={chartData.series} />
+                {splitAvailable && (
+                  <FormControlLabel
+                    control={<Switch checked={splitEnabled} onChange={(event) => setSplitRequested(event.target.checked)} size="small" />}
+                    label="Split by skill version"
+                  />
+                )}
+                {!splitEnabled && <Legend series={chartData.series} />}
                 <ShowComponent
                   condition={selectedGraphProperty && !isCollapsed}
                 >
@@ -1083,13 +1115,15 @@ const GraphSection = ({
                   {apiGraphReadMessage}
                 </Typography>
               </ShowComponent>
-              <ReactApexChart
-                ref={chartRef}
-                options={chartData.options}
-                series={chartData.series}
-                type="line"
-                height={isCollapsed ? 124 : 248}
-              />
+              {splitEnabled ? <SkillVersionGraph result={exactGraphData} /> : (
+                <ReactApexChart
+                  ref={chartRef}
+                  options={chartData.options}
+                  series={chartData.series}
+                  type="line"
+                  height={isCollapsed ? 124 : 248}
+                />
+              )}
             </ShowComponent>
 
             <ShowComponent

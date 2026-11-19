@@ -240,37 +240,14 @@ jobs:
         # images, or the default backend variant instead of -slim. Covers this
         # workflow and the local builds of ./bin/install --from-source,
         # install.ps1 -FromSource and ./bin/dev (bin/lib/build-local.*): the
-        # standalone build's args against deploy/standalone/Dockerfile, every
-        # other build arg (the backend's IMAGE_VARIANT) against
-        # futureagi/Dockerfile.oss. The scripts build nothing of their own.
+        # guard checks each invocation against its own image's declarations.
         run: |
           set -euo pipefail
-          declared() { sed -nE 's/^[[:space:]]*ARG[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$1" | sort -u; }
-          names() { { grep -ohE -- "--build-arg['\", ]+[A-Za-z_][A-Za-z0-9_]*=" || true; } \
-            | sed -E "s/.*['\", ]([A-Za-z_][A-Za-z0-9_]*)=$/\1/" | sort -u; }
-          standalone=$({
-            printf '%s\n' "$STANDALONE_BUILD_ARGS" | sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p'
-            { sed -n '/build_local_image futureagi\/standalone:local/,/[^\\]$/p' bin/lib/build-local.sh
-              sed -n "/Build-Image 'futureagi\/standalone:local'/,/)/p" bin/lib/build-local.ps1; } | names
-          } | sort -u)
-          backend=$(cat bin/lib/build-local.sh bin/lib/build-local.ps1 | names | comm -23 - <(printf '%s\n' "$standalone"))
-          failed=0
           if own=$(grep -l -- '--build-arg' bin/install bin/install.ps1 bin/dev); then
             echo "::error::build the local images with bin/lib/build-local.*, not in $(paste -sd' ' - <<<"$own")"
-            failed=1
+            exit 1
           fi
-          unknown=$(comm -13 <(declared deploy/standalone/Dockerfile) <(printf '%s\n' "$standalone"))
-          if [ -n "$unknown" ]; then
-            echo "::error::build args not declared in deploy/standalone/Dockerfile: $(paste -sd' ' - <<<"$unknown")"
-            failed=1
-          fi
-          unknown=$(comm -13 <(declared futureagi/Dockerfile.oss) <(printf '%s\n' "$backend" | sed '/^$/d'))
-          if [ -n "$unknown" ]; then
-            echo "::error::build args not declared in futureagi/Dockerfile.oss: $(paste -sd' ' - <<<"$unknown")"
-            failed=1
-          fi
-          echo "standalone: $(paste -sd' ' - <<<"$standalone"); backend: $(paste -sd' ' - <<<"$backend")"
-          exit "$failed"
+          python3 -I deploy/standalone/check_build_args.py
 
       - name: Image label build args
         id: labels

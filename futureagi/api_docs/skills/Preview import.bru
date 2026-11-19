@@ -1,0 +1,21 @@
+meta {
+  name: Preview import
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{backend_url}}/model-hub/skills/import/preview/
+  body: multipart-form
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:multipart-form {
+  files: @file({{skills_zip_path}})
+}

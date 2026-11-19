@@ -109,6 +109,27 @@ const ProfileSettings = lazyWithRetry(
 const OrgSettings = lazyWithRetry(
   () => import("src/pages/dashboard/settings/OrgSettings"),
 );
+const SkillsSpendPolicyPage = lazyWithRetry(() => import('src/pages/dashboard/skills/SkillsSpendPolicyPage'));
+const SkillsWorkspaceLayout = lazyWithRetry(() => import('src/sections/skills/components/SkillsWorkspaceLayout'));
+const ContextLibraryPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextLibraryPage'));
+const ContextDetailPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextDetailPage'));
+const ContextEditorPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextEditorPage'));
+const ContextReviewPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextReviewPage'));
+const ContextCampaignPage = lazyWithRetry(() => import('src/pages/dashboard/skills/contexts/ContextCampaignPage'));
+const SkillsReviewsPage = lazyWithRetry(() => import('src/pages/dashboard/skills/SkillsReviewsPage'));
+const ArchivedSkillsPage = lazyWithRetry(() => import('src/pages/dashboard/skills/ArchivedSkillsPage'));
+const SkillsLibraryPage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillsLibraryPage"),
+);
+const SkillDetailPage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillDetailPage"),
+);
+const SkillEditorPage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillEditorPage"),
+);
+const SkillComparePage = lazyWithRetry(
+  () => import("src/pages/dashboard/skills/SkillComparePage"),
+);
 const Prompt = lazyWithRetry(() => import("src/pages/dashboard/Prompt/Prompt"));
 const Evals = lazyWithRetry(() => import("src/pages/dashboard/evals/Evals"));
 const EvalsUsage = lazyWithRetry(
@@ -1320,6 +1341,25 @@ export const dashboardRoutes = (
           path: "add/:id",
           element: <AddNewPrompt />,
         },
+      ],
+    },
+    {
+      path: "skills",
+      element: <SkillsWorkspaceLayout />,
+      children: [
+        { index: true, element: <SkillsLibraryPage /> },
+        { path: 'contexts', element: <ContextLibraryPage /> },
+        { path: 'contexts/rollouts', element: <ContextCampaignPage /> },
+        { path: 'contexts/rollouts/:campaignId', element: <ContextCampaignPage /> },
+        { path: 'contexts/:contextId/review', element: <ContextReviewPage /> },
+        { path: 'contexts/:contextId/edit', element: <ContextEditorPage /> },
+        { path: 'contexts/:contextId', element: <ContextDetailPage /> },
+        { path: 'reviews', element: <SkillsReviewsPage /> },
+        { path: 'archived', element: <ArchivedSkillsPage /> },
+        { path: 'allowance', element: <SkillsSpendPolicyPage /> },
+        { path: ":skillId", element: <SkillDetailPage /> },
+        { path: ":skillId/edit", element: <SkillEditorPage /> },
+        { path: ":skillId/compare", element: <SkillComparePage /> },
       ],
     },
     {

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctxhub-support-application"
+version = "0.1.0"
+description = "Synthetic refund and chargeback application for Skills native qualification"
+requires-python = ">=3.11"
+dependencies = ["futureagi==0.8.0", "httpx>=0.27,<1"]
+
+[project.scripts]
+ctxhub-support = "ctxhub_support.entrypoint:main"
+ctxhub-business-fixture = "ctxhub_support.business:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ctxhub_support*", "fi.context.adapters"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

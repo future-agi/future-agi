@@ -55,4 +55,17 @@ describe("TraceGrid exact custom attribute requests", () => {
     expect(hiddenCustom).not.toBe(withCustom);
     expect(getTraceAttributeRequestKey([standard])).toBe(withoutCustom);
   });
+
+  it("never asks for the Skills column as an attribute key", () => {
+    const skills = { id: "skills", groupBy: "Custom Columns", isVisible: true };
+    const agent = {
+      id: "gen_ai.agent.name",
+      groupBy: "Custom Columns",
+      isVisible: true,
+    };
+    expect(getRequestedTraceAttributeKeys([standard, skills, agent])).toEqual([
+      "gen_ai.agent.name",
+    ]);
+    expect(getTraceAttributeRequestParams([standard, skills])).toEqual({});
+  });
 });

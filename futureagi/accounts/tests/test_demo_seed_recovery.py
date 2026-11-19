@@ -302,6 +302,8 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
     old = ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key")
     new = ("accounts", "0030_queue_existing_demo_trace_publications")
     executor = MigrationExecutor(connection)
+    current_targets = executor.loader.graph.leaf_nodes()
+    current_tables = set(connection.introspection.table_names())
     try:
         executor.migrate([old])
         assert (
@@ -331,10 +333,11 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
             )
         assert DemoTracePublication.objects.count() == 2
     finally:
-        # Back to the latest accounts migration, not to 0030: a later one must not
-        # stay unapplied for the rest of the test session.
-        executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes("accounts"))
+        # Rolling accounts back also unapplies dependent apps, including Skills.
+        # Restore the complete graph, not only the historical accounts target.
+        MigrationExecutor(connection).migrate(current_targets)
+        assert not MigrationExecutor(connection).migration_plan(current_targets)
+        assert current_tables <= set(connection.introspection.table_names())
 
 
 @pytest.mark.django_db(transaction=True)

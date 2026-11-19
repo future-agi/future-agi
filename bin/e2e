@@ -24,7 +24,7 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # recreates failed jobs.
 SERVICES=(frontend backend worker worker-exact-aggregation worker-sql-workbench code-executor link-canary link-worker-canary
   postgres clickhouse redis minio
-  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack mock-google
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm mock-slack mock-google skills-fakes
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 # E2E_STACK=standalone: the same suite against the Standalone setup
 # (docker-compose.yml: one `app` container plus Postgres and ClickHouse) on the
@@ -35,6 +35,11 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
     -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.standalone-e2e.yml"
     -p futureagi-e2e-standalone)
   SERVICES=(app postgres clickhouse mock-llm mock-google code-executor link-canary link-worker-canary)
+  case "${E2E_STANDALONE_NETWORK:-managed-mock}" in
+    native) COMPOSE+=(-f "$ROOT/e2e/stack/docker-compose.standalone-native.yml"); SERVICES+=(native-runtime) ;;
+    managed-mock) ;;
+    *) die "E2E_STANDALONE_NETWORK must be native or managed-mock" ;;
+  esac
 fi
 
 # Telemetry registration from an E2E stack always goes to loopback, whatever
@@ -110,7 +115,7 @@ build_target() {
       local tag; tag=$(standalone_tag)
       docker build -t "futureagi/future-agi:$tag" --build-arg IMAGE_VARIANT=slim -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
       docker build --build-arg BASE_TAG="$tag" -t "futureagi/future-agi:$tag" -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
-      docker build -t "futureagi/frontend:$tag" "$ROOT/frontend"
+      docker build --build-arg VITE_SKILL_TRACES=on -t "futureagi/frontend:$tag" "$ROOT/frontend"
       docker build --build-arg BASE_TAG="$tag" -t "futureagi/frontend:$tag" -f "$ROOT/e2e/stack/frontend/Dockerfile" "$ROOT"
       docker build -t "futureagi/fi-collector:$tag" "$ROOT/fi-collector"
       docker build -t "futureagi/agentcc-gateway:$tag" "$ROOT/agentcc-gateway"

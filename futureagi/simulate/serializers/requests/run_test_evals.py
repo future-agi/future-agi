@@ -4,8 +4,8 @@ from rest_framework import serializers
 
 from tracer.serializers.filters import (
     StrictInputSerializer,
-    filter_list_field,
     json_object_field,
+    skill_filter_list_field,
 )
 
 
@@ -31,7 +31,7 @@ class EvalConfigDefinitionSerializer(StrictInputSerializer):
         default=dict,
         help_text="Maps test execution data fields to the evaluation template's expected inputs.",
     )
-    filters = filter_list_field(
+    filters = skill_filter_list_field(
         required=False,
         default=list,
         help_text="Canonical filter list to restrict which test results are evaluated.",
@@ -120,7 +120,7 @@ class EvalConfigUpdateRequestSerializer(StrictInputSerializer):
         required=False,
         help_text="UUID of the evaluation template to switch to.",
     )
-    filters = filter_list_field(
+    filters = skill_filter_list_field(
         required=False,
         allow_null=True,
         help_text="Updated canonical filter list to restrict which test results are evaluated.",

@@ -2944,7 +2944,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             analytics = V2AnalyticsQueryService()
             workspace_id = getattr(getattr(request, "workspace", None), "id", None)
             try:
-                if metric_type == "SYSTEM_METRIC":
+                if body.get("split_by") == "skill_version":
+                    from tracer.services.clickhouse.skill_graph import (
+                        fetch_skill_version_graph,
+                    )
+
+                    graph = fetch_skill_version_graph(
+                        analytics=analytics,
+                        project_id=project_id,
+                        filters=filters,
+                        interval=interval,
+                        metric_id=metric_id,
+                        refresh=refresh,
+                        organization_id=str(project.organization_id),
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
+                    )
+                elif metric_type == "SYSTEM_METRIC":
                     graph = fetch_system_metric_graph_ch(
                         analytics=analytics,
                         project_id=project_id,
@@ -4858,11 +4874,21 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Cursor pagination is unavailable for this query shape.",
             )
         cursor_enabled = cursor_requested and cursor_supported
+        from tracer.services.clickhouse.runtime_cohorts import LATENCY_DESC
+        from tracer.services.clickhouse.v2.query_builders.observe_runtime import (
+            RuntimeLatencyQueryBuilderV2,
+        )
         from tracer.services.clickhouse.v2.query_builders.observe_usage import (
             ObserveTraceListQueryBuilderV2,
         )
 
-        builder = ObserveTraceListQueryBuilderV2(
+        list_sort = validated_data.get("sort_params") or []
+        builder_type = (
+            RuntimeLatencyQueryBuilderV2
+            if list_sort == LATENCY_DESC
+            else ObserveTraceListQueryBuilderV2
+        )
+        builder = builder_type(
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
@@ -4874,9 +4900,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_count_mode=True,
         )
         pin_filter_seed_witness_slack(builder, cursor_state)
-        usage_sort = validated_data.get("sort_params") or []
         requires_cursor = (
-            not usage_sort and builder.requires_cursor_for_long_filtered_read()
+            not list_sort and builder.requires_cursor_for_long_filtered_read()
         )
         if requires_cursor and not cursor_supported:
             # A long filtered request must never escape to the legacy broad
@@ -4935,8 +4960,53 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
-        if usage_sort:
-            query, params = builder.build_usage_sorted_query(usage_sort)
+        if isinstance(builder, RuntimeLatencyQueryBuilderV2):
+            from tracer.services.clickhouse.query_service import QueryResult
+
+            if not analytics.supports_per_query_read_settings:
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Bounded latency ordering is unavailable on this connection.",
+                    code="service_unavailable",
+                )
+
+            def read_page(statement, parameters):
+                remaining = read_deadline.remaining_ms()
+                return analytics.execute_ch_query(
+                    statement,
+                    parameters,
+                    timeout_ms=remaining,
+                    server_execution_cap_ms=remaining,
+                    settings={
+                        **page_read_settings,
+                        "max_memory_usage": min(
+                            page_read_settings["max_memory_usage"], 512 * 1024**2
+                        ),
+                    },
+                )
+
+            count_result = read_page(*builder.build_runtime_latency_page(list_sort))
+            (receipt,) = count_result.data
+            total_count = receipt["total"]
+            ranked = builder.runtime_latency_page_rows(receipt["page"])
+            result = QueryResult([], 0, "clickhouse", 0.0)
+            if ranked:
+                result = read_page(*builder.build_filter_page_hydration_query(ranked))
+                # Light replay returns newest first. Reassemble only after proving
+                # it hydrated every ranked physical winner, version and latency.
+                by_trace = {row["trace_id"]: row for row in result.data}
+                if not builder.content_root_rows_match(ranked, result.data) or any(
+                    row["latency_ms"] != by_trace[row["trace_id"]]["latency_ms"]
+                    for row in ranked
+                ):
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Trace data changed while loading this page. Please retry.",
+                        code="service_unavailable",
+                    )
+                result.data = [by_trace[row["trace_id"]] for row in ranked]
+        elif list_sort:
+            query, params = builder.build_usage_sorted_query(list_sort)
             result = analytics.execute_ch_query(
                 query,
                 params,
@@ -4944,7 +5014,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 settings=page_read_settings,
             )
             count_query, count_params = builder.build_usage_sorted_query(
-                usage_sort, count_only=True
+                list_sort, count_only=True
             )
             count_result = analytics.execute_ch_query(
                 count_query,
@@ -5240,6 +5310,25 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         tasks: dict[str, Any] = {}
+        if (
+            project_id
+            and validated_data.get("include_skill_links")
+            and page_number == 0
+        ):
+            # This is a column-availability hint, not delivery evidence. Probe
+            # the narrow link table for the project/window, not this page's IDs.
+            from tracer.services.clickhouse.v2.query_builders.filters import (
+                ClickHouseFilterBuilderV2,
+            )
+
+            start, end = builder.parse_time_range(filters)
+            live_loads = ClickHouseFilterBuilderV2(
+                project_id=str(project_id)
+            ).skill_live_rows_sql()
+            tasks["skill_links"] = (
+                f"SELECT 1 FROM ({live_loads}) LIMIT 1",
+                {"project_id": project_id, "start_date": start, "end_date": end},
+            )
         content_task_names: list[str] = []
         attribute_task_names: list[str] = []
         attribute_task_expected_rows: dict[str, int] = {}
@@ -5836,6 +5925,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             metadata_total_rows = cursor_seen_rows
 
         metadata = {"total_rows": metadata_total_rows}
+        if "skill_links" in enrichment_results:
+            metadata["skill_links_exist"] = bool(enrichment_results["skill_links"].data)
         if bounded_page is not None:
             published_has_more = (
                 bool(bounded_page.complete and bounded_page.has_more) or cursor_has_more

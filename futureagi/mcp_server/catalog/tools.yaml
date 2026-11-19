@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 111
+expected_tool_count: 124
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -641,6 +641,86 @@ tools:
     access: read
     pagination:
       page_size: {maximum: 100}
+  # skills: a separate default-enabled group, like prompts. Existing explicit
+  # group selections stay unchanged; callers can opt into skills independently.
+  - name: list_skills
+    group: skills
+    description: List versioned skills in the authenticated workspace. Read release_revision, protected_label_names and current label targets here before a protected release; submit that revision as expected_release_revision and the target as expected_version. Call get_skill to resolve a label or version before reading instructions.
+    operation: {method: GET, path: "/model-hub/skills/"}
+    access: read
+    pagination:
+      page_size: {maximum: 100}
+  - name: get_skill
+    group: skills
+    description: Resolve a bounded skill manifest without file contents or frontmatter. Choose label or version; neither means production and missing labels never fall back. Files are sorted by path and paged (file_limit 1–25, default 25). Until next_file_offset is null, call get_skill again with file_offset=next_file_offset, the same name and the returned version pinned (omit label); file_count is the total inventory size. Never treat one page as the complete inventory. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed. SKILL.md contains the full original frontmatter. Every response stays within the 64 KiB MCP limit.
+    operation: {method: GET, path: "/model-hub/skills/resolve/"}
+    access: read
+  - name: read_skill_file
+    group: skills
+    description: Read a lossless text chunk from an immutable skill version. Start with SKILL.md after get_skill, use max_bytes 24000, follow the character next_offset until eof, concatenate text and verify its UTF-8 sha256. Read supporting files only when needed. MCP reads are capped at 24000 bytes even if a larger size is requested.
+    operation: {method: GET, path: "/model-hub/skills/{skill_id}/versions/{number}/files/"}
+    access: read
+  - name: publish_skill
+    group: skills
+    description: Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied. Protected labels require a current admin and expected_release_revision read from list_skills (0 for a new identity); publish without labels otherwise. Optional expected_digest binds reviewed content and evidence_run_id attaches already shared exact-content evidence.
+    operation: {method: POST, path: "/model-hub/skills/publish/"}
+    access: write
+  - name: set_skill_label
+    group: skills
+    description: Move a skill label to a published version. Read list_skills first and send expected_release_revision plus expected_version for compare-and-swap; null requires that the label does not exist. Both preconditions and current admin access are mandatory for protected labels, even on a no-op. Optional expected_digest and evidence_run_id bind the reviewed target and shared evidence. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.
+    operation: {method: PUT, path: "/model-hub/skills/{skill_id}/labels/{label}/"}
+    access: write
+  - name: update_skill_tags
+    group: skills
+    description: Replace a skill's discovery tags without changing its immutable versions or labels. Pass the complete desired tags list, or an empty list to remove all tags.
+    operation: {method: PATCH, path: "/model-hub/skills/{skill_id}/"}
+    access: write
+  # skills reads for history, agent contexts and runtime evidence. These are
+  # inspection reads: none of them resolves, fetches or records a load, and
+  # agent-context IDs never go to the leaf-skill tools above.
+  - name: list_skill_versions
+    group: skills
+    description: List the immutable published versions of one leaf skill, newest first, with number, id, digest, note, file_count and the labels currently on each version. Use a skill_id from list_skills, never an agent-context ID. Page with page and page_size (at most 25, the default; pass a smaller value if a page exceeds the MCP size limit); keep requesting pages until page equals total_pages. Read a version's files with get_skill(version=number) and read_skill_file. This does not count as a fetch or a load.
+    operation: {method: GET, path: "/model-hub/skills/{skill_id}/versions/"}
+    access: read
+    pagination:
+      page_size: {maximum: 25}
+  - name: list_agent_contexts
+    group: skills
+    description: List agent contexts in the authenticated workspace. An agent context is a versioned bundle (entrypoint such as AGENTS.md plus files and pinned skill links) that an agent loads as a whole. Each row has its id, name, latest_version, label targets, release_revision, protected_label_names and has_draft. Filter with search, tag or label; page with page and page_size (at most 25, the default) until page equals total_pages. Use the id with get_agent_context and list_agent_context_versions.
+    operation: {method: GET, path: "/model-hub/skills/contexts/"}
+    access: read
+    pagination:
+      page_size: {maximum: 25}
+  - name: get_agent_context
+    group: skills
+    description: Return one agent context by context_id with its release state (latest_version, label targets, release_revision, security_revision, protected_label_names and your permissions), the latest published version summary and whether you have an unpublished draft. Read-only; it never resolves the context for an agent and records no load.
+    operation: {method: GET, path: "/model-hub/skills/contexts/{context_id}/"}
+    access: read
+  - name: list_agent_context_versions
+    group: skills
+    description: List the immutable published versions (snapshots) of one agent context, newest first, with number, id, digest, note, file_count and current labels. Page with page and page_size (at most 25, the default) until page equals total_pages. Inspect a snapshot's pinned skills and file inventory with get_agent_context_snapshot.
+    operation: {method: GET, path: "/model-hub/skills/contexts/{context_id}/versions/"}
+    access: read
+    pagination:
+      page_size: {maximum: 25}
+  - name: get_agent_context_snapshot
+    group: skills
+    description: Inspect one immutable agent-context version without distributing it. descriptor names the entrypoint and lists links, the exact skill versions this snapshot pins; manifest pages the file inventory sorted by path (file_limit 1-25). Until manifest.next_file_offset is null, call again with file_offset set to it and the same context_id and number; file_count is the total. If distribution_blocked is true the version is quarantined or otherwise withheld (reason says why) and must not be loaded or recommended. This is a review read and records no fetch or load.
+    operation: {method: GET, path: "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/"}
+    access: read
+  - name: get_skill_usage
+    group: skills
+    description: 'Read runtime usage for skills or one agent context from traced agent runs, grouped by version (default), skill, agent or context. Requires from and to (ISO 8601 datetimes, a window of at most 30 days ending now or earlier). kind=agent_context needs resource_id; agent or service filters need project_id. Use projection=table for rows; page with cursor=next_cursor and limit (default and maximum 100; pass a smaller limit such as 25 if the result exceeds the MCP size limit). Rows count traces where a version was recorded as loaded, plus outcome metrics; a load is client-reported delivery, never proof that the agent used the skill. coverage and diagnosis explain gaps such as projects without load tracing.'
+    operation: {method: GET, path: "/model-hub/skills/usage/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: get_latest_skill_load
+    group: skills
+    description: Check whether a skill or agent context has been loaded since a time. Supply resource_id, kind (skill or agent_context) and since (ISO 8601). load is the newest traced load (version, agent, project, received_at) or null; fetch separately reports the newest SDK fetch and whether that client can record loads. A fetch is not a load, and a load is never proof of use.
+    operation: {method: GET, path: "/model-hub/skills/loads/"}
+    access: read
   # usage
   - name: get_usage_overview
     group: usage

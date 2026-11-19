@@ -662,3 +662,21 @@ def test_main_sanitizes_driver_error_and_never_retries(monkeypatch, capsys):
         and "secret" not in out.err
         and "customer-value" not in out.err
     )
+
+
+@pytest.mark.parametrize(
+    "phase, apply", [("cdc", False), ("cdc", True), ("native", False)]
+)
+def test_skills_schema_requires_explicit_native_apply(harness, phase, apply):
+    with pytest.raises(cli.InstallError, match="explicit native apply"):
+        harness.run(phase=phase, apply=apply, with_skill_schema=True)
+    harness.pg_connect.assert_not_called()
+    harness.ch_connect.assert_not_called()
+
+
+@pytest.mark.parametrize("phase,apply", [("cdc", False), ("native", True)])
+def test_skill_inspection_cannot_be_used_to_apply(harness, phase, apply):
+    with pytest.raises(cli.InstallError, match="read-only native inspection"):
+        harness.run(phase=phase, apply=apply, require_skill_schema=True)
+    harness.pg_connect.assert_not_called()
+    harness.ch_connect.assert_not_called()

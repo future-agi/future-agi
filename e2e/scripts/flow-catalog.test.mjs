@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractFlows, renderCatalog } from "./flow-catalog.mjs";
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import {
+  collectFlowEntries,
+  extractFlows,
+  renderCatalog,
+} from "./flow-catalog.mjs";
 
 const entry = (id, area = "observe") => ({
   title: `${id}: does a thing`,
@@ -19,6 +25,75 @@ const entry = (id, area = "observe") => ({
     },
   ],
 });
+
+test("collection failure rejects even when the reporter wrote valid partial entries", () => {
+  let output;
+  const failure = new Error("a different spec failed to import");
+  assert.throws(
+    () =>
+      collectFlowEntries((_command, _args, options) => {
+        output = options.env.FLOW_CATALOG_OUT;
+        writeFileSync(output, JSON.stringify([entry("OBS-E2E-001")]));
+        throw failure;
+      }),
+    (error) => error === failure,
+  );
+  assert.equal(existsSync(path.dirname(output)), false);
+});
+
+test("successful collection includes gated flows and removes its private temporary directory", () => {
+  let output;
+  const entries = [entry("OBS-E2E-001")];
+  assert.deepEqual(
+    collectFlowEntries((command, args, options) => {
+      assert.equal(command, "npx");
+      assert.ok(args.includes("--list"));
+      assert.equal(options.env.E2E_INCLUDE_QUARANTINED, "1");
+      assert.equal(options.env.E2E_LIVE_LLM, "1");
+      output = options.env.FLOW_CATALOG_OUT;
+      writeFileSync(output, JSON.stringify(entries));
+    }),
+    entries,
+  );
+  assert.equal(existsSync(path.dirname(output)), false);
+});
+
+for (const content of [undefined, "invalid json"]) {
+  test(`missing or malformed reporter output fails closed (${content})`, () => {
+    let output;
+    assert.throws(() =>
+      collectFlowEntries((_command, _args, options) => {
+        output = options.env.FLOW_CATALOG_OUT;
+        if (content !== undefined) writeFileSync(output, content);
+      }),
+    );
+    assert.equal(existsSync(path.dirname(output)), false);
+  });
+}
+
+for (const [field, values] of Object.entries({
+  id: [42, {}, [], " "],
+  area: [42, {}, [], " "],
+  userGoal: [42, {}, [], " "],
+  steps: ["step", {}, [null], [" "]],
+  backendChecks: ["check", {}, [null], [" "]],
+  browserChecks: ["check", {}, [null], [" "]],
+})) {
+  test(`rejects malformed ${field} before rendering the catalog`, () => {
+    for (const value of values) {
+      const bad = entry("OBS-E2E-001");
+      const meta = JSON.parse(bad.annotations[0].description);
+      bad.annotations[0].description = JSON.stringify({
+        ...meta,
+        [field]: value,
+      });
+      assert.throws(
+        () => extractFlows([bad]),
+        new RegExp(`annotation .*${field}`),
+      );
+    }
+  });
+}
 
 test("extracts well-formed flows", () => {
   const flows = extractFlows([entry("OBS-E2E-001")]);

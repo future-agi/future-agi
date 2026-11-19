@@ -705,6 +705,21 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
                         f"{where}: POD_IP is not the pod's IP (status.podIP) defined before ALLOWED_HOSTS"
                     )
 
+        if doc["kind"] == "Deployment" and component(doc) == "fi-collector":
+            spec = pod_spec(doc)
+            collector = spec["containers"][0]
+            if (
+                spec.get("initContainers")
+                or collector.get("args") != ["-require-skill-schema"]
+                or collector.get("readinessProbe", {}).get("httpGet")
+                != {"path": "/healthz", "port": "admin"}
+                or collector.get("livenessProbe", {}).get("tcpSocket")
+                != {"port": "otlp-grpc"}
+            ):
+                failed.append(
+                    f"{where}: gate OTLP admission without delaying the bootstrap hook"
+                )
+
         if doc["kind"] == "Deployment" and component(doc).startswith("worker"):
             spec = pod_spec(doc)
             if spec.get("initContainers"):

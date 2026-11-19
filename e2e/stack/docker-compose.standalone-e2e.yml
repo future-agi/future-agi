@@ -14,8 +14,9 @@
 #     In Standalone the gateway listens on 127.0.0.1:8080 in the same container.
 services:
   app:
-    networks: [default, link-public]
     depends_on:
+      skills-fakes:
+        condition: service_started
       mock-google:
         condition: service_healthy
     # Never read the checkout's own .env: it belongs to the developer's
@@ -42,14 +43,29 @@ services:
       # Environment versions and drafts, as production runs them (see docker-compose.e2e.yml).
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      E2E_SKILLS_FIXTURES: "1"
+      # J5 qualification only. Production and ordinary E2E runs remain off.
+      SKILLS_CONTEXT_CAMPAIGNS_ENABLED: ${E2E_SKILLS_CAMPAIGNS_ENABLED:-false}
+      # Freeze pricing to the image's pinned LiteLLM catalog; no live GitHub fetch.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # Native guest access is enabled only by the explicit native overlay.
+      SKILLS_NATIVE_RUNTIME_URL: ""
+      SKILLS_NATIVE_CALLBACK_URL: ""
+      SKILLS_NATIVE_RUNTIME_TOKEN: ""
+      SKILLS_NATIVE_RUNTIME_NAME: ""
+      SKILLS_NATIVE_EVIDENCE_CLASS: ""
+    networks: [default, link-public]
     volumes:
       - google-fixture-tls:/run/google-fixture-tls:ro
       - ./e2e/stack/backend/e2e_google.py:/app/backend/tfc/views/e2e_google.py:ro
       - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
+      - ./e2e/stack/backend/e2e_skills_transport.py:/app/backend/tfc/e2e_skills_transport.py:ro
       - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
       - ./e2e/stack/backend/e2e_clean_signup.py:/app/backend/accounts/views/e2e_clean_signup.py:ro
       - ./e2e/stack/backend/e2e_feed_issue.py:/app/backend/tracer/views/e2e_feed_issue.py:ro
       - ./e2e/stack/backend/e2e_legacy_eval.py:/app/backend/sdk/views/e2e_legacy_eval.py:ro
+      # J4: test-image-only retention clock seam.
+      - ./e2e/stack/backend/e2e_j4_evidence_clock.py:/app/backend/model_hub/views/e2e_j4_evidence_clock.py:ro
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.
@@ -68,6 +84,15 @@ services:
     ports:
       - "127.0.0.1:${CH_HTTP_PORT:-28123}:8123"
       - "127.0.0.1:${CH_PORT:-29000}:9000"
+    restart: "no"
+  skills-fakes:
+    networks: [default]
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/skills-fakes/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28084}:8080"
     restart: "no"
   mock-llm:
     image: node:22-alpine
@@ -143,6 +168,45 @@ services:
       retries: 30
     restart: "no"
 
+  # On-demand application request; no ports, external route or persistent credentials.
+  skills-ts-runtime:
+    profiles: [skill-traces]
+    build: ./e2e/stack/skills-ts-runtime
+    image: futureagi/skills-ts-runtime:e2esa
+    read_only: true
+    user: node
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [native-net]
+  # J2 native container runtime. No route outside native-net (internal), read-only
+  # root/source/context mounts, separate writable state, context-only credentials.
+  native-runtime:
+    build:
+      context: ./e2e/stack/native-runtime
+      args:
+        CTXHUB_APP_COMMIT: ${CTXHUB_APP_COMMIT:-}
+    image: futureagi/native-runtime:e2esa
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      CTXHUB_RUNTIME_TOKEN: e2e-native-runtime-launch-token-0001
+      CTXHUB_PROVIDER_KEY: e2e-skills-native-runtime-fixture
+      CTXHUB_PROVIDER_URL: http://skills-fakes:8080/v1
+      CTXHUB_MODEL: gpt-4o-mini
+      CTXHUB_BUSINESS_DB: /fi_business/business.sqlite
+    volumes:
+      - ./e2e/fixtures/skills-r3/support-application:/fi_app:ro
+      - native-context:/fi_context:ro
+    tmpfs:
+      - /fi_state:uid=10001,gid=10001,mode=0700
+      - /fi_output:uid=10001,gid=10001,mode=0700
+      - /fi_business:uid=10001,gid=10001,mode=0700
+      - /tmp:uid=10001,gid=10001,mode=1777
+    networks:
+      - native-net
+    restart: "no"
 networks:
   link-public:
     internal: true
@@ -154,5 +218,8 @@ networks:
     ipam:
       config:
         - subnet: 172.30.91.0/24
+  native-net:
+    internal: true
 volumes:
   google-fixture-tls:
+  native-context: {}

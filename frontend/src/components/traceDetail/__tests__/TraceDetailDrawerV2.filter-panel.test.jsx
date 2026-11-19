@@ -36,6 +36,8 @@ describe("TraceDetailDrawerV2 span filter adapter", () => {
         propertyNamespace: "traces",
         attributeSource: "spans",
         isSpansView: true,
+        // Skill filters are list filters; the drawer filters spans locally.
+        skillFields: false,
         onApply,
       }),
     );

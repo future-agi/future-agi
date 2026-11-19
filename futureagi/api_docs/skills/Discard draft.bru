@@ -1,0 +1,21 @@
+meta {
+  name: Discard draft
+  type: http
+  seq: 24
+}
+
+delete {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/draft/
+  body: json
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}
+
+body:json {
+  {}
+}
