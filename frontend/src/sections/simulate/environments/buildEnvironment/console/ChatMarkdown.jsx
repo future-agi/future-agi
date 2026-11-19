@@ -3,36 +3,27 @@ import { useMemo } from "react";
 import { Box } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
-import { isBasicHtmlTag } from "./basicHtml";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
 // Raw HTML would be dropped by the sanitizer, losing words like "<front desk>".
-const htmlAsText =
-  ({ basicHtml } = {}) =>
-  (tree) => {
-    const walk = (node) => {
-      if (node.type === "html" && !(basicHtml && isBasicHtmlTag(node.value)))
-        node.type = "text";
-      node.children?.forEach(walk);
-    };
-    walk(tree);
+const htmlAsText = () => (tree) => {
+  const walk = (node) => {
+    if (node.type === "html") node.type = "text";
+    node.children?.forEach(walk);
   };
+  walk(tree);
+};
 
-/** Markdown prose in the builder chat: builder notes and question prompts.
- *  `basicHtml` also renders bare formatting tags like <b>; any other HTML stays text. */
-export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
+/** Markdown prose in the builder chat: builder notes and question prompts. */
+export default function ChatMarkdown({ text, dim, small, sx }) {
   // Every keystroke in the composer redraws the chat; parse only when text changes.
   const body = useMemo(
     () => (
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, [htmlAsText, { basicHtml }]]}
-        // The sanitizer runs last, so nothing rehypeRaw parses gets past it.
-        rehypePlugins={
-          basicHtml ? [rehypeRaw, rehypeSanitize] : [rehypeSanitize]
-        }
+        remarkPlugins={[remarkGfm, htmlAsText]}
+        rehypePlugins={[rehypeSanitize]}
         // An image loads as soon as the chat opens, so model-written text could
         // send data to any site through its URL.
         disallowedElements={["img"]}
@@ -40,13 +31,14 @@ export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
         {text || ""}
       </ReactMarkdown>
     ),
-    [text, basicHtml],
+    [text],
   );
 
   return (
     <Box
       sx={{
-        typography: "m3",
+        // Small for compact spots like the run plan and the chat's cards.
+        typography: small ? "s3" : "m3",
         color: dim ? "text.secondary" : "text.primary",
         "& p": { m: 0, mb: 1 },
         "& p:last-of-type": { mb: 0 },
@@ -58,7 +50,7 @@ export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
           mb: 0.5,
         },
         "& ul, & ol": { m: 0, mb: 1, pl: 3 },
-        "& code": { typography: "s1", fontFamily: MONO },
+        "& code": { typography: small ? "s3" : "s1", fontFamily: MONO },
         "& a": { color: "text.primary", textDecoration: "underline" },
         // Code keeps its lines and tables keep whole words, so both scroll
         // sideways inside their own box rather than widening the chat.
@@ -97,6 +89,6 @@ export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
 ChatMarkdown.propTypes = {
   text: PropTypes.string,
   dim: PropTypes.bool,
+  small: PropTypes.bool,
   sx: PropTypes.object,
-  basicHtml: PropTypes.bool,
 };

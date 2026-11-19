@@ -35,6 +35,7 @@ import {
   useEnvironmentVersions,
   useRetryAgentVersion,
 } from "src/api/simulate-environments/versions";
+import ChatMarkdown from "../../../buildEnvironment/console/ChatMarkdown";
 import CredentialsForm from "../../agents/CredentialsForm";
 import { PreflightBadge, PreflightReport } from "../../agents/PreflightStatus";
 import {
@@ -405,9 +406,13 @@ function FixLine({
         )}
       </Stack>
       {showReason && (
-        <Typography sx={{ typography: "s3", color: "text.secondary", pt: 0.5 }}>
-          {progress.reason.message}
-        </Typography>
+        // The builder's own reply, often markdown (lists, tables, code).
+        <ChatMarkdown
+          text={progress.reason.message}
+          dim
+          small
+          sx={{ pt: 0.5 }}
+        />
       )}
       {fix && (
         <Collapse
