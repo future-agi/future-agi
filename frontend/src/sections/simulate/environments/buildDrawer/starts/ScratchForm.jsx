@@ -16,6 +16,9 @@ import {
 } from "../forms/shared/useFileUploads";
 import { T12 } from "../drawerStyles";
 import { paths } from "src/routes/paths";
+import { useMyEnvironments } from "src/api/simulate-environments/environments";
+import { EMPTY_ENV_FILTERS } from "src/api/simulate-environments/environmentListParams";
+import { UNTITLED } from "../../design/design";
 import { useDesignDraftStore } from "../../design/useDesignDraftStore";
 import DescribeFlowCard from "./DescribeFlowCard";
 import { PERSONAL_DATA } from "./startUtils";
@@ -36,6 +39,11 @@ export default function ScratchForm() {
   const navigate = useNavigate();
   const createDesignDraft = useDesignDraftStore((s) => s.createDesignDraft);
   const [name, setName] = useState("");
+  // Environments an untitled name could clash with.
+  const { data: untitled } = useMyEnvironments({
+    pageSize: 100,
+    filters: { ...EMPTY_ENV_FILTERS, search: UNTITLED },
+  });
   const [flowText, setFlowText] = useState("");
   const uploads = useFileUploads();
   // Asked up front and starting on the safest choice, never a silent default.
@@ -58,7 +66,7 @@ export default function ScratchForm() {
         label={
           <HintLine
             text="Environment name (optional)"
-            hint="Leave it blank and we'll name it from your description."
+            hint="Leave it blank and the builder suggests a name once it has read your description and files."
           />
         }
         inputProps={{ "aria-label": "Environment name" }}
@@ -86,6 +94,7 @@ export default function ScratchForm() {
                 description: flowText,
                 files: draftFilesOf(uploads.done),
                 personalChoice: personalData,
+                takenNames: (untitled?.rows || []).map((r) => r.name),
               }),
             ),
           )

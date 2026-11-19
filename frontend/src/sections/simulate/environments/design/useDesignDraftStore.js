@@ -2,7 +2,7 @@ import { create } from "src/utils/zustand";
 import { createJSONStorage, devtools, persist } from "zustand/middleware";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
 import { mergeFileRows } from "../buildDrawer/forms/shared/buildFiles";
-import { READ_MS, draftNameOf } from "./design";
+import { READ_MS, untitledNameOf } from "./design";
 
 // Drafts kept in this browser; creating one drops the oldest past this.
 export const MAX_DESIGN_DRAFTS = 20;
@@ -19,6 +19,7 @@ export const useDesignDraftStore = create(
         // files: [{ id, name, size, type, documentId }], only ones that
         // uploaded (documentId from the upload). Each file keeps the personal data
         // choice it was added under. Returns the new draft's id.
+        // takenNames: environment names an untitled draft mustn't repeat.
         createDesignDraft: ({
           name,
           description = "",
@@ -26,12 +27,21 @@ export const useDesignDraftStore = create(
           personalChoice = null,
           agent = null,
           scenarioCount = null,
+          takenNames = [],
         }) => {
           const now = Date.now();
           const id = `design-${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+          const typed = name?.trim();
           const draft = {
             id,
-            name: name?.trim() || draftNameOf(description, files),
+            name:
+              typed ||
+              untitledNameOf([
+                ...takenNames,
+                ...Object.values(get().drafts).map((d) => d.name),
+              ]),
+            // A typed name is never replaced by the builder's suggestion.
+            nameTyped: !!typed,
             description: description.trim(),
             files: personalChoice
               ? files.map((f) => ({ ...f, personalChoice }))
@@ -59,6 +69,26 @@ export const useDesignDraftStore = create(
           return id;
         },
 
+        // typed: false only when the builder's suggestion fills an untitled name.
+        renameDraft: (draftId, name, { typed = true } = {}) =>
+          set(
+            (s) =>
+              s.drafts[draftId]
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        name,
+                        nameTyped: typed,
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "renameDraft",
+          ),
+
         // Approval: the stub build runs from this moment (designBuildOf).
         startDesignBuild: (draftId) =>
           set(
@@ -76,6 +106,46 @@ export const useDesignDraftStore = create(
                 : {},
             false,
             "startDesignBuild",
+          ),
+
+        // Save in Review changes: the checked build becomes v1. Only a build
+        // that passed its checks can be saved, and only once.
+        saveDesignRelease: (draftId, name = "") =>
+          set(
+            (s) =>
+              s.drafts[draftId]?.build && !s.drafts[draftId].release
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        release: { version: 1, name, savedAt: Date.now() },
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "saveDesignRelease",
+          ),
+
+        // agent: { id, name, version } picked or connected after save. Kept
+        // apart from `agent`, which an agent-built design was read from.
+        connectDesignAgent: (draftId, agent) =>
+          set(
+            (s) =>
+              s.drafts[draftId]
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        connectedAgent: agent,
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "connectDesignAgent",
           ),
 
         // A file left out to repair a failed build: the design is read again

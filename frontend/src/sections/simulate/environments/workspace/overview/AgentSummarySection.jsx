@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Fade, Stack, Typography } from "@mui/material";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -15,7 +16,13 @@ const providerLabel = (provider) =>
   provider;
 
 // With `onManageVersions`, a "Manage versions" action opens the agent versions.
-export default function AgentSummarySection({ subject, onManageVersions }) {
+// With `onConnect` and no agent, "Connect agent" opens the agent picker.
+export default function AgentSummarySection({
+  subject,
+  onManageVersions,
+  onConnect,
+}) {
+  const reduce = usePrefersReducedMotion();
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
@@ -109,6 +116,22 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
             {AGENT_SUMMARY_COPY.viewAgent}
           </Button>
         )}
+        <Fade
+          in={!subject && !!onConnect}
+          timeout={reduce ? 0 : undefined}
+          unmountOnExit
+        >
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={onConnect}
+            endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+            sx={{ flexShrink: 0 }}
+          >
+            {AGENT_SUMMARY_COPY.connect}
+          </Button>
+        </Fade>
         {onManageVersions && (
           <Button
             variant="outlined"
@@ -133,4 +156,5 @@ AgentSummarySection.propTypes = {
     active_version: PropTypes.string,
   }),
   onManageVersions: PropTypes.func,
+  onConnect: PropTypes.func,
 };

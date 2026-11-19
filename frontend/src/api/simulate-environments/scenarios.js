@@ -1,6 +1,11 @@
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { isScenarioSampleMode } from "./scenariosSampleMode";
+import {
+  designNotSaved,
+  designScenarioRowsOf,
+  isDesignEnvId,
+} from "./designEnvironment";
 
 // Dev sample mode (?scnSample=1): serve the in-repo captured 20-row suite from
 // the fixtures emulator instead of the live endpoints. Dynamically imported so
@@ -51,6 +56,10 @@ export const serializeScenarioParams = (params = {}) => {
 };
 
 export const listScenarios = async (jobId, params = {}) => {
+  if (isDesignEnvId(jobId)) {
+    const { queryScenarioFixture } = await sampleEmulator();
+    return queryScenarioFixture(params, designScenarioRowsOf(jobId));
+  }
   if (isScenarioSampleMode()) {
     const { queryScenarioFixture } = await sampleEmulator();
     return withSampleLatency(queryScenarioFixture(params));
@@ -67,6 +76,7 @@ export const listScenarios = async (jobId, params = {}) => {
 // delete (drop). The body is { rework, changes:[...] }; the response is
 // { receipts:[{ scenario, outcome, why }] }. There is no create route.
 export const amendScenarios = async (jobId, body) => {
+  if (isDesignEnvId(jobId)) throw designNotSaved();
   if (isScenarioSampleMode()) {
     const { amendScenarioFixture } = await sampleEmulator();
     return withSampleLatency(amendScenarioFixture(body));
@@ -78,6 +88,10 @@ export const amendScenarios = async (jobId, body) => {
 // does not change with the page but does change with the filter. Takes the same
 // search + object-style filters as the list, plus row_axis / col_axis.
 export const scenarioCoverage = async (jobId, params = {}) => {
+  if (isDesignEnvId(jobId)) {
+    const { coverageScenarioFixture } = await sampleEmulator();
+    return coverageScenarioFixture(params, designScenarioRowsOf(jobId));
+  }
   if (isScenarioSampleMode()) {
     const { coverageScenarioFixture } = await sampleEmulator();
     return withSampleLatency(coverageScenarioFixture(params));

@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import { useRef } from "react";
 import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { uiOnlyToast } from "../buildDrawer/starts/startUtils";
 import { PlanLine, PlanRow, Quiet } from "./planParts";
 import ReadingLine from "./ReadingLine";
 
@@ -156,27 +155,6 @@ export default function DesignBuildView({ build, onLeaveOut, timeout }) {
               ? `A check failed, so nothing was saved and the draft is kept. ${failed.file ? `Leave out ${failed.file.name} (add a corrected copy if you have one), then approve again.` : "Fix the design, then approve again."}`
               : `Saved as v${release?.version}. Nothing runs until you connect an agent and start a run.`}
           </Typography>
-          {!failed && (
-            <>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => uiOnlyToast("picking an existing agent here")}
-                sx={quietBtnSx}
-              >
-                Pick an existing agent
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={() => uiOnlyToast("connecting an agent here")}
-                sx={{ flexShrink: 0 }}
-              >
-                Connect my agent
-              </Button>
-            </>
-          )}
         </Stack>
       </Collapse>
     </Box>

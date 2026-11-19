@@ -143,19 +143,39 @@ const tableOf = (name) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_|_$/g, "");
 
-/** A draft's name when none was typed: from the description, else a file. */
-export function draftNameOf(description, files = []) {
-  const words = String(description || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 5)
+export const UNTITLED = "Untitled environment";
+
+/** The name when none was typed, numbered from 2 only when it's taken. */
+export function untitledNameOf(taken = []) {
+  const used = new Set(
+    taken.map((n) =>
+      String(n || "")
+        .trim()
+        .toLowerCase(),
+    ),
+  );
+  let name = UNTITLED;
+  for (let n = 2; used.has(name.toLowerCase()); n += 1)
+    name = `${UNTITLED} ${n}`;
+  return name;
+}
+
+// Stub of the design job's suggested name, by what the design is about.
+const SUGGESTED_NAMES = [
+  [/refund|return/, "Refund desk"],
+  [/book|appointment|slot/, "Booking desk"],
+  [/order/, "Order desk"],
+  [/issue|triage/, "Issue triage"],
+  [/discount|pric/, "Pricing desk"],
+  [/ticket|support/, "Support desk"],
+];
+
+/** The name the builder suggests once it has read the design, or null. */
+export function suggestedNameOf(description, files = []) {
+  const text = [description, ...files.map((f) => f.name)]
     .join(" ")
-    .replace(/[.,;:!?]+$/, "");
-  const base = words || (files[0] && `${tableOf(files[0].name)} environment`);
-  return base
-    ? base.charAt(0).toUpperCase() + base.slice(1)
-    : "New environment";
+    .toLowerCase();
+  return SUGGESTED_NAMES.find(([re]) => re.test(text))?.[1] || null;
 }
 
 // What one file gives the design, from its name.
@@ -378,6 +398,10 @@ export function designSummary(draft, now) {
     people: shown("people", people),
     scenarios: shown("scenarios", scenarios),
     questions: readingParts.length ? [] : questions,
+    suggestedName:
+      readingParts.length || approveBlocked
+        ? null
+        : suggestedNameOf(description, sources),
     deps,
     // While reading, only the files that can be opened are named.
     readingNames: names(read.filter((f) => !f.unsupported)),

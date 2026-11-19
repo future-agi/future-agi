@@ -12,6 +12,7 @@ import {
   ReviewDecisionSchema,
 } from "./draftReview.contract";
 import { environmentVersionsKey } from "./versions";
+import { designReviewOf, isDesignEnvId } from "./designEnvironment";
 
 const CHECK_CONTRACT = import.meta.env.DEV || import.meta.env.MODE === "test";
 
@@ -36,9 +37,9 @@ export function useDraftReview(envId, { enabled = true } = {}) {
   return useQuery({
     queryKey: draftReviewKey(envId),
     queryFn: async () => {
-      const review = freshSampleReview(
-        queryClient.getQueryData(draftReviewKey(envId)),
-      );
+      const review = isDesignEnvId(envId)
+        ? designReviewOf(envId)
+        : freshSampleReview(queryClient.getQueryData(draftReviewKey(envId)));
       if (CHECK_CONTRACT) DraftReviewSchema.parse(review);
       return review;
     },
@@ -82,8 +83,16 @@ export function useDecideChanges(envId) {
       return decisions;
     },
     onSuccess: (decisions) => {
+      // Keeps what the review says it is (a design build isn't the sample).
       queryClient.setQueryData(draftReviewKey(envId), (review) =>
-        review ? withSampleDecisions(review, decisions) : review,
+        review
+          ? {
+              ...withSampleDecisions(review, decisions),
+              is_sample: review.is_sample,
+              sample_scenario_total: review.sample_scenario_total,
+              drafts: review.drafts,
+            }
+          : review,
       );
     },
   });
