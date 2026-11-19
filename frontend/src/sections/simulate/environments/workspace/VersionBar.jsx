@@ -28,6 +28,9 @@ export default function VersionBar({ env, envState, action = null }) {
   // refreshes what follows the default.
   useRefreshWhenChecked(env?.id, data?.agent);
   const { versionBar } = WORKSPACE_COPY;
+  if (env?.designBuild) {
+    return <DesignPairing env={env} action={action} />;
+  }
 
   // Only state a pairing once the server has answered. A failed refresh keeps
   // what it last answered; before any answer only the scenario count shows.
@@ -236,9 +239,91 @@ export default function VersionBar({ env, envState, action = null }) {
   );
 }
 
+const strong = (text) => (
+  <Box
+    component="span"
+    sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+  >
+    {text}
+  </Box>
+);
+const quiet = (text) => (
+  <Box component="span" sx={{ typography: "s3", color: "text.subtitle" }}>
+    {text}
+  </Box>
+);
+
+// A design's environment: its one version, the agent if one is connected,
+// and the scenarios the design makes, as the prototype states them.
+function DesignPairing({ env, action }) {
+  const copy = WORKSPACE_COPY.versionBar.design;
+  const agent = env.testSubject;
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{
+        px: 2,
+        py: 0.875,
+        minHeight: 43,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+        flexWrap: "wrap",
+        rowGap: 1,
+      }}
+    >
+      <Typography
+        noWrap
+        sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+      >
+        <Iconify
+          icon="solar:box-linear"
+          width={14}
+          sx={{ color: "text.subtitle", verticalAlign: "-2px", mr: 0.75 }}
+        />
+        {agent ? (
+          <>
+            {`${copy.agent} `}
+            {strong(
+              [agent.name, agent.active_version].filter(Boolean).join(" "),
+            )}
+          </>
+        ) : (
+          copy.noAgent
+        )}
+        <Box
+          component="span"
+          sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
+        >
+          ×
+        </Box>
+        {`${copy.environment} `}
+        {strong("v1")}
+        {quiet(` · ${copy.notRun}`)}
+        {quiet(` · ${copy.scenarios(env.designScenarioCount ?? 0)}`)}
+      </Typography>
+      <Box flex={1} />
+      {action}
+    </Stack>
+  );
+}
+DesignPairing.propTypes = {
+  env: PropTypes.shape({
+    testSubject: PropTypes.shape({
+      name: PropTypes.string,
+      active_version: PropTypes.string,
+    }),
+    designScenarioCount: PropTypes.number,
+  }).isRequired,
+  action: PropTypes.node,
+};
+
 VersionBar.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
+    designBuild: PropTypes.object,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
     testSubject: PropTypes.shape({
       name: PropTypes.string,
