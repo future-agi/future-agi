@@ -24,8 +24,8 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     eval_review,
     held_back_cases,
-    limited_validation,
     overridable_regressions,
+    too_few_held_back,
     verdict_tiers,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
@@ -116,7 +116,7 @@ def open_pull_request(
             title,
             body,
             token,
-            draft=limited_validation(fix_run) or bool(candidate.override_reason),
+            draft=too_few_held_back(fix_run) or bool(candidate.override_reason),
         )
     AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
         pull_request_url=url
@@ -190,6 +190,12 @@ def _must_pass_check(check: str) -> str:
     return f"{named}: its “{_text(sub_goal)}” check" if sub_goal else named
 
 
+def _strength(held: int) -> str:
+    """The label of a result too few held-back cases verify: proven on the targets only
+    when none were held back, limited validation when some were."""
+    return "Proven on the targets only" if not held else "Limited validation"
+
+
 def _limited_note(candidate: AgentFixCandidate) -> str:
     held = held_back_cases(candidate.fix_run)
     which = (
@@ -200,7 +206,7 @@ def _limited_note(candidate: AgentFixCandidate) -> str:
         else f"Only {held} failing cases were"
     )
     return (
-        f"**Limited validation.** {which} held back from the epoch to verify it; it takes"
+        f"**{_strength(held)}.** {which} held back from the epoch to verify it; it takes"
         f" {HELD_BACK_VERIFIED_MIN} or more. Check the changed behavior yourself before"
         " you merge."
     )
@@ -261,10 +267,11 @@ def _title(
     else:
         fixes = _plural(causes, "diagnosed cause", "diagnosed causes")
         wordings = [f"{name}: fix {fixes} in {place}" for place in places]
-        # Both marks leave room only for the shorter word.
+        # Both marks leave room only for the shorter word, or for no causes at all.
         wordings.append(
             f"{name}: fix {_plural(causes, 'cause', 'causes')} in {counted}"
         )
+        wordings.append(f"{name}: change {counted}")
     return next((one for one in wordings if len(one) <= _TITLE_CHARS), wordings[-1])
 
 
@@ -484,9 +491,11 @@ def _verdict_section(
     tiers: list[VerdictTier], verdict: dict, standing: str, request: dict, plan: dict
 ) -> str:
     """The verdict's checks in the fix page's words, each part of one on its own row, and
-    the engine's statistics folded below them."""
+    the engine's statistics folded below them. A normal result has no standing, so its
+    heading carries no label."""
+    heading = f"### Verdict: {standing}" if standing else "### Verdict"
     if not tiers:
-        return f"### Verdict: {standing}"
+        return heading
     rows = []
     for tier in tiers:
         rows.append(
@@ -503,9 +512,7 @@ def _verdict_section(
     )
     decided = _decided_section(tiers, verdict, request)
     return "\n\n".join(
-        part
-        for part in (f"### Verdict: {standing}\n\n{table}{measured}", decided)
-        if part
+        part for part in (f"{heading}\n\n{table}{measured}", decided) if part
     )
 
 
@@ -668,23 +675,18 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     verdict = candidate.verdict or {}
     # Not the engine's own reason: the checks below say the same in the page's words.
     rates = _evidence(verdict)
-    limited = limited_validation(candidate.fix_run)
+    held = held_back_cases(candidate.fix_run)
+    limited = too_few_held_back(candidate.fix_run)
     overridden = bool(candidate.override_reason)
-    proof = "Checked" if limited or overridden else "Verified"
-    standing = (
-        "Known regression"
-        if overridden
-        else "Limited validation"
-        if limited
-        else "Verified"
-    )
+    # A normal result carries no label; only a weaker one says how strong it is.
+    standing = "Known regression" if overridden else _strength(held) if limited else ""
     files = _changed_files(patch)
     head = "\n\n".join(
         part
         for part in (
             _override_note(candidate) if overridden else "",
             _limited_note(candidate) if limited else "",
-            f"{proof} by Epoch: {rates}" if rates else "",
+            f"Checked by Epoch: {rates}" if rates else "",
             _verdict_section(
                 verdict_tiers(candidate),
                 verdict,
@@ -713,7 +715,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     marks = ", ".join(
         mark
         for mark, applies in (
-            ("limited validation", limited),
+            (_strength(held).lower(), limited),
             ("known regression", overridden),
         )
         if applies

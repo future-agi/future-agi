@@ -108,10 +108,10 @@ describe("ErrorFeedDetailView on a shared issue", () => {
     }
   });
 
-  it("opens the Fix tab as the read-only analysis tab", async () => {
+  it("opens the Root cause tab as the read-only analysis tab", async () => {
     renderShared();
 
-    await userEvent.click(screen.getByRole("tab", { name: /fix/i }));
+    await userEvent.click(screen.getByRole("tab", { name: /root cause/i }));
 
     expect(screen.getByText("analysis tab")).toBeInTheDocument();
   });

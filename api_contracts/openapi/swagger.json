@@ -173100,6 +173100,8 @@
             "required": [
                 "row",
                 "description",
+                "fix_hypothesis",
+                "falsifier",
                 "success_trace",
                 "representative_trace"
             ],
@@ -173110,6 +173112,18 @@
                 },
                 "description": {
                     "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "fix_hypothesis": {
+                    "title": "Fix hypothesis",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "falsifier": {
+                    "title": "Falsifier",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true
