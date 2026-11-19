@@ -14,7 +14,7 @@ from tfc.deployment_telemetry.schema import (
     HEARTBEAT_FIELDS,
     REGISTRATION_FIELDS,
 )
-from tfc.logging.sentry import _is_telemetry_url, _scrub_deployment_telemetry_event
+from tfc.logging.sentry import _is_telemetry_url, _scrub_event
 from tfc.telemetry.middleware import (
     OTelContextMiddleware,
     is_sensitive_body_path,
@@ -74,7 +74,7 @@ def test_staged_credential_files_are_treated_as_sensitive_bodies():
         },
     }
 
-    scrubbed = _scrub_deployment_telemetry_event(event)
+    scrubbed = _scrub_event(event)
 
     assert "data" not in scrubbed["request"]
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
@@ -184,7 +184,7 @@ def test_sentry_scrubs_a_transcript_import_request_and_frame_variables():
         },
     }
 
-    scrubbed = _scrub_deployment_telemetry_event(event)
+    scrubbed = _scrub_event(event)
 
     assert "data" not in scrubbed["request"]
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
@@ -224,7 +224,7 @@ def test_guest_and_fix_engine_bodies_stay_off_spans_and_sentry(suffix):
         },
     }
 
-    scrubbed = _scrub_deployment_telemetry_event(event)
+    scrubbed = _scrub_event(event)
 
     assert "data" not in scrubbed["request"]
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
@@ -274,7 +274,7 @@ def test_sentry_scrubs_deployment_telemetry_request_data_and_frame_variables():
         },
     }
 
-    scrubbed = _scrub_deployment_telemetry_event(event)
+    scrubbed = _scrub_event(event)
 
     assert "data" not in scrubbed["request"]
     assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
@@ -312,7 +312,7 @@ def test_sentry_scrubs_outbound_telemetry_request_breadcrumb_body():
         },
     }
 
-    scrubbed = _scrub_deployment_telemetry_event(event)
+    scrubbed = _scrub_event(event)
 
     telemetry_crumb, other_crumb = scrubbed["breadcrumbs"]["values"]
     assert "body" not in telemetry_crumb["data"]

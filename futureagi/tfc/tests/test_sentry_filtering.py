@@ -28,7 +28,6 @@ from tfc.logging.sentry import (
     _get_before_send,
     _is_sensitive_key,
     _scrub,
-    _scrub_deployment_telemetry_event,
     _scrub_event,
 )
 from tfc.tests.sentry_capture import EnvelopeTransport
@@ -448,7 +447,7 @@ def test_transaction_scrubber_accepts_list_breadcrumbs():
         ]
     }
 
-    out = _scrub_deployment_telemetry_event(event)
+    out = _scrub_event(event)
 
     assert out is event
     assert out["breadcrumbs"][0]["data"] == {
@@ -470,6 +469,6 @@ def test_transaction_scrubber_keeps_mapping_breadcrumb_contract():
         }
     }
 
-    out = _scrub_deployment_telemetry_event(event)
+    out = _scrub_event(event)
 
     assert out["breadcrumbs"]["values"][0]["data"] == {}

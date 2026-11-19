@@ -20,7 +20,7 @@ Usage:
 import json
 import os
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, cast
 
@@ -284,42 +284,66 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
     return result
 
 
-def _entries(container: dict, key: str, limit: int) -> list | tuple:
+def _entries(container: dict, key: str, limit: int) -> list | tuple | None:
     items = container.get(key)
     if type(items) not in (list, tuple) or len(items) > min(limit, _MAX_ITEMS) or not all(
         type(item) is dict for item in items
     ):
         container.pop(key, None)
-        return []
+        return None
     return cast("list | tuple", items)
 
 
-def _frames(event: dict) -> Iterator[dict]:
+def _scrub_frames(event: dict) -> bool | None:
+    """Return whether a Vertex loader was found, or None for an incomplete walk."""
     remaining = 512
+    complete = True
+    matched = False
 
-    def stack_frames(owner: dict) -> list | tuple:
-        nonlocal remaining
-        stack = owner.get("stacktrace")
+    def inspect_stack(owner: dict) -> None:
+        nonlocal remaining, complete, matched
+        if "stacktrace" not in owner:
+            return
+        stack = owner["stacktrace"]
         if type(stack) is not dict:
-            owner.pop("stacktrace", None)
-            return []
+            owner.pop("stacktrace")
+            complete = False
+            return
         frames = _entries(stack, "frames", remaining)
+        if frames is None:
+            complete = False
+            return
         remaining -= len(frames)
-        return frames
+        for frame in frames:
+            frame.pop("vars", None)
+            matched |= _vertex_auth_frame(frame.get("module"), frame.get("function"))
 
-    yield from stack_frames(event)
+    inspect_stack(event)
     for section in ("exception", "threads"):
-        container = event.get(section)
-        if type(container) is not dict:
-            event.pop(section, None)
+        if section not in event:
             continue
-        for item in _entries(container, "values", _MAX_ITEMS):
-            yield from stack_frames(item)
+        container = event[section]
+        if type(container) is not dict:
+            event.pop(section)
+            complete = False
+            continue
+        items = _entries(container, "values", _MAX_ITEMS)
+        if items is None:
+            complete = False
+            continue
+        for item in items:
+            inspect_stack(item)
+    if matched:
+        return True
+    return False if complete else None
 
 
-def _scrub_event(event: dict, *, vertex_log: bool = False) -> None:
+def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
+    _scrub_breadcrumbs(event)
     request = event.get("request")
     if type(request) is dict:
+        if _is_telemetry_url(request.get("url", "")):
+            request.pop("data", None)
         if "url" in request:
             url = _scrub_text(request["url"])
             request["url"] = url.partition("?")[0].partition("#")[0]
@@ -346,22 +370,23 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> None:
         contexts = _scrub(event["contexts"])
         event["contexts"] = contexts if type(contexts) is dict else {}
 
-    for frame in _frames(event):
-        frame.pop("vars", None)
-        vertex_log |= _vertex_auth_frame(frame.get("module"), frame.get("function"))
+    frame_match = _scrub_frames(event)
+    replacement = None
+    if vertex_log or frame_match is True:
+        replacement = _VERTEX_SAFE_MESSAGE
+    elif frame_match is None:
+        replacement = _REDACTED
     for value in event.get("exception", {}).get("values", []):
         if "value" in value:
-            value["value"] = (
-                _VERTEX_SAFE_MESSAGE if vertex_log else _scrub_text(value["value"])
-            )
+            value["value"] = replacement or _scrub_text(value["value"])
     if "message" in event:
-        event["message"] = _VERTEX_SAFE_MESSAGE if vertex_log else _scrub_text(event["message"])
+        event["message"] = replacement or _scrub_text(event["message"])
     if "logentry" in event:
         entry = event["logentry"]
         # Never replay a format string, stringify parameters, or guess which
         # argument produced part of a rendered message.
-        if vertex_log:
-            event["logentry"] = {"message": _VERTEX_SAFE_MESSAGE}
+        if replacement:
+            event["logentry"] = {"message": replacement}
         elif type(entry) is not dict:
             event.pop("logentry")
         else:
@@ -373,13 +398,16 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> None:
             has_params = params is not None and not (
                 type(params) in (list, tuple, dict) and not params
             )
-            rendered = "message" in entry and "formatted" in entry and message != formatted
+            rendered = "formatted" in entry and (
+                "message" not in entry or message != formatted
+            )
             if has_params or rendered:
                 event["logentry"] = {"message": _REDACTED}
             else:
                 event["logentry"] = {
                     k: v for k, v in (("message", message), ("formatted", formatted)) if k in entry
                 }
+    return event
 
 
 def _event_scrubber() -> Any:
@@ -463,7 +491,7 @@ def _is_telemetry_url(url: object) -> bool:
     return any(pattern.search(url) for pattern in SENSITIVE_BODY_PATHS)
 
 
-def _scrub_deployment_telemetry_event(event: dict) -> dict:
+def _scrub_breadcrumbs(event: dict) -> None:
     # Construct new records at send time, even for SDK-retained or restored
     # scope breadcrumbs that never passed through our ingestion hook.
     if "breadcrumbs" in event:
@@ -475,17 +503,9 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
             clean = [_before_breadcrumb(c, {}) for c in items if type(c) is dict]
         event["breadcrumbs"] = {"values": clean} if wrapped else clean
 
-    request = event.get("request")
-    if type(request) is dict and _is_telemetry_url(request.get("url", "")):
-        request.pop("data", None)
-        for frame in _frames(event):
-            frame.pop("vars", None)
-    return event
-
 
 def _before_send_transaction(event: dict, hint: dict) -> dict | None:
     try:
-        _scrub_deployment_telemetry_event(event)
         _scrub_event(event)
     except Exception:
         return None
@@ -588,7 +608,6 @@ def _get_before_send() -> Callable:
 
         # 3. Scrub secrets/PII from the surviving event.
         try:
-            _scrub_deployment_telemetry_event(event)
             _scrub_event(
                 event,
                 vertex_log=_vertex_log_message(

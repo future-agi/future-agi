@@ -89,6 +89,42 @@ def test_small_limits_discard_uninspectable_payloads(monkeypatch):
         assert MARKER not in json.dumps(transport.events)
 
 
+@pytest.mark.parametrize("url", ["/jobs/", "/telemetry/register/"])
+def test_over_budget_stack_keeps_the_exception_type(monkeypatch, url):
+    monkeypatch.setattr(sentry, "_MAX_ITEMS", 2)
+    frames = [{"function": name} for name in ("start", "read", "finish")]
+    with sentry_capture(include_local_variables=False) as transport:
+        sentry_sdk.add_breadcrumb(category="job", message=MARKER)
+        sentry_sdk.capture_event({
+            "request": {"url": url},
+            "exception": {"values": [{
+                "type": "LookupError", "value": MARKER, "stacktrace": {"frames": frames},
+            }]},
+        })
+        sentry_sdk.capture_message("next diagnostic")
+        first, second = transport.events
+        [error] = first["exception"]["values"]
+        assert error["type"] == "LookupError"
+        assert error["value"] == sentry._REDACTED
+        assert second["message"] == "next diagnostic"
+        assert MARKER not in json.dumps(transport.events)
+
+
+def test_formatted_only_entry_keeps_the_logger_and_level():
+    with sentry_capture(include_local_variables=False) as transport:
+        sentry_sdk.add_breadcrumb(category="job", message=MARKER)
+        sentry_sdk.capture_event({
+            "logger": LOGGER, "level": "error", "logentry": {"formatted": MARKER},
+        })
+        sentry_sdk.capture_message("next diagnostic")
+        first, second = transport.events
+        assert first["logger"] == LOGGER
+        assert first["level"] == "error"
+        assert first["logentry"] == {"message": sentry._REDACTED}
+        assert second["message"] == "next diagnostic"
+        assert MARKER not in json.dumps(transport.events)
+
+
 def test_uninspectable_arguments_are_not_rendered():
     calls = []
 
