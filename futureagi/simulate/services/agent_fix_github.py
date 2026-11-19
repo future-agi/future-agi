@@ -490,9 +490,11 @@ def _verdict_section(
     tiers: list[VerdictTier], verdict: dict, standing: str, request: dict, plan: dict
 ) -> str:
     """The verdict's checks in the fix page's words, each part of one on its own row, and
-    the engine's statistics folded below them."""
+    the engine's statistics folded below them. A normal result has no standing, so its
+    heading carries no label."""
+    heading = f"### Verdict: {standing}" if standing else "### Verdict"
     if not tiers:
-        return f"### Verdict: {standing}"
+        return heading
     rows = []
     for tier in tiers:
         rows.append(
@@ -509,9 +511,7 @@ def _verdict_section(
     )
     decided = _decided_section(tiers, verdict, request)
     return "\n\n".join(
-        part
-        for part in (f"### Verdict: {standing}\n\n{table}{measured}", decided)
-        if part
+        part for part in (f"{heading}\n\n{table}{measured}", decided) if part
     )
 
 
@@ -658,17 +658,15 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     held = held_back_cases(candidate.fix_run)
     limited = held < HELD_BACK_VERIFIED_MIN
     overridden = bool(candidate.override_reason)
-    proof = "Checked" if limited or overridden else "Verified"
-    standing = (
-        "Known regression" if overridden else _strength(held) if limited else "Verified"
-    )
+    # A normal result carries no label; only a weaker one says how strong it is.
+    standing = "Known regression" if overridden else _strength(held) if limited else ""
     files = _changed_files(patch)
     head = "\n\n".join(
         part
         for part in (
             _override_note(candidate) if overridden else "",
             _limited_note(candidate) if limited else "",
-            f"{proof} by Epoch: {rates}" if rates else "",
+            f"Checked by Epoch: {rates}" if rates else "",
             _verdict_section(
                 verdict_tiers(candidate),
                 verdict,
