@@ -69339,7 +69339,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "set_aside",
         "validation",
         "candidates",
-        "validation_required",
       ],
       type: "object",
       properties: {
@@ -69364,7 +69363,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         validation_required: {
           title: "Validation required",
           description:
-            "A Save of these drafts must go through Validate first; a plain Save is refused.",
+            "A Save of these drafts must go through Validate first; a plain Save is refused. Always sent by this release; read as false when absent (a server from before it, during a rolling deploy).",
           type: "boolean",
         },
       },
@@ -108139,9 +108138,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         saved_without_check: {
           title: "Saved without check",
           description:
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           type: "boolean",
-          default: false,
         },
       },
     },
@@ -109687,9 +109685,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         saved_without_check: {
           title: "Saved without check",
           description:
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           type: "boolean",
-          default: false,
         },
         stale: {
           title: "Stale",

@@ -45807,15 +45807,6 @@ export const SimulateApiHarnessEnvironmentsDraftsParams = zod.object({
   id: zod.string(),
 });
 
-export const simulateApiHarnessEnvironmentsDraftsResponseEnvironmentSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsDraftsResponseSuiteSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsDraftsResponseSetAsideItemSavedWithoutCheckDefault =
-  false;
-
 export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
   environment: zod
     .object({
@@ -45930,11 +45921,9 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .nullable(),
       saved_without_check: zod
         .boolean()
-        .default(
-          simulateApiHarnessEnvironmentsDraftsResponseEnvironmentSavedWithoutCheckDefault,
-        )
+        .optional()
         .describe(
-          "Saved while the check was unavailable; its pairings read Untested until checked.",
+          "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
         ),
       stale: zod
         .boolean()
@@ -46079,11 +46068,9 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .nullable(),
       saved_without_check: zod
         .boolean()
-        .default(
-          simulateApiHarnessEnvironmentsDraftsResponseSuiteSavedWithoutCheckDefault,
-        )
+        .optional()
         .describe(
-          "Saved while the check was unavailable; its pairings read Untested until checked.",
+          "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
         ),
       stale: zod
         .boolean()
@@ -46228,11 +46215,9 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .nullable(),
       saved_without_check: zod
         .boolean()
-        .default(
-          simulateApiHarnessEnvironmentsDraftsResponseSetAsideItemSavedWithoutCheckDefault,
-        )
+        .optional()
         .describe(
-          "Saved while the check was unavailable; its pairings read Untested until checked.",
+          "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
         ),
       stale: zod
         .boolean()
@@ -46314,8 +46299,9 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
     .nullable(),
   validation_required: zod
     .boolean()
+    .optional()
     .describe(
-      "A Save of these drafts must go through Validate first; a plain Save is refused.",
+      "A Save of these drafts must go through Validate first; a plain Save is refused. Always sent by this release; read as false when absent (a server from before it, during a rolling deploy).",
     ),
 });
 
@@ -46590,18 +46576,6 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody = zod.object({
     .describe("Repeating a Save with the same key repeats its answer."),
 });
 
-export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSavedSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsAgentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsEnvironmentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsSuiteItemSavedWithoutCheckDefault =
-  false;
-
 export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
   zod.object({
     saved: zod
@@ -46723,11 +46697,9 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           saved_without_check: zod
             .boolean()
-            .default(
-              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSavedSavedWithoutCheckDefault,
-            )
+            .optional()
             .describe(
-              "Saved while the check was unavailable; its pairings read Untested until checked.",
+              "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
             ),
         }),
       )
@@ -46850,11 +46822,9 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           saved_without_check: zod
             .boolean()
-            .default(
-              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsAgentItemSavedWithoutCheckDefault,
-            )
+            .optional()
             .describe(
-              "Saved while the check was unavailable; its pairings read Untested until checked.",
+              "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
             ),
         }),
       ),
@@ -46975,11 +46945,9 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           saved_without_check: zod
             .boolean()
-            .default(
-              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsEnvironmentItemSavedWithoutCheckDefault,
-            )
+            .optional()
             .describe(
-              "Saved while the check was unavailable; its pairings read Untested until checked.",
+              "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
             ),
         }),
       ),
@@ -47100,11 +47068,9 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
           saved_without_check: zod
             .boolean()
-            .default(
-              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsSuiteItemSavedWithoutCheckDefault,
-            )
+            .optional()
             .describe(
-              "Saved while the check was unavailable; its pairings read Untested until checked.",
+              "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
             ),
         }),
       ),
@@ -50469,15 +50435,6 @@ export const SimulateApiHarnessEnvironmentsVersionsParams = zod.object({
   id: zod.string(),
 });
 
-export const simulateApiHarnessEnvironmentsVersionsResponseAgentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsVersionsResponseEnvironmentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsVersionsResponseSuiteItemSavedWithoutCheckDefault =
-  false;
-
 export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
   agent: zod.array(
     zod.object({
@@ -50592,11 +50549,9 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .nullable(),
       saved_without_check: zod
         .boolean()
-        .default(
-          simulateApiHarnessEnvironmentsVersionsResponseAgentItemSavedWithoutCheckDefault,
-        )
+        .optional()
         .describe(
-          "Saved while the check was unavailable; its pairings read Untested until checked.",
+          "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
         ),
     }),
   ),
@@ -50713,11 +50668,9 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .nullable(),
       saved_without_check: zod
         .boolean()
-        .default(
-          simulateApiHarnessEnvironmentsVersionsResponseEnvironmentItemSavedWithoutCheckDefault,
-        )
+        .optional()
         .describe(
-          "Saved while the check was unavailable; its pairings read Untested until checked.",
+          "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
         ),
     }),
   ),
@@ -50834,11 +50787,9 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .nullable(),
       saved_without_check: zod
         .boolean()
-        .default(
-          simulateApiHarnessEnvironmentsVersionsResponseSuiteItemSavedWithoutCheckDefault,
-        )
+        .optional()
         .describe(
-          "Saved while the check was unavailable; its pairings read Untested until checked.",
+          "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
         ),
     }),
   ),
@@ -50914,15 +50865,6 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionParam
 
 export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionBody =
   zod.object({});
-
-export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseAgentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseEnvironmentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuiteItemSavedWithoutCheckDefault =
-  false;
 
 export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse =
   zod.object({
@@ -51041,11 +50983,9 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .nullable(),
         saved_without_check: zod
           .boolean()
-          .default(
-            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseAgentItemSavedWithoutCheckDefault,
-          )
+          .optional()
           .describe(
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           ),
       }),
     ),
@@ -51164,11 +51104,9 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .nullable(),
         saved_without_check: zod
           .boolean()
-          .default(
-            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseEnvironmentItemSavedWithoutCheckDefault,
-          )
+          .optional()
           .describe(
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           ),
       }),
     ),
@@ -51287,11 +51225,9 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .nullable(),
         saved_without_check: zod
           .boolean()
-          .default(
-            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuiteItemSavedWithoutCheckDefault,
-          )
+          .optional()
           .describe(
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           ),
       }),
     ),
@@ -51353,15 +51289,6 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultBody = zod.object(
       ),
   },
 );
-
-export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseAgentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseEnvironmentItemSavedWithoutCheckDefault =
-  false;
-
-export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuiteItemSavedWithoutCheckDefault =
-  false;
 
 export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
   zod.object({
@@ -51480,11 +51407,9 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .nullable(),
         saved_without_check: zod
           .boolean()
-          .default(
-            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseAgentItemSavedWithoutCheckDefault,
-          )
+          .optional()
           .describe(
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           ),
       }),
     ),
@@ -51603,11 +51528,9 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .nullable(),
         saved_without_check: zod
           .boolean()
-          .default(
-            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseEnvironmentItemSavedWithoutCheckDefault,
-          )
+          .optional()
           .describe(
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           ),
       }),
     ),
@@ -51726,11 +51649,9 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .nullable(),
         saved_without_check: zod
           .boolean()
-          .default(
-            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuiteItemSavedWithoutCheckDefault,
-          )
+          .optional()
           .describe(
-            "Saved while the check was unavailable; its pairings read Untested until checked.",
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
           ),
       }),
     ),
