@@ -62330,6 +62330,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     .describe(
       "Which attempt this call is, counted from 1: one more than its earlier attempts.",
     ),
+  actors_enabled: zod
+    .boolean()
+    .describe(
+      "Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view.",
+    ),
   comparable: zod
     .boolean()
     .describe(
