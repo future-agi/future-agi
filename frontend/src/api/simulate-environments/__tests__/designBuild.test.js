@@ -9,7 +9,7 @@ const draftWith = (files) => ({
 describe("designBuildOf", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("builds stage by stage, validates, then saves v1", () => {
+  it("builds stage by stage, validates, then waits for Save to make v1", () => {
     vi.useFakeTimers();
     const draft = draftWith([{ id: "f1", name: "orders.csv" }]);
     expect(designBuildOf({ files: [] })).toBeNull();
@@ -30,10 +30,15 @@ describe("designBuildOf", () => {
     expect(checking.validation).toBeNull();
 
     vi.advanceTimersByTime(VALIDATE_MS);
-    const saved = designBuildOf(draft);
-    expect(saved.status).toBe("saved");
-    expect(saved.release).toEqual({ version: 1 });
-    expect(saved.validation.checks.every((c) => c.ok)).toBe(true);
+    const ready = designBuildOf(draft);
+    expect(ready.status).toBe("ready");
+    expect(ready.release).toBeUndefined();
+    expect(ready.validation.checks.every((c) => c.ok)).toBe(true);
+    const release = { version: 1, name: "", savedAt: 1 };
+    expect(designBuildOf({ ...draft, release })).toMatchObject({
+      status: "saved",
+      release,
+    });
   });
 
   it("needs repair when a records file is broken, naming it", () => {

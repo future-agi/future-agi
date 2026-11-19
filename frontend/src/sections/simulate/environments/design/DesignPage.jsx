@@ -91,6 +91,8 @@ function buildTurn(build) {
   const text = {
     building:
       "Approved. Building the records and data, tool handlers, rules and checks, then the scenarios. It's checked before it saves.",
+    ready:
+      "Built and checked. Review the changes on the environment page and save them as v1.",
     saved: `Built and checked, and saved as v${build.release?.version}. Nothing runs until you connect an agent and start a run.`,
     needs_repair: [
       failed && `A check failed: ${failed.label.toLowerCase()}.`,
@@ -322,6 +324,16 @@ export default function DesignPage() {
   const leaveOutFile = useDesignDraftStore((s) => s.leaveOutFile);
   const build = useDesignBuild(draftId);
   const approve = useApproveDesign(draftId);
+  const navigate = useNavigate();
+  // An approved build is followed on its environment's page; only a failed
+  // check keeps it here, to repair.
+  const toEnvironment = !!build && build.status !== "needs_repair";
+  useEffect(() => {
+    if (toEnvironment)
+      navigate(paths.dashboard.simulate.environments.detail(draftId), {
+        replace: true,
+      });
+  }, [toEnvironment, draftId, navigate]);
   const readUntil = draft?.readUntil || 0;
   const [now, setNow] = useState(Date.now);
 

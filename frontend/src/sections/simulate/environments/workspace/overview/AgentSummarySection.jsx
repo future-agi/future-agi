@@ -15,7 +15,12 @@ const providerLabel = (provider) =>
   provider;
 
 // With `onManageVersions`, a "Manage versions" action opens the agent versions.
-export default function AgentSummarySection({ subject, onManageVersions }) {
+// With `onConnect` and no agent, "Connect agent" opens the agent picker.
+export default function AgentSummarySection({
+  subject,
+  onManageVersions,
+  onConnect,
+}) {
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
@@ -109,6 +114,18 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
             {AGENT_SUMMARY_COPY.viewAgent}
           </Button>
         )}
+        {!subject && onConnect && (
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={onConnect}
+            endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+            sx={{ flexShrink: 0 }}
+          >
+            {AGENT_SUMMARY_COPY.connect}
+          </Button>
+        )}
         {onManageVersions && (
           <Button
             variant="outlined"
@@ -133,4 +150,5 @@ AgentSummarySection.propTypes = {
     active_version: PropTypes.string,
   }),
   onManageVersions: PropTypes.func,
+  onConnect: PropTypes.func,
 };

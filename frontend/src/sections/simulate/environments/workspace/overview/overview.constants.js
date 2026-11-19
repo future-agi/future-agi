@@ -1,9 +1,13 @@
 import PropTypes from "prop-types";
-import { getPacks, getRows } from "src/api/simulate-environments/_fixtures/scenarioPool";
+import {
+  getPacks,
+  getRows,
+} from "src/api/simulate-environments/_fixtures/scenarioPool";
 
 // Every copy string the Overview surface renders.
 export const OVERVIEW_COPY = {
-  manageVersionsSubtitle: "Manage the agent versions running against this environment",
+  manageVersionsSubtitle:
+    "Manage the agent versions running against this environment",
   facts: {
     channel: "Channel",
     domain: "Domain",
@@ -15,15 +19,18 @@ export const OVERVIEW_COPY = {
   capabilities: "Capabilities",
   world: "The world",
   toolsTitle: "Tools",
-  toolsConnected: (n) => `${n} actions your agent declared, with the arguments it really takes`,
+  toolsConnected: (n) =>
+    `${n} actions your agent declared, with the arguments it really takes`,
   toolsDisconnected: "Read from your agent once it connects",
   noToolsTitle: "No tools yet",
   noToolsBody: "Tool definitions come from the agent.",
   connectAgent: "Connect agent",
   noArguments: "no arguments",
   hardRulesTitle: "Hard rules",
-  hardRulesSubtitle: "Told to the agent, graded afterwards. Hover a badge for where it was found",
-  noRules: "No rules yet. Add them on the Contract tab or as the agent introduces them.",
+  hardRulesSubtitle:
+    "Told to the agent, graded afterwards. Hover a badge for where it was found",
+  noRules:
+    "No rules yet. Add them on the Contract tab or as the agent introduces them.",
   useCasesTitle: "Use cases",
   useCasesSubtitle: "What it is actually for",
   amendmentsTitle: "Amendments",
@@ -90,7 +97,8 @@ export const AGENT_SUMMARY_COPY = {
   versions: (n) => `${n} ${n === 1 ? "version" : "versions"}`,
   connected: "Connected",
   noAgentTitle: "No agent attached",
-  agentTitle: (name, label) => [name || "Agent", label].filter(Boolean).join(" "),
+  agentTitle: (name, label) =>
+    [name || "Agent", label].filter(Boolean).join(" "),
   lockedBody:
     "Seeded baseline shipped with this template. Fork the environment to add your own agent versions.",
   portableBody:
@@ -98,6 +106,7 @@ export const AGENT_SUMMARY_COPY = {
   fork: "Fork to edit",
   manage: "Manage versions",
   attach: "Attach agent",
+  connect: "Connect agent",
 };
 
 // The environment shape Overview reads. Local PropTypes.shape (Phase-2 owns the
@@ -113,7 +122,7 @@ export const ENV_SHAPE = PropTypes.shape({
       name: PropTypes.string,
       desc: PropTypes.string,
       args: PropTypes.arrayOf(PropTypes.string),
-    })
+    }),
   ),
   rules: PropTypes.arrayOf(PropTypes.string),
   parallelism: PropTypes.shape({
@@ -128,7 +137,7 @@ export const ENV_SHAPE = PropTypes.shape({
         name: PropTypes.string,
         rows: PropTypes.number,
         note: PropTypes.string,
-      })
+      }),
     ),
   }),
 });
@@ -143,8 +152,11 @@ export const ENV_STATE_SHAPE = PropTypes.shape({
   }),
   scenarios: PropTypes.arrayOf(
     PropTypes.shape({
-      persona: PropTypes.shape({ slug: PropTypes.string, name: PropTypes.string }),
-    })
+      persona: PropTypes.shape({
+        slug: PropTypes.string,
+        name: PropTypes.string,
+      }),
+    }),
   ),
   evals: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
   runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
@@ -167,7 +179,10 @@ export const packStatsFor = (env) => {
   const packs = getPacks(env);
   return {
     packs: packs.length,
-    scenarios: packs.reduce((total, pack) => total + getRows(pack.id, env).length, 0),
+    scenarios: packs.reduce(
+      (total, pack) => total + getRows(pack.id, env).length,
+      0,
+    ),
   };
 };
 
@@ -211,5 +226,7 @@ export const CHECKLIST_COPY = {
 // The seeded tables the agent works with. The harness's own bookkeeping
 // tables (`_alk_tool_trace`, `harness_seed_sentinel`) share the store but
 // aren't the agent's world, so they stay out of Seeded data.
-export const isHarnessTable = (name = "") => name.startsWith("_") || name.startsWith("harness_");
-export const worldTables = (env) => (env?.seed?.tables || []).filter((t) => !isHarnessTable(t.name));
+export const isHarnessTable = (name = "") =>
+  name.startsWith("_") || name.startsWith("harness_");
+export const worldTables = (env) =>
+  (env?.seed?.tables || []).filter((t) => !isHarnessTable(t.name));

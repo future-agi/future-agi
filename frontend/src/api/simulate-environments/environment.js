@@ -19,6 +19,9 @@ import {
 import { usePrebuiltEnvironments } from "./prebuilt";
 import { conversationInFlight } from "./conversationProjection";
 import { environmentVersionsKey, refreshDrafts } from "./versions";
+import { useDesignBuild } from "./designBuild";
+import { designEnvironmentOf, isDesignEnvId } from "./designEnvironment";
+import { useDesignDraftStore } from "src/sections/simulate/environments/design/useDesignDraftStore";
 
 // The §6 environment-detail endpoint is implemented on the backend branch but not
 // yet merged/served (see environments-api-contracts §6). Until it lands and the
@@ -75,7 +78,9 @@ export const harnessJobQuery = (envId, { enabled = true } = {}) => ({
   enabled: Boolean(envId) && enabled,
   retry: (failureCount, error) => !isJobNotFound(error) && failureCount < 3,
   refetchInterval: (query) =>
-    isJobNotFound(query.state.error) ? false : jobRefetchInterval(query.state.data),
+    isJobNotFound(query.state.error)
+      ? false
+      : jobRefetchInterval(query.state.data),
 });
 
 // §6 environment detail. Fetched once on open and refetched by the workspace
@@ -124,7 +129,8 @@ function seedTablesFromEnvironment(environment = {}) {
 export function stageOutputsToWorld(stageOutputs = []) {
   const outputs = Array.isArray(stageOutputs) ? stageOutputs : [];
   const contract = outputs.find((o) => o?.kind === "contract")?.data || {};
-  const environment = outputs.find((o) => o?.kind === "environment")?.data || {};
+  const environment =
+    outputs.find((o) => o?.kind === "environment")?.data || {};
   const scenariosOut = outputs.find((o) => o?.kind === "scenarios")?.data;
 
   const tools = (contract.tools || [])
@@ -182,7 +188,8 @@ export function harnessEnvState(item, world) {
   const status = item?.status || {};
   const resolved = world || {};
   const scenarios =
-    (resolved.scenarios?.length && resolved.scenarios.map(scenarioFromOutput)) ||
+    (resolved.scenarios?.length &&
+      resolved.scenarios.map(scenarioFromOutput)) ||
     (Array.isArray(item?.scenarios) && item.scenarios.length
       ? item.scenarios.map(scenarioFromOutput)
       : []);
@@ -263,25 +270,59 @@ const overlayDefined = (base, extra) => {
   return merged;
 };
 
+// A design draft's id opens the environment its approved build makes, read
+// from this browser (designEnvironment.js), never fetched. Its scenarios are
+// written into the per-env state as the build writes them.
+function useDesignEnvironment(envId) {
+  const isDesign = isDesignEnvId(envId);
+  const draft = useDesignDraftStore((s) => (isDesign ? s.drafts[envId] : null));
+  const build = useDesignBuild(isDesign ? envId : null);
+  const view = useMemo(
+    () => (isDesign ? designEnvironmentOf(draft) : null),
+    // The build's polls move the view on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isDesign, draft, build],
+  );
+  const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
+  const scenarios = view?.envState?.scenarios || null;
+  const queryClient = useQueryClient();
+  const written = `${draft?.build?.startedAt}:${scenarios?.length ?? "none"}:${build?.status}`;
+  useEffect(() => {
+    if (!isDesign || !draft?.build) return;
+    patchEnvState(envId, view?.envState || { scenarios: [] });
+    // The stubbed reads (drafts, review, versions, scenarios) answer from the
+    // draft, so they're asked again as the build moves on.
+    queryClient.invalidateQueries({ queryKey: environmentVersionsKey(envId) });
+    queryClient.invalidateQueries({ queryKey: ["harness-scenarios", envId] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesign, envId, written]);
+  return { isDesign, env: view?.env || null };
+}
+
 // Resolve an environment id to its record. Order: an adopted client env in the
 // store, then the harness backend, then the prebuilt template catalogue. An
 // unknown id whose harness fetch 404s (and that no template claims) is notFound.
 export function useEnvironment(envId) {
   const clientEnv = useEnvironmentsStore((s) => s.workspaceEnvs[envId]);
   const prebuilt = usePrebuiltEnvironments();
+  const design = useDesignEnvironment(envId);
 
   // A client record only shadows the poll when it is genuinely client-only
   // (template/fork, or a mockMode build). A real build-adopted record
   // (origin:"harness") already holds the completed job's real snapshot, so the
   // client-first branch below serves it without a second fetch.
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: !clientEnv }));
+  const jobQuery = useQuery(
+    harnessJobQuery(envId, { enabled: !clientEnv && !design.isDesign }),
+  );
 
   // §6 detail (gated by HARNESS_DETAIL_ENABLED). The job poll stays the live
   // heartbeat (§7); the detail carries no progress, so it is fetched once and
   // refetched when the job crosses `validating_scenarios` (sections appear) or a
   // terminal stage (results appear).
   const detailQuery = useQuery(
-    harnessEnvironmentQuery(envId, { enabled: HARNESS_DETAIL_ENABLED && !clientEnv }),
+    harnessEnvironmentQuery(envId, {
+      enabled: HARNESS_DETAIL_ENABLED && !clientEnv && !design.isDesign,
+    }),
   );
   const stage = jobQuery.data?.status?.stage;
   const detailRefetch = detailQuery.refetch;
@@ -290,7 +331,12 @@ export function useEnvironment(envId) {
     if (!HARNESS_DETAIL_ENABLED || !stage) return;
     const authoredIdx = stages.indexOf("validating_scenarios");
     const idx = stages.indexOf(stage);
-    if (!crossed.current.authored && idx >= 0 && authoredIdx >= 0 && idx >= authoredIdx) {
+    if (
+      !crossed.current.authored &&
+      idx >= 0 &&
+      authoredIdx >= 0 &&
+      idx >= authoredIdx
+    ) {
       crossed.current.authored = true;
       detailRefetch();
     }
@@ -354,7 +400,8 @@ export function useEnvironment(envId) {
   }, [inFlight, refreshAfterTurn]);
 
   const detail = useMemo(
-    () => (detailQuery.data ? harnessDetailToEnvironment(detailQuery.data) : null),
+    () =>
+      detailQuery.data ? harnessDetailToEnvironment(detailQuery.data) : null,
     [detailQuery.data],
   );
 
@@ -367,6 +414,16 @@ export function useEnvironment(envId) {
     () => prebuilt.data?.find((tpl) => tpl.id === envId) || null,
     [prebuilt.data, envId],
   );
+
+  if (design.isDesign) {
+    return {
+      env: design.env,
+      source: design.env ? "client" : null,
+      bootstrapState: undefined,
+      notFound: !design.env,
+      isLoading: false,
+    };
+  }
 
   if (clientEnv) {
     return {
@@ -388,7 +445,7 @@ export function useEnvironment(envId) {
     const base = harness?.env ?? {};
     const merged = detailReady
       ? overlayDefined(base, detail.env)
-      : (harness?.env ?? detail?.env);
+      : harness?.env ?? detail?.env;
     const env = base.status ? { ...merged, status: base.status } : merged;
 
     // Gate the bootstrap on the detail settling so a slightly-later §6 success is
@@ -428,9 +485,7 @@ export function useEnvironment(envId) {
   }
 
   const notFound =
-    isJobNotFound(jobQuery.error) &&
-    prebuilt.isSuccess &&
-    !templateEnv;
+    isJobNotFound(jobQuery.error) && prebuilt.isSuccess && !templateEnv;
 
   return {
     env: null,

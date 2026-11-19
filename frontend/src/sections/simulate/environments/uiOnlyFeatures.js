@@ -24,7 +24,8 @@ export const UI_ONLY_FEATURES = Object.freeze({
   },
   connectAgent: {
     label: "Connect an agent",
-    ask: "an endpoint to attach or change the agent an environment tests",
+    ask: "an endpoint to attach or change the agent an environment tests, with a run readiness check for the agent picked",
+    note: "UI only: the agent picked is kept in this browser, and connecting a new one adds a sample agent. Nothing is sent.",
   },
   syncAgent: {
     label: "Sync agent",
@@ -127,8 +128,8 @@ export const UI_ONLY_FEATURES = Object.freeze({
   },
   designBuild: {
     label: "Build an approved design",
-    ask: "the design job's approve and build (see #3612): approving starts the cloud build, polled for its stages (records and data, tool handlers, rules and checks, scenarios), its validation checks with what failed, and the saved release's version, kept with the draft so a reload resumes it",
-    note: 'UI only: the build is timed in this browser and a records file named with "broken" fails a check. Nothing is built or saved.',
+    ask: "the design job's approve and build (see #3612): approving creates the draft environment and starts the cloud build, polled for its stages (records and data, tool handlers, rules and checks, scenarios) and its validation checks with what failed; the built draft's review and Save as v1 through the drafts API; a suggested_name on the design job",
+    note: 'UI only: the environment is this browser\'s design draft, built on a timer, and a records file named with "broken" fails a check. Review changes lists what the build made and Save keeps v1 here. Nothing is built or saved.',
   },
   designDocuments: {
     label: "File uploads",

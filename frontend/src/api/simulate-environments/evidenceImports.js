@@ -4,6 +4,7 @@ import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { refreshDrafts, refreshFollowers } from "./versions";
+import { isDesignEnvId } from "./designEnvironment";
 
 // Observe sessions or calls or dataset rows frozen as evidence for an
 // environment's tests, or transcripts a person added, and the review that
@@ -98,7 +99,7 @@ export const getEvidenceImport = async (envId, importId) =>
   (await axios.get(importPath(envId, importId))).data;
 
 export const listEvidenceImports = async (envId) =>
-  (await axios.get(importsPath(envId))).data;
+  isDesignEnvId(envId) ? [] : (await axios.get(importsPath(envId))).data;
 
 // Nothing of it added: the import goes, and a transcript's stored text with
 // it. Some of it added: only the cases not added go.
