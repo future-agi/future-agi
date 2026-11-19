@@ -374,19 +374,23 @@ def jobs_of_issues(
     environments: QuerySet[HostedHarnessJob] | None = None,
 ) -> dict[UUID, list[AgentFixIssueJob]]:
     """Each issue's jobs, newest first, with the jobs of the issues merged into it (up to
-    _REDIRECT_HOPS merges back); only jobs on ``environments`` when given."""
+    _REDIRECT_HOPS merges back); only jobs on ``environments`` when given. A job on a
+    deleted environment is gone with it: it holds its issue no more."""
     ids = {issue.id for issue in issues}
     if not ids:
         return {}
     match = Q()
     for hops in range(_REDIRECT_HOPS + 1):
         match |= Q(**{f"{_issue_path(hops)}_id__in": ids})
+    match &= Q(environment__deleted=False)
     if environments is not None:
         match &= Q(environment__in=environments)
     jobs = (
         AgentFixIssueJob.no_workspace_objects.filter(match)
         .select_related(
+            "environment",
             "evidence_import",
+            "baseline_run",
             "fix_run",
             *(_issue_path(hops) for hops in range(_REDIRECT_HOPS + 1)),
         )
@@ -421,20 +425,19 @@ def jobs_of_epochs(
     return {run_id: jobs[root] for run_id, root in roots.items() if root in jobs}
 
 
-def measuring_job(
-    environment: HostedHarnessJob, *, except_run: Any = None
-) -> AgentFixIssueJob | None:
-    """The job whose baseline runs on the environment now, other than the one whose
-    baseline is ``except_run``."""
-    jobs = AgentFixIssueJob.no_workspace_objects.filter(
-        environment=environment,
-        baseline_run__isnull=False,
-        fix_run__isnull=True,
-        ending__isnull=True,
+def measuring_job(environment: HostedHarnessJob) -> AgentFixIssueJob | None:
+    """The job whose baseline runs on the environment now: it holds the environment
+    until its epoch starts (launch_blocker reads the same rule)."""
+    return (
+        AgentFixIssueJob.no_workspace_objects.filter(
+            environment=environment,
+            baseline_run__isnull=False,
+            fix_run__isnull=True,
+            ending__isnull=True,
+        )
+        .select_related("evidence_import__source_issue")
+        .first()
     )
-    if except_run is not None:
-        jobs = jobs.exclude(baseline_run=except_run)
-    return jobs.select_related("evidence_import__source_issue").first()
 
 
 def issue_scenarios(

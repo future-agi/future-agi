@@ -20,7 +20,6 @@ from django.utils import timezone
 from simulate.models import (
     AgentFixIssueJob,
     AgentFixRun,
-    EvidenceImport,
     EvidenceImportCase,
     HarnessSuiteMember,
     HostedHarnessConversation,
@@ -36,6 +35,7 @@ from simulate.pydantic_schemas.agent_fix_issue import (
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     default_max_minutes,
+    fewest_failing_cases,
     fresh_draft_pieces,
     scenario_results,
     unsaved_changes,
@@ -64,6 +64,7 @@ from simulate.services.evidence_import import (
     add_to_suite,
     create_evidence_import,
     discard_evidence_import,
+    discard_open_cases,
 )
 from simulate.services.harness_agent_versions import advisory_xact_lock
 from simulate.services.harness_usage import (
@@ -86,10 +87,11 @@ from tracer.models.trace_error_analysis import TraceErrorGroup
 
 logger = structlog.get_logger(__name__)
 
-# Run Epoch refusals after which the job cannot go on: its drafts were made on an
+# The Run Epoch refusal after which the job cannot go on: its drafts were made on an
 # environment that changed since, and they cannot be drafted again in the same import.
-_ENDS_THE_JOB = frozenset({"evidence_draft_stale", "scenario_unavailable"})
-# How long a baseline may run before the job stops waiting for it.
+_ENDS_THE_JOB = frozenset({"evidence_draft_stale"})
+# How long a job may take from its baseline's start to its epoch's, whatever holds it
+# up: the run itself, or a launch that keeps failing in a way a later look might outlive.
 _BASELINE_PATIENCE = timedelta(hours=12)
 STOPPED = IssueJobEnding(code="stopped", message="Stopped")
 
@@ -286,6 +288,14 @@ def _require_launchable(
 ) -> None:
     """Every refusal of the launch that can be known before the baseline is paid for:
     ``added`` new scenarios join the suite, and the baseline runs ``scenarios``."""
+    # The epoch's targets are the baseline's scenarios that fail: never more than these.
+    if scenarios < (fewest := fewest_failing_cases()):
+        raise _refused(
+            "fix_targets_too_few",
+            f"Keep at least {fewest} scenarios: an epoch starts from that many failing"
+            " ones.",
+            status_code=422,
+        )
     if environment.state != HostedHarnessJob.State.COMPLETED:
         raise _refused(
             "environment_busy",
@@ -356,8 +366,11 @@ def run_issue_job(
     try:
         return _run(job, case_ids=case_ids, launch=launch, user=user)
     except HostedHarnessError as exc:
-        if exc.code in _ENDS_THE_JOB:
-            _end(job.id, IssueJobEnding(code=exc.code, message=exc.message))
+        if exc.code in _ENDS_THE_JOB and _end(
+            job.id, IssueJobEnding(code=exc.code, message=exc.message)
+        ):
+            # Its drafts can go no further, so they hold back no later import.
+            discard_open_cases(job.evidence_import)
         raise
 
 
@@ -366,16 +379,17 @@ def _run(
 ) -> AgentFixIssueJob:
     wanted = {str(case_id) for case_id in case_ids}
     with transaction.atomic():
-        # The environment first, as adding to its suite and starting a run take it.
-        environment = (
-            HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",))
-            .select_related("environment_version", "suite_version")
-            .get(id=job.environment_id)
-        )
+        # The job, then the environment, in the order advance_issue_job takes them
+        # when it launches: adding to the suite and starting a run take it too.
         locked = (
             AgentFixIssueJob.no_workspace_objects.select_for_update(of=("self",))
             .select_related("evidence_import")
             .get(id=job.id)
+        )
+        environment = (
+            HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",))
+            .select_related("environment_version", "suite_version")
+            .get(id=job.environment_id)
         )
         if issue_job_phase(locked) != IssueJobPhase.REVIEW:
             raise _refused(
@@ -413,6 +427,9 @@ def _run(
                 idempotency_key=f"issue-epoch-{locked.id}",
                 user=user,
             )
+        # The drafts the person did not keep are discarded, so they hold back no
+        # later import of their sources.
+        discard_open_cases(locked.evidence_import)
         environment.refresh_from_db()
         run, _created = create_selected_harness_run(
             environment,
@@ -482,12 +499,19 @@ def advance_issue_job(job_id: str) -> bool:
         if job.ending or job.fix_run_id is not None:
             return True
         run = job.baseline_run
-        if run is None or (
-            run.state not in FINISHED_RUN_STATES
-            and timezone.now() - run.created_at > _BASELINE_PATIENCE
-        ):
+        if run is None:
             _set_ending(job, _baseline_failed())
-            if run is not None:
+            return True
+        # Checked before anything else, so nothing a look raises keeps the job going.
+        if timezone.now() - run.created_at > _BASELINE_PATIENCE:
+            _set_ending(
+                job,
+                IssueJobEnding(
+                    code="issue_epoch_timed_out",
+                    message="The epoch did not start in time. Run Epoch again.",
+                ),
+            )
+            if run.state not in FINISHED_RUN_STATES:
                 transaction.on_commit(lambda: _cancel_run(run))
             return True
         if run.state not in FINISHED_RUN_STATES:
@@ -563,8 +587,16 @@ def _cancel_run(run: HostedHarnessJob) -> None:
 
 def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
     """Stop a job before its epoch starts. Its baseline is canceled; before Run
-    Epoch, its drafting is forgotten and its import discarded. The scenarios Run Epoch
+    Epoch, its drafting is forgotten and its import discarded, and only then is it
+    ended, so a stop that fails part way can be asked again. The scenarios Run Epoch
     added stay in the suite. A launched job's epoch stops on its own page."""
+    if issue_job_phase(job) in (
+        IssueJobPhase.DRAFTING,
+        IssueJobPhase.REVIEW,
+        IssueJobPhase.BLOCKED,
+    ):
+        # Drafting first: an import is not discarded while its builder drafts.
+        forget(str(job.evidence_import_id))
     with transaction.atomic():
         locked = (
             AgentFixIssueJob.no_workspace_objects.select_for_update(of=("self",))
@@ -580,12 +612,9 @@ def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
             )
         if phase == IssueJobPhase.ENDED:
             return locked
+        if phase != IssueJobPhase.MEASURING:
+            discard_evidence_import(locked.evidence_import)
         _set_ending(locked, STOPPED)
     if phase == IssueJobPhase.MEASURING:
         _cancel_run(locked.baseline_run)
-        return locked
-    evidence_import: EvidenceImport = locked.evidence_import
-    # Drafting first: an import is not discarded while its builder drafts.
-    forget(str(evidence_import.id))
-    discard_evidence_import(evidence_import)
     return locked

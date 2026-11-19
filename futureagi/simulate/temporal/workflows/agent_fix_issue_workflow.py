@@ -21,7 +21,8 @@ _OUTAGE_PAUSE = timedelta(seconds=30)
 class AgentFixIssueWorkflow:
     """Waits for a Run Epoch from an issue to finish its baseline run, then lets
     simulate.services.agent_fix_issue launch the epoch from it. Each look is one
-    activity; the job ends itself when its baseline runs too long."""
+    activity; the job ends itself when it takes too long to start its epoch, whatever
+    holds it up."""
 
     @workflow.run
     async def run(self, input: AgentFixIssueInput) -> None:

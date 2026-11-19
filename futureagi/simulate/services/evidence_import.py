@@ -466,6 +466,22 @@ def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
         return False
 
 
+def discard_open_cases(evidence_import: EvidenceImport) -> None:
+    """Discard the import's cases still to draft, add or retry, and keep the import
+    with what it added and what it repeats: a person kept only some of its drafts, or
+    its drafts can go no further. Under the environment's lock, as a discard is."""
+    with transaction.atomic():
+        _lock(evidence_import.environment_id)
+        leaving = EvidenceImportCase.objects.filter(
+            evidence_import=evidence_import, status__in=OPEN_CASE_STATUSES
+        )
+        list(leaving.select_for_update(of=("self",)).values_list("id", flat=True))
+        _promote_duplicates(evidence_import, leaving)
+        leaving.update(
+            status=EvidenceImportCase.Status.DISCARDED, updated_at=timezone.now()
+        )
+
+
 def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
     """For each of ``leaving`` another import repeats, its earliest duplicate
     there becomes the case to draft, and the rest repeat that one instead, so an

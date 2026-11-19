@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.utils import timezone
 
 from model_hub.models.ai_model import AIModel
 from simulate.models import (
@@ -225,11 +226,11 @@ def _job(environment, evidence_import, **fields):
     )
 
 
-def _in_review(environment, issue, user):
-    """A job whose one case the builder drafted, waiting for review."""
-    made = _import(environment, issue, [str(uuid.uuid4())])
-    case = _drafted(environment, made.cases.get())
-    return _job(environment, made, created_by=user), case
+def _in_review(environment, issue, user, *, drafts=1):
+    """A job whose cases the builder drafted, waiting for review; the first case."""
+    made = _import(environment, issue, [str(uuid.uuid4()) for _ in range(drafts)])
+    cases = [_drafted(environment, case) for case in made.cases.order_by("position")]
+    return _job(environment, made, created_by=user), cases[0]
 
 
 class TestSample:
@@ -387,6 +388,16 @@ class TestLinks:
 
         assert reads.jobs_of_issues([into]) == {into.id: [job]}
         assert reads.live_issue(issue) == into
+
+    def test_a_deleted_environment_holds_its_issue_no_more(
+        self, environment, issue, user
+    ):
+        _in_review(environment, issue, user)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            deleted=True
+        )
+
+        assert reads.jobs_of_issues([issue]) == {}
 
     def test_the_limit_counts_only_what_the_suite_still_holds(self, environment, issue):
         made = _import(environment, issue, ["t1", "t2"], status="added")
@@ -556,6 +567,58 @@ class TestRunEpoch:
         ]
         temporal.start.assert_called_once_with(str(epoch.id))
 
+    def test_the_drafts_not_kept_are_discarded(
+        self, environment, issue, user, django_capture_on_commit_callbacks
+    ):
+        job, kept = _in_review(environment, issue, user, drafts=2)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            jobs.run_issue_job(job, case_ids=[str(kept.id)], launch=LAUNCH, user=user)
+
+        assert dict(job.evidence_import.cases.values_list("id", "status")) == {
+            kept.id: "added",
+            job.evidence_import.cases.exclude(id=kept.id).get().id: "discarded",
+        }
+
+    def test_fewer_scenarios_than_an_epoch_starts_from_are_refused_first(
+        self, environment, issue, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 12
+        job, case = _in_review(environment, issue, user)
+        suite = environment.suite_version_id
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.run_issue_job(job, case_ids=[str(case.id)], launch=LAUNCH, user=user)
+
+        assert refused.value.code == "fix_targets_too_few"
+        environment.refresh_from_db()
+        assert environment.suite_version_id == suite
+        job.refresh_from_db()
+        assert (job.baseline_run_id, job.ending) == (None, None)
+
+    def test_a_scenario_not_ready_yet_leaves_the_job_to_try_again(
+        self, environment, issue, user
+    ):
+        job, case = _in_review(environment, issue, user)
+        suite = environment.suite_version_id
+
+        with (
+            patch(
+                "simulate.services.agent_fix_issue.create_selected_harness_run",
+                side_effect=HostedHarnessError(
+                    "scenario_unavailable", "try again in a moment", status_code=409
+                ),
+            ),
+            pytest.raises(HostedHarnessError),
+        ):
+            jobs.run_issue_job(job, case_ids=[str(case.id)], launch=LAUNCH, user=user)
+
+        job.refresh_from_db()
+        environment.refresh_from_db()
+        assert job.ending is None
+        assert environment.suite_version_id == suite
+        assert EvidenceImportCase.objects.get(id=case.id).status == "drafted"
+
     def test_past_the_limit_nothing_joins_the_suite(
         self, environment, issue, user, settings, boundaries
     ):
@@ -586,6 +649,8 @@ class TestRunEpoch:
         job.refresh_from_db()
         assert job.ending["code"] == "evidence_draft_stale"
         assert job.baseline_run_id is None
+        # The stale draft can go no further, so it holds back no later import.
+        assert EvidenceImportCase.objects.get(id=case.id).status == "discarded"
 
     def test_an_epoch_running_in_the_environment_is_named(
         self, environment, issue, user, source_run
@@ -610,6 +675,7 @@ class TestAdvance:
         AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(
             baseline_run=baseline, launch=LAUNCH.model_dump(mode="json")
         )
+        job.refresh_from_db()
         return job
 
     def test_a_baseline_that_did_not_finish_is_not_could_not_reproduce(
@@ -636,6 +702,27 @@ class TestAdvance:
         job.refresh_from_db()
         assert job.ending["code"] == "fix_targets_passed"
         assert job.fix_run_id is None
+
+    def test_a_launch_that_keeps_failing_ends_on_the_job_s_clock(
+        self, environment, issue, user
+    ):
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": False}
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=job.baseline_run_id).update(
+            created_at=timezone.now() - timedelta(hours=13)
+        )
+
+        with patch(
+            "simulate.services.agent_fix_issue.launch_fix_run",
+            side_effect=HostedHarnessError(
+                "fix_traces_unreadable", "later", retryable=True
+            ),
+        ):
+            assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        assert job.ending["code"] == "issue_epoch_timed_out"
 
     def test_a_baseline_still_running_waits(self, environment, issue, user):
         job = self._measuring(
@@ -668,6 +755,26 @@ class TestStop:
         job.refresh_from_db()
         assert job.ending == {"code": "stopped", "message": "Stopped"}
         assert EvidenceImport.all_objects.get(id=job.evidence_import_id).deleted
+
+    def test_a_stop_that_fails_part_way_can_be_asked_again(
+        self, environment, issue, user
+    ):
+        job, _case = _in_review(environment, issue, user)
+
+        with (
+            patch(
+                "simulate.services.agent_fix_issue.discard_evidence_import",
+                side_effect=RuntimeError("storage blip"),
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            jobs.stop_issue_job(job)
+
+        job.refresh_from_db()
+        assert job.ending is None
+        jobs.stop_issue_job(job)
+        job.refresh_from_db()
+        assert job.ending["code"] == "stopped"
 
     def test_a_measuring_baseline_is_canceled(
         self, environment, issue, user, boundaries
