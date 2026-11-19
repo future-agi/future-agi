@@ -29,7 +29,11 @@ import {
   ownsArrowKeys,
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
-import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
+import {
+  TRIAL_CHANGES_COPY,
+  TRIAL_UNDER_WAY,
+  hasSharedRecords,
+} from "./trialChanges.constants";
 import { openingTab } from "./participants/stepLink";
 
 // The annotate / queue / dataset / tags actions need project + annotation
@@ -139,6 +143,7 @@ export default function VoiceCallDrawer({
     hasWorkers ||
     (hasWorkers === undefined && chosenTab === "workers") ||
     Boolean(attempt);
+  const trialState = chosen ? chosen.trial_state : data?.trial_state ?? null;
   const leftPanelTabs = useMemo(() => {
     // Participants and World state are kept per attempt: each says which attempt it shows.
     const attemptSelect = data?.earlier_attempts?.length ? (
@@ -204,8 +209,9 @@ export default function VoiceCallDrawer({
             },
           ]
         : []),
-      // The World state view shows only when the call detail says actors are on.
-      ...(data?.actors_enabled === true
+      // The World state view shows when the call detail says actors are on; with them off, only a call's shared
+      // records show there.
+      ...(data?.actors_enabled === true || hasSharedRecords(trialState)
         ? [
             {
               label: TRIAL_CHANGES_COPY.tab,
@@ -215,10 +221,9 @@ export default function VoiceCallDrawer({
                 <>
                   {attemptSelect}
                   <TrialChangesPanel
-                    trialState={
-                      chosen ? chosen.trial_state : data?.trial_state ?? null
-                    }
+                    trialState={trialState}
                     underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
+                    sharedOnly={data?.actors_enabled !== true}
                   />
                 </>
               ),
@@ -236,7 +241,7 @@ export default function VoiceCallDrawer({
     showWorkers,
     data,
     attempt,
-    chosen,
+    trialState,
     callTraces.projectId,
     callTraces.isError,
     callTraces.traces,

@@ -889,6 +889,42 @@ describe("CallDrawer — the call's traces", () => {
     );
   });
 
+  it("gives a voice call with shared records a World state tab while actors are off", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-1",
+        transcript: [],
+        actors_enabled: false,
+        trial_state: {
+          shared_records: [
+            {
+              key: "order_id=1042",
+              argument: "order_id",
+              value: "1042",
+              actions: [],
+            },
+          ],
+        },
+      },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces,World state",
+    );
+  });
+
   it("gives a voice call no World state tab until the server says actors are on", () => {
     useHasWorkers.mockReturnValue(false);
     useCallExecutionV3Detail.mockReturnValue({
