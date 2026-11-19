@@ -3405,31 +3405,6 @@
 - a line says the agent committed the change after Dana Brooks refused it
 - the approval names the refund the agent wrote after the decision
 
-### SIM-E2E-024 — a run started with a case held back says so in its header, and a run from before says nothing
-
-**Goal:** A developer who starts a run on a pairing that holds a case back reads, on the run itself, the readiness it started under and the cases it held back; a run started before runs kept readiness shows no tag
-
-**Spec:** `flows/simulate/run-readiness-header.spec.ts:12`
-
-**Tags:** —
-
-**User steps:**
-
-1. seed a built, certified Environment of 1 refund and 1 lookup whose contract routes issue_refund to production, with one finished run from before readiness was kept (e2e/lib/harness_environment_seed.py)
-2. open the Environment and click Run simulation
-3. run both scenarios from the run dialog
-4. land on the new run and open its readiness tag
-5. open the finished run from before
-
-**Backend state verified:**
-
-- the new run job keeps the readiness it was created with: answer blocked, and its selection holds back exactly the refund, by tool_routing
-
-**Browser observations:**
-
-- the new run's header reads "Started with 1 limit" and its popover "1 of 2 cases held back"
-- the run from before has no readiness tag
-
 ### SIM-E2E-030 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
 
 **Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs
