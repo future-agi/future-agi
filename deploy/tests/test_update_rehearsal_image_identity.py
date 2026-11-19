@@ -480,19 +480,24 @@ class ShippingLockedDependencyBootTests(unittest.TestCase):
         manifest = dict(version='v1.54.0', components=dict(standalone=dict(image=IMAGE.split('@')[0], digest=DIGEST)))
         driver.row = SimpleNamespace(platform='linux/amd64', release=SimpleNamespace(manifest=manifest))
         driver.dependencies = lock
-        driver.target = {}  # stops right after the dependency lock check
+        # The next stage looks up the target component after verifying both dependencies.
+        driver.target = mock.MagicMock(spec=dict)
+        driver.target.__getitem__.side_effect = StopIteration('dependency check finished')
         installation = mock.Mock()
         installation.config.return_value = copy.deepcopy(LockedDependencyBootTests.MODEL)
         installation.docker_run.side_effect = daemon
         with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
             driver.root = Path(temporary).resolve()
+            driver.row.deployment_directory = driver.root
+            driver.row.execution_deployment = {'files': {}}
             with mock.patch('deploy.update.install.Installation', return_value=installation), \
                  mock.patch('deploy.update.install.resolve_compose_command', return_value=['docker','compose']), \
                  mock.patch('deploy.update.processes.ProcessSupervisor'), \
                  mock.patch.object(shipping.socket, 'socket') as socket, \
-                 self.assertRaises(KeyError):
+                 self.assertRaisesRegex(StopIteration, 'dependency check finished'):
                 socket.return_value.getsockname.return_value = ('127.0.0.1', 12345)
-                driver.install_and_boot()
+                driver._prepare()
+            driver.target.__getitem__.assert_called_once_with('components')
         return driver
 
     def test_shipping_boot_uses_the_locked_digest_and_refuses_a_real_mismatch(self):
