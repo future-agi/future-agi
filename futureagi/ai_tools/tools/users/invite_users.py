@@ -42,24 +42,29 @@ class InviteUsersTool(BaseTool):
     def execute(self, params: InviteUsersInput, context: ToolContext) -> ToolResult:
         from django.db import transaction
 
+        from accounts.models.organization_membership import OrganizationMembership
         from accounts.models.user import User
         from accounts.models.workspace import (
             OrganizationRoles,
             Workspace,
             WorkspaceMembership,
         )
+        from accounts.services.workspace_membership import ensure_org_membership
         from accounts.utils import generate_password
+        from tfc.constants.levels import Level
         from tfc.constants.roles import RoleMapping, RolePermissions
 
         org = context.organization
         inviter = context.user
 
-        # Permission check: only Owner/Admin/Member can invite
-        if inviter.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-            OrganizationRoles.MEMBER,
-        ]:
+        # Permission check: only Owner/Admin/Member can invite. The level is
+        # the inviter's active membership in this organization, not the
+        # organization_role string on the account.
+        inviter_membership = inviter.get_membership(org)
+        inviter_level = (
+            inviter_membership.level_or_legacy or 0 if inviter_membership else 0
+        )
+        if inviter_level < Level.MEMBER:
             return ToolResult.error(
                 "You do not have permission to invite users. "
                 "Only Owner, Admin, or Member roles can invite.",
@@ -110,8 +115,25 @@ class InviteUsersTool(BaseTool):
         role = params.role
         if role in [r.value for r in organization_level_roles]:
             workspace_role = RoleMapping.get_workspace_role(role)
+            org_role = role
         else:
             workspace_role = role
+            org_role = OrganizationRoles.MEMBER.value
+
+        # An invite grants at most the inviter's own level, in the
+        # organization and in the workspace.
+        granted_level = Level.STRING_TO_LEVEL.get(org_role)
+        workspace_level = Level.STRING_TO_LEVEL.get(workspace_role)
+        if granted_level is None or workspace_level is None:
+            return ToolResult.error(
+                f"Unknown role: {role}.",
+                error_code="VALIDATION_ERROR",
+            )
+        if max(granted_level, workspace_level) > inviter_level:
+            return ToolResult.error(
+                "You can't invite someone with a role above your own.",
+                error_code="PERMISSION_DENIED",
+            )
 
         results = []
         errors = []
@@ -147,14 +169,26 @@ class InviteUsersTool(BaseTool):
                             password=password,
                             name=email.split("@")[0],
                             organization=org,
-                            organization_role=(
-                                role
-                                if role in [r.value for r in organization_level_roles]
-                                else OrganizationRoles.MEMBER
-                            ),
+                            organization_role=org_role,
                             invited_by=inviter,
                         )
                         status = "created"
+
+                    # Every org user needs an org membership. A missing row is
+                    # written at the granted level and organization_role mirrors
+                    # it; an existing active row keeps its level, and a removed
+                    # member (inactive row) stays removed and gets None.
+                    had_membership = OrganizationMembership._base_manager.filter(
+                        user=target_user, organization=org
+                    ).exists()
+                    org_membership = ensure_org_membership(
+                        target_user, org, invited_by=inviter, level=granted_level
+                    )
+                    if not had_membership and org_membership is not None:
+                        mirrored = Level.to_org_string(granted_level)
+                        if target_user.organization_role != mirrored:
+                            target_user.organization_role = mirrored
+                            target_user.save(update_fields=["organization_role"])
 
                     # Add to workspaces
                     ws_added = []
@@ -171,6 +205,10 @@ class InviteUsersTool(BaseTool):
                             existing_deleted.is_active = True
                             existing_deleted.role = workspace_role
                             existing_deleted.invited_by = inviter
+                            if existing_deleted.organization_membership_id is None:
+                                existing_deleted.organization_membership = (
+                                    org_membership
+                                )
                             existing_deleted.save()
                         else:
                             membership, created = (
@@ -181,11 +219,14 @@ class InviteUsersTool(BaseTool):
                                         "role": workspace_role,
                                         "invited_by": inviter,
                                         "is_active": True,
+                                        "organization_membership": org_membership,
                                     },
                                 )
                             )
                             if not created:
                                 membership.role = workspace_role
+                                if membership.organization_membership_id is None:
+                                    membership.organization_membership = org_membership
                                 membership.save()
 
                         ws_added.append(workspace.name)
