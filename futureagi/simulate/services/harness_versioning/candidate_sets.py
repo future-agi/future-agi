@@ -15,7 +15,6 @@ from django.utils import timezone
 
 from simulate.models import HarnessAssembledBundle, HostedHarnessJob
 from simulate.models.harness_versioning import DiscardReason, VersionStatus
-from simulate.services.harness_readiness.rules import failed_actions
 from simulate.services.harness_scenario_needs import affected_by_tool, case_needs
 from simulate.services.harness_versioning import validation
 from simulate.services.harness_versioning.draft_pieces import DRAFT_PIECES, piece_model
@@ -201,6 +200,9 @@ def validation_state(
             }
         )
     if state == "failed" and bundle is not None:
+        # Imported here: readiness reaches the drafts, which import this module.
+        from simulate.services.harness_readiness.rules import failed_actions
+
         error = bundle.error if isinstance(bundle.error, dict) else {}
         failed = [dict(one) for one in failed_actions(bundle)]
         body["error"] = FailedValidation(
