@@ -22,7 +22,11 @@ server:
   # cert_file is PEM, the leaf then any intermediates (all served); both
   # files are re-read every reload_interval and a changed pair is served
   # from the next connection on, with no restart. A pair that does not load
-  # is logged and the previous certificate kept. Env: AGENTCC_HTTP_ENABLED,
+  # is logged and the previous certificate kept. key_file should be readable
+  # by its owner, and at most also by its group (0400, 0600, or 0440 for a
+  # Kubernetes Secret with an fsGroup); a key other users can access, or its
+  # group can write, is still served with a warning naming the file and mode.
+  # Env: AGENTCC_HTTP_ENABLED,
   # AGENTCC_TLS_ENABLED, AGENTCC_TLS_PORT, AGENTCC_TLS_CERT_FILE,
   # AGENTCC_TLS_KEY_FILE, AGENTCC_TLS_MIN_VERSION, AGENTCC_TLS_RELOAD_INTERVAL.
   # http_enabled: true
