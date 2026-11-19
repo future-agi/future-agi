@@ -23,6 +23,7 @@ import { selectableRowIds } from "./scenarios.constants";
  *   fields / groupings / groupBy / scenarioEditing / levelLabels: from the server response
  */
 export const PAGE_SIZE = 25;
+const EMPTY_LIST = [];
 const EMPTY_LABELS = {};
 
 export default function useScenarioPage({
@@ -34,7 +35,15 @@ export default function useScenarioPage({
   page = 0,
   pageSize = PAGE_SIZE,
 } = {}) {
-  const query = useHarnessScenarios({ jobId, page, pageSize, search, groupBy, ordering, filters });
+  const query = useHarnessScenarios({
+    jobId,
+    page,
+    pageSize,
+    search,
+    groupBy,
+    ordering,
+    filters,
+  });
   const data = query.data;
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -47,6 +56,9 @@ export default function useScenarioPage({
   const scenarioEditing = data?.scenarioEditing ?? null;
   const levelLabels = data?.levelLabels ?? EMPTY_LABELS;
   const proofCounts = data?.proofCounts ?? null;
+  const dropped = data?.dropped ?? EMPTY_LIST;
+  const restored = data?.restored ?? EMPTY_LIST;
+  const privateFields = data?.privateFields ?? EMPTY_LIST;
 
   // Whole-suite total per section name, so a header reads "240 scenarios" even
   // when the page holds only a slice of that group.
@@ -65,9 +77,18 @@ export default function useScenarioPage({
       const name = row.group ?? "";
       const last = out[out.length - 1];
       if (last && last.name === name) last.rows.push(row);
-      else out.push({ id: `${appliedGroupBy}:${name}`, name, label: levelLabels[name] ?? name, rows: [row] });
+      else
+        out.push({
+          id: `${appliedGroupBy}:${name}`,
+          name,
+          label: levelLabels[name] ?? name,
+          rows: [row],
+        });
     }
-    return out.map((g) => ({ ...g, totalInGroup: groupCounts[g.name] ?? g.rows.length }));
+    return out.map((g) => ({
+      ...g,
+      totalInGroup: groupCounts[g.name] ?? g.rows.length,
+    }));
   }, [rows, appliedGroupBy, groupCounts, levelLabels]);
 
   // Rows only the unsaved changes add can't be selected, so the page's
@@ -92,5 +113,8 @@ export default function useScenarioPage({
     scenarioEditing,
     levelLabels,
     proofCounts,
+    dropped,
+    restored,
+    privateFields,
   };
 }

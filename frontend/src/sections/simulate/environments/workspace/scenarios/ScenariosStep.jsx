@@ -27,6 +27,7 @@ import ValidateScenariosButton from "./ValidateScenariosButton";
 import { clampCount, missingCasesGuidance } from "./addScenarios.constants";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
+import DroppedCases from "../preview/DroppedCases";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
 import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
 import DraftImports from "../../evidence/DraftImports";
@@ -544,6 +545,10 @@ export default function ScenariosStep({
                 list.
               </Alert>
             )}
+            <DroppedCases
+              dropped={pageData.dropped}
+              restored={pageData.restored}
+            />
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
                 underneath, so the row keeps the toolbar's height (no shift when
@@ -761,6 +766,7 @@ export default function ScenariosStep({
         scenarioEditing={pageData.scenarioEditing}
         noiseOptions={noiseOptions}
         levelLabels={pageData.levelLabels}
+        privateFields={pageData.privateFields}
         env={env}
       />
       <ConfirmDialog

@@ -555,7 +555,7 @@ export const DRAFTS_COPY = {
     draft_not_found: "These changes were already saved or discarded.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
-    validation_required: "Validate these reviewed changes, then save them.",
+    validation_required: "Validate these changes, then save them.",
     scenario_index_mismatch:
       "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
     change_depends_on_rejected:

@@ -35,6 +35,7 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       realHooks
         ? real.useActors(...args)
         : { data: actorsData, refetch, ...actorsState },
+    useSetFileRole: () => ({ mutate: vi.fn(), isPending: false, error: null }),
     useEditActor: (...args) =>
       realHooks
         ? real.useEditActor(...args)

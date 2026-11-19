@@ -38,6 +38,7 @@ import {
   fileFault,
   storedFault,
 } from "./testConditions.constants";
+import { PREVIEW_COPY } from "../preview/preview.constants";
 
 // The server names which fields may be written, in `scenario_editing`
 // (editable_fields + persona_fields), and which force a re-proof (rework_fields).
@@ -55,6 +56,7 @@ export default function ScenarioEditor({
   scenarioEditing,
   noiseOptions = [],
   levelLabels = {},
+  privateFields = [],
   env,
 }) {
   const [saveError, setSaveError] = useState("");
@@ -314,7 +316,10 @@ export default function ScenarioEditor({
         </Box>
 
         <Stack spacing={3} sx={{ flex: 1, overflow: "auto", p: 3 }}>
-          <SectionHeader title={EDITOR_COPY.scenarioSection} />
+          <SectionHeader
+            title={EDITOR_COPY.scenarioSection}
+            hint={PREVIEW_COPY.scenarioHint}
+          />
           <TextField
             size="small"
             label="Name"
@@ -412,7 +417,7 @@ export default function ScenarioEditor({
 
           <SectionHeader
             title={EDITOR_COPY.personaSection}
-            hint="Who is on the other end of the run."
+            hint={`Who is on the other end of the run. ${PREVIEW_COPY.personaHint}`}
           />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
@@ -485,7 +490,9 @@ export default function ScenarioEditor({
 
           <SectionHeader
             title={TEST_CONDITIONS_COPY.heading}
-            hint={canEdit("faults") ? REPROOF_HINT : READ_ONLY_HINT}
+            hint={`${canEdit("faults") ? REPROOF_HINT : READ_ONLY_HINT} ${PREVIEW_COPY.privateHint}${
+              privateFields.length ? ` (${privateFields.join(", ")})` : ""
+            }`}
           />
           <TestConditionsEditor
             faults={draft.faults || []}
@@ -642,6 +649,8 @@ ScenarioEditor.propTypes = {
   }),
   // Background-noise choices from the server field catalogue (values the agent uses).
   noiseOptions: PropTypes.arrayOf(PropTypes.string),
+  // Scenario fields only the grader reads.
+  privateFields: PropTypes.arrayOf(PropTypes.string),
   levelLabels: PropTypes.object,
   env: PropTypes.object,
 };

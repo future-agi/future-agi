@@ -16,6 +16,7 @@ import {
   TEST_CONDITIONS_COPY,
   testConditionRoute,
 } from "./testConditions.constants";
+import StartingRecords from "./StartingRecords";
 
 // One scenario, opened from its table row, laid out as the designer's
 // ScenarioDrawer: the name (the table's Scenario column) and Edit in the
@@ -179,6 +180,12 @@ export default function ScenarioDrawer({
             <ScenarioSheet row={row} />
             <Stack spacing={3} sx={{ px: 3, pb: 3 }}>
               <LifecycleSections row={row} jobId={env?.id} />
+              {env?.id && (row.scenarioKey ?? row._raw?.scenario_key) && (
+                <StartingRecords
+                  envId={env.id}
+                  scenarioKey={row.scenarioKey ?? row._raw?.scenario_key}
+                />
+              )}
             </Stack>
           </Box>
         </Stack>

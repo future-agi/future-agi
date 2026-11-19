@@ -26,6 +26,7 @@ import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
 import HeldBackList from "./HeldBackList";
+import ReadinessRows from "../preview/ReadinessRows";
 import { useValidateScenarios } from "src/api/harness/scenarios";
 
 // Seconds left before a refused run may be tried again; re-read on each new error.
@@ -414,6 +415,11 @@ export default function RunDialog({
             picks={picks}
             keys={runIds}
             enabled={open && Boolean(data) && !blocked}
+          />
+          <ReadinessRows
+            envId={env?.id}
+            picks={picks}
+            enabled={open && Boolean(data)}
           />
         </Stack>
       </>

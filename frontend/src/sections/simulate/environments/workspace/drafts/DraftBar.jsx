@@ -21,7 +21,10 @@ import { DRAFTS_COPY as COPY } from "../workspace.constants";
 import { changeCount } from "./changeCount";
 import { SCENARIOS_COPY } from "../scenarios/scenarios.constants";
 import { draftSaveRequests } from "./draftSave";
-import { useDraftsValidation, validationStateNote } from "./useDraftsValidation";
+import {
+  useDraftsValidation,
+  validationStateNote,
+} from "./useDraftsValidation";
 
 const pieceLine = (piece, draft) =>
   `${COPY.pieces[piece]} · ${
@@ -111,6 +114,7 @@ export default function DraftBar({
     (review?.counts?.accepted ?? 0) + (review?.counts?.rejected ?? 0) > 0;
   const validation = drafts.validation;
   const needsValidate =
+    drafts.validationRequired ||
     decided ||
     save.error?.error === "validation_required" ||
     Boolean(validation);
@@ -135,11 +139,14 @@ export default function DraftBar({
   const onSave = () => {
     discard.reset();
     save.mutate(draftSaveRequests(drafts), {
-        // Saving never activates an unvalidated case: it is saved as Draft and does not run.
-        onSuccess: (saved) => {
-          const drafted = saved?.not_active?.length ?? 0;
-          if (drafted) enqueueSnackbar(SCENARIOS_COPY.savedAsDraft(drafted), { variant: "info" });
-        },
+      // Saving never activates an unvalidated case: it is saved as Draft and does not run.
+      onSuccess: (saved) => {
+        const drafted = saved?.not_active?.length ?? 0;
+        if (drafted)
+          enqueueSnackbar(SCENARIOS_COPY.savedAsDraft(drafted), {
+            variant: "info",
+          });
+      },
     });
   };
   const onDiscard = () => {

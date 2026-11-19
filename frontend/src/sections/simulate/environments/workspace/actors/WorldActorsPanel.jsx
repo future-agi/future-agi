@@ -20,6 +20,7 @@ import ActorSideGroups from "./ActorSideGroups";
 import ActorsSkeleton from "./ActorsSkeleton";
 import AddActorMenu from "./AddActorMenu";
 import { ACTORS_COPY } from "./actors.constants";
+import FileRoles from "../preview/FileRoles";
 
 const C = ACTORS_COPY.worldActors;
 const OUTLINED = {
@@ -186,6 +187,15 @@ export default function WorldActorsPanel({ envId, locked = false }) {
           </Alert>
         )}
       </Stack>
+      <Box sx={{ mb: 2 }}>
+        <FileRoles
+          envId={envId}
+          files={data.knowledge_sources?.files}
+          roles={data.knowledge_sources?.roles}
+          revision={revision}
+          locked={locked}
+        />
+      </Box>
       {(data?.unresolved || []).length > 0 && (
         <Box sx={{ mb: 2 }} data-testid="needs-decision">
           <SectionCard title={C.unresolved.title} subtitle={C.unresolved.about}>

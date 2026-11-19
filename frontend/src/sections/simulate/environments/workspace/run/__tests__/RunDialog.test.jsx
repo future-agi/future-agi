@@ -24,6 +24,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   );
   return {
     ...actual,
+    useRunReadiness: vi.fn(() => ({ data: undefined })),
     useEnvironmentVersions: vi.fn((envId, { enabled } = {}) => ({
       data:
         enabled && state.versions
