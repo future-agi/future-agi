@@ -169,7 +169,7 @@ PickAgent.propTypes = {
 };
 
 /**
- * Connect agent on a saved environment: pick one of the channel's connected
+ * Connect agent on a design's environment, saved or not: pick one of the channel's connected
  * agents, or connect a new one in a second drawer offering only the ways that
  * bring an agent of that channel. Connecting there adds a sample agent, as in
  * Build environment; picking isn't sent anywhere yet.

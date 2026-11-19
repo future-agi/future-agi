@@ -205,8 +205,6 @@ export const CHECKLIST_COPY = {
   agent: {
     title: "Connect an agent",
     body: "Wire your agent so it can act against the environment. This flow lets you connect one after the fact.",
-    saveFirst:
-      "Save v1 first. Connect agent opens Review and save, then the agent picker.",
     cta: "Connect agent",
   },
   scenarios: {

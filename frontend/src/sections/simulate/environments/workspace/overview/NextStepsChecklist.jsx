@@ -78,9 +78,6 @@ export default function NextStepsChecklist({
   if (connect)
     steps.splice(0, steps.length, {
       ...steps[1],
-      body: connect.saved
-        ? CHECKLIST_COPY.agent.body
-        : CHECKLIST_COPY.agent.saveFirst,
       onClick: connect.onClick,
       disabled: false,
     });
@@ -182,5 +179,5 @@ NextStepsChecklist.propTypes = {
   envState: ENV_STATE_SHAPE,
   onGo: PropTypes.func,
   scenarioCount: PropTypes.number,
-  connect: PropTypes.shape({ saved: PropTypes.bool, onClick: PropTypes.func }),
+  connect: PropTypes.shape({ onClick: PropTypes.func }),
 };
