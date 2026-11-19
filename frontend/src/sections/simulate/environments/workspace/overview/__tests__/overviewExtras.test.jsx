@@ -78,6 +78,18 @@ describe("NextStepsChecklist", () => {
     expect(onGo).not.toHaveBeenCalledWith("agent");
   });
 
+  it("lists only Connect an agent for a design, off until v1 is saved", async () => {
+    const onClick = vi.fn();
+    const { rerender } = renderChecklist({ connect: { saved: false, onClick } });
+    expect(screen.getByText(/Save v1 first/)).toBeInTheDocument();
+    expect(screen.queryByText(/Tasks the agent has to complete/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /connect agent/i })).toBeDisabled();
+
+    rerender(<NextStepsChecklist env={MOCK_WORLD} envState={{}} connect={{ saved: true, onClick }} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /connect agent/i }));
+    expect(onClick).toHaveBeenCalled();
+  });
+
   it("counts completed steps and retires their CTAs as progress is made", () => {
     renderChecklist({ envState: { scenarios: [{}, {}], evals: [{}] } });
     // created + scenarios + evals are done; agent + run remain.
