@@ -1433,7 +1433,8 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
                 return [], []
             seconds = self.connection.send_receive_timeout
             calls.append((seconds, settings["max_execution_time"]))
-            now[0] += seconds * 0.9
+            # A one-second stall without a timeout leaves only 450 ms for the page.
+            now[0] += 1.0 if seconds is None else seconds * 0.9
             if fallback:
                 raise DriverNetworkError(_LEAKY_DETAIL)
             return [(datetime(2020, 1, 1, tzinfo=UTC),)], [
