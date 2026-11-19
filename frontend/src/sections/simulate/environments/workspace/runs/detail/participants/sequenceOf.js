@@ -1,5 +1,6 @@
 import { SEQUENCE_COPY as C } from "./sequence.constants";
 import { readable } from "./sequenceLayout";
+import { shownWords } from "./shownWords";
 
 /*
   A call's participants as a sequence: one lane per participant (caller,
@@ -16,6 +17,10 @@ const oneLine = (text) =>
   String(text ?? "")
     .replace(/\s*\n+\s*/g, " · ")
     .trim();
+
+// An arrow's one-line label: what the message shows once rendered, when the API marks it as prose.
+const labelOf = (text, shown) =>
+  oneLine(shown && shown.format !== "code" ? shownWords(text) : text);
 
 const refusalWords = (call) =>
   call.refused ? C.refusalWords[call.reason] ?? null : null;
@@ -99,7 +104,7 @@ const answerOf = (w, start, turnEnd) => {
     kind: "answer",
     bad: w.state === "failed",
     at: w.endedAt,
-    label: oneLine(w.result),
+    label: labelOf(w.result, w.resultShown),
     full: w.result,
     fullShown: w.resultShown,
   };
@@ -118,7 +123,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       from: USER_LANE,
       to: coord.id,
       at: t.at,
-      label: oneLine(t.request),
+      label: labelOf(t.request, t.requestShown),
       full: t.request,
       fullShown: t.requestShown,
       turn: t.n,
@@ -130,7 +135,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
             // Placed at the request when the reply has no time; then it has no duration either.
             at: turnEnd ?? start,
             timed: turnEnd != null,
-            label: oneLine(t.reply),
+            label: labelOf(t.reply, t.replyShown),
             full: t.reply,
             fullShown: t.replyShown,
           }
@@ -149,8 +154,9 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       from: coord.id,
       to: USER_LANE,
       at: t.replyAt,
-      label: oneLine(t.reply),
+      label: labelOf(t.reply, t.replyShown),
       full: t.reply,
+      fullShown: t.replyShown,
       turn: t.n,
       key: `turn-${t.n}`,
       answer: null,
@@ -172,7 +178,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       from,
       to: w.id,
       at: w.delegatedAt,
-      label: oneLine(w.task) || C.noTaskText,
+      label: labelOf(w.task, w.taskShown) || C.noTaskText,
       full: w.task || null,
       fullShown: w.taskShown,
       turn: t.n,
@@ -225,7 +231,7 @@ const foldQuietTurns = (sorted) => {
       prev.fullShown = null;
       prev.answer = {
         ...s.answer,
-        label: oneLine(s.answer.full),
+        label: labelOf(s.answer.full, s.answer.fullShown),
         fullShown: null,
         full: prev.replyTexts
           .map((x, i) => C.turnLine(prev.turnNums[i], x))
@@ -236,6 +242,7 @@ const foldQuietTurns = (sorted) => {
     steps.push({
       ...s,
       turnTexts: s.kind === "message" ? [s.full] : [],
+      firstShown: s.kind === "message" ? s.fullShown : null,
       turnNums: s.kind === "message" ? [s.turn] : [],
       replyTexts: s.kind === "message" && s.answer?.full ? [s.answer.full] : [],
     });
@@ -495,6 +502,7 @@ const turnGroupsOf = (steps) => {
     if (!g.label && s.kind === "message") {
       g.label = s.label;
       g.text = s.turnTexts?.[0] || s.full || s.label;
+      g.textShown = s.firstShown ?? null;
     }
     if (s.bad || s.answer?.bad) g.bad = true;
     if (s.refused) g.refused = (g.refused || 0) + 1;
