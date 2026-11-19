@@ -3063,7 +3063,7 @@
 
 **Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
 
-**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:37`
+**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:43`
 
 **Tags:** —
 
@@ -3082,8 +3082,8 @@
 - the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org
 - from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay
 - simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
-- the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
-- the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay
+- the import's bundle re-reads Observe: each case's transcript holds its minted ask, redaction reports the minted email as an EMAIL_ADDRESS finding, and each case's starting state is missing, with the reason that the draft labels what it assumes synthetic
+- the review shows both cases waiting, the transcript present, the starting state missing, and one Starting state alert saying Observe lacks the seed records (an earlier refund), the draft marks them synthetic and the test is not an exact replay; it never claims an exact replay
 
 ### SIM-E2E-004 — a person pastes a transcript into an environment and sees its personal data replaced and marked as their transcript
 
@@ -3362,3 +3362,30 @@
 - her decision reads Refused
 - a line says the agent committed the change after Dana Brooks refused it
 - the approval names the refund the agent wrote after the decision
+
+### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
+
+**Goal:** A person in an environment-only organisation creates an environment test from Observe and reaches only their own workspace's environments and projects, while another organisation or workspace can neither import into them nor read the import
+
+**Spec:** `flows/simulate/evidence-import-tenant-scope.spec.ts:38`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one session in a minted Observe project for each of two organisations' owners, A and B
+2. seed three built, versioned environments: in A's workspace, in A's sibling workspace and in B's (lib/environment-seed.ts)
+3. as A, open the project's Sessions, select the seeded session, choose Actions then Create environment test, and open the environment picker
+4. pick A's environment and import; land on its review
+5. as A, and as A scoped to the sibling workspace, import naming another organisation's or workspace's environment or project
+6. as B, read A's import through A's environment and through B's own
+7. as a viewer of A's workspace, import into A's environment and draft A's import
+
+**Backend state verified:**
+
+- both seeded sessions are stored for their own project in ClickHouse trace_sessions (FINAL)
+- A's organisation is environment-only, and the environment picker lists exactly A's environment: not the sibling workspace's, not B's
+- the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session
+- the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
+- B reading A's import answers 404, through A's environment and through B's own
+- a viewer of A's workspace is refused the import and the draft with 403 (Write access denied to this workspace): A's organisation keeps its one import, still undrafted, with its case pending
