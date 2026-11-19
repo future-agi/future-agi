@@ -56,6 +56,10 @@ export default function ProposalsDrawer({
   onAddKb,
   onReviewChanges,
 }) {
+  const { data: summary } = useEnvironmentSources(envId);
+  const live = new Set(
+    (summary?.sources || prepared.ui.sources).map((one) => one.source_id),
+  );
   return (
     // Kept mounted so closing mid-review keeps checks, edits and picks.
     <SideDrawer open={open} onClose={onClose} width={560} keepMounted>
@@ -75,7 +79,11 @@ export default function ProposalsDrawer({
             {COPY.subtitle(
               // A file refused by its extension was never read.
               prepared.ui.sources
-                .filter((source) => source.status !== "unsupported")
+                .filter(
+                  (source) =>
+                    source.status !== "unsupported" &&
+                    live.has(source.source_id),
+                )
                 .map((source) => source.name),
             )}
           </Typography>
@@ -236,7 +244,10 @@ export function Proposals({
     try {
       // eslint-disable-next-line no-restricted-syntax -- sequential on purpose: accepts share one draft
       for (const batch of batches.filter(
-        (one) => !done.current.has(one.import_ref),
+        (one) =>
+          !done.current.has(one.import_ref) &&
+          // A batch whose files were all removed has nothing to add.
+          one.ui.sources.some((source) => live.has(source.source_id)),
       )) {
         const own = new Set(batch.ui.items.map((item) => item.id));
         const files = new Set(batch.ui.sources.map((one) => one.source_id));
@@ -436,7 +447,8 @@ export function Proposals({
               reading ||
               undecided ||
               accept.isPending ||
-              (!count && !personal.length)
+              // Done ends a review whose files were all removed.
+              (!count && !personal.length && items.length > 0)
             }
             onClick={count ? add : () => onDone(null)}
           >
