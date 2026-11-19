@@ -246,6 +246,43 @@ def test_a_scenario_summary_names_its_check_files_in_words_and_never_its_index_e
     ]
 
 
+def test_an_actor_share_change_names_its_values_and_grades_nothing():
+    from simulate.services.harness_versioning.review_items import graded
+
+    actors = [{"id": "partner", "name": "Partner"}]
+    default = _tree(
+        {},
+        **{"actors.json": {"actors": actors, "actor_share": {"min": 0.16, "max": 0.5}}},
+    )
+    share = _tree(
+        {},
+        **{"actors.json": {"actors": actors, "actor_share": {"min": 0.1, "max": 0.3}}},
+    )
+    other = _tree(
+        {},
+        **{
+            "actors.json": {
+                "actors": actors,
+                "actor_share": {"min": 0.16, "max": 0.5},
+                "voice": "calm",
+            }
+        },
+    )
+
+    [change] = compute_changes(default, share)
+    [added] = compute_changes(default, other)
+
+    assert (change["fields"], change["summary"], graded(change)) == (
+        ["actor_share"],
+        "Change actor share: 16-50% → 10-30% in actors.json",
+        False,
+    )
+    assert (added["summary"], graded(added)) == (
+        "Change voice: not set → calm in actors.json",
+        True,
+    )
+
+
 def _pair():
     default = _tree(
         {"tools": TOOLS, "persona": "calm"},

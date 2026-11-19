@@ -583,6 +583,49 @@ def _summary(action: str, item: Item, fields: list[str]) -> str:
     return f"{verb} {noun} {name}"
 
 
+# Longer values are named, not quoted.
+_VALUE_SHOWN_MAX = 40
+
+
+def _value_said(field: str, value: Any) -> str:
+    """A setting's value in words: a {min, max} range as "a-b" (a share as percents), else its text when short."""
+    if value is None:
+        return "not set"
+    if isinstance(value, dict) and set(value) == {"min", "max"}:
+        low, high = value["min"], value["max"]
+        if all(
+            isinstance(one, int | float) and not isinstance(one, bool)
+            for one in (low, high)
+        ):
+            if field.endswith("share") and 0 <= low <= 1 and 0 <= high <= 1:
+                return f"{round(low * 100)}-{round(high * 100)}%"
+            return f"{low}-{high}"
+    return (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, sort_keys=True)
+    )
+
+
+def _file_fields(before: bytes | None, after: bytes | None) -> tuple[list[str], str]:
+    """The top-level fields a JSON file's change touches, and each said in words with its old and new value when both
+    are short ("actor share: 16-50% → 10-30%"); nothing when either side is not a JSON object."""
+    old, new = read_json(before or b""), read_json(after or b"")
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return [], ""
+    fields = _fields(old, new)
+    said = []
+    for field in fields:
+        name = field.replace("_", " ")
+        was, now = (
+            _value_said(field, old.get(field)),
+            _value_said(field, new.get(field)),
+        )
+        short = len(was) <= _VALUE_SHOWN_MAX and len(now) <= _VALUE_SHOWN_MAX
+        said.append(f"{name}: {was} → {now}" if short else name)
+    return fields, "; ".join(said)
+
+
 def _rows_said(rows: list[WorldRowCounts] | None) -> str:
     """Each table's row counts, e.g. "orders 1 row added, 2 changed"; empty when they could not be read."""
     said = []
@@ -631,6 +674,10 @@ def compute_changes(
             else None
         )
         summary = _summary(action, item, fields)
+        if item.kind == "file" and old is not None and new is not None:
+            fields, said = _file_fields(old.raw, new.raw)
+            if said:
+                summary = f"Change {said} in {item.key}"
         if _rows_said(rows):
             summary = f"{summary}: {_rows_said(rows)}"
         change = ReviewChange(
@@ -654,11 +701,20 @@ def compute_changes(
 
 # A scenario's own name is shown, never graded.
 _UNGRADED_SCENARIO_FIELDS = frozenset({"name", "title"})
+# Settings of a file that decide how often something joins a trial, never what any check reads.
+_UNGRADED_FILE_FIELDS = {"actors.json": frozenset({"actor_share"})}
 
 
 def graded(change: ReviewChange) -> bool:
-    """Whether a change alters what a trial is graded on: every change except a scenario's rename (fields the diff
-    ignores never become changes at all)."""
+    """Whether a change alters what a trial is graded on: every change except a scenario's rename and a file change
+    to settings no check reads, such as how often actors join (fields the diff ignores never become changes at all)."""
     if change["kind"] == "scenario" and change["action"] == "changed":
         return not set(change.get("fields") or []) <= _UNGRADED_SCENARIO_FIELDS
+    if (
+        change["kind"] == "file"
+        and change["key"] in _UNGRADED_FILE_FIELDS
+        and change["action"] == "changed"
+    ):
+        fields = set(change.get("fields") or [])
+        return not fields or not fields <= _UNGRADED_FILE_FIELDS[change["key"]]
     return True
