@@ -907,7 +907,7 @@
 
 **Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
 
-**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:53`
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:50`
 
 **Tags:** —
 
@@ -923,10 +923,10 @@
 **Backend state verified:**
 
 - the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
-- each widget’s 30D response is query_complete and query_exact with 3 traces and 6 spans
+- each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans
 - custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
 - the custom-range responses are complete and exact with the seeded totals
-- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion
 
 ## datasets
 

@@ -1,4 +1,4 @@
-import { request, type Locator, type Page } from '@playwright/test';
+import { request, type Locator, type Page, type Request } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace } from '../../lib/otlp';
 import { captureAnnotationHttp, type Receipt } from '../../lib/annotation-http';
@@ -25,20 +25,14 @@ const METRICS: Metric[] = ['trace_count', 'span_count'];
 type QueryInput = { project_ids?: string[]; metrics?: { id: string }[];
   time_range?: { preset?: string; custom_start?: string; custom_end?: string } };
 type QueryResult = { query_complete?: boolean; query_exact?: boolean; query_status?: string;
-  query_refreshing?: boolean; query_completed_at?: string;
+  time_range?: { start: string; end: string }; query_refreshing?: boolean; query_completed_at?: string;
   metrics?: { id: string; series: { data: { value: number | null }[] }[] }[] };
 type QueryBody = { result?: QueryResult };
-type Seen = { url: URL; input: QueryInput; at: number };
+type Seen = { url: URL; input: QueryInput; req: Request; at: number };
 
 const rangeKey = (input: QueryInput) => {
   const tr = input.time_range ?? {};
   return tr.preset ? `preset:${tr.preset}` : `${tr.custom_start}|${tr.custom_end}`;
-};
-/** Whole days a custom range spans, so Today (<1), 7D (7) and 30D (30) are told apart. */
-const rangeDays = (input: QueryInput) => {
-  const tr = input.time_range ?? {};
-  if (!tr.custom_start || !tr.custom_end) return null;
-  return Math.round((Date.parse(tr.custom_end) - Date.parse(tr.custom_start)) / DAY_MS);
 };
 const total = (result: QueryResult | undefined, metric: Metric) =>
   (result?.metrics?.find(m => m.id === metric)?.series ?? [])
@@ -49,6 +43,9 @@ const isExact = (result: QueryResult | undefined) =>
 function chip(page: Page, label: string): Locator {
   return page.locator('.MuiChip-root').filter({ has: page.getByText(label, { exact: true }) });
 }
+
+// A non-UTC, non-DST zone distinguishes local midnight from UTC midnight.
+test.use({ timezoneId: 'Asia/Kolkata' });
 
 test('DASH-E2E-018: rapid date presets query only the final range, custom Done and Refresh apply at once', {
   tag: ['@flow'],
@@ -65,10 +62,10 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     ],
     backendChecks: [
       'the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click',
-      'each widget’s 30D response is query_complete and query_exact with 3 traces and 6 spans',
+      'each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans',
       'custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done',
       'the custom-range responses are complete and exact with the seeded totals',
-      'Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals',
+      'Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -80,12 +77,16 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   const prefix = `e2e-dash18-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projectName = `${prefix}-project`;
 
-  // ---- seed: 3 traces 60 s ago, so they fall inside Today, 7D and 30D ----
+  // Yesterday at noon UTC (17:30 browser-local): never a future trace or a midnight seed.
+  const anchor = new Date(Date.now() - DAY_MS);
+  anchor.setUTCHours(12, 0, 0, 0);
+  const bounds30 = { start: anchor.getTime() - 30 * DAY_MS, end: anchor.getTime() };
+  const key30 = `${new Date(bounds30.start).toISOString()}|${anchor.toISOString()}`;
   const ingest = await request.newContext();
   const seeded = [];
   try {
     for (let i = 0; i < 3; i++) {
-      const start = BigInt(Date.now() - 60_000) * 1_000_000n;
+      const start = BigInt(anchor.getTime() - 60_000) * 1_000_000n;
       seeded.push(await sendTrace(ingest, { collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey,
         secretKey: actor.secretKey, projectName, rootName: `${prefix}-root-${i}`, childName: `${prefix}-child-${i}`,
         startTimeUnixNano: start, endTimeUnixNano: start + 50_000_000n }));
@@ -122,7 +123,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   page.on('request', req => {
     const url = new URL(req.url());
     if (url.origin !== new URL(E2E.apiUrl).origin || url.pathname !== QUERY || req.method() !== 'POST') return;
-    try { seen.push({ url, input: req.postDataJSON() as QueryInput, at: Date.now() }); } catch { /* not JSON */ }
+    try { seen.push({ url, req, input: req.postDataJSON() as QueryInput, at: Date.now() }); } catch { /* not JSON */ }
   });
   const pageErrors: string[] = [];
   page.on('pageerror', err => pageErrors.push(err.message));
@@ -137,14 +138,15 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     const r = queries(metric, since).filter(q => q.settled && rangeKey(q.input as QueryInput) === key).at(-1);
     const result = r?.body?.result;
     return r && { status: r.status, exact: isExact(result), total: total(result, metric),
+      bounds: result?.time_range && { start: Date.parse(result.time_range.start), end: Date.parse(result.time_range.end) },
       completedAt: result?.query_completed_at ?? null };
   };
   const expectedTotal = (metric: Metric) =>
     metric === 'trace_count' ? EXPECTED_TRACES : EXPECTED_TRACES * EXPECTED_SPANS_PER_TRACE;
-  const settledExact = (metric: Metric, since: number, key: string) =>
+  const settledExact = (metric: Metric, since: number, key: string, bounds?: typeof bounds30) =>
     expect.poll(() => latest(metric, since, key), { ...POLL.ASYNC_JOB,
       message: `${metric} ${key} completes exactly` })
-      .toMatchObject({ status: 200, exact: true, total: expectedTotal(metric) });
+      .toMatchObject({ status: 200, exact: true, total: expectedTotal(metric), ...(bounds ? { bounds } : {}) });
 
   const loadStart = Date.now();
   await page.goto(`/dashboard/dashboards/${dashboardId}`, { waitUntil: 'domcontentloaded' });
@@ -157,16 +159,30 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     }
   });
 
+  // Keep a real browser performance clock even when the application Date is fixed.
+  // Chromium Request.timing().startTime also uses real epoch milliseconds.
+  const timing = await page.evaluateHandle(() => {
+    const origin = performance.timeOrigin, now = performance.now.bind(performance);
+    return { now: () => origin + now(), click: 0 };
+  });
+  await page.clock.setFixedTime(anchor);
+  const clickDispatch = async (target: Locator) => {
+    await target.evaluate((el, t) => el.addEventListener('click', () => { t.click = t.now(); },
+      { capture: true, once: true }), timing);
+    await target.click(); // actionability precedes the DOM event and is not timed
+    return timing.evaluate(t => t.click);
+  };
+  const firstDispatch = (metric: Metric, since: number, key: string) => seen.find(s =>
+    s.at >= since && mine(s.input, metric) && rangeKey(s.input) === key)?.req.timing().startTime ?? NaN;
   const chip30 = chip(page, '30D');
   let burstStart = 0, clicked30 = 0, highlighted30 = 0;
   await test.step('UI: Today, 7D and 30D clicked back to back; 30D highlights before any 30D query', async () => {
     burstStart = Date.now(); // Every query from here on belongs to the burst.
     await chip(page, 'Today').click();
     await chip(page, '7D').click();
-    clicked30 = Date.now();
-    await chip30.click();
+    clicked30 = await clickDispatch(chip30);
     await expect(chip30).toHaveClass(PRIMARY);
-    highlighted30 = Date.now();
+    highlighted30 = await timing.evaluate(t => t.now());
     await expect(chip(page, 'Today')).not.toHaveClass(PRIMARY);
     await expect(chip(page, '7D')).not.toHaveClass(PRIMARY);
   });
@@ -182,18 +198,18 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
       await attach(`burst-${metric}`, sent.map(r => ({ input: r.input, startedAt: r.startedAt })));
       // Exactly one range on the wire, and it is the 30-day one: Today and 7D never left the browser.
       expect(distinctRanges(metric, burstStart), `${metric} burst ranges`).toHaveLength(1);
-      expect(sent.map(r => rangeDays(r.input as QueryInput)), `${metric} burst range days`)
-        .toEqual(sent.map(() => 30));
-      // Ordering: the chip was already primary when the first 30D query left.
-      expect(sent[0].startedAt, `${metric} 30D query after the highlight`).toBeGreaterThanOrEqual(highlighted30);
-      expect(sent[0].startedAt - clicked30, `${metric} 30D query waits out the debounce`)
+      expect(distinctRanges(metric, burstStart)).toEqual([key30]);
+      const first = firstDispatch(metric, burstStart, key30);
+      expect(first, `${metric} 30D query after the highlight`).toBeGreaterThanOrEqual(highlighted30);
+      expect(first - clicked30, `${metric} 30D query waits out the debounce`)
         .toBeGreaterThanOrEqual(DEBOUNCE_FLOOR_MS);
     }
   });
 
   await test.step('API: both 30D responses complete exactly with the seeded totals', async () => {
     for (const metric of METRICS) {
-      await settledExact(metric, clicked30, distinctRanges(metric, clicked30)[0]);
+      await settledExact(metric, burstStart, key30, bounds30);
+      await attach(`completed-30D-${metric}`, latest(metric, burstStart, key30));
     }
   });
 
@@ -206,8 +222,9 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
       label: `${start.toLocaleString('en-US', { month: 'short' })} ${pad(start.getDate())}`,
       start: start.toISOString(), end: end.toISOString() };
   });
+  await attach('calendar', { anchor: anchor.toISOString(), seed: new Date(anchor.getTime() - 60_000).toISOString(), ...today });
   const customKey = `${today.start}|${today.end}`;
-  let doneAt = 0;
+  let doneAt = 0, clickedDone = 0;
   await test.step("UI: a custom range of today's date applies on Done", async () => {
     await chip(page, 'Custom').click();
     await page.getByLabel('Start Date').fill(today.input);
@@ -215,7 +232,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     const done = page.getByRole('button', { name: 'Done', exact: true });
     await expect(done).toBeEnabled();
     doneAt = Date.now();
-    await done.click();
+    clickedDone = await clickDispatch(done);
     await expect(chip(page, `${today.label} - ${today.label}`)).toHaveClass(PRIMARY);
   });
 
@@ -226,7 +243,10 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
       const sent = queries(metric, doneAt);
       await attach(`custom-${metric}`, sent.map(r => ({ input: r.input, startedAt: r.startedAt })));
       // Dispatch time first: a debounced Done would only send the range ~500 ms later.
-      expect(custom()[0].startedAt - doneAt, `${metric} custom query is not debounced`).toBeLessThan(CUSTOM_DISPATCH_MS);
+      await uiExpect.poll(() => firstDispatch(metric, doneAt, customKey)).toBeGreaterThan(0);
+      const elapsed = firstDispatch(metric, doneAt, customKey) - clickedDone;
+      expect(elapsed, `${metric} custom query follows Done`).toBeGreaterThanOrEqual(0);
+      expect(elapsed, `${metric} custom query is not debounced`).toBeLessThan(CUSTOM_DISPATCH_MS);
       expect(distinctRanges(metric, doneAt), `${metric} custom ranges`).toEqual([customKey]);
     }
     for (const metric of METRICS) await settledExact(metric, doneAt, customKey);
@@ -236,6 +256,17 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   await test.step('UI + API: Refresh sends one refresh=true query per widget and completes', async () => {
     const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
     await expect(refresh).toBeEnabled();
+    const observed = await refresh.evaluateHandle(el => {
+      const state = { refreshing: false };
+      const observer = new MutationObserver(() => {
+        if (el.textContent?.trim() === 'Refreshing' && (el as HTMLButtonElement).disabled) {
+          state.refreshing = true;
+          observer.disconnect();
+        }
+      });
+      observer.observe(el, { attributes: true, childList: true, subtree: true, characterData: true });
+      return state;
+    });
     refreshAt = Date.now();
     await refresh.click();
     const refreshes = (metric: Metric) =>
@@ -243,6 +274,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     for (const metric of METRICS) {
       await uiExpect.poll(() => refreshes(metric).length, { message: `${metric} refresh=true sent` }).toBeGreaterThan(0);
     }
+    await uiExpect.poll(() => observed.evaluate(state => state.refreshing)).toBe(true);
     for (const metric of METRICS) {
       await expect.poll(() => {
         const r = latest(metric, refreshAt, customKey);
@@ -251,7 +283,13 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
         .toMatchObject({ status: 200, exact: true, total: expectedTotal(metric), afterClick: true });
     }
     await uiExpect(refresh).toBeEnabled();
-    await uiExpect(page.getByText(/^Last updated /)).toBeVisible();
+    const completed = Math.max(...METRICS.map(metric => Date.parse(latest(metric, refreshAt, customKey)!.completedAt!)));
+    const label = await page.evaluate(ms => {
+      const d = new Date(ms);
+      return `Last updated ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}, ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    }, completed);
+    await uiExpect(page.getByText(label, { exact: true })).toBeVisible();
+    await attach('refresh-completion', { label, completed, refreshAt });
     for (const metric of METRICS) {
       const sent = refreshes(metric);
       await attach(`refresh-${metric}`, sent.map(s => ({ url: s.url.search, input: s.input, at: s.at })));
@@ -261,8 +299,8 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
 
   const firstAfter = (metric: Metric, since: number) => queries(metric, since)[0]?.startedAt - since;
   await attach('timings-ms', Object.fromEntries(METRICS.map(metric => [metric, {
-    burstClickToFirst30D: firstAfter(metric, clicked30), highlightBeforeFirst30D: queries(metric, burstStart)[0]?.startedAt - highlighted30,
-    doneToFirstCustom: firstAfter(metric, doneAt), refreshClickToFirst: firstAfter(metric, refreshAt) }])));
+    burstClickToFirst30D: firstDispatch(metric, burstStart, key30) - clicked30, highlightBeforeFirst30D: firstDispatch(metric, burstStart, key30) - highlighted30,
+    doneToFirstCustom: firstDispatch(metric, doneAt, customKey) - clickedDone, refreshClickToFirst: firstAfter(metric, refreshAt) }])));
   await Promise.all([...http.pending]);
   http.stop();
   expect(pageErrors, 'no page errors').toEqual([]);
