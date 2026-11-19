@@ -147,7 +147,7 @@ vi.mock("src/sections/evals/hooks/useCompositeEval", () => ({
 }));
 
 vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
-  useCompositeChildrenUnionKeys: () => stableUnionKeys,
+  useCompositeChildrenInputs: () => ({ keys: stableUnionKeys }),
 }));
 
 vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
