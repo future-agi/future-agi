@@ -1,6 +1,7 @@
 # Every PR states whether it needs a public docs change, so the docs PR is
 # raised with the code instead of drifting behind it. The PR body must carry
-# exactly one `Docs:` line: a future-agi/docs PR, or `none (<reason>)`.
+# exactly one `Docs:` line: a future-agi/docs PR, or `none (<reason>)`
+# (`none needed (<reason>)` is accepted too).
 # Skips drafts, release-please PRs, and dev<->main release/back-merge PRs.
 name: docs-declaration
 
@@ -32,5 +33,5 @@ jobs:
             if (values.length > 1) return core.setFailed(`More than one Docs: line. Keep one.\n${usage}`);
             const value = values[0] || '';
             if (/(https:\/\/github\.com\/future-agi\/docs\/pull\/\d+|future-agi\/docs#\d+)/i.test(value)) return core.info(`Docs PR: ${value}`);
-            if (/^none\s*\(\s*[^)\s][^)]*\)/i.test(value)) return core.info(`No docs change: ${value}`);
+            if (/^none(\s+needed)?\s*\(\s*[^)\s][^)]*\)/i.test(value)) return core.info(`No docs change: ${value}`);
             core.setFailed(value ? `Docs: "${value}" is not a docs PR link or none (<reason>).\n${usage}` : `Docs: line is missing or empty.\n${usage}`);
