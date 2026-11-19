@@ -94,7 +94,7 @@ def _check_source(
                 " private repository",
                 status_code=422,
             )
-        checked["repository_id"] = _installation_repository_id(
+        checked["repository_id"] = installation_repository_id(
             str(source.get("installation_id") or ""),
             str(source.get("repository") or ""),
         )
@@ -113,7 +113,7 @@ def _check_source(
     return checked
 
 
-def _installation_repository_id(installation_id: str, repository: str) -> int:
+def installation_repository_id(installation_id: str, repository: str) -> int:
     from integrations.services.github_app import GitHubAppError, list_repositories
 
     wanted = repository.lower()
@@ -149,10 +149,10 @@ def _installation_repository_id(installation_id: str, repository: str) -> int:
 def _require_public_repository(
     organization_id: Any, workspace_id: Any, source: Mapping
 ) -> int | None:
-    from simulate.services.harness_agent_changes import validate_public_github_source
+    from simulate.services.harness_agent_changes import validate_github_source
 
     try:
-        return validate_public_github_source(
+        return validate_github_source(
             {"source": {**source, "visibility": "public"}},
             organization_id=organization_id,
             workspace_id=workspace_id,

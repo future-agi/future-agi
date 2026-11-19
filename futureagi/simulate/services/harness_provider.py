@@ -1500,11 +1500,11 @@ class HostedHarnessProvider:
             )
             if replayed is None and versioning_enabled() and not connected_build:
                 from simulate.services.harness_agent_changes import (
-                    validate_public_github_source,
+                    validate_github_source,
                 )
 
                 # Before the source is cloned; GitHub is asked once replays are out.
-                validate_public_github_source(payload, lookup=False)
+                validate_github_source(payload, lookup=False)
             if replayed is None:
                 _validate_github_installation(
                     organization.id, getattr(workspace, "id", None), payload
@@ -1557,14 +1557,14 @@ class HostedHarnessProvider:
                 on_create = None
                 if replayed is None and versioning_enabled():
                     from simulate.services.harness_agent_changes import (
-                        validate_public_github_source,
+                        validate_github_source,
                     )
 
                     # A replay answers with its job, whatever GitHub says now.
                     repository_id = (
                         None
                         if connected_build
-                        else validate_public_github_source(
+                        else validate_github_source(
                             payload,
                             organization_id=organization.id,
                             workspace_id=getattr(workspace, "id", None),

@@ -37,7 +37,7 @@ from simulate.tests.test_harness_versioning_backfill import (
 pytestmark = pytest.mark.django_db
 
 NUDGE = "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
-PUBLIC_ONLY = "simulate.services.harness_agent_changes.validate_public_github_source"
+PUBLIC_ONLY = "simulate.services.harness_agent_changes.validate_github_source"
 INSTALLED = "integrations.services.github_app.installation_connected"
 
 

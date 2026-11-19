@@ -403,7 +403,6 @@ export const AGENT_VERSIONS_COPY = {
       `Built from ${repository} @ ${ref || "the default branch"}`,
     watchHint:
       "New commits become new agent versions automatically; they're checked before becoming the default.",
-    privateNotWatched: "Private repositories aren't watched for new commits.",
     checkRunning: "Another change is still being checked",
     upload: "Upload new source",
     uploading: (progress) => `Uploading… ${progress}%`,
