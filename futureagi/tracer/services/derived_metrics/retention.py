@@ -25,6 +25,7 @@ from operator import itemgetter
 from uuid import UUID
 
 from django.db import connection
+from django.db.models import Q
 from django.utils import timezone
 
 from tracer.models.derived_metric import (
@@ -237,8 +238,6 @@ def _terminal_payloads(project_id, *, recovery_attempt=None, through_generation=
     if through_generation is not None:
         chunks = chunks.filter(attempt__generation__lte=through_generation)
     if recovery_attempt is not None:
-        from django.db.models import Q
-
         chunks = chunks.exclude(Q(attempt=recovery_attempt) & ~Q(part="cleanup_intent"))
     return chunks
 
@@ -274,6 +273,14 @@ def _delete(store, table, predicate, params):
         f"ALTER TABLE {table.name} DELETE WHERE {predicate} SETTINGS mutations_sync = 2",
         params,
     )
+
+
+def _verified_delete(store, table, predicate, params):
+    _delete(store, table, predicate, params)
+    if store.execute(f"SELECT count() FROM {table.name} WHERE {predicate}", params) != [
+        (0,)
+    ]:
+        raise MetricStateConflict("physical scrub is incomplete")
 
 
 def _frozen_batch_sources(writer, attempt, table):
@@ -1787,11 +1794,7 @@ def finish_pending_expiry(writer, *, expiry_id=None):
         # key. Their dispatch registration revalidates that state, so no new old-
         # namespace submission can appear after this barrier observation.
         for table in tables:
-            _delete(writer.store, table, predicate, params)
-            if writer.store.execute(
-                f"SELECT count() FROM {table.name} WHERE {predicate}", params
-            ) != [(0,)]:
-                raise MetricStateConflict("physical expiry scrub is incomplete")
+            _verified_delete(writer.store, table, predicate, params)
         # Saved SQL jobs can overlap the scrub. The pass start is a cutoff
         # input, not evidence that the final verification had finished.
         completed_at = writer.lease.clock()
@@ -2072,11 +2075,7 @@ def finish_unpublished_replan(writer, *, discard_drafts=False):
     # no old writer can register after the abort above. Late ACKs are not enough
     # without this second physical scrub of every old native namespace.
     for table in TABLES.values():
-        _delete(writer.store, table, predicate, params)
-        if writer.store.execute(
-            f"SELECT count() FROM {table.name} WHERE {predicate}", params
-        ) != [(0,)]:
-            raise MetricStateConflict("unpublished cleanup is incomplete")
+        _verified_delete(writer.store, table, predicate, params)
     with serialized_project(project_id):
         writer.lease.check()
         _purge_terminal_payloads(project_id, through_generation=through)
@@ -2594,6 +2593,87 @@ def _erasure_handoff(store, handoff, request, erased_units):
     return retained, erased_units
 
 
+def _scrub_erasure_rows(store, request, predicates, params, **namespace):
+    """Predicates address fenced namespaces. Only a post-drain scrub is final."""
+    submissions = MetricErasureRequest.objects.filter(
+        organization_key=request.organization_key,
+        store_payload__protocol="metric_submission",
+        **namespace,
+    )
+    if request.project_key:
+        submissions = submissions.filter(project_key=request.project_key)
+    drained = submissions.filter(
+        Q(receipts__synchronous_response__drained=1)
+        | Q(receipts__terminal_query__drained=1),
+        status="done",
+        store_payload__shard=store.identity(),
+    )
+    # NOT IN a positive proof query: a missing JSON receipt is not a drain.
+    pending = submissions.exclude(pk__in=drained.values("pk"))
+    if pending.exists():
+        # Promptly remove existing rows even when a dispatched write is stuck.
+        for table, predicate in predicates:
+            _delete(store, table, predicate, params)
+        if pending.exists():
+            raise MetricStateConflict("live write drainage is pending")
+    for table, predicate in predicates:
+        _verified_delete(store, table, predicate, params)
+
+
+def _finish_subject_erasure(writer, store, request, manifest, base, params):
+    attempt = manifest.published_by
+    with serialized_project(request.project_key):
+        writer.lease.check()
+        current = MetricProjectRefresh.for_project(request.project_key).head_manifest
+        if current is None or current.id != manifest.id or current.revoked_at:
+            raise MetricStateConflict("subject erasure checkpoint changed")
+        old = list(
+            MetricReadManifest.objects.filter(project_id=request.project_key)
+            .exclude(id=manifest.id)
+            .values_list("id", flat=True)
+        )
+        revoke_generations(request.project_key, reason="erased", manifest_ids=old)
+        # A pre-checkpoint attempt may have started without a parent manifest.
+        MetricRefreshAttempt.objects.filter(
+            project_id=request.project_key,
+            generation__lte=attempt.generation,
+            state__in=MetricRefreshAttempt.OPEN_STATES,
+        ).update(
+            state="aborted",
+            aborted_at=writer.lease.clock(),
+            abort_reason="generation_revoked",
+        )
+    with serialized_project(request.project_key):
+        writer.lease.check()
+        _purge_terminal_payloads(
+            request.project_key,
+            recovery_attempt=attempt
+            if attempt.source_ceilings.get("recovery_pending")
+            else None,
+            through_generation=attempt.generation,
+        )
+    # Keep the new subject-safe copies, not anonymous history without lineage.
+    predicates = []
+    for table in TABLES.values():
+        predicate = base + " AND generation <= %(erase_through)s"
+        if table.name.startswith("metric_field_values") or table in (
+            SOURCE_DEPENDENCIES,
+            UNIT_STATE,
+            *LIST_CURRENT_TABLES,
+        ):
+            predicate += " AND attempt_id != toUUID(%(erase_new)s)"
+        predicates.append((table, predicate))
+    _scrub_erasure_rows(
+        store,
+        request,
+        predicates,
+        {**params, "erase_new": str(attempt.id), "erase_through": attempt.generation},
+        store_payload__generation__lte=attempt.generation,
+    )
+    writer.lease.check()
+    return {"manifest": str(manifest.id), "anonymous_history_dropped": True}
+
+
 def purge_by_scope(store, request, *, writer=None):
     if writer is not None:
         return _purge_with_writer(writer, store, request)
@@ -2640,12 +2720,20 @@ def _purge_by_scope(store, request, *, writer=None):
             )
         ids = tuple(UUID(a["id"]) for a in request.store_payload.get("attempts", []))
         if ids:
-            for table in TABLES.values():
-                _delete(
+            predicate = base + " AND attempt_id IN %(erase_attempts)s"
+            params["erase_attempts"] = ids
+            if request.claim_token is None:
+                # collect_garbage runs an early, best-effort purge. It doesn't
+                # issue receipts or wait for a previously dispatched write.
+                for table in TABLES.values():
+                    _delete(store, table, predicate, params)
+            else:
+                _scrub_erasure_rows(
                     store,
-                    table,
-                    base + " AND attempt_id IN %(erase_attempts)s",
-                    {**params, "erase_attempts": ids},
+                    request,
+                    [(table, predicate) for table in TABLES.values()],
+                    params,
+                    store_payload__attempt__in=[str(attempt) for attempt in ids],
                 )
         return {"attempt_count": len(ids)}
     if kind in {"users", "sessions"}:
@@ -2653,11 +2741,15 @@ def _purge_by_scope(store, request, *, writer=None):
             raise MetricStateConflict("subject erasure requires a project writer")
         with serialized_project(request.project_key):
             head = MetricProjectRefresh.for_project(request.project_key).head_manifest
-            if head is not None:
-                if head.revoked_at:
-                    raise MetricStateConflict(
-                        "subject erasure requires a usable source manifest"
-                    )
+            attempt = None
+            if head is not None and head.revoked_at:
+                raise MetricStateConflict(
+                    "subject erasure requires a usable source manifest"
+                )
+            if (
+                head is not None
+                and head.published_by.source_ceilings.get("erasure") != str(request.id)
+            ):
                 recovery_pending = head.published_by.source_ceilings.get(
                     "recovery_pending", False
                 )
@@ -2685,6 +2777,9 @@ def _purge_by_scope(store, request, *, writer=None):
                 "anonymous_history_dropped": True,
             }
         store.assert_visible(head)
+        if attempt is None:
+            # A retry after publication needs only the physical phase.
+            return _finish_subject_erasure(writer, store, request, head, base, params)
         ids = tuple(request.subject_ids)
         params["erase_subjects"] = ids
         field_predicate = (
@@ -2787,52 +2882,7 @@ def _purge_by_scope(store, request, *, writer=None):
             )
         writer.seal(attempt)
         manifest = writer.stage_and_publish(attempt)
-        with serialized_project(request.project_key):
-            old = list(
-                MetricReadManifest.objects.filter(project_id=request.project_key)
-                .exclude(id=manifest.id)
-                .values_list("id", flat=True)
-            )
-            writer.lease.check()
-            current = MetricProjectRefresh.for_project(
-                request.project_key
-            ).head_manifest
-            if current is None or current.id != manifest.id or current.revoked_at:
-                raise MetricStateConflict("subject erasure checkpoint changed")
-            revoke_generations(request.project_key, reason="erased", manifest_ids=old)
-        writer.lease.check()
-        for table in TABLES.values():
-            if table.name.startswith("metric_field_values") or table in (
-                SOURCE_DEPENDENCIES,
-                UNIT_STATE,
-                *LIST_CURRENT_TABLES,
-            ):
-                # Every old generation was revoked, and the new complete
-                # checkpoint contains ALL unrelated live rows. Collect ALL
-                # older evidence, not just a rediscovered id list: this also
-                # makes interruption after field purge restart-safe for state
-                # and dependency rows that have no surviving field lineage.
-                predicate = "attempt_id != toUUID(%(erase_new)s)"
-            else:
-                predicate = "1"  # no surviving per-unit lineage in anonymous parts
-            _delete(
-                store,
-                table,
-                base + " AND generation <= %(erase_through)s AND (" + predicate + ")",
-                {
-                    **params,
-                    "erase_new": str(attempt.id),
-                    "erase_through": attempt.generation,
-                },
-            )
-        with serialized_project(request.project_key):
-            writer.lease.check()
-            _purge_terminal_payloads(
-                request.project_key,
-                recovery_attempt=attempt if recovery_pending else None,
-                through_generation=attempt.generation,
-            )
-        return {"manifest": str(manifest.id), "anonymous_history_dropped": True}
+        return _finish_subject_erasure(writer, store, request, manifest, base, params)
     if kind not in {"organization", "project", "metric", "version"}:
         raise ValueError("unsupported live erasure scope")
     # Parent-independent intents may reach this path after the project vanished.
@@ -2847,31 +2897,36 @@ def _purge_by_scope(store, request, *, writer=None):
     )
     for project in projects:
         with serialized_project(project):
+            # Discovery can precede attempt registration. Invalidate the old
+            # lease before any native deletes; begin() fences new attempts
+            # while the request runs, including copies from a still-live head.
+            MetricProjectRefresh.objects.filter(project_id=project).update(
+                lease_token=None, lease_expires_at=None, lease_holder=""
+            )
             if kind in {"metric", "version"}:
-                from tracer.models.derived_metric import DerivedMetricVersion
-
                 versions = DerivedMetricVersion.objects.filter(
                     metric_id=request.metric_key
                 )
                 if kind == "version":
                     versions = versions.filter(id=request.version_key)
+                version_ids = list(versions.values_list("id", flat=True))
                 revoke_generations(
-                    project,
-                    reason="erased",
-                    definition_version_ids=list(versions.values_list("id", flat=True)),
+                    project, reason="erased", definition_version_ids=version_ids
                 )
+                if not version_ids:
+                    # After hard deletion there is no definition left to revoke.
+                    # A writer may already have frozen its bytes from the head.
+                    MetricRefreshAttempt.objects.filter(
+                        project_id=project, state__in=MetricRefreshAttempt.OPEN_STATES
+                    ).update(
+                        state="aborted",
+                        aborted_at=timezone.now(),
+                        abort_reason="generation_revoked",
+                    )
             else:
-                # Discovery happens BEFORE an attempt exists and may already
-                # hold private dependency preimages in memory. Abort/revoke alone
-                # cannot fence that writer (including a project with NO head).
-                # Invalidate its durable lease in this same lifecycle boundary;
-                # registration/append require the old epoch+token and must fail.
-                # A later worker takes a new epoch and rediscovers current source.
-                MetricProjectRefresh.objects.filter(project_id=project).update(
-                    lease_token=None, lease_expires_at=None, lease_holder=""
-                )
                 revoke_generations(project, reason="erased")
             _purge_terminal_payloads(project)
+    predicates = []
     for table in TABLES.values():
         predicate = base
         if kind in {"metric", "version"}:
@@ -2893,5 +2948,6 @@ def _purge_by_scope(store, request, *, writer=None):
                 version_col = "field_version" if key == "field_id" else "metric_version"
                 predicate += f" AND {version_col} = %(erase_version)s"
                 params["erase_version"] = ordinal
-        _delete(store, table, predicate, params)
+        predicates.append((table, predicate))
+    _scrub_erasure_rows(store, request, predicates, params)
     return {"live_rows": "purged"}

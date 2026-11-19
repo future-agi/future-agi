@@ -722,18 +722,8 @@ def _process_erasure(request_id, *, store=None, writer=None):
                             )
                     else:
                         purge_by_scope(connection, request, writer=writer)
-                    phase = "live_write_drain"
-                    # Unknown live submissions are not completion receipts.
-                    pending = MetricErasureRequest.objects.filter(
-                        organization_key=request.organization_key,
-                        store_payload__protocol="metric_submission",
-                    ).exclude(status="done")
-                    if request.project_key:
-                        pending = pending.filter(project_key=request.project_key)
-                    if pending.exists():
-                        raise MetricStateConflict("live write drainage is pending")
             phase = "scope_fence"
-            if request.scope_kind in {"project", "organization"}:
+            if request.scope_kind in {"project", "organization", "metric", "version"}:
                 from tracer.models.derived_metric import MetricProjectRefresh
 
                 states = MetricProjectRefresh.objects.filter(
@@ -744,8 +734,8 @@ def _process_erasure(request_id, *, store=None, writer=None):
                 for project_id in states.values_list("project_id", flat=True):
                     with serialized_project(project_id):
                         # Fence discovery begun on a replacement lease DURING
-                        # physical cleanup as well. begin() rejects pending whole
-                        # erasures; after finish only post-purge leases can write.
+                        # physical cleanup as well. After finish only post-purge
+                        # leases can register the result of discovery.
                         MetricProjectRefresh.objects.filter(
                             project_id=project_id
                         ).update(

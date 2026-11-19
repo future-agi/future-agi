@@ -320,14 +320,21 @@ class RefreshWriter:
             self.lease.check()
             from tracer.models.derived_metric import MetricErasureRequest
 
-            # No new attempt can race a whole-project physical purge. Erasure
-            # also fences leases at completion, invalidating discovery performed
-            # by workers that acquired a fresh lease while cleanup was pending.
+            # Existing attempts are fenced before deletion. Don't let a new
+            # writer stage copies while the physical scrub is in progress.
             if (
                 MetricErasureRequest.objects.filter(organization_key=self.org_id)
                 .filter(
                     Q(scope_kind="organization")
                     | Q(scope_kind="project", project_key=self.lease.project_id)
+                    # A compaction can copy a deleted definition's rows until
+                    # its physical purge is over. Fence new writers only while
+                    # that narrower cleanup is actually running.
+                    | Q(
+                        scope_kind__in=["metric", "version"],
+                        project_key=self.lease.project_id,
+                        status="running",
+                    )
                 )
                 .exclude(status="done")
                 .exists()

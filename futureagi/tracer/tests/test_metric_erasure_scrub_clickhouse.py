@@ -20,14 +20,20 @@ from tracer.models.derived_metric import (
     ERASURE_SUBJECT_DIGEST,
     MetricErasureRequest,
     MetricLedgerConflict,
+    MetricProjectRefresh,
+    MetricRefreshAttempt,
     MetricStateConflict,
     _sha256_json,
 )
-from tracer.services.derived_metrics import erasure
+from tracer.services.derived_metrics import erasure, retention
+from tracer.services.derived_metrics.deletion_protocol import _intent
+from tracer.services.derived_metrics.lease import project_lease
+from tracer.services.derived_metrics.refresh import RefreshWriter
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
     field_query,
     live_writer,
     metric_ch,
+    prepare_field,
     publication_store,
 )
 from tracer.tests.test_derived_metric_snapshot_erasure_clickhouse import (  # noqa: F401
@@ -381,3 +387,190 @@ def test_sweep_backfills_requests_completed_before_scrubbing(
         assert row == before[row["id"]]
     with pytest.raises(ValueError):
         MetricErasureRequest.scrub_completed(limit=0)
+
+
+@pytest.mark.parametrize("scope", ["project", "organization", "version", "history"])
+def test_late_live_insert_acknowledged_during_erasure_is_scrubbed(
+    live_writer, monkeypatch, scope
+):
+    writer = live_writer
+    org, project, metric = writer.org_id, writer.lease.project_id, uuid4()
+    stale = writer.begin()
+    submission = _intent(
+        organization_id=org,
+        project_id=project,
+        scope="history",
+        store_payload={
+            "protocol": "metric_submission",
+            "attempt": str(stale.pk),
+            "generation": stale.generation,
+            "shard": writer.store.identity(),
+        },
+    )
+    # Version deletion and history collection fence the attempt before the
+    # worker sees its intent, without cancelling a previously registered send.
+    if scope in {"version", "history"}:
+        MetricRefreshAttempt.abort(
+            stale.pk, reason="generation_revoked", **writer.lease.check()
+        )
+    request = _intent(
+        organization_id=org,
+        project_id=project if scope != "organization" else None,
+        scope=scope,
+        metric_key=metric if scope == "version" else None,
+        version_key=uuid4() if scope == "version" else None,
+        store_payload={"attempts": [{"id": str(stale.pk)}], "version": 1},
+    )
+    # The in-flight sender lands and ACKs AFTER this table's first DELETE. A
+    # status check at pass end would report success with its row still present.
+    params = {
+        "org": str(org),
+        "project": str(project),
+        "metric": str(metric),
+        "version": 1,
+        "attempt": str(stale.pk),
+        "generation": stale.generation,
+    }
+    insert = (
+        "INSERT INTO metric_field_values_checkpoint "
+        "(org_id, project_id, field_id, field_version, attempt_id, generation, unit_id) "
+        "VALUES (%(org)s, %(project)s, %(metric)s, %(version)s, %(attempt)s, %(generation)s, 'late')"
+    )
+    control = {
+        "project": {"project": str(uuid4())},
+        "organization": {"org": str(uuid4())},
+        "version": {"version": 2},
+        "history": {"attempt": str(uuid4())},
+    }[scope]
+    writer.store.execute(insert, {**params, **control})
+    delete = retention._delete
+    landed = []
+
+    def late(store, table, predicate, bound):
+        delete(store, table, predicate, bound)
+        if table.name == "metric_field_values_checkpoint" and not landed:
+            store.execute(insert, params)
+            MetricErasureRequest.objects.filter(pk=submission.pk).update(
+                status="done",
+                completed_at=timezone.now(),
+                receipts={"synchronous_response": {"drained": 1}},
+            )
+            landed.append(True)
+
+    monkeypatch.setattr(retention, "_delete", late)
+    assert erasure.process_erasure(request.pk, store=writer.store)
+    assert landed
+    kept = {**params, **control}
+    assert writer.store.execute(
+        "SELECT toString(org_id), toString(project_id), field_version, toString(attempt_id) "
+        "FROM metric_field_values_checkpoint WHERE unit_id = 'late'"
+    ) == [(kept["org"], kept["project"], kept["version"], kept["attempt"])]
+
+
+def test_subject_erasure_retries_physical_scrub_without_republishing(
+    live_writer, monkeypatch
+):
+    writer = live_writer
+    project = writer.lease.project_id
+    keep, _ = prepare_field(writer, unit_id="keep", user="keep")
+    writer.stage_and_publish(keep)
+    erase, _ = prepare_field(writer, unit_id="private", user=ERASED)
+    writer.stage_and_publish(erase)
+    # A done flag alone is not proof the sender finished on this shard.
+    submission = MetricErasureRequest.objects.get(
+        store_payload__protocol="metric_submission",
+        store_payload__attempt=str(erase.pk),
+    )
+    MetricErasureRequest.objects.filter(pk=submission.pk).update(receipts={})
+    request = erasure.erase_metric_data(
+        organization_id=writer.org_id,
+        project_id=project,
+        scope_kind="users",
+        subject_ids=[ERASED],
+    )
+    assert not erasure.process_erasure(request.pk, store=writer.store, writer=writer)
+    request.refresh_from_db()
+    assert not request.receipts and not request.completed_at
+    head = MetricProjectRefresh.for_project(project).head_manifest
+    assert head.published_by.source_ceilings["erasure"] == str(request.pk)
+    # A late private row even in a current-facts store (no field_id). Skipping
+    # its mutation must fail verification rather than issue a zero receipt.
+    writer.store.execute(
+        "INSERT INTO list_current_user_activity (org_id, project_id, attempt_id, generation, canonical_user_id) "
+        "VALUES (%(org)s, %(project)s, %(attempt)s, %(generation)s, %(user)s)",
+        {
+            "org": str(writer.org_id),
+            "project": str(project),
+            "attempt": str(erase.pk),
+            "generation": erase.generation,
+            "user": ERASED,
+        },
+    )
+    MetricErasureRequest.objects.filter(pk=submission.pk).update(
+        receipts={"synchronous_response": {"drained": 1}}
+    )
+    delete = retention._delete
+
+    def skip_one(store, table, predicate, params):
+        if table.name != "list_current_user_activity":
+            delete(store, table, predicate, params)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(retention, "_delete", skip_one)
+        assert not erasure.process_erasure(request.pk, store=writer.store, writer=writer)
+    request.refresh_from_db()
+    assert not request.receipts and not request.completed_at
+    assert erasure.process_erasure(request.pk, store=writer.store, writer=writer)
+    assert MetricProjectRefresh.for_project(project).head_manifest_id == head.pk
+    assert not writer.store.execute(
+        "SELECT canonical_user_id FROM list_current_user_activity"
+    )
+    assert writer.store.execute(
+        "SELECT unit_id FROM metric_field_values_checkpoint"
+    ) == [("keep",)]
+
+
+@pytest.mark.parametrize("scope", ["metric", "version"])
+def test_definition_erasure_fences_compaction_only_until_scrub(
+    live_writer, monkeypatch, scope
+):
+    writer, metric = live_writer, uuid4()
+    first, _ = prepare_field(writer, metric=metric, unit_id="erase")
+    writer.stage_and_publish(first)
+    keep, _ = prepare_field(writer, unit_id="keep")
+    writer.stage_and_publish(keep)
+    # A detached deletion intent outlives its definition. The committed head
+    # still contains the target and compaction would copy it into a new attempt.
+    request = _intent(
+        organization_id=writer.org_id,
+        project_id=writer.lease.project_id,
+        scope=scope,
+        metric_key=metric,
+        version_key=uuid4() if scope == "version" else None,
+        store_payload={"version": 1} if scope == "version" else {},
+    )
+    old_copy = writer.begin(purpose="compaction")
+    head = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
+    writer.freeze_current(old_copy, retention.FIELD_VALUES, head)
+    delete = retention._delete
+    checked = []
+
+    def during_scrub(store, table, predicate, params):
+        if not checked:
+            with project_lease(writer.lease.project_id, holder="during-scrub") as lease:
+                with pytest.raises(MetricStateConflict, match="erasure"):
+                    RefreshWriter(lease, store, org_id=writer.org_id).compact(server_side=False)
+            checked.append(True)
+        delete(store, table, predicate, params)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(retention, "_delete", during_scrub)
+        assert erasure.process_erasure(request.pk, store=writer.store)
+    assert checked
+    old_copy.refresh_from_db()
+    assert old_copy.state == "aborted" and not old_copy.ledger_chunks.exists()
+    with project_lease(writer.lease.project_id, holder="after-scrub") as lease:
+        RefreshWriter(lease, writer.store, org_id=writer.org_id).compact(server_side=False)
+    assert writer.store.execute(
+        "SELECT unit_id FROM metric_field_values_checkpoint"
+    ) == [("keep",)]
