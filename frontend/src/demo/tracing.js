@@ -49,6 +49,19 @@ const TRACE_COLUMNS = [
   ["status", "Status"],
 ].map(([id, name]) => ({ id, name, is_visible: true, group_by: "System Metrics" }));
 
+/* The Sessions list's columns, as the backend names them — without them the
+   grid shows header placeholders only. */
+const SESSION_COLUMNS = [
+  ["session_id", "Session ID"],
+  ["first_message", "First Message"],
+  ["last_message", "Last Message"],
+  ["start_time", "Start Time"],
+  ["duration", "Duration"],
+  ["total_cost", "Total Cost"],
+  ["total_tokens", "Total Tokens"],
+  ["total_traces_count", "Total Traces"],
+].map(([id, name]) => ({ id, name, is_visible: true, group_by: "System Metrics" }));
+
 const meta = (n) => ({ total_rows: n, total_rows_exact: n, has_more: false, next_cursor: null, query_complete: true, query_status: "complete", query_sampled: false });
 
 const projectOf = (q, path) => q.project_id || q.projectId || path?.split("/").filter(Boolean).pop();
@@ -73,7 +86,7 @@ export const sessionList = (q) => {
     first_message: t[k * 3 + 2].input,
     last_message: t[k * 3].output,
   }));
-  return { status: true, result: { metadata: meta(rows.length), table: rows, config: [] } };
+  return { status: true, result: { metadata: meta(rows.length), table: rows, config: SESSION_COLUMNS } };
 };
 
 export const graph = (q) => ({

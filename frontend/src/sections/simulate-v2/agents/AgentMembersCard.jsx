@@ -1,10 +1,11 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
-import { Box, Stack, Typography } from "@mui/material";
+import { useLayoutEffect, useRef, useState } from "react";
+import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { PanelCard, QuietTag } from "./AgentBits";
 import { MONO } from "./agentViewUtils";
 import { workerToolsOf } from "../_mock/handoffs";
+import { NOT_CONTROLLED } from "../_mock/participants";
 import { clickable, focusRing } from "../components/clickable";
 
 const LABEL = {
@@ -14,6 +15,47 @@ const LABEL = {
   textTransform: "none",
   letterSpacing: 0.4,
 };
+
+/* Two lines, with Show all only when the text is really cut off. */
+function ClampText({ text }) {
+  const ref = useRef(null);
+  const [full, setFull] = useState(false);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && !full) setCut(el.scrollHeight > el.clientHeight + 1);
+  }, [text, full]);
+  return (
+    <>
+      <Typography
+        ref={ref}
+        sx={{
+          typography: "s2",
+          mt: 0.25,
+          whiteSpace: "pre-line",
+          ...(!full && {
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }),
+        }}
+      >
+        {text}
+      </Typography>
+      {(cut || full) && (
+        <Typography
+          component="span"
+          {...clickable(() => setFull((v) => !v))}
+          sx={{ typography: "s3", color: "primary.main", fontWeight: 600, cursor: "pointer", ...focusRing }}
+        >
+          {full ? "Show less" : "Show all"}
+        </Typography>
+      )}
+    </>
+  );
+}
+ClampText.propTypes = { text: PropTypes.string };
 
 /**
  * Several agents working together — a Vapi squad, a Retell or ElevenLabs
@@ -36,6 +78,23 @@ export default function AgentMembersCard({
     () => new Set((members || []).slice(0, 1).map((m) => m.id)),
   );
   const areasOf = (id) => areas.find((x) => x.member.id === id)?.areas;
+  const instrumented = evidence?.source === "instrumented";
+  /* What a run can know about the members, as three facts; the why is one
+     hover away (roadmap connect.md, Week 2). */
+  const facts = evidence
+    ? [
+        ["Declared by", evidence.source === "provider" ? "Its platform" : instrumented ? "Its code" : "You"],
+        ["Each member's part", evidence.observed ? "Observed in runs" : "Not observed"],
+        ["Tool limits", instrumented ? "Enforced" : "Not enforced"],
+      ]
+    : [];
+  const factsWhy = evidence
+    ? [
+        evidence.line,
+        "These are real parts of your agent, not simulated people (those are the environment's Actors). Hidden grading material is kept from all of them.",
+        !instrumented && `${NOT_CONTROLLED}.`,
+      ].filter(Boolean)
+    : [];
   if (!members?.length) return null;
   const toggle = (id) =>
     setOpen((s) => {
@@ -47,28 +106,39 @@ export default function AgentMembersCard({
   return (
     <PanelCard
       title={`Participants · ${members.length}`}
-      note="Coordinator first · one version history"
+      note="One version for the whole agent"
     >
-      {/* What a run can know about them, and what each may touch in the
-          test world (roadmap connect.md, Week 2). */}
       {evidence && (
-        <Stack spacing={0.5} sx={{ px: 2, py: 1.25 }}>
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {`Declared by ${evidence.source === "provider" ? "its platform" : evidence.source === "instrumented" ? "its code" : "you"}. ${evidence.line}`}
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {evidence.source === "instrumented"
-              ? "The runtime enforces each worker's own tools; their calls are answered by the test world."
-              : "Each worker's tools are declared by the app — the runtime doesn't enforce them, so no run claims it does."}{" "}
-            These are real parts of your agent, run together as it orchestrates
-            them — not simulated people (those are the environment&apos;s
-            Actors). Hidden grading material is kept from all of them.
-          </Typography>
-          {evidence.source !== "instrumented" && (
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              Not a controlled run — a worker could bypass a block
-            </Typography>
-          )}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={3}
+          sx={{ px: 2, py: 1, borderBottom: "1px solid", borderColor: "divider" }}
+        >
+          {facts.map(([k, v]) => (
+            <Box key={k}>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{k}</Typography>
+              <Typography sx={{ typography: "s3", fontWeight: 500 }}>{v}</Typography>
+            </Box>
+          ))}
+          <Tooltip
+            arrow
+            title={
+              <Stack spacing={0.5} sx={{ py: 0.25, maxWidth: 320 }}>
+                {factsWhy.map((t) => (
+                  <Typography key={t} sx={{ typography: "s3", color: "inherit" }}>{t}</Typography>
+                ))}
+              </Stack>
+            }
+          >
+            <Box
+              component="span"
+              aria-label="What this means"
+              sx={{ display: "inline-flex", color: "text.subtitle", alignSelf: "flex-end", pb: 0.25 }}
+            >
+              <Iconify icon="solar:info-circle-linear" width={16} />
+            </Box>
+          </Tooltip>
         </Stack>
       )}
       {members.map((m, i) => {
@@ -158,52 +228,8 @@ export default function AgentMembersCard({
             </Stack>
             {on && (
               <Box sx={{ px: 2, pb: 1.5, pl: 5.25 }}>
-                {evidence && (
-                  <Box sx={{ mb: 1.25 }}>
-                    <Typography sx={LABEL}>Tool boundary</Typography>
-                    {(evidence.source === "instrumented"
-                      ? [
-                          ["Allowed", workerToolsOf(m).join(", ") || "none"],
-                          [
-                            "Blocked",
-                            members
-                              .filter((x) => x.id !== m.id)
-                              .flatMap((x) => workerToolsOf(x))
-                              .filter((n) => !workerToolsOf(m).includes(n))
-                              .join(", ") || "none",
-                          ],
-                        ]
-                      : [
-                          [
-                            "Not enforced",
-                            workerToolsOf(m).join(", ") || "none",
-                          ],
-                        ]
-                    ).map(([state, list]) => (
-                      <Stack key={state} direction="row" spacing={1.5}>
-                        <Typography
-                          sx={{
-                            typography: "s3",
-                            color: "text.subtitle",
-                            width: 84,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {state}
-                        </Typography>
-                        <Typography sx={{ typography: "s3", fontFamily: MONO }}>
-                          {list}
-                        </Typography>
-                      </Stack>
-                    ))}
-                  </Box>
-                )}
                 <Typography sx={LABEL}>Instructions</Typography>
-                <Typography
-                  sx={{ typography: "s2", mt: 0.25, whiteSpace: "pre-line" }}
-                >
-                  {m.instructions || "—"}
-                </Typography>
+                <ClampText text={m.instructions || "—"} />
                 {!!areasOf(m.id)?.length && (
                   <Typography sx={{ ...LABEL, mt: 1.25 }}>
                     Configuration
@@ -220,7 +246,12 @@ export default function AgentMembersCard({
                     }}
                   >
                     {(areasOf(m.id) || [])
-                      .filter((a) => a.id !== "instructions")
+                      .filter(
+                        (a) =>
+                          a.id !== "instructions" &&
+                          !(a.id !== "tools" && (!a.value || a.value === "—")) &&
+                          !(a.value && a.value === m.role),
+                      )
                       .map((a, j) => (
                         <Box
                           key={a.id}
@@ -246,7 +277,7 @@ export default function AgentMembersCard({
                               useFlexGap
                               flexWrap="wrap"
                             >
-                              {m.tools.map((t) => (
+                              {workerToolsOf(m).map((t) => (
                                 <Box
                                   key={t}
                                   sx={{
@@ -262,6 +293,21 @@ export default function AgentMembersCard({
                                   {t}
                                 </Box>
                               ))}
+                              {evidence && (
+                                <Typography
+                                  sx={{ typography: "s3", color: "text.subtitle", alignSelf: "center" }}
+                                >
+                                  {instrumented
+                                    ? `· others blocked${(() => {
+                                        const blocked = members
+                                          .filter((x) => x.id !== m.id)
+                                          .flatMap((x) => workerToolsOf(x))
+                                          .filter((n, k, all) => !workerToolsOf(m).includes(n) && all.indexOf(n) === k);
+                                        return blocked.length ? `: ${blocked.join(", ")}` : "";
+                                      })()}`
+                                    : "· not enforced"}
+                                </Typography>
+                              )}
                             </Stack>
                           ) : (
                             <Typography
@@ -296,7 +342,7 @@ export default function AgentMembersCard({
             borderColor: "divider",
           }}
         >
-          {"Protect a member on "}
+          {"Protect a member in "}
           <Box
             component="span"
             {...clickable(onConstraints)}
@@ -310,9 +356,7 @@ export default function AgentMembersCard({
           >
             Constraints
           </Box>
-          {
-            " so an improvement never changes it. Analysis and Account belong to the whole agent."
-          }
+          {" to keep improvements off it."}
         </Typography>
       )}
     </PanelCard>
