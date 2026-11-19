@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
     run_test_id: "test-1",
     test_execution_id: "run-9",
   })),
+  run: vi.fn(async () => ({
+    run_test_id: "test-1",
+    test_execution_id: "run-10",
+  })),
   navigate: vi.fn(),
 }));
 
@@ -26,6 +30,7 @@ vi.mock(
   async (importOriginal) => ({
     ...(await importOriginal()),
     replayTrialWithRecordedTools: (...args) => mocks.replay(...args),
+    runHarnessEnvironment: (...args) => mocks.run(...args),
   }),
 );
 
@@ -49,9 +54,100 @@ vi.mock("react-router-dom", async (importOriginal) => ({
   useNavigate: () => mocks.navigate,
 }));
 
-const { ReplayWithRecordedTools, RecordedReplayOrigin } = await import(
-  "../RecordedReplay"
-);
+const { ReplayWithRecordedTools, RecordedReplayOrigin, ReplayStopped } =
+  await import("../RecordedReplay");
+
+const STOPPED = {
+  stopped: { call: 3, tool: "refund_booking", diverged: true },
+  live_run: { scenario_id: "scenario-a", agent_version_id: "v2" },
+  agent_changed: true,
+};
+
+describe("A replay that stopped", () => {
+  it("says where the changed agent took a different path, and runs it live", async () => {
+    const user = userEvent.setup();
+    render(
+      withClient(
+        <ReplayStopped
+          envId="env-1"
+          testId="test-1"
+          recordedReplay={STOPPED}
+        />,
+      ),
+    );
+
+    expect(
+      screen.getByText(
+        "The changed agent took a different path at call 3: refund_booking",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: COPY.runLive }));
+
+    await waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(1));
+    const [envId, scenarioIds, trials, key, picks] = mocks.run.mock.calls[0];
+    expect([envId, scenarioIds, trials, picks]).toEqual([
+      "env-1",
+      ["scenario-a"],
+      1,
+      { agent: "v2" },
+    ]);
+    expect(key).toEqual(expect.any(String));
+    await waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        expect.stringContaining("/runs/test-1/run-10"),
+      ),
+    );
+  });
+
+  it("names the agent without 'changed' when the replay ran the same version", () => {
+    render(
+      withClient(
+        <ReplayStopped
+          envId="env-1"
+          recordedReplay={{ ...STOPPED, agent_changed: false }}
+        />,
+      ),
+    );
+
+    expect(
+      screen.getByText(
+        "The agent took a different path at call 3: refund_booking",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("offers a live run without a path sentence when the recording, not the agent, stopped it", () => {
+    render(
+      withClient(
+        <ReplayStopped
+          envId="env-1"
+          recordedReplay={{
+            ...STOPPED,
+            stopped: { call: 1, tool: "get_order", diverged: false },
+          }}
+        />,
+      ),
+    );
+
+    expect(screen.queryByText(/took a different path/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: COPY.runLive }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows nothing on a replay that did not stop", () => {
+    const { container } = render(
+      withClient(
+        <ReplayStopped
+          envId="env-1"
+          recordedReplay={{ ...STOPPED, stopped: null }}
+        />,
+      ),
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+});
 
 describe("Replay with recorded tools", () => {
   it("is off with the reason when the trial can't be replayed", async () => {

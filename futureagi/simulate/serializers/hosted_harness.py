@@ -171,6 +171,8 @@ class HarnessFailureSerializer(serializers.Serializer):
     stage = serializers.CharField(max_length=64)
     code = serializers.CharField(max_length=128)
     message = serializers.CharField(max_length=2000)
+    # More than the message for the failure's reader, when the harness has it: a recorded replay's `replay_stop`.
+    details = serializers.DictField(required=False)
 
 
 class HarnessResultReceiptSerializer(serializers.Serializer):

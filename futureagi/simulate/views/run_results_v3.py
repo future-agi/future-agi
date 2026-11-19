@@ -38,6 +38,7 @@ from simulate.selectors.recorded_replay import (
     RecordedReplayView,
     recorded_replay,
     replay_of,
+    replay_result,
 )
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
@@ -298,6 +299,21 @@ class RecordedReplayOriginalSerializer(RecordedReplayOfSerializer):
     )
 
 
+class ReplayStopSerializer(serializers.Serializer):
+    call = serializers.IntegerField(help_text="The number of the call the replay stopped at.")
+    tool = serializers.CharField(help_text="That call's tool.")
+    diverged = serializers.BooleanField(
+        help_text="The agent took another path than the original trial; else the recording could not answer the call."
+    )
+
+
+class LiveRunSerializer(serializers.Serializer):
+    scenario_id = serializers.CharField(help_text="The replayed scenario, to run once on the live test world.")
+    agent_version_id = serializers.UUIDField(
+        allow_null=True, help_text="The agent version the replay ran; null for the environment's default."
+    )
+
+
 class RecordedReplaySerializer(serializers.Serializer):
     available = serializers.BooleanField(
         help_text="The trial can be replayed with the tool answers it recorded."
@@ -308,6 +324,19 @@ class RecordedReplaySerializer(serializers.Serializer):
     original = RecordedReplayOriginalSerializer(
         allow_null=True,
         help_text="Set when this trial is itself a recorded replay: the trial it replays.",
+    )
+    stopped = ReplayStopSerializer(
+        allow_null=True,
+        required=False,
+        help_text="On a recorded replay that stopped: the call it stopped at.",
+    )
+    live_run = LiveRunSerializer(
+        allow_null=True,
+        required=False,
+        help_text="On a recorded replay: the run that tries its agent version on the live test world.",
+    )
+    agent_changed = serializers.BooleanField(
+        required=False, help_text="On a recorded replay: it ran another agent version than the original trial."
     )
 
 
@@ -977,6 +1006,7 @@ def _recorded_replay_with_original(call: CallExecution) -> RecordedReplayView:
     if found is not None:
         rows, _ = build_call_rows(found.test_execution, [found])
         original["outcome"] = rows[0]["outcome"]
+    view.update(replay_result(call))
     return view
 
 

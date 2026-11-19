@@ -154,6 +154,8 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
+# A recorded replay's original end state, by scenario key: read once by the harness's control process and removed.
+_RECORDED_END_STATE_PATH = "/run/futureagi/recorded-end-state.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
@@ -2788,6 +2790,16 @@ class HostedHarnessGateway:
                 ).encode(),
                 _SIMULATOR_SECRETS_PATH,
             )
+            # A recorded replay's state checks are graded on its original's end state when the replay made every
+            # change the original made. Read from the sealed artifact at dispatch, never carried in the job.
+            from simulate.selectors.recorded_replay import recorded_end_state_for
+
+            end_state = recorded_end_state_for(dispatch_payload.get("metadata"))
+            if end_state is not None:
+                sandbox.fs.upload_file(
+                    json.dumps(end_state, sort_keys=True, separators=(",", ":"), default=str).encode(),
+                    _RECORDED_END_STATE_PATH,
+                )
             # Provider creation and uploads can consume much of the initial lease. Re-arm
             # providers with mutable leases before exposing a full-duration capability.
             self.client.renew_ttl(sandbox, ttl_seconds)
@@ -2840,6 +2852,7 @@ class HostedHarnessGateway:
                 "/run/futureagi/capabilities.json "
                 f"{_CHAT_POLICY_PATH} "
                 f"{_SIMULATOR_SECRETS_PATH} "
+                + (f"{_RECORDED_END_STATE_PATH} " if end_state is not None else "")
                 + (authoring_secrets_path if authoring_target_secrets else "")
                 + (f" {bundle_cache.CERTIFY_JOB_PATH}" if certify else ""),
                 timeout=120,

@@ -3,14 +3,17 @@ import json
 import pytest
 from django.test import override_settings
 
-from simulate.models import CallExecution
+from simulate.models import CallExecution, HostedHarnessJob
 from simulate.selectors import recorded_replay as recorded_replay_module
 from simulate.selectors.recorded_replay import (
     RECORDED_REPLAY_KEY,
+    recorded_end_state_for,
     recorded_replay,
     replay_of,
+    replay_result,
 )
 from simulate.serializers.harness_job import HarnessRunCreateSerializer
+from simulate.serializers.hosted_harness import HarnessFailureSerializer
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
@@ -166,7 +169,6 @@ def test_a_replay_runs_the_trials_scenario_once_with_what_its_agent_received(use
     ("fields", "reason"),
     [
         ({"status": CallExecution.CallStatus.ONGOING}, "once this trial has finished"),
-        ({"simulation_call_type": CallExecution.SimulationCallType.VOICE}, "chat trials only"),
         ({"call_metadata": {TRIAL_STATE_KEY: {"recorded": False, "why": "in_process_tools"}}}, "Rebuild it"),
         ({"call_metadata": {}}, "Rebuild it"),
         ({"call_metadata": {TRIAL_STATE_KEY: {"door": True}}}, "kept no recording"),
@@ -290,3 +292,95 @@ def test_a_replays_detail_names_its_original_and_how_it_ended(user, workspace, s
     assert shown["original"]["call_execution_id"] == str(call.id)
     assert shown["original"]["outcome"]
     assert original == {"available": True, "unavailable_reason": None, "original": None}
+
+
+
+def test_a_voice_trial_whose_tools_a_door_held_is_replayed_like_a_chat_trial(user, workspace, settings, sealed):
+    settings.HARNESS_VERSIONING_ENABLED = False
+    environment, _, [call] = _original(
+        user, workspace, "replay-voice", sealed, simulation_call_type=CallExecution.SimulationCallType.VOICE
+    )
+
+    replay, created = _replay(environment, call)
+
+    assert created and recorded_replay(call)["available"] is True
+    assert [one["name"] for one in replay.payload["metadata"][RECORDED_REPLAY_KEY]["calls"]][0] == AGENT_ROWS[0]["name"]
+
+
+def test_a_replays_original_end_state_is_read_at_dispatch_and_never_carried_in_its_run(
+    user, workspace, settings, sealed
+):
+    settings.HARNESS_VERSIONING_ENABLED = False
+    environment, _, [call] = _original(user, workspace, "replay-end", sealed)
+    replay, _ = _replay(environment, call)
+
+    # The run the harness receives carries no record of the world's: the end state is staged on its own at dispatch.
+    carried = json.dumps(replay.payload, default=str)
+    assert "internal_note" not in carried and '"tables"' not in carried
+    assert recorded_end_state_for(replay.payload["metadata"]) == {"scenario-a": TABLES}
+    assert recorded_end_state_for({}) is None
+
+
+@pytest.mark.parametrize(
+    "sealed_with",
+    [
+        {"skipped": [{"table": "bookings", "why": "over 5000 rows"}]},
+        {"action_log": [{"name": "x", "refusal_code": "evidence_incomplete", "outcome": "unrecorded"}]},
+    ],
+    ids=["a table left out of the seal", "a call that ran unrecorded"],
+)
+def test_an_end_state_that_is_not_whole_grades_nothing(user, workspace, settings, sealed, sealed_with):
+    settings.HARNESS_VERSIONING_ENABLED = False
+    environment, _, [call] = _original(user, workspace, "replay-partial", sealed)
+    replay, _ = _replay(environment, call)
+    key = call.call_metadata["hosted_harness_artifacts"]["world_state"]["object_key"]
+    whole = json.loads(sealed[key])
+    sealed[key] = json.dumps({**whole, **sealed_with}).encode()
+
+    assert recorded_end_state_for(replay.payload["metadata"]) is None
+
+
+def test_an_end_state_that_cannot_be_read_grades_nothing(user, workspace, settings, sealed):
+    settings.HARNESS_VERSIONING_ENABLED = False
+    environment, _, [call] = _original(user, workspace, "replay-unread", sealed)
+    replay, _ = _replay(environment, call)
+    sealed.clear()
+
+    assert recorded_end_state_for(replay.payload["metadata"]) is None
+
+
+def test_a_stopped_replays_detail_says_where_and_how_to_run_its_agent_live(user, workspace, settings, sealed):
+    settings.HARNESS_VERSIONING_ENABLED = False
+    environment, original_run, [call] = _original(user, workspace, "replay-stopped", sealed)
+    replay, _ = _replay(environment, call)
+    agent = environment.run_test.agent_definition
+    first = agent.create_version(description="p", commit_message="v1", status="active")
+    changed = agent.create_version(description="p2", commit_message="v2", status="draft")
+    HostedHarnessJob.no_workspace_objects.filter(id=original_run.id).update(agent_version=first)
+    HostedHarnessJob.no_workspace_objects.filter(id=replay.id).update(agent_version=changed)
+    replayed_call = CallExecution.objects.get(test_execution=replay.test_execution)
+    replayed_call.call_metadata = {
+        **(replayed_call.call_metadata or {}),
+        "hosted_harness_receipt": {"failure": {
+            "domain": "simulator", "stage": "running", "code": "replay_unrecorded_call", "message": "Stopped",
+            "details": {"replay_stop": {"call": 3, "tool": "refund_booking", "diverged": True}},
+        }},
+    }
+    replayed_call.save(update_fields=["call_metadata"])
+
+    shown = build_call_execution_detail(replayed_call)["recorded_replay"]
+
+    assert shown["stopped"] == {"call": 3, "tool": "refund_booking", "diverged": True}
+    assert shown["live_run"] == {"scenario_id": "scenario-a", "agent_version_id": str(changed.id)}
+    assert shown["agent_changed"] is True
+    # A trial that is no replay shows none of it.
+    assert replay_result(call) == {}
+
+
+def test_a_result_keeps_where_a_replay_stopped():
+    sent = {"domain": "simulator", "stage": "running", "code": "replay_unrecorded_call", "message": "Stopped",
+            "details": {"replay_stop": {"call": 2, "tool": "refund_booking", "diverged": True}}}
+    serializer = HarnessFailureSerializer(data=sent)
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["details"] == sent["details"]

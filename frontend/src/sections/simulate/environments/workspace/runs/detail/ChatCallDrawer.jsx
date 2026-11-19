@@ -30,6 +30,7 @@ import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 import {
   RecordedReplayOrigin,
+  ReplayStopped,
   ReplayWithRecordedTools,
 } from "./RecordedReplay";
 
@@ -339,6 +340,11 @@ export default function ChatCallDrawer({
                   envId={envId}
                   testId={testId}
                   original={callDetail.recordedReplay.original}
+                />
+                <ReplayStopped
+                  envId={envId}
+                  testId={testId}
+                  recordedReplay={callDetail.recordedReplay}
                 />
               </Box>
             )}

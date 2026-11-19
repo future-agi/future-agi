@@ -16,4 +16,13 @@ export const RECORDED_REPLAY_COPY = {
   failed: "The replay could not be started",
   original: (outcome) => `Original trial: ${outcome}`,
   openOriginal: "Open the original trial",
+  // Where a replay stopped because the agent made a call the original trial
+  // never made, at that point in the replay.
+  diverged: (call, tool, changed) =>
+    `${changed ? "The changed agent" : "The agent"} took a different path at call ${call}: ${tool}`,
+  runLive: "Run it live",
+  runLiveAbout:
+    "Runs this scenario once with the same agent version, on the test world as it is now.",
+  runLiveStarted: "Live run started",
+  runLiveFailed: "The live run could not be started",
 };

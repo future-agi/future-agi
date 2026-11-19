@@ -15,7 +15,10 @@ import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import { paths } from "src/routes/paths";
-import { replayTrialWithRecordedTools } from "src/api/simulate-environments/harnessEnvironments";
+import {
+  replayTrialWithRecordedTools,
+  runHarnessEnvironment,
+} from "src/api/simulate-environments/harnessEnvironments";
 import { useEnvironmentVersions } from "src/api/simulate-environments/versions";
 import { runOutcome } from "./trace/traceTable.constants";
 import { RECORDED_REPLAY_COPY as COPY } from "./recordedReplay.constants";
@@ -80,6 +83,85 @@ RecordedReplayOrigin.propTypes = {
   envId: PropTypes.string,
   testId: PropTypes.string,
   original: originalShape.isRequired,
+};
+
+// On a replay that stopped: where the agent took another path, and a live run
+// of the same agent version to see what it does with the world as it is now.
+export function ReplayStopped({ envId, testId, recordedReplay }) {
+  const navigate = useNavigate();
+  // One key for this trial view: a double click starts one live run.
+  const [requestKey] = useState(() => crypto.randomUUID());
+  const stopped = recordedReplay?.stopped;
+  const liveRun = recordedReplay?.live_run;
+  const run = useMutation({
+    mutationFn: () =>
+      runHarnessEnvironment(
+        envId,
+        [liveRun.scenario_id],
+        1,
+        requestKey,
+        liveRun.agent_version_id ? { agent: liveRun.agent_version_id } : {},
+      ),
+    onSuccess: (created) => {
+      enqueueSnackbar(COPY.runLiveStarted, { variant: "success" });
+      navigate(
+        paths.dashboard.simulate.environments.execution(
+          envId,
+          created.run_test_id ?? testId,
+          created.test_execution_id,
+        ),
+      );
+    },
+    onError: (error) =>
+      enqueueSnackbar(error?.message || error?.detail || COPY.runLiveFailed, {
+        variant: "error",
+      }),
+  });
+  if (!stopped) return null;
+  return (
+    <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
+      {stopped.diverged && (
+        <Typography sx={{ typography: "s1" }}>
+          {COPY.diverged(
+            stopped.call,
+            stopped.tool,
+            recordedReplay.agent_changed,
+          )}
+        </Typography>
+      )}
+      {envId && liveRun && (
+        <Tooltip arrow title={COPY.runLiveAbout}>
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={run.isPending}
+              onClick={() => run.mutate()}
+            >
+              {COPY.runLive}
+            </Button>
+          </span>
+        </Tooltip>
+      )}
+    </Stack>
+  );
+}
+ReplayStopped.propTypes = {
+  envId: PropTypes.string,
+  testId: PropTypes.string,
+  recordedReplay: PropTypes.shape({
+    stopped: PropTypes.shape({
+      call: PropTypes.number,
+      tool: PropTypes.string,
+      diverged: PropTypes.bool,
+    }),
+    live_run: PropTypes.shape({
+      scenario_id: PropTypes.string,
+      agent_version_id: PropTypes.string,
+    }),
+    agent_changed: PropTypes.bool,
+  }),
 };
 
 // Replay a finished trial with the tool answers it recorded, with this agent
