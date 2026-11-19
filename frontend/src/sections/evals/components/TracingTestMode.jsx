@@ -1636,9 +1636,9 @@ const TracingTestMode = React.forwardRef(
 
     // Keep data availability separate from mapping completeness. In particular,
     // entering an exact attribute cannot recover a failed sample-row request.
-    const allMapped =
-      variables.length === 0 ||
-      variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
+    const allMapped = variables.every(
+      (v) => typeof mapping[v] === "string" && mapping[v].trim().length > 0,
+    );
     const sampleStatus =
       loading ||
       isPendingNewFetch ||

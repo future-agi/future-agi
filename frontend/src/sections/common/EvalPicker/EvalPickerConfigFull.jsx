@@ -56,7 +56,7 @@ import useDecisionBinding, {
   normalizeDecisionOutput,
 } from "./useDecisionBinding";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
-import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
+import { useCompositeChildrenInputs } from "src/sections/evals/hooks/useCompositeChildrenKeys";
 import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
@@ -363,10 +363,17 @@ const EvalPickerConfigFull = ({
   // `useCompositeDetail` only when the selected template is composite so
   // single-eval picks don't pay the round-trip cost. `compositeChildWeights`
   // is the state that flows into `composite_weight_overrides` on save.
-  const { data: compositeDetail } = useCompositeDetail(templateId, isComposite);
-  const compositeUnionKeys = useCompositeChildrenUnionKeys(
-    compositeDetail?.children || [],
-  );
+  const compositeQuery = useCompositeDetail(templateId, isComposite);
+  const compositeDetail = compositeQuery.data;
+  const childInputs = useCompositeChildrenInputs(compositeDetail?.children);
+  const compositeUnionKeys = childInputs.keys;
+  // TracingTestMode treats zero variables as fully mapped. Don't mount it
+  // with a partial schema: a pending child isn't an input-free child.
+  const taskComposite = source === "task" && isComposite;
+  const childInputsFailed =
+    taskComposite && (compositeQuery.isError || childInputs.isError);
+  const waitingForChildInputs =
+    taskComposite && (compositeQuery.isPending || childInputs.isLoading);
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
   const compositePopulatedRef = useRef(false);
   useEffect(() => {
@@ -489,11 +496,14 @@ const EvalPickerConfigFull = ({
 
   const hasDataInjection = useMemo(
     () =>
+      // A composite containing an agent is classified as "agent", but its
+      // other children still need their explicit task inputs.
+      (!taskComposite || compositeUnionKeys.length === 0) &&
       evalType === "agent" &&
       (source === "task" || source === "tracing") &&
       Array.isArray(contextOptions) &&
       contextOptions.some((o) => o && o !== "variables_only"),
-    [evalType, source, contextOptions],
+    [evalType, source, contextOptions, taskComposite, compositeUnionKeys.length],
   );
 
   const visibleCodeParamEntries = useMemo(() => {
@@ -1375,7 +1385,7 @@ const EvalPickerConfigFull = ({
     decisionRunConfig,
   ]);
 
-  if (isLoading) {
+  if (isLoading || (waitingForChildInputs && !childInputsFailed)) {
     return (
       <Box
         sx={{
@@ -1391,7 +1401,7 @@ const EvalPickerConfigFull = ({
     );
   }
 
-  if (!templateId || (isError && !fullEval)) {
+  if (!templateId || (isError && !fullEval) || childInputsFailed) {
     return (
       <Box
         sx={{
@@ -1412,7 +1422,9 @@ const EvalPickerConfigFull = ({
         <Typography variant="body2" color="text.secondary">
           {!templateId
             ? "No template ID found for this evaluation."
-            : "Failed to load evaluation details."}
+            : childInputsFailed
+              ? "Failed to load child evaluation inputs."
+              : "Failed to load evaluation details."}
         </Typography>
         <Button
           size="small"
