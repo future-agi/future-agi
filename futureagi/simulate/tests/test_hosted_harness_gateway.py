@@ -4619,6 +4619,23 @@ def _chat_document(monkeypatch, events=None):
     return json.loads(client.sandbox.fs.uploads["/work/job.json"]), job
 
 
+def test_a_build_and_a_chat_send_every_key_the_environment_gave(monkeypatch):
+    """So a new case never takes a removed one's key and inherits its runs: a build seeds them as the chat does."""
+    monkeypatch.setattr(
+        f"{_GATEWAY}._with_used_scenario_keys",
+        lambda document, _job: {
+            **document,
+            "metadata": {
+                **(document.get("metadata") or {}),
+                "used_scenario_keys": ["removed-case"],
+            },
+        },
+    )
+    for upload_document in (_authoring_document, _chat_document):
+        document, _job = upload_document(monkeypatch)
+        assert document["metadata"]["used_scenario_keys"] == ["removed-case"]
+
+
 def test_authoring_and_chat_documents_carry_the_mark_even_when_the_function_fails(
     monkeypatch,
 ):

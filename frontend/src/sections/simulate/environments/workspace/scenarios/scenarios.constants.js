@@ -92,7 +92,9 @@ export const SCENARIOS_COPY = {
   validate: "Validate all against the environment",
   validateOne: "Validate scenario against the environment",
   validateDrafts: "Validate with the unsaved changes",
-  validating: "Validating… (up to 45 min)",
+  validating: "Validating…",
+  // From the validation's own counts: how many cases hold a proof of their own, of how many.
+  validatingProgress: (proved, total) => `Validating · proved ${proved} of ${total}`,
   validationNoResults:
     "Validation finished but recorded no results; try again.",
   archive: "Archive",

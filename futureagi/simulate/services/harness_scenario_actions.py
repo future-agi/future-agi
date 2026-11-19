@@ -157,6 +157,49 @@ class ValidationStatus(TypedDict):
     finished_at: str | None
     proofs_recorded: bool
     message: str | None
+    # How many of the pair's cases hold a proof made with this agent version on these versions, of how many.
+    proved: int
+    total: int
+
+
+# A case held for one of these has no proof of its own on the pair yet: never proved, not reached, or proved with
+# another agent version. Validate proves these; a case whose proof ran keeps it until its content or versions change.
+UNPROVED_REASONS = frozenset(
+    {
+        "not_validated",
+        "validation_incomplete",
+        "proved_on_other_agent",
+        "tools_unread",
+        "validation_failed",
+        "validation_ended_on_our_side",
+        "proofs_unread",
+    }
+)
+
+
+def cases_to_prove(
+    environment: HostedHarnessJob,
+    agent: Any,
+    environment_version: Any,
+    suite_version: Any,
+) -> tuple[list[str], int]:
+    """The pair's cases without a proof of their own for this agent version, and how many cases it holds (archived
+    ones aside)."""
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+
+    views = scenario_lifecycle(
+        environment,
+        suite_version=suite_version,
+        environment_version=environment_version,
+        agent_version_id=getattr(agent, "id", agent),
+    )
+    live = {key: view for key, view in views.items() if view["state"] != "archived"}
+    needed = sorted(
+        key
+        for key, view in live.items()
+        if view["state"] == "draft" and view["reason"] in UNPROVED_REASONS
+    )
+    return needed, len(live)
 
 
 class LifecycleAnswer(TypedDict):
@@ -257,6 +300,14 @@ def validate_scenarios(
                 job_id=str(newest.id),
                 finished_at=newest.updated_at.isoformat(),
             ), 200
+    if keys is None and not body.get("reprove_all"):
+        # Only what has no proof of its own yet: a check the window stopped carries on where it stopped.
+        needed, total = cases_to_prove(
+            environment, agent, environment_version, suite_version
+        )
+        if not needed:
+            return ValidateAnswer(state="ready"), 200
+        keys = needed if len(needed) < total else None
     started = validation.start_validation(
         environment,
         agent,
@@ -314,6 +365,9 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> ValidationS
         message = None if recorded else NO_RESULTS
     else:
         (state, message), finished = check_ending(job), job.updated_at.isoformat()
+    needed, total = cases_to_prove(
+        environment, job.agent_version_id, job.environment_version, job.suite_version
+    )
     return ValidationStatus(
         state=state,
         job_id=str(job.id),
@@ -321,6 +375,8 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> ValidationS
         finished_at=finished,
         proofs_recorded=recorded,
         message=message,
+        proved=total - len(needed),
+        total=total,
     )
 
 
@@ -598,24 +654,6 @@ def _file_texts(version: Any, paths: set[str]) -> dict[str, str | None]:
     return texts
 
 
-def _reworded(
-    before: str | None, old_rules: list[str], new_rules: list[str]
-) -> str | None:
-    """The rule the version added that reads most like the cited one it dropped, so a reworded
-    rule compares with its new wording rather than with nothing."""
-    from difflib import SequenceMatcher
-
-    if not before:
-        return None
-    added = [rule for rule in new_rules if rule not in old_rules]
-    scored = [
-        (SequenceMatcher(None, before.lower(), rule.lower()).ratio(), rule)
-        for rule in added
-    ]
-    best = max(scored, default=(0.0, None))
-    return best[1] if best[0] >= 0.6 else None
-
-
 def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChanges:
     """What changed between an environment version and its parent in the rules and files the
     default suite cites, each with the cases that cite it."""
@@ -670,9 +708,9 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
             if kind == "rule":
                 quote = str(source.get("quote") or "")
                 entry["before"] = matched_rule(quote, old_rules)
-                entry["after"] = matched_rule(quote, new_rules) or _reworded(
-                    entry["before"], old_rules, new_rules
-                )
+                # A cited rule this version no longer holds has no "after": nothing guesses which new rule took its
+                # place by how it reads.
+                entry["after"] = matched_rule(quote, new_rules)
             else:
                 files.add(file_path(ref))
     before_texts = _file_texts(parent, files) if parent else {}

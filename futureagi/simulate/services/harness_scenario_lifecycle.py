@@ -29,10 +29,6 @@ from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_scenario_needs import case_needs
 from simulate.services.harness_scenario_sources import SourceView, file_path
-from simulate.services.harness_seed_joins import (
-    broken_join_text,
-    environment_broken_joins,
-)
 from simulate.services.harness_versioning.versions import (
     control_ran,
     legacy_verdict,
@@ -579,18 +575,6 @@ def scenario_lifecycle(
     unread: set[str] = set()
     changed = changed_refs(environment_version, contents, unread=unread)
     proofs_lost = _proofs_unread(environment, suite_version, environment_version)
-    cited_files = {
-        key: {
-            file_path(str(one.get("ref") or ""))
-            for one in (content or {}).get("sources") or []
-            if isinstance(one, Mapping) and one.get("kind") == "file"
-        }
-        for key, content in contents.items()
-    }
-    joins = environment_broken_joins(
-        environment_version,
-        set().union(*cited_files.values()) if cited_files else set(),
-    )
     from simulate.services.hosted_harness_conversation import failed_changes
 
     failed = failed_changes(environment) if default else {}
@@ -702,27 +686,6 @@ def scenario_lifecycle(
                     kind=bad["kind"],
                     ref=bad["ref"] or bad["label"],
                 ),
-            )
-        if joins is None:
-            # Whether its seed rows join up is unknown just now: held, never read as fine.
-            if cited_files.get(key) and view["state"] != "archived":
-                _demote(view, "seed_records_unread", reason_text("seed_records_unread"))
-            broken = None
-        else:
-            broken = next(
-                (
-                    joins.get(path) or joins.get(f"knowledge/{path}")
-                    for path in sorted(cited_files.get(key) or ())
-                    if joins.get(path) or joins.get(f"knowledge/{path}")
-                ),
-                None,
-            )
-        if broken and view["state"] != "archived":
-            # The rows it starts from do not join up: only the cases citing that file are held.
-            _demote(
-                view,
-                "broken_join",
-                reason_text("broken_join", entry, joins=broken_join_text(broken)),
             )
         if view["state"] != "archived" and (proofs_lost or key in unread):
             # Unknown just now, never "not validated": the case is held until the read works.

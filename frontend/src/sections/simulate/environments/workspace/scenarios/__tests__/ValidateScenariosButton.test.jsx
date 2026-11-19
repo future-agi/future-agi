@@ -75,3 +75,27 @@ describe("Validate one scenario", () => {
     );
   });
 });
+
+describe("A running validation", () => {
+  it("says how many cases are proved of how many, from the validation's own counts", async () => {
+    const user = userEvent.setup();
+    getHarnessScenarioValidation.mockImplementation(async () => ({
+      state: "validating",
+      proofs_recorded: false,
+      proved: 120,
+      total: 500,
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ValidateScenariosButton jobId="env-2" />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Validate all against the environment" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Validating · proved 120 of 500" }),
+    ).toBeDisabled();
+  });
+});

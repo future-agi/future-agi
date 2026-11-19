@@ -2418,7 +2418,12 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
-                    _with_simulation_mark(guest_job_document(payload), simulation_mark),
+                    _with_used_scenario_keys(
+                        _with_simulation_mark(
+                            guest_job_document(payload), simulation_mark
+                        ),
+                        job,
+                    ),
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode(),
@@ -2970,7 +2975,13 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
-            deadline_at = check_deadline(job).timestamp() if validation else None
+            # ALK stops proving before the outer stop and the check's own end, so what it proved is written and read.
+            deadline_at = (
+                check_deadline(job).timestamp()
+                - bundle_cache.ALK_DEADLINE_MARGIN_SECONDS
+                if validation
+                else None
+            )
             if certify:
                 # A run's own certify on a cache miss never proves: its proofs would be discarded.
                 bundle_command = bundle_cache.certify_command(

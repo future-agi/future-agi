@@ -115,13 +115,12 @@ def source_problems(value: object, *, require_one: bool = False) -> list[str]:
     return problems
 
 
-REQUESTED_LINE = re.compile(r"^Requested case \d+: (.+)$", re.MULTILINE)
 REQUESTED_MESSAGES = 20
 
 
 def requested_uncovered(environment: Any) -> list[str]:
-    """The lines a person asked for in the builder chat ("Requested case N: ...", the last 20
-    messages) that no scenario of the suite being edited cites by quote yet."""
+    """The cases a person asked for in the builder chat (`payload.requested_cases` on the last 20 messages) that no
+    scenario of the suite being edited cites by quote yet."""
     from simulate.models import HarnessSuiteMember, HostedHarnessConversationMessage
     from simulate.services.harness_versioning.drafts import open_draft
 
@@ -130,13 +129,14 @@ def requested_uncovered(environment: Any) -> list[str]:
             conversation__job_id=environment.id, role="user"
         )
         .order_by("-sequence")
-        .values_list("content", flat=True)[:REQUESTED_MESSAGES]
+        .values_list("payload", flat=True)[:REQUESTED_MESSAGES]
     )
     lines: list[str] = []
-    for content in reversed(messages):
-        for line in REQUESTED_LINE.findall(content or ""):
-            if line.strip() and line.strip() not in lines:
-                lines.append(line.strip())
+    for payload in reversed(messages):
+        asked = payload.get("requested_cases") if isinstance(payload, Mapping) else None
+        for line in asked if isinstance(asked, list) else []:
+            if str(line).strip() and str(line).strip() not in lines:
+                lines.append(str(line).strip())
     if not lines:
         return []
     suite = open_draft(environment, "suite") or environment.suite_version

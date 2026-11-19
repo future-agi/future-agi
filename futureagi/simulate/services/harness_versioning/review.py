@@ -24,6 +24,7 @@ from simulate.services.harness_versioning.review_compose import (
     review_digest,
 )
 from simulate.services.harness_versioning.review_items import (
+    INDEX_ENTRY,
     ChangeSource,
     Decision,
     ReviewChange,
@@ -199,6 +200,61 @@ def _saved_actors(environment: Any) -> dict[str, dict[str, Any]]:
     }
 
 
+def _restore_summary(environment: Any, change: ReviewChange) -> str | None:
+    """How an added scenario that restores a removed one under its own key reads: "Restore scenario X", with the fields
+    that differ from what it was when removed ("with changes: tests"). None for any other change, and for a
+    restore naming a key this environment never removed, which is a new case."""
+    from simulate.models import HarnessSuiteMember, HostedHarnessScenario
+    from simulate.services.harness_scenarios import restores_own_key
+    from simulate.services.harness_versioning.versions import (
+        MEMBER_FIELDS,
+        _member_content,
+    )
+
+    if (
+        change["kind"] != "scenario"
+        or change["action"] != "added"
+        or not change["patch"]
+    ):
+        return None
+    value = change["patch"][0].get("value")
+    if not isinstance(value, dict):
+        return None
+    document = {
+        **(value.get(INDEX_ENTRY) or {}),
+        **{name: one for name, one in value.items() if not name.startswith("_")},
+    }
+    if not restores_own_key(document):
+        return None
+    held = HarnessSuiteMember.no_workspace_objects.filter(
+        scenario__in=HostedHarnessScenario.all_objects.filter(
+            job=environment, deleted=True, scenario_key=document["scenario_key"]
+        )
+    ).order_by("-suite_version__created_at")
+    # The version it names when it names one of this environment's, else the last that held it.
+    named = str(document["restored_from"].get("suite_version") or "")
+    removed = (
+        next(
+            (
+                content
+                for suite, content in held.values_list("suite_version_id", "content")
+                if not named or str(suite) == named
+            ),
+            None,
+        )
+        or held.values_list("content", flat=True).first()
+    )
+    if removed is None:
+        return None
+    now = _member_content(document)
+    changed = [
+        field for field in MEMBER_FIELDS if (removed or {}).get(field) != now.get(field)
+    ]
+    return f"Restore scenario {change['key']}" + (
+        f" with changes: {', '.join(changed)}" if changed else ""
+    )
+
+
 def draft_review(environment: Any) -> DraftReview:
     """Every change the open drafts make, each with the decision taken on it.
 
@@ -253,6 +309,9 @@ def draft_review(environment: Any) -> DraftReview:
         named = change["affects"]
         touched = sorted(scenarios) if isinstance(named, str) else named
         change["revalidate"] = touched if change["graded"] else []
+        restored = _restore_summary(environment, change)
+        if restored:
+            change["summary"] = restored
     accepted = sum(one["decision"] == "accepted" for one in changes)
     rejected = sum(one["decision"] == "rejected" for one in changes)
     counts = ReviewCounts(

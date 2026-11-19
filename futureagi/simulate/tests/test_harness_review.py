@@ -281,6 +281,30 @@ def test_an_actor_share_change_names_its_values_and_grades_nothing():
         "Change voice: not set → calm in actors.json",
         True,
     )
+    # Percents only for a field declared so, never for one whose name merely looks alike.
+    [undeclared] = compute_changes(
+        _tree(
+            {},
+            **{
+                "actors.json": {
+                    "actors": actors,
+                    "caller_share": {"min": 0.2, "max": 0.4},
+                }
+            },
+        ),
+        _tree(
+            {},
+            **{
+                "actors.json": {
+                    "actors": actors,
+                    "caller_share": {"min": 0.1, "max": 0.4},
+                }
+            },
+        ),
+    )
+    assert (
+        undeclared["summary"] == "Change caller share: 0.2-0.4 → 0.1-0.4 in actors.json"
+    )
 
 
 def _renaming(tests="refunds once"):
@@ -605,26 +629,35 @@ def test_every_change_but_a_scenario_rename_is_graded():
 
 
 RULE = "Never refund more than the order total"
-AMENDMENT = f"rule added \u2014 {RULE}: the policy caps refunds"
+AMENDMENT = {
+    "kind": "rule",
+    "keys": [RULE],
+    "action": "added",
+    "text": f"rule added: {RULE}: the policy caps refunds",
+}
+OLD_LINE = {
+    "kind": "tool",
+    "keys": ["old_tool"],
+    "action": "removed",
+    "text": "old_tool removed",
+}
 
 
 def _rule_and_tool():
     """A draft where one write added a rule with its amendment line, and another changed a tool."""
-    default = _tree(
-        {"tools": TOOLS, "amendments": ["tool removed \u2014 old_tool: no seam"]}
-    )
+    default = _tree({"tools": TOOLS, "amendments": [OLD_LINE]})
     draft = _tree(
         {
             "tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}],
             "hard_constraints": [RULE],
-            "amendments": ["tool removed \u2014 old_tool: no seam", AMENDMENT],
+            "amendments": [OLD_LINE, AMENDMENT],
         }
     )
     return default, draft, compute_changes(default, draft)
 
 
 def test_an_accepted_rule_keeps_its_amendment_line_when_another_change_is_rejected():
-    """The line names the rule in ALK's format, so it follows the rule's decision."""
+    """The entry declares the rule it records, so it follows the rule's decision."""
     default, draft, changes = _rule_and_tool()
     rule = next(one["id"] for one in changes if one["kind"] == "rule")
     partly = json.loads(
@@ -633,14 +666,14 @@ def test_an_accepted_rule_keeps_its_amendment_line_when_another_change_is_reject
         )["contract.json"]
     )
     assert partly["hard_constraints"] == [RULE]
-    assert partly["amendments"] == ["tool removed \u2014 old_tool: no seam", AMENDMENT]
+    assert partly["amendments"] == [OLD_LINE, AMENDMENT]
     assert partly["tools"] == TOOLS
     every = json.loads(
         compose_accepted(
             default, draft, changes, {rule: "accepted", "tool:issue_refund": "accepted"}
         )["contract.json"]
     )
-    assert every["amendments"] == ["tool removed \u2014 old_tool: no seam", AMENDMENT]
+    assert every["amendments"] == [OLD_LINE, AMENDMENT]
 
 
 def test_rejected_rule_leaves_no_amendment():
@@ -652,7 +685,7 @@ def test_rejected_rule_leaves_no_amendment():
         )["contract.json"]
     )
     assert not composed.get("hard_constraints")
-    assert composed["amendments"] == ["tool removed \u2014 old_tool: no seam"]
+    assert composed["amendments"] == [OLD_LINE]
     # With nothing accepted, the contract is the saved one, byte for byte, so the version is the saved one.
     nothing = compose_accepted(
         default, draft, changes, {rule: "rejected", "tool:issue_refund": "rejected"}
@@ -745,10 +778,13 @@ def test_the_suite_index_follows_the_accepted_scenario_changes_and_keeps_the_rej
     assert "scenarios/gone/scenario.json" not in composed
 
 
-def test_an_unrecognized_amendment_line_is_dropped_when_a_contract_change_was_rejected():
+def test_an_older_free_text_amendment_line_is_dropped_when_a_contract_change_was_rejected():
+    """An older line declares nothing, so nothing in it is read: it is kept only while every contract change is."""
     default, draft, changes = _rule_and_tool()
     contract = json.loads(draft["contract.json"])
-    contract["amendments"].append("issue_refund narrowed after review")
+    contract["amendments"].append(
+        "rule added \u2014 issue_refund narrowed: after review"
+    )
     draft["contract.json"] = json.dumps(contract).encode()
     changes = compute_changes(default, draft)
     rule = next(one["id"] for one in changes if one["kind"] == "rule")
@@ -758,13 +794,19 @@ def test_an_unrecognized_amendment_line_is_dropped_when_a_contract_change_was_re
             default, draft, changes, {rule: "accepted", "tool:issue_refund": "rejected"}
         )["contract.json"]
     )
-    assert "issue_refund narrowed after review" not in rejected["amendments"]
+    assert (
+        "rule added \u2014 issue_refund narrowed: after review"
+        not in rejected["amendments"]
+    )
     accepted = json.loads(
         compose_accepted(
             default, draft, changes, {rule: "accepted", "tool:issue_refund": "accepted"}
         )["contract.json"]
     )
-    assert "issue_refund narrowed after review" in accepted["amendments"]
+    assert (
+        "rule added \u2014 issue_refund narrowed: after review"
+        in accepted["amendments"]
+    )
 
 
 def test_a_suite_index_entry_is_part_of_its_scenario_and_a_change_to_it_alone_is_reviewed():
@@ -1257,8 +1299,13 @@ def test_stored_review_records_are_read_into_their_shapes_and_bad_entries_left_o
     }
 
 
-def test_a_permission_line_follows_the_tool_change_it_names():
-    permission = "billing may use issue_refund, as asked: the owner said so"
+def test_a_permission_entry_follows_the_tool_change_it_names():
+    permission = {
+        "kind": "tool",
+        "keys": ["issue_refund"],
+        "action": "permitted",
+        "text": "billing may use issue_refund, as asked",
+    }
     default = _tree({"tools": TOOLS, "amendments": []})
     draft = _tree(
         {

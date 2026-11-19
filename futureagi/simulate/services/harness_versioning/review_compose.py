@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -229,60 +228,26 @@ def _compose_suite_index(
     _put(files, "scenarios.json", index)
 
 
-# The em dash the harness puts between an amendment's action and its subject.
-
-
-# The one reader of ALK's amendment lines. ALK writes them as free text (agent-learning-kit
-# ``fi/alk/harness/amend.py`` and ``builder.py``); each pattern below mirrors one of its formats, pinned by
-# ``tests/test_harness_amendment_lines_contract.py``. A line no pattern reads is owned by every contract change.
-_AMENDMENT_SUBJECTS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^rule (?:added|removed) \u2014 (?P<key>.+): "), "rule"),
-    (re.compile(r"^tool (?:removed|corrected) \u2014 (?P<key>[^:]+): "), "tool"),
-    (re.compile(r"^(?P<key>[^\s.:]+)\.[^\s:]+ widened by "), "tool"),
-    (re.compile(r"^(?P<key>[^\s:]+) added from [^:]+: "), "tool"),
-    (re.compile(r"^(?P<key>modality) \S+ -> \S+: "), "contract_field"),
-    # A participant allowed tools follows those tools: rejecting a tool's change drops the permission with it.
-    (re.compile(r"^\S+ may use (?P<key>[^:]+?), as asked: "), "tool"),
-)
-
-
-def amendment_subject(line: str) -> tuple[str, list[str]] | None:
-    """The items an amendment line records, as ``(kind, keys)``; a rule is named by its text. ``None`` for a line
-    no known format reads."""
-    for pattern, kind in _AMENDMENT_SUBJECTS:
-        found = pattern.match(line)
-        if found:
-            key = found.group("key")
-            keys = (
-                [one.strip() for one in key.split(",")]
-                if " may use " in line
-                else [key]
-            )
-            return kind, keys
-    return None
-
-
-def _amendment_owners(line: str, changes: list[ReviewChange]) -> list[str]:
-    """The reviewed changes an amendment line records; empty when it names none of them."""
-    subject = amendment_subject(line)
-    if subject is None:
+def _amendment_owners(entry: Any, changes: list[ReviewChange]) -> list[str]:
+    """The reviewed changes an amendment records, read from its declared ``kind`` and ``keys`` (a rule is named by its
+    text); empty for an entry that declares none, such as an older free-text line, which is only shown."""
+    if not isinstance(entry, Mapping):
         return []
-    kind, keys = subject
-    owners = []
-    for change in changes:
-        if change["kind"] != kind:
-            continue
-        named = (
+    kind, keys = entry.get("kind"), entry.get("keys")
+    if not isinstance(kind, str) or not isinstance(keys, list):
+        return []
+    named = {str(one) for one in keys}
+    return [
+        change["id"]
+        for change in changes
+        if change["kind"] == kind
+        and (
             change["patch"][0].get("value")
             if kind == "rule" and change["patch"]
             else change["key"]
         )
-        # A rule's text may hold ": " itself, so it is matched whole against the line.
-        if (
-            kind == "rule" and line.split(" \u2014 ", 1)[-1].startswith(f"{named}: ")
-        ) or (kind != "rule" and named in keys):
-            owners.append(change["id"])
-    return owners
+        in named
+    ]
 
 
 def _carry_amendments(
@@ -292,9 +257,9 @@ def _carry_amendments(
     changes: list[ReviewChange],
     decisions: Mapping[str, str],
 ) -> None:
-    """The contract's amendment log keeps the lines the draft added for accepted changes and drops the lines of
-    rejected ones. A line no format reads, or that names no change under review, is kept only while every contract
-    change was accepted."""
+    """The contract's amendment log keeps the entries the draft added for accepted changes and drops those of
+    rejected ones. An entry that declares no change under review is kept only while every contract change was
+    accepted."""
     if "contract.json" not in files:
         return
     contract = read_json(files["contract.json"])
@@ -312,7 +277,7 @@ def _carry_amendments(
     for entry in edited.get("amendments") or []:
         if entry in kept:
             continue
-        owners = _amendment_owners(str(entry), changes)
+        owners = _amendment_owners(entry, changes)
         if (not owners and all_accepted) or (
             owners and all(decisions.get(one) == "accepted" for one in owners)
         ):

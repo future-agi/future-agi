@@ -758,7 +758,7 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
 
     [[part.section.row]]
     keys = ["HARNESS_MAX_EXECUTIONS_PER_RUN"]
-    default = "`200`"
+    default = "`1000`"
     setups = ["S", "D", "H"]
     text = "Most scenarios × trials one simulation Run may submit; a larger Run is refused with `run_too_large`."
 

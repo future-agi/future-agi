@@ -1378,6 +1378,54 @@ def _scenario_summary(row: HostedHarnessScenario, full: bool) -> dict[str, Any]:
     return summary
 
 
+def removed_scenarios(
+    environment: HostedHarnessJob, drafted: Any = None
+) -> list[dict[str, Any]]:
+    """The cases the environment had and no longer holds (nor does its open draft), each with its key, name, the last
+    saved suite version that held it and its document there, so the chat can restore one under its key or copy it."""
+    from simulate.models import HarnessSuiteMember
+    from simulate.models.harness_versioning import VersionStatus
+    from simulate.services.harness_starting_records import scenario_token
+
+    held = {row.scenario_key for row in drafted} if drafted is not None else set()
+    removed = []
+    for row in HostedHarnessScenario.all_objects.filter(
+        job=environment, deleted=True
+    ).order_by("number"):
+        if row.scenario_key in held:
+            continue
+        member = (
+            HarnessSuiteMember.no_workspace_objects.filter(
+                scenario_id=row.id, suite_version__status=VersionStatus.ACTIVE
+            )
+            .select_related("suite_version")
+            .order_by("-suite_version__created_at")
+            .first()
+        )
+        if member is None:
+            continue
+        documents = (member.suite_version.documents or {}).get("scenarios") or []
+        content = next(
+            (
+                one
+                for one in documents
+                if isinstance(one, dict)
+                and scenario_token(one.get("scenario_key") or one.get("name"))
+                == scenario_token(row.scenario_key)
+            ),
+            member.content or {},
+        )
+        removed.append(
+            {
+                "scenario_key": row.scenario_key,
+                "name": row.name,
+                "suite_version": str(member.suite_version_id),
+                "content": content,
+            }
+        )
+    return removed
+
+
 def conversation_scenarios(
     conversation: HostedHarnessConversation, params: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1395,6 +1443,8 @@ def conversation_scenarios(
     environment = conversation.job.environment or conversation.job
     # The unsaved scenarios, numbered as Save will number them.
     drafted = draft_rows(environment)
+    if params.get("removed"):
+        return {"removed": removed_scenarios(environment, drafted)}
     live = (
         drafted
         if drafted is not None

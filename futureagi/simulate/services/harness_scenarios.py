@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Any, cast
@@ -765,6 +765,33 @@ class PlannedPair:
     doc: dict[str, Any]
 
 
+def restores_own_key(document: Mapping[str, Any]) -> bool:
+    """Whether a scenario is a removed one restored under its own key (`restored_from.key` is its `scenario_key`):
+    the only scenario that takes back a key the environment gave before, with its row and history."""
+    restored = document.get("restored_from")
+    key = str(document.get("scenario_key") or "").strip()
+    return (
+        bool(key)
+        and isinstance(restored, Mapping)
+        and str(restored.get("key") or "").strip() == key
+    )
+
+
+def _comes_back_as_it_was(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document is the removed scenario ``row`` back exactly as its last saved suite held it, as a rebuild
+    restores one whose capability returned: the same case, so it keeps its row."""
+    from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_versioning.versions import _member_content
+
+    last = (
+        HarnessSuiteMember.no_workspace_objects.filter(scenario_id=row.id)
+        .order_by("-suite_version__created_at")
+        .values_list("content", flat=True)
+        .first()
+    )
+    return last is not None and last == _member_content(doc)
+
+
 def plan_pairs(
     job: HostedHarnessJob,
     docs: list[dict[str, Any]],
@@ -831,6 +858,16 @@ def plan_pairs(
             )
         elif exact:
             held = by_token.get(_scenario_token(doc.get("name")))
+        if (
+            exact
+            and held is not None
+            and held.deleted
+            and held.id not in owned
+            and not restores_own_key(doc)
+            and not _comes_back_as_it_was(held, doc)
+        ):
+            # A new case whose key or name a removed one held: a fresh key and row, never the old one's history.
+            held = None
         if (
             exact
             and held is not None
