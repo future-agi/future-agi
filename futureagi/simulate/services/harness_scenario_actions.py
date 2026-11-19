@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
 import structlog
+from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -173,8 +174,11 @@ UNPROVED_REASONS = frozenset(
         "validation_failed",
         "validation_ended_on_our_side",
         "proofs_unread",
+        "validation_unavailable",
     }
 )
+# How long a validation's progress counts are kept between polls of a large suite.
+PROGRESS_CACHE_SECONDS = 10
 
 
 def cases_to_prove(
@@ -184,7 +188,9 @@ def cases_to_prove(
     suite_version: Any,
 ) -> tuple[list[str], int]:
     """The pair's cases without a proof of their own for this agent version, and how many cases it holds (archived
-    ones aside)."""
+    ones aside). A case proved only the older way (a legacy proof, or one that is not format 2) counts as not proved,
+    so a Validate brings it up to date; it keeps running as it does until then."""
+    from simulate.models import HarnessSuiteValidation
     from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
 
     views = scenario_lifecycle(
@@ -193,11 +199,20 @@ def cases_to_prove(
         environment_version=environment_version,
         agent_version_id=getattr(agent, "id", agent),
     )
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
     live = {key: view for key, view in views.items() if view["state"] != "archived"}
     needed = sorted(
         key
         for key, view in live.items()
-        if view["state"] == "draft" and view["reason"] in UNPROVED_REASONS
+        if (view["state"] == "draft" and view["reason"] in UNPROVED_REASONS)
+        or view.get("legacy")
+        or (isinstance(proofs.get(key), dict) and proofs[key].get("format") != 2)
     )
     return needed, len(live)
 
@@ -365,9 +380,24 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> ValidationS
         message = None if recorded else NO_RESULTS
     else:
         (state, message), finished = check_ending(job), job.updated_at.isoformat()
-    needed, total = cases_to_prove(
-        environment, job.agent_version_id, job.environment_version, job.suite_version
+    # Polled every few seconds while a large suite is proved: counted at most once per interval while it runs, and
+    # afresh once it ends.
+    counted = (
+        cache.get(f"harness-validation-progress:{job.id}")
+        if state == "validating"
+        else None
     )
+    if counted is None:
+        needed, total = cases_to_prove(
+            environment,
+            job.agent_version_id,
+            job.environment_version,
+            job.suite_version,
+        )
+        counted = (total - len(needed), total)
+        cache.set(
+            f"harness-validation-progress:{job.id}", counted, PROGRESS_CACHE_SECONDS
+        )
     return ValidationStatus(
         state=state,
         job_id=str(job.id),
@@ -375,8 +405,8 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> ValidationS
         finished_at=finished,
         proofs_recorded=recorded,
         message=message,
-        proved=total - len(needed),
-        total=total,
+        proved=counted[0],
+        total=counted[1],
     )
 
 
