@@ -168,3 +168,121 @@ class TestListApiKeysTool:
         assert not by_type.is_error
         assert by_type.data["api_keys"] == []
         assert by_type.data["total"] == 0
+
+
+# ===================================================================
+# INVITE: the inviter's level bounds the grant
+# ===================================================================
+
+
+def _inviter(tool_context, level, organization_role):
+    """A second org user who invites, at ``level`` in the organization."""
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import WorkspaceMembership
+    from ai_tools.base import ToolContext
+
+    organization = tool_context.organization
+    inviter = User.objects.create_user(
+        email=f"inviter-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Inviter",
+        organization=organization,
+        organization_role=organization_role,
+    )
+    membership = OrganizationMembership.no_workspace_objects.create(
+        user=inviter,
+        organization=organization,
+        role={15: "Owner", 8: "Admin", 3: "Member", 1: "Viewer"}[level],
+        level=level,
+        is_active=True,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=inviter,
+        workspace=tool_context.workspace,
+        role="workspace_member",
+        level=3,
+        is_active=True,
+        organization_membership=membership,
+    )
+    return ToolContext(
+        user=inviter, organization=organization, workspace=tool_context.workspace
+    )
+
+
+class TestInviteUsersGrantsAtMostTheInvitersLevel:
+    """The invite reads the inviter's live membership level, never grants a
+    role above it, and writes the invitee's membership at the granted level."""
+
+    def _invite(self, context, role):
+        email = f"invitee-{uuid.uuid4().hex[:8]}@futureagi.com"
+        return email, run_tool(
+            "invite_users", {"emails": [email], "role": role}, context
+        )
+
+    @pytest.mark.parametrize("role", ["Owner", "Admin", "workspace_admin"])
+    def test_member_cannot_grant_a_higher_role(self, tool_context, role):
+        from accounts.models.user import User
+
+        member = _inviter(tool_context, 3, "Member")
+        email, result = self._invite(member, role)
+
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+        assert not User.objects.filter(email=email).exists()
+
+    def test_owner_string_without_owner_membership_cannot_grant_owner(
+        self, tool_context
+    ):
+        from accounts.models.user import User
+
+        member = _inviter(tool_context, 3, "Owner")
+        email, result = self._invite(member, "Owner")
+
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+        assert not User.objects.filter(email=email).exists()
+
+    def test_viewer_cannot_invite(self, tool_context):
+        from accounts.models.user import User
+
+        viewer = _inviter(tool_context, 1, "Member")
+        email, result = self._invite(viewer, "workspace_viewer")
+
+        assert result.is_error
+        assert result.error_code == "PERMISSION_DENIED"
+        assert not User.objects.filter(email=email).exists()
+
+    def test_member_invites_a_member_below_admin(self, tool_context):
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.user import User
+        from accounts.utils import resolve_org_role
+        from tfc.constants.levels import Level
+
+        member = _inviter(tool_context, 3, "Member")
+        email, result = self._invite(member, "Member")
+
+        assert not result.is_error
+        invitee = User.objects.get(email=email)
+        organization = tool_context.organization
+        row = OrganizationMembership.no_workspace_objects.get(
+            user=invitee, organization=organization
+        )
+        assert row.is_active and row.level == Level.MEMBER
+        assert invitee.organization_role == "Member"
+        assert invitee.get_membership_level(organization) == Level.MEMBER
+        assert invitee.has_global_workspace_access(organization) is False
+        assert resolve_org_role(invitee, organization) == "Member"
+
+    def test_owner_grants_admin_at_the_admin_level(self, tool_context):
+        from accounts.models.user import User
+        from tfc.constants.levels import Level
+
+        email, result = self._invite(tool_context, "Admin")
+
+        assert not result.is_error
+        invitee = User.objects.get(email=email)
+        organization = tool_context.organization
+        assert invitee.get_membership_level(organization) == Level.ADMIN
+        assert invitee.organization_role == "Admin"
+        assert invitee.has_global_workspace_access(organization) is True
