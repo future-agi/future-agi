@@ -2830,7 +2830,18 @@ class TestMetricsEndpoint:
             )
 
     @pytest.mark.django_db
-    @pytest.mark.parametrize("query", [{}, {"page": 1, "page_size": 50}])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            {},
+            {
+                "category": "custom_attribute",
+                "source": "traces",
+                "page": 1,
+                "page_size": 50,
+            },
+        ],
+    )
     @patch("tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService")
     def test_metrics_skips_custom_attributes_above_attribute_project_cap(
         self,
@@ -2859,13 +2870,25 @@ class TestMetricsEndpoint:
 
         assert response.status_code == 200
         metrics = response.json()["result"]["metrics"]
-        assert "latency" in {metric["name"] for metric in metrics}
+        if not query:
+            assert "latency" in {metric["name"] for metric in metrics}
         assert all(metric["category"] != "custom_attribute" for metric in metrics)
         analytics = mock_analytics_cls.return_value
         analytics.get_span_attribute_keys_ch_for_projects.assert_not_called()
 
     @pytest.mark.django_db
-    @pytest.mark.parametrize("query", [{}, {"page": 1, "page_size": 50}])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            {},
+            {
+                "category": "custom_attribute",
+                "source": "traces",
+                "page": 1,
+                "page_size": 50,
+            },
+        ],
+    )
     @patch("tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService")
     def test_metrics_reads_custom_attributes_at_attribute_project_cap(
         self,
