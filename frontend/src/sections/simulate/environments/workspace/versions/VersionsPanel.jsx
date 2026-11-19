@@ -257,10 +257,12 @@ export default function VersionsPanel({ env }) {
           ...card,
           display: "grid",
           gridTemplateColumns: { xs: "1fr", sm: "repeat(3, minmax(0, 1fr))" },
+          // Width, style and colour set apart: a responsive "1px solid"
+          // shorthand would reset the colour to the text colour.
           "& > :not(:first-of-type)": {
-            borderLeft: { sm: "1px solid" },
-            borderTop: { xs: "1px solid", sm: 0 },
+            borderStyle: "solid",
             borderColor: "divider",
+            borderWidth: { xs: "1px 0 0 0", sm: "0 0 0 1px" },
           },
         }}
       >
