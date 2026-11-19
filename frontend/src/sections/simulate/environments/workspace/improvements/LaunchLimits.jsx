@@ -219,7 +219,15 @@ export default function LaunchLimits({
         </Select>
       </Row>
       <Row k="Agent's cost" center>
-        <Stack direction="row" spacing={1.5} alignItems="center">
+        {/* One line where it fits; in a narrower form the limit moves under the
+            margin as one phrase, never word by word. */}
+        <Stack
+          direction="row"
+          alignItems="center"
+          flexWrap="wrap"
+          columnGap={1.5}
+          rowGap={1}
+        >
           <Select
             size="small"
             value={costMargin}
@@ -233,29 +241,37 @@ export default function LaunchLimits({
               </MenuItem>
             ))}
           </Select>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-            and at most $
-          </Typography>
-          <InputBase
-            value={costLimit}
-            onChange={(e) => onCostLimit(e.target.value)}
-            placeholder="no limit"
-            inputProps={{
-              "aria-label": "Agent's cost limit per conversation",
-              inputMode: "decimal",
-            }}
-            sx={{
-              width: 80,
-              "& .MuiInputBase-input": {
-                typography: "s2",
-                p: 0,
-                height: 22,
-              },
-            }}
-          />
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-            a conversation
-          </Typography>
+          <Stack
+            direction="row"
+            spacing={1.5}
+            alignItems="center"
+            sx={{ whiteSpace: "nowrap" }}
+            data-testid="agent-cost-limit"
+          >
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+              and at most $
+            </Typography>
+            <InputBase
+              value={costLimit}
+              onChange={(e) => onCostLimit(e.target.value)}
+              placeholder="no limit"
+              inputProps={{
+                "aria-label": "Agent's cost limit per conversation",
+                inputMode: "decimal",
+              }}
+              sx={{
+                width: 80,
+                "& .MuiInputBase-input": {
+                  typography: "s2",
+                  p: 0,
+                  height: 22,
+                },
+              }}
+            />
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+              a conversation
+            </Typography>
+          </Stack>
         </Stack>
       </Row>
       <Row k="Budget" center>
