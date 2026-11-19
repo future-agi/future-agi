@@ -4072,7 +4072,6 @@ simulate/utils/session_comparison.py:0: error: No overload variant of "get" of "
 simulate/utils/speaker_roles.py:0: error: Argument 1 to "is_simulator" of "SpeakerRoleResolver" has incompatible type "Any | None"; expected "str"  [arg-type]
 simulate/utils/speaker_roles.py:0: error: Argument 1 to "is_tested_agent" of "SpeakerRoleResolver" has incompatible type "Any | None"; expected "str"  [arg-type]
 simulate/utils/speaker_roles.py:0: error: Statement is unreachable  [unreachable]
-simulate/utils/test_execution.py:0: error: Need type annotation for "eval_scores" (hint: "eval_scores: dict[<type>, <type>] = ...")  [var-annotated]
 simulate/utils/test_execution_utils.py:0: error: Argument 1 to "float" has incompatible type "Any | None"; expected "str | Buffer | SupportsFloat | SupportsIndex"  [arg-type]
 simulate/utils/test_execution_utils.py:0: error: Argument 1 to "float" has incompatible type "Any | None"; expected "str | Buffer | SupportsFloat | SupportsIndex"  [arg-type]
 simulate/utils/test_execution_utils.py:0: error: Item "None" of "Any | None" has no attribute "lower"  [union-attr]
