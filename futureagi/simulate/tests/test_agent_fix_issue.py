@@ -1,0 +1,798 @@
+"""Run Epoch from an Error Feed issue: the sample of the issue's traces, the job from
+them to a running epoch, the review stop, and the links between the issue, its imports
+and its epochs.
+
+The chain runs on a real environment with its real suite: the drafts join it with
+``add_to_suite``, the baseline is a real selected run, and the epoch starts through the
+real ``launch_fix_run``. The builder's drafting turn and Temporal are faked at their
+boundary; ClickHouse is a stand-in reader.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from model_hub.models.ai_model import AIModel
+from simulate.models import (
+    AgentFixIssueJob,
+    AgentFixRun,
+    EvidenceImport,
+    EvidenceImportCase,
+    HarnessSuiteMember,
+    HostedHarnessJob,
+)
+from simulate.pydantic_schemas.agent_fix_issue import (
+    SAMPLE_ALTERNATES,
+    SAMPLE_PICKS,
+    SAMPLE_POOL,
+    IssueJobPhase,
+    IssueLaunch,
+)
+from simulate.selectors import agent_fix_issue as reads
+from simulate.selectors.agent_fix import launch_blocker
+from simulate.services import agent_fix_issue as jobs
+from simulate.services.evidence_drafts import _proposal, scenario_key_for
+from simulate.services.harness_versioning import archives
+from simulate.services.harness_versioning.versions import suite_documents
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.tests.test_agent_fix_api import BASE as RUNS
+from simulate.tests.test_agent_fix_api import entitled as entitled
+from simulate.tests.test_agent_fix_services import (
+    KEYS,
+    _fix_run,
+    _receipts,
+    _run,
+)
+from simulate.tests.test_agent_fix_services import (
+    any_suite_may_launch as any_suite_may_launch,
+)
+from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixtures
+    environment as environment,
+)
+from simulate.tests.test_agent_fix_services import temporal as temporal
+from simulate.tests.test_agent_fix_services import versioning_on as versioning_on
+from simulate.tests.test_harness_amend_archive import NAMES
+from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
+    storage as storage,
+)
+from simulate.tests.test_harness_versioning_record import _authoring
+from tracer.models.project import Project
+from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
+from tracer.services.clickhouse.v2.span_reader import TraceUnit
+from tracer.tests.test_observe_evidence import _root
+
+pytestmark = pytest.mark.django_db
+
+ISSUES = "/simulate/api/agent-fix-issues"
+T0 = datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
+LAUNCH = IssueLaunch(surfaces=["prompt"], budget_credits=500, max_minutes=30)
+
+
+@pytest.fixture(autouse=True)
+def issues_entitled():
+    with patch("simulate.views.agent_fix_issue.check_ee_feature") as gate:
+        yield gate
+
+
+@pytest.fixture(autouse=True)
+def boundaries():
+    """The builder's drafting turn, the baseline's dispatch and the job's workflow."""
+    service = "simulate.services.agent_fix_issue"
+    with (
+        patch(f"{service}.start_drafting") as drafting,
+        patch(f"{service}._dispatch") as dispatch,
+        patch(f"{service}.start_agent_fix_issue_workflow") as workflow,
+        patch(f"{service}.cancel_hosted_harness_gateway_workflow") as cancel,
+    ):
+        yield MagicMock(
+            drafting=drafting, dispatch=dispatch, workflow=workflow, cancel=cancel
+        )
+
+
+@pytest.fixture
+def project(environment):
+    return Project.objects.create(
+        name="Support agent",
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+
+
+def _issue(project, cluster_id="S-REFUND-1", **fields):
+    return TraceErrorGroup.objects.create(
+        project=project,
+        cluster_id=cluster_id,
+        error_type="investigation_finding",
+        title="Refund quoted twice",
+        **fields,
+    )
+
+
+@pytest.fixture
+def issue(project):
+    return _issue(project)
+
+
+def _members(issue, count=None, *, traces=None, sessions=False):
+    """Members of ``issue``, the newest first in the order given."""
+    ids = traces or [str(uuid.uuid4()) for _ in range(count)]
+    column = "trace_session_id" if sessions else "trace_id"
+    ErrorClusterTraces.objects.bulk_create(
+        [ErrorClusterTraces(cluster=issue, **{column: one}) for one in ids]
+    )
+    for age, one in enumerate(ids):
+        ErrorClusterTraces.objects.filter(cluster=issue, **{column: one}).update(
+            created_at=T0 - timedelta(minutes=age)
+        )
+    return ids
+
+
+def _roots(by_trace):
+    """A stand-in ClickHouse reader whose roots are ``{trace: (type, session)}``: the
+    sample reads their units, and an import reads each one as a trace with an
+    exchange."""
+    reader = MagicMock()
+    reader.__enter__ = MagicMock(return_value=reader)
+    reader.__exit__ = MagicMock(return_value=False)
+    reader.trace_units.side_effect = lambda ids, project_id: {
+        one: TraceUnit(
+            observation_type=by_trace[one][0],
+            session_id=by_trace[one][1],
+            start_time=T0,
+        )
+        for one in ids
+        if one in by_trace
+    }
+    reader.roots_by_trace_ids.side_effect = lambda ids, **_: [
+        _root(one, kind=by_trace[one][0], input="Refund 42", output="Refunded twice.")
+        for one in ids
+        if one in by_trace
+    ]
+    reader.activity_by_trace_ids.return_value = []
+    reader.trace_ids_for_span_ids.return_value = {}
+    return patch("tracer.services.clickhouse.v2.get_reader", return_value=reader)
+
+
+def _sdk(traces):
+    return dict.fromkeys(traces, ("chain", None))
+
+
+def _import(
+    environment, issue, source_ids, *, project=None, kind="trace", status="pending"
+):
+    """An Observe import of ``environment``; one of ``issue`` unless it is None."""
+    made = EvidenceImport.objects.create(
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        environment=environment,
+        project=project or issue.project,
+        source_issue=issue,
+        source_kind=kind,
+    )
+    EvidenceImportCase.objects.bulk_create(
+        [
+            EvidenceImportCase(
+                evidence_import=made, position=n, source_id=one, status=status
+            )
+            for n, one in enumerate(source_ids)
+        ]
+    )
+    return made
+
+
+def _drafted(environment, case):
+    """The builder's draft of ``case``, kept as ``_settle`` keeps it: its scenario
+    folder under the case's own key, made on the environment as it is."""
+    key = scenario_key_for(case)
+    suite = archives.split_authoring(
+        archives.read_archive(_authoring([*NAMES[:2], key]))
+    ).suite
+    document = next(one for one in suite_documents(suite) if one.get("name") == key)
+    proposal = _proposal(suite, document, key)
+    object_key = archives.suite_key(
+        environment.organization_id, environment.id, proposal
+    )
+    archives.put_archive(object_key, proposal)
+    EvidenceImportCase.objects.filter(id=case.id).update(
+        status="drafted",
+        scenario_key=key,
+        scenario_name=key,
+        proposal_object_key=object_key,
+        environment_hash=environment.environment_version.hash,
+    )
+    case.refresh_from_db()
+    return case
+
+
+def _job(environment, evidence_import, **fields):
+    return AgentFixIssueJob.no_workspace_objects.create(
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        environment=environment,
+        evidence_import=evidence_import,
+        **fields,
+    )
+
+
+def _in_review(environment, issue, user):
+    """A job whose one case the builder drafted, waiting for review."""
+    made = _import(environment, issue, [str(uuid.uuid4())])
+    case = _drafted(environment, made.cases.get())
+    return _job(environment, made, created_by=user), case
+
+
+class TestSample:
+    def test_a_large_issue_gives_twelve_picks_from_a_bounded_read(
+        self, issue, environment, django_assert_max_num_queries
+    ):
+        traces = _members(issue, 5000)
+
+        with _roots(_sdk(traces)) as reader, django_assert_max_num_queries(6):
+            sample = reads.issue_sample(issue, environment)
+
+        assert (len(sample.picks), len(sample.alternates)) == (
+            SAMPLE_PICKS,
+            SAMPLE_ALTERNATES,
+        )
+        # The newest members, each read once: never all 5,000.
+        [asked] = [
+            call.args[0] for call in reader.return_value.trace_units.call_args_list
+        ]
+        assert asked == traces[:SAMPLE_POOL]
+        assert [one.member_id for one in sample.picks] == traces[:SAMPLE_PICKS]
+        assert {(one.unit, one.reason) for one in sample.picks} == {("trace", "recent")}
+
+    def test_the_same_issue_state_gives_the_same_picks(self, issue, environment):
+        traces = _members(issue, 40)
+
+        with _roots(_sdk(traces)):
+            first = reads.issue_sample(issue, environment)
+            second = reads.issue_sample(issue, environment)
+
+        assert first == second
+
+    def test_one_pick_per_session_and_one_unit(self, issue, environment):
+        a, a_again, call, b = _members(issue, 4)
+        session_a, session_b = str(uuid.uuid4()), str(uuid.uuid4())
+
+        with _roots(
+            {
+                a: ("chain", session_a),
+                a_again: ("chain", session_a),
+                call: ("conversation", None),
+                b: ("chain", session_b),
+            }
+        ):
+            sample = reads.issue_sample(issue, environment)
+
+        assert sample.unit == "session"
+        assert [(one.member_id, one.source_id) for one in sample.picks] == [
+            (a, session_a),
+            (b, session_b),
+        ]
+
+    def test_traces_the_root_cause_analysis_cited_come_first(self, issue, environment):
+        newest, *rest, oldest = _members(issue, 5)
+        TraceErrorGroup.objects.filter(id=issue.id).update(
+            rca_evidence_trace_ids=[oldest, str(uuid.uuid4())]
+        )
+        issue.refresh_from_db()
+
+        with _roots(_sdk([newest, *rest, oldest])):
+            sample = reads.issue_sample(issue, environment)
+
+        assert [(one.member_id, one.reason) for one in sample.picks[:2]] == [
+            (oldest, "cited"),
+            (newest, "recent"),
+        ]
+
+    def test_a_source_another_import_still_reviews_is_left_out(
+        self, issue, environment
+    ):
+        kept, reviewed = _members(issue, 2)
+        _import(environment, None, [reviewed], project=issue.project)
+
+        with _roots(_sdk([kept, reviewed])):
+            sample = reads.issue_sample(issue, environment)
+
+        assert [one.member_id for one in sample.picks] == [kept]
+
+    def test_an_issue_of_sessions_picks_its_sessions_without_a_read(
+        self, project, environment
+    ):
+        issue = _issue(project, "E-SESSIONS-1", eval_target_type="session")
+        sessions = _members(issue, 3, sessions=True)
+
+        with _roots({}) as reader:
+            sample = reads.issue_sample(issue, environment)
+
+        assert [(one.unit, one.source_id) for one in sample.picks] == [
+            ("session", one) for one in sessions
+        ]
+        reader.return_value.trace_units.assert_not_called()
+
+
+class TestPhase:
+    def test_the_phase_comes_from_what_the_job_holds(
+        self, environment, issue, source_run
+    ):
+        made = _import(environment, issue, ["t1", "t2"])
+        job = _job(environment, made)
+        assert reads.issue_job_phase(job) == IssueJobPhase.BLOCKED
+
+        EvidenceImport.objects.filter(id=made.id).update(drafting_job=source_run)
+        job.evidence_import.refresh_from_db()
+        assert reads.issue_job_phase(job) == IssueJobPhase.DRAFTING
+
+        EvidenceImport.objects.filter(id=made.id).update(drafting_job=None)
+        job.evidence_import.refresh_from_db()
+        EvidenceImportCase.objects.filter(evidence_import=made, source_id="t1").update(
+            status="drafted"
+        )
+        assert reads.issue_job_phase(job) == IssueJobPhase.REVIEW
+
+        job.baseline_run = source_run
+        assert reads.issue_job_phase(job) == IssueJobPhase.MEASURING
+
+        job.fix_run = _fix_run(source_run)
+        assert reads.issue_job_phase(job) == IssueJobPhase.LAUNCHED
+
+        job.ending = {"code": "stopped", "message": "Stopped"}
+        assert reads.issue_job_phase(job) == IssueJobPhase.ENDED
+
+    def test_a_repeat_of_a_scenario_not_added_yet_cannot_run(self, environment, issue):
+        elsewhere = _import(
+            environment, None, ["t1"], project=issue.project, status="drafted"
+        )
+        made = _import(environment, issue, ["t1"], status="duplicate")
+        EvidenceImportCase.objects.filter(evidence_import=made).update(
+            duplicate_of=elsewhere.cases.get()
+        )
+        job = _job(environment, made)
+        assert reads.issue_job_phase(job) == IssueJobPhase.BLOCKED
+
+        elsewhere.cases.update(status="added")
+        assert reads.issue_job_phase(job) == IssueJobPhase.REVIEW
+
+
+class TestLinks:
+    def test_a_retried_epoch_keeps_its_issue(self, environment, issue, source_run):
+        first = _fix_run(source_run, state=AgentFixRun.State.FAILED)
+        retry = _fix_run(source_run, retried_from=first)
+        job = _job(environment, _import(environment, issue, ["t1"]), fix_run=first)
+
+        assert reads.job_epoch(job) == retry
+        assert reads.jobs_of_epochs([retry]) == {retry.id: job}
+
+    def test_a_merged_issue_shows_on_the_issue_it_was_merged_into(
+        self, environment, issue, project
+    ):
+        into = _issue(project, "S-REFUND-2")
+        job = _job(environment, _import(environment, issue, ["t1"]))
+        TraceErrorGroup.all_objects.filter(id=issue.id).update(
+            deleted=True, redirect_to=into
+        )
+        issue.refresh_from_db()
+
+        assert reads.jobs_of_issues([into]) == {into.id: [job]}
+        assert reads.live_issue(issue) == into
+
+    def test_the_limit_counts_only_what_the_suite_still_holds(self, environment, issue):
+        made = _import(environment, issue, ["t1", "t2"], status="added")
+        EvidenceImportCase.objects.filter(evidence_import=made, source_id="t1").update(
+            scenario_key=KEYS[0]
+        )
+        EvidenceImportCase.objects.filter(evidence_import=made, source_id="t2").update(
+            scenario_key="removed-since"
+        )
+
+        assert reads.issue_scenarios(environment) == {KEYS[0]: issue}
+
+
+class TestCreate:
+    def test_the_picks_are_imported_and_drafted(
+        self, environment, issue, user, boundaries
+    ):
+        traces = _members(issue, 3)
+
+        with _roots(_sdk(traces)):
+            job = jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=traces[:2],
+                user=user,
+                endpoint_base_url="https://platform.test",
+            )
+
+        made = job.evidence_import
+        assert (made.source_issue_id, made.source_kind) == (issue.id, "trace")
+        assert list(made.cases.values_list("source_id", "status")) == [
+            (traces[0], "pending"),
+            (traces[1], "pending"),
+        ]
+        assert [one["reason"] for one in job.sample] == ["recent", "recent"]
+        (drafted, pending), kwargs = boundaries.drafting.call_args
+        assert drafted == made
+        assert set(pending) == {str(one.id) for one in made.cases.all()}
+        assert set(kwargs["shows"].values()) == {"failure"}
+
+    def test_an_issue_with_an_open_job_opens_it_instead(self, environment, issue, user):
+        traces = _members(issue, 2)
+        open_job, _case = _in_review(environment, issue, user)
+
+        with _roots(_sdk(traces)), pytest.raises(HostedHarnessError) as refused:
+            jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=traces,
+                user=user,
+                endpoint_base_url="https://platform.test",
+            )
+
+        assert refused.value.code == "issue_epoch_open"
+        assert refused.value.details == {"job_id": str(open_job.id)}
+
+    def test_a_pick_another_import_reviews_is_named_and_nothing_is_kept(
+        self, environment, issue, user, boundaries
+    ):
+        kept, reviewed = _members(issue, 2)
+        _import(environment, None, [reviewed], project=issue.project)
+        before = EvidenceImport.objects.count()
+
+        with (
+            _roots(_sdk([kept, reviewed])),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=[kept, reviewed],
+                user=user,
+                endpoint_base_url="https://platform.test",
+            )
+
+        assert refused.value.code == "issue_epoch_picks_in_review"
+        assert refused.value.details == {"member_ids": [reviewed]}
+        assert EvidenceImport.objects.count() == before
+        assert not AgentFixIssueJob.no_workspace_objects.exists()
+        boundaries.drafting.assert_not_called()
+
+    def test_picks_of_two_kinds_or_outside_the_issue_are_refused(
+        self, environment, issue, user
+    ):
+        sdk, call = _members(issue, 2)
+        stranger = str(uuid.uuid4())
+
+        with _roots({sdk: ("chain", None), call: ("conversation", None)}):
+            for picks, code in (
+                ([sdk, call], "issue_epoch_mixed_units"),
+                ([sdk, stranger], "issue_epoch_not_member"),
+            ):
+                with pytest.raises(HostedHarnessError) as refused:
+                    jobs.create_issue_job(
+                        issue,
+                        environment=environment,
+                        member_ids=picks,
+                        user=user,
+                        endpoint_base_url="https://platform.test",
+                    )
+                assert refused.value.code == code
+
+
+class TestRunEpoch:
+    def test_the_drafts_join_the_suite_and_the_epoch_starts_from_the_baseline(
+        self,
+        environment,
+        issue,
+        user,
+        boundaries,
+        temporal,
+        django_capture_on_commit_callbacks,
+    ):
+        job, case = _in_review(environment, issue, user)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            jobs.run_issue_job(job, case_ids=[str(case.id)], launch=LAUNCH, user=user)
+
+        job.refresh_from_db()
+        environment.refresh_from_db()
+        held = set(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=environment.suite_version_id
+            ).values_list("scenario_key", flat=True)
+        )
+        assert case.scenario_key in held
+        assert EvidenceImportCase.objects.get(id=case.id).status == "added"
+        baseline = job.baseline_run
+        assert baseline.suite_version_id == environment.suite_version_id
+        assert reads.issue_job_phase(job) == IssueJobPhase.MEASURING
+        boundaries.dispatch.assert_called_once()
+        boundaries.workflow.assert_called_once_with(str(job.id))
+
+        _receipts(baseline, {case.scenario_key: {"refunded": False}})
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        epoch = job.fix_run
+        assert epoch.source_run_id == baseline.id
+        assert epoch.request["target_scenario_keys"] == [case.scenario_key]
+        assert [one["import_id"] for one in epoch.request["evidence"]] == [
+            str(job.evidence_import_id)
+        ]
+        temporal.start.assert_called_once_with(str(epoch.id))
+
+    def test_past_the_limit_nothing_joins_the_suite(
+        self, environment, issue, user, settings, boundaries
+    ):
+        settings.AGENT_FIX_ISSUE_SCENARIOS_MAX = 0
+        job, case = _in_review(environment, issue, user)
+        suite = environment.suite_version_id
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.run_issue_job(job, case_ids=[str(case.id)], launch=LAUNCH, user=user)
+
+        assert refused.value.code == "issue_scenarios_limit"
+        environment.refresh_from_db()
+        assert environment.suite_version_id == suite
+        job.refresh_from_db()
+        assert (job.baseline_run_id, job.ending) == (None, None)
+        assert EvidenceImportCase.objects.get(id=case.id).status == "drafted"
+
+    def test_a_draft_made_on_an_older_environment_ends_the_job(
+        self, environment, issue, user
+    ):
+        job, case = _in_review(environment, issue, user)
+        EvidenceImportCase.objects.filter(id=case.id).update(environment_hash="older")
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.run_issue_job(job, case_ids=[str(case.id)], launch=LAUNCH, user=user)
+
+        assert refused.value.code == "evidence_draft_stale"
+        job.refresh_from_db()
+        assert job.ending["code"] == "evidence_draft_stale"
+        assert job.baseline_run_id is None
+
+    def test_an_epoch_running_in_the_environment_is_named(
+        self, environment, issue, user, source_run
+    ):
+        job, case = _in_review(environment, issue, user)
+        _fix_run(source_run)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.run_issue_job(job, case_ids=[str(case.id)], launch=LAUNCH, user=user)
+
+        assert refused.value.code == "fix_run_active"
+        job.refresh_from_db()
+        assert job.ending is None
+
+
+class TestAdvance:
+    def _measuring(self, environment, issue, user, *, state, held):
+        job, case = _in_review(environment, issue, user)
+        baseline = _run(environment, key=f"baseline-{job.id}")
+        _receipts(baseline, dict.fromkeys(KEYS, held))
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(state=state)
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(
+            baseline_run=baseline, launch=LAUNCH.model_dump(mode="json")
+        )
+        return job
+
+    def test_a_baseline_that_did_not_finish_is_not_could_not_reproduce(
+        self, environment, issue, user
+    ):
+        job = self._measuring(
+            environment, issue, user, state="failed", held={"refunded": True}
+        )
+
+        assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        assert job.ending["code"] == "issue_epoch_baseline_failed"
+
+    def test_a_baseline_where_nothing_failed_could_not_reproduce(
+        self, environment, issue, user
+    ):
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": True}
+        )
+
+        assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        assert job.ending["code"] == "fix_targets_passed"
+        assert job.fix_run_id is None
+
+    def test_a_baseline_still_running_waits(self, environment, issue, user):
+        job = self._measuring(
+            environment, issue, user, state="running", held={"refunded": False}
+        )
+
+        assert jobs.advance_issue_job(str(job.id)) is False
+
+    def test_another_issue_s_baseline_holds_the_environment(
+        self, environment, issue, user, source_run
+    ):
+        # Finished but not launched from yet: the job still holds the environment.
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": False}
+        )
+
+        refused = launch_blocker(source_run)
+
+        assert refused is not None and refused.code == "issue_epoch_measuring"
+        job.refresh_from_db()
+        assert launch_blocker(job.baseline_run) is None
+
+
+class TestStop:
+    def test_before_run_epoch_the_import_is_discarded(self, environment, issue, user):
+        job, _case = _in_review(environment, issue, user)
+
+        jobs.stop_issue_job(job)
+
+        job.refresh_from_db()
+        assert job.ending == {"code": "stopped", "message": "Stopped"}
+        assert EvidenceImport.all_objects.get(id=job.evidence_import_id).deleted
+
+    def test_a_measuring_baseline_is_canceled(
+        self, environment, issue, user, boundaries
+    ):
+        job, _case = _in_review(environment, issue, user)
+        baseline = _run(environment, key="baseline-stop", state="running")
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(
+            baseline_run=baseline
+        )
+        job.refresh_from_db()
+
+        jobs.stop_issue_job(job)
+
+        baseline.refresh_from_db()
+        assert baseline.cancel_reason == "user_canceled"
+        boundaries.cancel.assert_called_once_with(str(baseline.id))
+
+    def test_a_started_epoch_stops_on_its_own_page(
+        self, environment, issue, user, source_run
+    ):
+        job, _case = _in_review(environment, issue, user)
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(
+            fix_run=_fix_run(source_run)
+        )
+        job.refresh_from_db()
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.stop_issue_job(job)
+
+        assert refused.value.code == "issue_epoch_launched"
+
+
+class TestApi:
+    def test_the_first_plan_names_no_environment(self, auth_client, environment, issue):
+        traces = _members(issue, 3)
+
+        with _roots(_sdk(traces)):
+            response = auth_client.get(
+                f"{ISSUES}/plan/",
+                {"cluster_id": issue.cluster_id, "project_id": str(issue.project_id)},
+            )
+
+        assert response.status_code == 200, response.content
+        body = response.json()
+        assert body["environment"] is None and body["blocked"] is None
+        assert [one["member_id"] for one in body["sample"]["picks"]] == traces
+        assert body["defaults"]["budget_credits"] > 0
+
+    def test_the_status_read_spans_projects(
+        self, auth_client, environment, issue, user
+    ):
+        job, _case = _in_review(environment, issue, user)
+        other = Project.objects.create(
+            name="Billing agent",
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        _issue(other, "S-OTHER-1")
+
+        response = auth_client.get(
+            f"{ISSUES}/", {"cluster_ids": f"{issue.cluster_id},S-OTHER-1"}
+        )
+
+        assert response.status_code == 200, response.content
+        [result] = response.json()["results"]
+        assert (result["cluster_id"], result["project_id"]) == (
+            issue.cluster_id,
+            str(issue.project_id),
+        )
+        assert (result["job"]["id"], result["job"]["phase"]) == (str(job.id), "review")
+
+    def test_the_detail_carries_the_review_and_the_form_s_defaults(
+        self, auth_client, environment, issue, user
+    ):
+        job, case = _in_review(environment, issue, user)
+
+        response = auth_client.get(f"{ISSUES}/{job.id}/")
+
+        assert response.status_code == 200, response.content
+        body = response.json()
+        assert body["phase"] == "review"
+        assert [one["id"] for one in body["evidence_import"]["cases"]] == [str(case.id)]
+        assert body["defaults"]["surfaces"]
+        assert body["ending"] is None and body["epoch"] is None
+
+    def test_an_epoch_names_the_issue_it_came_from(
+        self, auth_client, environment, issue, source_run
+    ):
+        epoch = _fix_run(source_run)
+        job = _job(environment, _import(environment, issue, ["t1"]), fix_run=epoch)
+
+        response = auth_client.get(f"{RUNS}/{epoch.id}/")
+
+        assert response.status_code == 200, response.content
+        assert response.json()["issue"] == {
+            "job_id": str(job.id),
+            "cluster_id": issue.cluster_id,
+            "project_id": str(issue.project_id),
+        }
+
+    def test_the_environment_page_leaves_an_issue_import_alone(
+        self, auth_client, environment, issue, user
+    ):
+        job, case = _in_review(environment, issue, user)
+        base = f"/simulate/api/harness-environments/{environment.id}/evidence-imports"
+
+        listed = auth_client.get(f"{base}/")
+        discarded = auth_client.delete(f"{base}/{job.evidence_import_id}/")
+
+        assert listed.status_code == 200, listed.content
+        assert str(job.evidence_import_id) not in {one["id"] for one in listed.json()}
+        assert discarded.status_code == 409, discarded.content
+        assert discarded.json()["error"] == "evidence_import_of_issue"
+
+    def test_the_suite_names_the_issue_a_scenario_came_from(
+        self, auth_client, environment, issue
+    ):
+        made = _import(environment, issue, ["t1"], status="added")
+        made.cases.update(scenario_key=KEYS[0])
+
+        response = auth_client.get(
+            f"/simulate/api/harness-environments/{environment.id}/versions/suite/"
+            f"{environment.suite_version_id}/members/"
+        )
+
+        assert response.status_code == 200, response.content
+        by_key = {one["scenario_key"]: one for one in response.json()}
+        assert by_key[KEYS[0]]["issue_cluster_id"] == issue.cluster_id
+        assert by_key[KEYS[1]]["issue_cluster_id"] is None
+
+
+def test_the_pull_request_links_the_issue(environment, issue, source_run, settings):
+    from simulate.services.agent_fix_github import _issue_link
+
+    settings.FRONTEND_BASE_URL = "https://app.test"
+    epoch = _fix_run(source_run)
+    _job(environment, _import(environment, issue, ["t1"]), fix_run=epoch)
+    candidate = MagicMock(fix_run=epoch, fix_run_id=epoch.id)
+
+    assert _issue_link(candidate) == (
+        f"Run from Error Feed issue [{issue.cluster_id}]"
+        f"(https://app.test/dashboard/error-feed/{issue.cluster_id})."
+    )
+
+
+@pytest.fixture
+def source_run(environment):
+    """A finished run of the environment's two scenarios."""
+    run = _run(environment)
+    _receipts(run, {KEYS[0]: {"refunded": False}, KEYS[1]: {"refunded": True}})
+    return run
