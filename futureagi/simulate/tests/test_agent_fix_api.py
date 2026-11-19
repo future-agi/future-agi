@@ -233,14 +233,14 @@ class _GitData:
         index = self.bare / "fake-index"
         env = {**os.environ, "GIT_INDEX_FILE": str(index)}
         self._run("read-tree", body["base_tree"], env=env)
-        for entry in body["tree"]:
-            if entry["sha"] is None:
-                self._run(
-                    "update-index", "--force-remove", "--", entry["path"], env=env
-                )
-            else:
-                cacheinfo = f"{entry['mode']},{entry['sha']},{entry['path']}"
-                self._run("update-index", "--add", "--cacheinfo", cacheinfo, env=env)
+        # A bare repository has no work tree: entries go in as index lines, and a
+        # removed path as mode 0 with the null sha.
+        lines = "".join(
+            f"{entry['mode'] if entry['sha'] else 0} {entry['sha'] or '0' * 40}"
+            f"\t{entry['path']}\n"
+            for entry in body["tree"]
+        )
+        self._run("update-index", "--index-info", env=env, data=lines.encode())
         sha = self._run("write-tree", env=env)
         index.unlink()
         return _reply(201, {"sha": sha})
