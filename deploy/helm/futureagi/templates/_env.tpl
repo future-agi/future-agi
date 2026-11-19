@@ -332,7 +332,7 @@ pod's 1Gi emptyDir with the dead-letter file. */ -}}
       "PGSSLMODE" (ternary "disable" $v.postgres.external.sslMode (eq $v.postgres.mode "bundled"))
       "FI_GRPC_ADDR" ":4317"
       "FI_HTTP_ADDR" ":4318"
-      "FI_ADMIN_ADDR" ":9464"
+      "FI_ADMIN_ADDR" (include "futureagi.collector.adminAddr" $root)
       "FI_DEAD_LETTER_FILE" "/var/lib/fi-collector/dead_letter.jsonl"
       "USAGE_EVENTS_ENABLED" (toString $v.config.usageEvents)
       "FI_OBSERVED_CATALOG_MODE" $observedMode

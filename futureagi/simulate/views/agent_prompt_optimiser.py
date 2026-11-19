@@ -256,7 +256,7 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             serializer = self.get_serializer(data=request.data)
             if not serializer.is_valid():
-                return self._gm.bad_request(get_error_message("INVALID_REQUEST_DATA"))
+                return self._gm.bad_request(format_validation_error(serializer.errors))
 
             self.perform_create(serializer)
             run_instance = serializer.instance
