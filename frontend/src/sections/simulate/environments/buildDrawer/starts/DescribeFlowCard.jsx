@@ -149,7 +149,8 @@ export default function DescribeFlowCard({
   const [aiOpen, setAiOpen] = useState(false);
 
   const onFiles = (list) => {
-    if (list?.length) onAdd(list);
+    // Copied now: the input is cleared right after, which empties a live FileList.
+    if (list?.length) onAdd(Array.from(list));
   };
   const words = value.trim() ? value.trim().split(/\s+/).length : 0;
 
@@ -452,7 +453,7 @@ DescribeFlowCard.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
   files: PropTypes.array.isRequired,
-  // Called with the picked or dropped FileList.
+  // Called with the picked or dropped files, as an array.
   onAdd: PropTypes.func.isRequired,
   onRemove: PropTypes.func.isRequired,
   onNext: PropTypes.func.isRequired,
