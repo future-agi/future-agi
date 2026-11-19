@@ -505,6 +505,17 @@ def _held_list(held: list[str], names: Mapping[str, str]) -> HeldBack:
     }
 
 
+# The rows that hold a case for its own lifecycle, not for the pairing: a held case is counted under one of these.
+_CASE_ROWS = (
+    NOT_VALIDATED_ROW,
+    ARCHIVED_ROW,
+    NOT_ACTIVE_ROW,
+    PROOF_FAILED_ROW,
+    SEED_UNREAD_ROW,
+    TOOL_MISSING_ROW,
+)
+
+
 def _held_back(
     placement: Any, rows: list[Any], workers: list[WorkerBoundaryView]
 ) -> tuple[list[str], Counter[str], dict[str, str]]:
@@ -514,7 +525,14 @@ def _held_back(
     ]
     placed = placement.placed
     held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
-    by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
+    # Each case counts once, under its own lifecycle reason when it has one, else the first row holding it, so the
+    # counts add up to the cases held back.
+    primary = {
+        one.case.key: next((row for row in one.by if row in _CASE_ROWS), one.by[0])
+        for one in placed
+        if one.bucket == "blocked" and one.by
+    }
+    by = Counter(primary.values())
     reasons = {
         row["id"]: row["reason"] or row["label"] for row in rows if row["id"] in by
     }
@@ -522,18 +540,11 @@ def _held_back(
         reasons[NO_DOOR_ROW] = NO_DOOR_REASON
     # A worker is not a row: a case it holds back reads ALK's sealed cause, or its bypass.
     reasons.update(_worker_reasons(placed, workers))
-    for row in (
-        NOT_VALIDATED_ROW,
-        ARCHIVED_ROW,
-        NOT_ACTIVE_ROW,
-        PROOF_FAILED_ROW,
-        SEED_UNREAD_ROW,
-        TOOL_MISSING_ROW,
-    ):
+    for row in _CASE_ROWS:
         texts = [
             one.lifecycle_reason
             for one in placed
-            if one.bucket == "blocked" and row in one.by and one.lifecycle_reason
+            if primary.get(one.case.key) == row and one.lifecycle_reason
         ]
         if texts:
             reasons[row] = "; ".join(dict.fromkeys(texts))

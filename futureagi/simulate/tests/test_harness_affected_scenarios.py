@@ -762,6 +762,53 @@ def _run_metadata(run):
     return run.payload["metadata"]
 
 
+def test_a_case_held_for_two_reasons_is_counted_once():
+    """A refund case missing its tool is held by the tool's reach and by its proof's needs: one case, one line."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        PROOF_FAILED_ROW,
+        TOOL_MISSING_ROW,
+        _held_back,
+    )
+
+    def held(key, by, why):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=key),
+            bucket="blocked",
+            by=by,
+            lifecycle_reason=why,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    needs = "Needs issue_refund, which agent version v14 doesn't have."
+    placement = SimpleNamespace(
+        placed=[
+            held("refund-1", ["tool_discovery", TOOL_MISSING_ROW], needs),
+            held("refund-2", ["tool_discovery", TOOL_MISSING_ROW], needs),
+            held(
+                "lookup-1", [PROOF_FAILED_ROW], "The expected way fails its own checks."
+            ),
+        ],
+        dropped=[],
+    )
+    rows = [
+        {
+            "id": "tool_discovery",
+            "reason": "Not in this agent version: issue_refund",
+            "label": "Tools",
+        }
+    ]
+
+    keys, by, reasons = _held_back(placement, rows, [])
+
+    assert sum(by.values()) == len(keys) == 3
+    # Under the case's own reason, the clearer of the two.
+    assert dict(by) == {TOOL_MISSING_ROW: 2, PROOF_FAILED_ROW: 1}
+    assert reasons[TOOL_MISSING_ROW] == needs
+    assert set(reasons) == set(by)
+
+
 def test_held_back_cases_are_listed_with_their_current_names():
     from types import SimpleNamespace
 
