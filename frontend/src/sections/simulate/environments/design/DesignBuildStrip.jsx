@@ -103,7 +103,10 @@ export default function DesignBuildStrip({ build, tab, onFollow }) {
                   width={14}
                   sx={{
                     transform: open ? "rotate(180deg)" : "none",
-                    transition: reduce ? "none" : "transform 0.2s",
+                    transition: (t) => t.transitions.create("transform"),
+                    "@media (prefers-reduced-motion: reduce)": {
+                      transition: "none",
+                    },
                   }}
                 />
               }

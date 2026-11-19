@@ -37,10 +37,9 @@ export function useDraftReview(envId, { enabled = true } = {}) {
   return useQuery({
     queryKey: draftReviewKey(envId),
     queryFn: async () => {
-      if (isDesignEnvId(envId)) return designReviewOf(envId);
-      const review = freshSampleReview(
-        queryClient.getQueryData(draftReviewKey(envId)),
-      );
+      const review = isDesignEnvId(envId)
+        ? designReviewOf(envId)
+        : freshSampleReview(queryClient.getQueryData(draftReviewKey(envId)));
       if (CHECK_CONTRACT) DraftReviewSchema.parse(review);
       return review;
     },

@@ -27,8 +27,10 @@ import { PlanLine, PlanRow, Quiet } from "./planParts";
 // What the page says under its title once the design is approved; the
 // build view below says what's next.
 const BUILD_LINE = {
-  building: "Building what you approved. It's checked before it saves.",
-  validating: "Building what you approved. It's checked before it saves.",
+  building:
+    "Building what you approved. It's checked, then you review and save it.",
+  validating:
+    "Building what you approved. It's checked, then you review and save it.",
   ready: "Built from what you approved, and checked.",
   saved: "Built from what you approved, and checked.",
   needs_repair: "Built from what you approved, but a check failed.",

@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Fade, Stack, Typography } from "@mui/material";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -21,6 +22,7 @@ export default function AgentSummarySection({
   onManageVersions,
   onConnect,
 }) {
+  const reduce = usePrefersReducedMotion();
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
@@ -114,7 +116,11 @@ export default function AgentSummarySection({
             {AGENT_SUMMARY_COPY.viewAgent}
           </Button>
         )}
-        {!subject && onConnect && (
+        <Fade
+          in={!subject && !!onConnect}
+          timeout={reduce ? 0 : undefined}
+          unmountOnExit
+        >
           <Button
             size="small"
             variant="contained"
@@ -125,7 +131,7 @@ export default function AgentSummarySection({
           >
             {AGENT_SUMMARY_COPY.connect}
           </Button>
-        )}
+        </Fade>
         {onManageVersions && (
           <Button
             variant="outlined"

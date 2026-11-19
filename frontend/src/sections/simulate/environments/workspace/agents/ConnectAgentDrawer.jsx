@@ -1,9 +1,17 @@
 import PropTypes from "prop-types";
 import { useCallback, useMemo, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Fade,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import AgentPicker, {
   useWorldAgents,
@@ -106,6 +114,7 @@ PickAgent.propTypes = {
  * Build environment; picking isn't sent anywhere yet.
  */
 export default function ConnectAgentDrawer({ open, env, onClose, onPick }) {
+  const reduce = usePrefersReducedMotion();
   const modality = env?.agentType === "voice" ? "voice" : "text";
   const word = TYPE_WORD[modality];
   const [picked, setPicked] = useState(null);
@@ -143,7 +152,14 @@ export default function ConnectAgentDrawer({ open, env, onClose, onPick }) {
 
   return (
     <ConnectNewAgentContext.Provider value={connectApi}>
-      <SideDrawer open={open} onClose={onClose} width={560} hideClose>
+      {/* One drawer at a time: the picker gives way while a new agent is
+          connected, and comes back with it picked. */}
+      <SideDrawer
+        open={open && !connecting}
+        onClose={onClose}
+        width={560}
+        hideClose
+      >
         <Stack sx={{ height: "100%", minHeight: 0 }}>
           <Header
             title={`Connect a ${word} agent`}
@@ -183,7 +199,7 @@ export default function ConnectAgentDrawer({ open, env, onClose, onPick }) {
               onClick={() => onPick(picked)}
               sx={BTN_SX}
             >
-              Pick this agent
+              Pick an agent
             </Button>
           </Stack>
         </Stack>
@@ -206,19 +222,28 @@ export default function ConnectAgentDrawer({ open, env, onClose, onPick }) {
             onClose={() => setConnecting(null)}
           />
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 3, pt: 2.5 }}>
-            {Form ? (
-              <ConnectModeContext.Provider value={connectMode}>
-                <Form item={connecting.item} onBusyChange={() => {}} />
-              </ConnectModeContext.Provider>
-            ) : (
-              <Box sx={{ pb: 4 }}>
-                <ConnectSection
-                  items={connectItemsFor(modality)}
-                  head={false}
-                  onPick={(item) => setConnecting((c) => ({ ...c, item }))}
-                />
+            <Fade
+              key={connecting?.item?.id || "ways"}
+              in
+              appear
+              timeout={reduce ? 0 : undefined}
+            >
+              <Box>
+                {Form ? (
+                  <ConnectModeContext.Provider value={connectMode}>
+                    <Form item={connecting.item} onBusyChange={() => {}} />
+                  </ConnectModeContext.Provider>
+                ) : (
+                  <Box sx={{ pb: 4 }}>
+                    <ConnectSection
+                      items={connectItemsFor(modality)}
+                      head={false}
+                      onPick={(item) => setConnecting((c) => ({ ...c, item }))}
+                    />
+                  </Box>
+                )}
               </Box>
-            )}
+            </Fade>
           </Box>
         </Stack>
       </SideDrawer>

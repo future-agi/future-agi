@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDesignDraftStore } from "src/sections/simulate/environments/design/useDesignDraftStore";
 import { STAGE_MS, VALIDATE_MS } from "../designBuild";
+import { DraftReviewSchema } from "../draftReview.contract";
 import {
   designDraftsOf,
   designEnvironmentOf,
@@ -37,6 +38,7 @@ describe("designEnvironment", () => {
 
     vi.advanceTimersByTime(3 * STAGE_MS + VALIDATE_MS);
     const review = designReviewOf(id);
+    expect(() => DraftReviewSchema.parse(review)).not.toThrow();
     expect(review.changes.length).toBeGreaterThan(0);
     expect(review.counts.undecided).toBe(review.changes.length);
     expect(designDraftsOf(id).environment).toBeDefined();

@@ -286,7 +286,7 @@ function useDesignEnvironment(envId) {
   const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
   const scenarios = view?.envState?.scenarios || null;
   const queryClient = useQueryClient();
-  const written = `${draft?.build?.startedAt}:${scenarios?.length ?? "none"}:${build?.status}`;
+  const written = `${draft?.build?.startedAt}:${scenarios?.length ?? "none"}:${build?.status}:${draft?.connectedAgent?.id}`;
   useEffect(() => {
     if (!isDesign || !draft?.build) return;
     patchEnvState(envId, view?.envState || { scenarios: [] });

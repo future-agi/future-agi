@@ -562,7 +562,10 @@ export default function EnvironmentWorkspace() {
           amendments: backedDetail.contract?.amendments ?? [],
           dependencies: backedDetail.contract?.dependencies ?? [],
         }
-      : undefined;
+      : // A design's build has none of these yet; never the sample cards.
+        designBuild
+        ? { stores: [], amendments: [], dependencies: [] }
+        : undefined;
   // Real capability-graph branches for a backed env: tools names,
   // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
   // Empty arrays render the graph's honest "none yet" instead of a fixture.
@@ -587,11 +590,13 @@ export default function EnvironmentWorkspace() {
   const detailLoading = backed && !backedDetail && !detailFailed;
   // Run needs the details too: without them the page can't show what a run
   // would test against, so it waits for them like the tabs do.
-  const detailBlock = detailFailed
-    ? WORKSPACE_COPY.runBlocked.detailFailed
-    : detailLoading
-      ? WORKSPACE_COPY.runBlocked.detailLoading
-      : null;
+  const detailBlock = designBuild
+    ? WORKSPACE_COPY.runBlocked.design
+    : detailFailed
+      ? WORKSPACE_COPY.runBlocked.detailFailed
+      : detailLoading
+        ? WORKSPACE_COPY.runBlocked.detailLoading
+        : null;
 
   return (
     <Box
@@ -656,7 +661,7 @@ export default function EnvironmentWorkspace() {
           }
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
-              turns={chatFiles.turns}
+              turns={designBuild ? env.designChat : chatFiles.turns}
               running={chat.running}
               onSend={chatFiles.send}
               canAttach={!locked}
@@ -664,8 +669,14 @@ export default function EnvironmentWorkspace() {
               canStop={chat.canStop}
               working={chat.working}
               stopping={chat.stopping}
-              frozen={!envLive || chat.frozen}
-              frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
+              frozen={!envLive || chat.frozen || !!designBuild}
+              frozenReason={
+                designBuild
+                  ? WORKSPACE_COPY.designChatFrozen
+                  : !envLive
+                    ? CONSOLE_COPY.frozen
+                    : chat.frozenReason
+              }
               answerWithOptions={chat.answerWithOptions}
               onCollapse={collapse}
               collapseRef={collapseRef}
