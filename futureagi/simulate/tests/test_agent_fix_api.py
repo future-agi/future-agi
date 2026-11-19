@@ -1699,7 +1699,7 @@ class TestUserApi:
         assert "limited validation" not in sent["json"]["body"].lower()
         assert "Verified by" not in sent["json"]["body"]
 
-    def test_a_verified_fix_ships_as_a_normal_pull_request(
+    def test_a_normal_result_ships_as_a_ready_pull_request_with_no_label(
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
@@ -1724,10 +1724,12 @@ class TestUserApi:
 
         assert response.status_code == 200, response.content
         assert sent["json"]["draft"] is False
-        assert "limited validation" not in sent["json"]["title"].lower()
-        assert "limited validation" not in sent["json"]["body"].lower()
+        # A normal result carries no strength label, and never says Verified.
+        for label in ("limited validation", "proven on the targets only", "verified"):
+            assert label not in sent["json"]["title"].lower()
+            assert label not in sent["json"]["body"].lower()
         assert (
-            "Verified by Epoch: held-back pass rate 0% → 61%, target pass rate"
+            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
             " 0% → 63%, broke none\n" in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
