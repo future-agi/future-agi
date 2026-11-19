@@ -1,6 +1,15 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Button, Chip, Link, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import {
+  Button,
+  Chip,
+  Link,
+  MenuItem,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
@@ -24,7 +33,12 @@ const originalShape = PropTypes.shape({
 export function RecordedReplayChip() {
   return (
     <Tooltip arrow title={COPY.about}>
-      <Chip size="small" variant="outlined" label={COPY.label} data-testid="recorded-replay-chip" />
+      <Chip
+        size="small"
+        variant="outlined"
+        label={COPY.label}
+        data-testid="recorded-replay-chip"
+      />
     </Tooltip>
   );
 }
@@ -50,7 +64,12 @@ export function RecordedReplayOrigin({ envId, testId, original }) {
         </Typography>
       )}
       {envId && testId && original.test_execution_id && (
-        <Link component="button" type="button" onClick={open} sx={{ typography: "s1" }}>
+        <Link
+          component="button"
+          type="button"
+          onClick={open}
+          sx={{ typography: "s1" }}
+        >
           {COPY.openOriginal}
         </Link>
       )}
@@ -65,25 +84,44 @@ RecordedReplayOrigin.propTypes = {
 
 // Replay a finished trial with the tool answers it recorded, with this agent
 // or another version of it. Off, with the reason, when the trial can't be.
-export function ReplayWithRecordedTools({ envId, testId, callId, recordedReplay }) {
+export function ReplayWithRecordedTools({
+  envId,
+  testId,
+  callId,
+  recordedReplay,
+}) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [agentVersionId, setAgentVersionId] = useState(SAME_AGENT);
   // One key per opened dialog: a double click replays once.
   const [requestKey, setRequestKey] = useState(null);
   const versions = useEnvironmentVersions(envId, { enabled: open });
-  const agents = (versions.data?.agent ?? []).filter((one) => one.isDefault || one.pickable);
+  const agents = (versions.data?.agent ?? []).filter(
+    (one) => one.isDefault || one.pickable,
+  );
   const replay = useMutation({
-    mutationFn: () => replayTrialWithRecordedTools(envId, callId, requestKey, agentVersionId || undefined),
+    mutationFn: () =>
+      replayTrialWithRecordedTools(
+        envId,
+        callId,
+        requestKey,
+        agentVersionId || undefined,
+      ),
     onSuccess: (run) => {
       setOpen(false);
       enqueueSnackbar(COPY.started, { variant: "success" });
       navigate(
-        paths.dashboard.simulate.environments.execution(envId, run.run_test_id ?? testId, run.test_execution_id),
+        paths.dashboard.simulate.environments.execution(
+          envId,
+          run.run_test_id ?? testId,
+          run.test_execution_id,
+        ),
       );
     },
     onError: (error) =>
-      enqueueSnackbar(error?.message || error?.detail || COPY.failed, { variant: "error" }),
+      enqueueSnackbar(error?.message || error?.detail || COPY.failed, {
+        variant: "error",
+      }),
   });
   const available = Boolean(recordedReplay?.available);
   const button = (
@@ -120,7 +158,9 @@ export function ReplayWithRecordedTools({ envId, testId, callId, recordedReplay 
         isLoading={replay.isPending}
       >
         <Stack gap={2}>
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>{COPY.explain}</Typography>
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+            {COPY.explain}
+          </Typography>
           <TextField
             select
             size="small"

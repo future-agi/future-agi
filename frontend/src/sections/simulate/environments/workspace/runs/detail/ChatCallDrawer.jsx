@@ -28,7 +28,10 @@ import { CALL_TRACES_COPY } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
-import { RecordedReplayOrigin, ReplayWithRecordedTools } from "./RecordedReplay";
+import {
+  RecordedReplayOrigin,
+  ReplayWithRecordedTools,
+} from "./RecordedReplay";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
