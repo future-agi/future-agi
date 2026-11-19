@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useState } from "react";
 import { act, render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
@@ -22,6 +23,7 @@ vi.mock(
     })),
     useDecideChanges: vi.fn(() => ({ mutate: decide, isPending: false })),
     useDismissFailedChange: vi.fn(() => dismiss),
+    useDraftCheck: () => useState({ key: null, state: "idle" }),
   }),
 );
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
