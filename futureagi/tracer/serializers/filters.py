@@ -108,7 +108,7 @@ FILTER_ITEM_SCHEMA = {
     "additionalProperties": False,
 }
 
-FILTER_LIST_SCHEMA = {
+FILTER_LIST_SCHEMA: dict[str, Any] = {
     "type": "array",
     "items": FILTER_ITEM_SCHEMA,
 }
@@ -1249,8 +1249,13 @@ class SkillVersionGraphPointSerializer(ObserveGraphDataPointSerializer):
 
 class SkillVersionGraphSeriesSerializer(serializers.Serializer):
     version_id = serializers.UUIDField()
-    label = serializers.CharField()
-    data = SkillVersionGraphPointSerializer(many=True)
+
+    def get_fields(self):
+        return {
+            **super().get_fields(),
+            "label": serializers.CharField(),
+            "data": SkillVersionGraphPointSerializer(many=True),
+        }
 
 
 class ObserveGraphDataResultSerializer(serializers.Serializer):

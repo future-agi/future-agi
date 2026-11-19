@@ -42,6 +42,7 @@ from tracer.services.clickhouse.query_builders.trace_list import (
     LatestFilterPredicate,
     TraceListQueryBuilder,
     _unix_microseconds,
+    has_runtime_cohort_filter,
 )
 from tracer.services.clickhouse.query_builders.trace_usage import (
     capture_coverage_from_counts,
@@ -330,6 +331,8 @@ class UserEnrichmentLimitExceeded(ReadDeadlineExceeded):
 
 class _TraceRootReplayV2:
     """CH25 physical replacement and hydration, independent of acquisition policy."""
+
+    filters: list[dict]
 
     @staticmethod
     def filter_classifier_has_exact_start_time_identity() -> bool:
@@ -765,7 +768,8 @@ class _TraceRootReplayV2:
             "toJSONString(metadata) AS metadata" if alias == "metadata" else alias
             for _, alias in fields[5:]
         ]
-        if self.has_runtime_cohort() and not content:
+        runtime_cohort = has_runtime_cohort_filter(self.filters)
+        if runtime_cohort and not content:
             selected = [
                 f"if(latest_parent_span_id IS NULL OR latest_parent_span_id = '', {column}, NULL) AS {column}"
                 if column in {"status", "latency_ms"}
@@ -814,7 +818,7 @@ class _TraceRootReplayV2:
         {self._root_replay_content_join_sql() if content else ""}
         {self._trace_rollup_join_sql(prefix) if trace_rollup else ""}
         WHERE latest_is_deleted = 0
-          {"" if self.has_runtime_cohort() else "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"}
+          {"" if runtime_cohort else "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"}
           {project_version}
         ORDER BY start_time DESC, trace_id DESC, project_id DESC
         LIMIT {len(identities)}

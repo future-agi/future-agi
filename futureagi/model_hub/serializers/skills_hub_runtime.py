@@ -6,7 +6,17 @@ from django.utils import timezone
 from rest_framework import serializers
 
 
-class RuntimeWindowQuery(serializers.Serializer):
+class _RuntimeFields(serializers.Serializer):
+    def get_fields(self):
+        # DRF binds only after get_fields. Keep the public name and field order
+        # without shadowing the serializer's own Field.label attribute.
+        return {
+            ("label" if key == "runtime_label" else key): field
+            for key, field in super().get_fields().items()
+        }
+
+
+class RuntimeWindowQuery(_RuntimeFields):
     to = serializers.DateTimeField()
     cursor = serializers.CharField(required=False, max_length=2048)
     limit = serializers.IntegerField(default=100, min_value=1, max_value=100)
@@ -52,9 +62,9 @@ class RuntimeFilterValuesQuery(RuntimeWindowQuery):
         return attrs
 
 
-class RuntimeFilterValue(serializers.Serializer):
+class RuntimeFilterValue(_RuntimeFields):
     value = serializers.CharField(allow_blank=True)
-    label = serializers.CharField(allow_blank=True)
+    runtime_label = serializers.CharField(allow_blank=True)
     skill_id = serializers.UUIDField(required=False)
     name = serializers.CharField(required=False)
     version_id = serializers.UUIDField(required=False)
@@ -81,7 +91,7 @@ class RuntimeUsageQuery(RuntimeWindowQuery):
     version_ids = serializers.CharField(required=False, max_length=7400)
     skill_ids = serializers.CharField(required=False, max_length=7400)
     context_version_id = serializers.UUIDField(required=False)
-    label = serializers.CharField(required=False, max_length=40)
+    runtime_label = serializers.CharField(required=False, max_length=40)
     service = serializers.CharField(required=False, allow_blank=True, max_length=256)
     agent = serializers.CharField(required=False, allow_blank=True, max_length=256)
     projection = serializers.ChoiceField(choices=("table", "series"), default="table")
@@ -120,11 +130,11 @@ class RuntimeUsageQuery(RuntimeWindowQuery):
         return attrs
 
 
-class RuntimeComparisonQuery(serializers.Serializer):
+class RuntimeComparisonQuery(_RuntimeFields):
     resource_id = serializers.UUIDField()
     kind = serializers.ChoiceField(choices=("skill", "agent_context"), default="skill")
     event_id = serializers.UUIDField(required=False)
-    label = serializers.CharField(default="production", max_length=40)
+    runtime_label = serializers.CharField(default="production", max_length=40)
     window = serializers.RegexField(
         r"^(?:[1-9][0-9]*)(?:h|d)$", default="24h", max_length=5
     )
@@ -200,9 +210,9 @@ class RuntimeUsageResult(serializers.Serializer):
     markers = serializers.ListField(child=serializers.DictField(), required=False)
 
 
-class RuntimeComparisonResult(serializers.Serializer):
+class RuntimeComparisonResult(_RuntimeFields):
     event_id = serializers.UUIDField(allow_null=True)
-    label = serializers.CharField()
+    runtime_label = serializers.CharField()
     from_version = serializers.IntegerField(allow_null=True)
     to_version = serializers.IntegerField(allow_null=True)
     from_version_id = serializers.UUIDField(allow_null=True)

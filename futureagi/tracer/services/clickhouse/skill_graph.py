@@ -17,7 +17,7 @@ from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
 
 # Deliberately separate from span-graph snapshots: these metrics have different
 # populations and denominators. No ordinary graph cache can satisfy this read.
-CACHE_NAMESPACE = "observe-skill-version-graph-v1"
+CACHE_NAMESPACE = "observe-skill-version-graph-v2"
 METRICS = {
     "latency": ("latency_p95", "Root latency p95 (ms)", "p95"),
     "cost": ("cost_per_trace", "Cost per trace ($)", "mean"),
@@ -97,6 +97,7 @@ def fetch_skill_version_graph(
         raise ReadDeadlineExceeded("Skill graph exceeds interactive read size")
     cohorts = builder.format_result(result.data, [])
     column, name, statistic = METRICS[metric_id]
+    assert builder.start_date is not None and builder.end_date is not None
     timestamps = [
         timestamp.replace(tzinfo=UTC)
         for timestamp in builder._generate_timestamp_range(

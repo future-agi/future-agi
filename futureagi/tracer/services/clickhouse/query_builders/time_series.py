@@ -290,6 +290,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             compile_exact_graph_row_predicates,
         )
         from tracer.services.clickhouse.query_builders.filters import (
+            SkillEvidenceWindow,
             resolve_skill_cohort_catalog,
         )
         from tracer.services.clickhouse.v2.query_builders.filters import (
@@ -301,15 +302,23 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         if self.start_date is None or self.end_date is None:
             self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params.update(start_date=self.start_date, end_date=self.end_date)
+        assert self.start_date is not None and self.end_date is not None
+        window = SkillEvidenceWindow.from_bounds(
+            self.start_date, self.end_date, self.filters
+        )
+        self.params.update(window.params)
         catalog = resolve_skill_cohort_catalog([str(self.project_id)])
         plan = compile_exact_graph_row_predicates(
             self.filters,
             project_id=str(self.project_id),
             observe_type="trace",
             annotation_label_ids=self.annotation_label_ids,
+            skill_window=window,
         )
         self.params.update(plan.params)
-        compiler = ClickHouseFilterBuilderV2(project_id=str(self.project_id))
+        compiler = ClickHouseFilterBuilderV2(
+            project_id=str(self.project_id), skill_window=window
+        )
         cohort_source, cohort_params = compiler.skill_cohort_rows_sql(
             self.filters,
             dimension=dimension,
@@ -330,7 +339,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "total_tokens",
         ]
         scalar_values = list(scalar_columns)
-        for index, predicate in enumerate(plan.predicates):
+        for index, (predicate, window_only) in enumerate(
+            zip(plan.predicates, plan.output_window_only, strict=True)
+        ):
+            if window_only:
+                predicate = f"({predicate}) AND ({window.condition})"
             scalar_values.append(f"toUInt8(ifNull(({predicate}), 0))")
             scalar_columns.append(f"graph_row_match_{index}")
         projections = ", ".join(
@@ -411,7 +424,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
     def format_result(
         self,
-        rows: list[tuple],
+        rows: list[tuple] | list[dict[str, Any]],
         columns: list[str],
     ) -> dict[str, Any]:
         """Post-process raw ClickHouse rows into the standard response dict.
@@ -435,22 +448,22 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             labels = resolve_skill_cohort_catalog([str(self.project_id)])[
                 "skill_version"
             ]
-            series = {}
+            series: dict[str, dict[str, Any]] = {}
             for raw_row in rows:
-                row = (
+                point = (
                     dict(raw_row)
                     if isinstance(raw_row, dict)
                     else dict(zip(columns, raw_row, strict=True))
                 )
-                key = str(row.pop("cohort_key"))
-                timestamp = row.pop("time_bucket")
-                row["timestamp"] = (
+                key = str(point.pop("cohort_key"))
+                timestamp = point.pop("time_bucket")
+                point["timestamp"] = (
                     timestamp.isoformat()
                     if hasattr(timestamp, "isoformat")
                     else str(timestamp)
                 )
-                if row.get("traces", 0) == row.get("incomplete", 0):
-                    row["latency_p50"] = row["latency_p95"] = None
+                if point.get("traces", 0) == point.get("incomplete", 0):
+                    point["latency_p50"] = point["latency_p95"] = None
                 series.setdefault(
                     key,
                     {
@@ -458,7 +471,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                         "label": labels.get(key, "Unknown skill"),
                         "data": [],
                     },
-                )["data"].append(row)
+                )["data"].append(point)
             return {
                 "split_by": self.split_by,
                 "series": list(series.values()),
@@ -487,7 +500,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 total_tok = row[2] if len(row) > 2 else 0
                 avg_cst = row[3] if len(row) > 3 else 0
                 count = row[4] if len(row) > 4 else 0
-            ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            ts_str = (
+                ts.isoformat()
+                if ts is not None and hasattr(ts, "isoformat")
+                else str(ts)
+            )
 
             latency_data.append(
                 {

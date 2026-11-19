@@ -52,8 +52,8 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
                 "filter_type": "datetime",
                 "filter_op": "between",
                 "filter_value": [
-                    self.params["start_date"].isoformat(),
-                    self.params["end_date"].isoformat(),
+                    self.start.isoformat(),
+                    self.end.isoformat(),
                 ],
             },
         }
@@ -63,8 +63,8 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
         # The shared Observe parser normalizes bounds to naive UTC; runtime
         # serializers supply aware dates. Compare in UTC without losing offsets.
         self.params.update(
-            start_date=max(self.params["start_date"], window.start.replace(tzinfo=UTC)),
-            end_date=min(self.params["end_date"], window.end.replace(tzinfo=UTC)),
+            start_date=max(self.start, window.start.replace(tzinfo=UTC)),
+            end_date=min(self.end, window.end.replace(tzinfo=UTC)),
         )
         plan = compile_exact_graph_row_predicates(
             filters, project_id=project_id, observe_type="trace"

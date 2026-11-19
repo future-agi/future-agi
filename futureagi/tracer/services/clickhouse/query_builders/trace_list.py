@@ -162,6 +162,10 @@ def _unix_microseconds(value: datetime) -> int:
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
+def has_runtime_cohort_filter(filters: list[dict]) -> bool:
+    return any(item.get("column_id") == "skill.trace_cohort" for item in filters)
+
+
 class TraceListQueryBuilder(BaseQueryBuilder):
     """Build queries for the paginated trace list view.
 
@@ -982,9 +986,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     def has_runtime_cohort(self) -> bool:
         """A runtime window selects loads, not the timestamp of the trace root."""
-        return any(
-            item.get("column_id") == "skill.trace_cohort" for item in self.filters
-        )
+        return has_runtime_cohort_filter(self.filters)
 
     @staticmethod
     def _runtime_root_condition() -> str:
@@ -4421,6 +4423,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # it has not arrived, retain an in-window span as a replay identity.
             # This is presentation only: runtime counts/denominators stay in
             # skill_runtime and never infer a successful request from a load.
+            assert request_start is not None and request_end is not None
             canonical_root_condition = self._runtime_root_condition()
             params["candidate_start_date_us"] = _unix_microseconds(request_start)
             params["candidate_end_date_us"] = _unix_microseconds(request_end)

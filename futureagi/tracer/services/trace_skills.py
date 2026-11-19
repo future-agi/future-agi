@@ -47,7 +47,7 @@ def _catalog(principal, ids, kind):
 
 
 def _skill_rows(rows, catalog, project_id):
-    groups = {}
+    groups: dict[tuple, dict] = {}
     for row in rows:
         version = catalog.get(row["skill_version_id"])
         if version and str(version.skill_id) != row["skill_id"]:
@@ -223,7 +223,8 @@ def trace_skills_projection(*, principal, workspace, query):
         [row["attrs"].get("fi.context.version_id") for row in context_spans],
         "agent_context",
     )
-    contexts, linked_by_context = {}, {}
+    contexts = {}
+    linked_by_context: dict[str, set[str]] = {}
     for row in context_spans:
         attrs = row["attrs"]
         context = contexts_catalog.get(attrs.get("fi.context.version_id"))
@@ -253,7 +254,7 @@ def trace_skills_projection(*, principal, workspace, query):
     entry = entries[page[0]]
     # Compare resource identity first, then versions. A failed read or a span
     # with mismatched bytes must not establish that the skill was loaded.
-    loaded_by_skill = {}
+    loaded_by_skill: dict[str, set[int]] = {}
     loaded_spans = set()
     for item in entry["skills"]:
         if item["digest_status"] == "verified":

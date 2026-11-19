@@ -11,6 +11,8 @@ import math
 import re
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, NamedTuple
 
 from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
@@ -83,7 +85,39 @@ _SKILL_FAILED_COLUMNS = frozenset(
 )
 
 
-def is_skill_filter(item: dict) -> bool:
+@dataclass(frozen=True)
+class SkillEvidenceWindow:
+    """Compiler-owned, exact admission window shared by split graph sources.
+
+    Parameters are bound once on the outer query. Never apply this condition to
+    replayed metrics, or use an excluded timestamp to hide a newer tombstone.
+    """
+
+    bounds = "start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s) AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)"
+    condition: str
+    params: dict[str, Any]
+
+    @classmethod
+    def from_bounds(cls, start: datetime, end: datetime, filters: list[dict]):
+        from tracer.services.clickhouse.query_builders.base import (
+            BaseQueryBuilder,
+            _unix_microseconds,
+        )
+
+        excluded, params = BaseQueryBuilder.bounded_datetime_exclusion_sql(
+            filters, param_prefix="graph_datetime"
+        )
+        return cls(
+            cls.bounds + (f" AND ({excluded})" if excluded else ""),
+            {
+                **params,
+                "skill_window_start_us": _unix_microseconds(start),
+                "skill_window_end_us": _unix_microseconds(end),
+            },
+        )
+
+
+def is_skill_filter(item: object) -> bool:
     if not isinstance(item, dict):
         return False
     config = item.get("filter_config") or item.get("filterConfig") or {}
@@ -231,7 +265,8 @@ def resolve_skill_cohort_catalog(project_ids: list[str]) -> dict:
         raise _unsupported_filter_shape(
             "Skill cohort catalog is too large for this read"
         )
-    identities, skill_labels, version_labels = [], {}, {}
+    identities: list[tuple[str, str, str, str]] = []
+    skill_labels, version_labels = {}, {}
     for version, skill, digest, number, name, workspace in versions:
         skill_labels[str(skill)] = name
         version_labels[str(version)] = f"{name} v{number}"
@@ -1035,10 +1070,12 @@ class ClickHouseFilterBuilder:
         eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
         resolved_candidate_sessions_table: str | None = None,
         eval_count_mode: bool = False,
+        skill_window: SkillEvidenceWindow | None = None,
     ) -> None:
         # Observe lists opt into newest-completed tiles. Session/user/dashboard
         # consumers retain matching across all live attempts by default.
         self.eval_count_mode = eval_count_mode
+        self.skill_window = skill_window
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
         self.query_mode = query_mode
@@ -1755,6 +1792,13 @@ class ClickHouseFilterBuilder:
     # Public API
     # ------------------------------------------------------------------
 
+    def _skill_window_bounds(self) -> str:
+        return (
+            self.skill_window.bounds
+            if self.skill_window
+            else "start_time >= %(start_date)s AND start_time < %(end_date)s"
+        )
+
     def skill_live_span_versions_sql(self) -> str:
         """Bounded, authoritative span winners, including key-only tombstones.
 
@@ -1773,7 +1817,7 @@ class ClickHouseFilterBuilder:
             "SELECT project_id, trace_id, id, max(_version) AS live_version "
             "FROM spans WHERE "
             + self._project_scope_predicate()
-            + " AND start_time >= %(start_date)s AND start_time < %(end_date)s"
+            + f" AND {self._skill_window_bounds()}"
             + candidate
             + " GROUP BY project_id, trace_id, id HAVING argMax(is_deleted, _version) = 0"
         )
@@ -1782,10 +1826,14 @@ class ClickHouseFilterBuilder:
         """Shared live load source for filters and cohort dimensions (ST8)."""
         table = "skill_load_failures" if failed else "skill_trace_links"
         outcome = "" if failed else "AND status != 'ERROR' "
+        window = (
+            self.skill_window.condition
+            if self.skill_window
+            else self._skill_window_bounds()
+        )
         return (
             f"SELECT * FROM {table} FINAL WHERE {self._project_scope_predicate()} "
-            f"AND is_deleted = 0 {outcome}AND start_time >= %(start_date)s "
-            "AND start_time < %(end_date)s "
+            f"AND is_deleted = 0 {outcome}AND {window} "
             "AND (project_id, trace_id, span_id, _version) IN ("
             + self.skill_live_span_versions_sql()
             + ")"
@@ -1921,7 +1969,8 @@ class ClickHouseFilterBuilder:
                 and item["filter_config"]["filter_value"] == "failed"
                 for item in members
             )
-            positives, negatives = [], []
+            positives: list[str] = []
+            negatives: list[str] = []
             explicit_result = False
             for item in members:
                 key = item["column_id"]
@@ -2027,7 +2076,7 @@ class ClickHouseFilterBuilder:
                 + self._project_scope_predicate()
                 + " AND (project_id, trace_id) IN (SELECT project_id, trace_id FROM spans WHERE "
                 + self._project_scope_predicate()
-                + " AND start_time >= %(start_date)s AND start_time < %(end_date)s) "
+                + f" AND {self._skill_window_bounds()}) "
                 "GROUP BY project_id, trace_id, id) WHERE root_state.3 = 0 "
                 "GROUP BY project_id, trace_id) "
                 f"WHERE roots > 0 AND canonical_root.1 {operator} %({param})s)"

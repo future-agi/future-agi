@@ -395,3 +395,150 @@ def test_live_selected_version_split_and_dashboard_share_source(
     )
     rows = list(client.query(sql, parameters=params).named_results())
     assert len(rows) == 1 and rows[0]["value"] == result[0]["traces"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("structured", [False, True])
+def test_split_exact_window_for_loads_and_structured_witnesses(
+    skill_query_client, cohort_catalog, structured
+):
+    project = str(uuid4())
+    excluded = START + timedelta(minutes=15)
+    inside = START + timedelta(minutes=30)
+    dates = [
+        {
+            "column_id": "start_time",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "datetime",
+                "filter_op": op,
+                "filter_value": [left.isoformat(), right.isoformat()],
+            },
+        }
+        for op, left, right in [
+            ("between", START, END),
+            ("not_between", excluded, inside),
+        ]
+    ]
+    matches = {"tags": ["vip"]}
+    rows = []
+    for trace, load, witness in [
+        ("good", inside, inside),
+        ("excluded-load", excluded, inside),
+        ("early-witness", inside, START - timedelta(minutes=1)),
+        ("excluded-witness", inside, excluded),
+        ("late-witness", inside, END),
+    ]:
+        rows += [
+            span_row(project, trace, start_time=load, cost=1),
+            span_row(
+                project,
+                trace,
+                name="request",
+                parent_span_id="",
+                start_time=START - timedelta(minutes=2),
+                span_attributes={},
+                cost=2,
+            ),
+            span_row(
+                project,
+                trace,
+                name="tool",
+                start_time=witness,
+                span_attributes=matches,
+                cost=3,
+            ),
+            span_row(
+                project,
+                trace,
+                name="tail",
+                start_time=END + timedelta(minutes=1),
+                span_attributes={},
+                cost=4,
+            ),
+        ]
+    insert_rows(skill_query_client, rows)
+
+    def metric(filters):
+        sql, params = TimeSeriesQueryBuilder(
+            project_id=project,
+            observe_type="trace",
+            split_by="skill_version",
+            filters=filters,
+        ).build()
+        return list(skill_query_client.query(sql, parameters=params).named_results())
+
+    if not structured:
+        (broad,) = metric(dates)
+        assert broad["traces"] == 4
+        return
+    (exact,) = metric(
+        [
+            *dates,
+            {
+                "column_id": "tags",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "array",
+                    "filter_op": "contains",
+                    "filter_value": ["vip"],
+                },
+            },
+        ]
+    )
+    assert (exact["traces"], exact["incomplete"], exact["total_cost"]) == (1, 0, 10)
+
+
+@pytest.mark.integration
+def test_split_rejects_excluded_second_group_and_preserves_microsecond_end(
+    skill_query_client, cohort_catalog
+):
+    project = str(uuid4())
+    left, right = START + timedelta(microseconds=3), START + timedelta(microseconds=9)
+    rows = [
+        span_row(project, "admitted", start_time=left),
+        span_row(
+            project,
+            "admitted",
+            start_time=right - timedelta(microseconds=1),
+            version=OTHER_VERSION,
+        ),
+        span_row(project, "excluded-group", start_time=left),
+        span_row(
+            project,
+            "excluded-group",
+            start_time=left + timedelta(microseconds=1),
+            version=OTHER_VERSION,
+        ),
+        span_row(project, "ends", start_time=right),
+        span_row(project, "early", start_time=START),
+    ]
+    insert_rows(skill_query_client, rows)
+
+    def date(op, val):
+        return {
+            "column_id": "start_time",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "datetime",
+                "filter_op": op,
+                "filter_value": val,
+            },
+        }
+
+    sql, params = TimeSeriesQueryBuilder(
+        project_id=project,
+        observe_type="trace",
+        split_by="skill_version",
+        filters=[
+            date("between", [left.isoformat(), right.isoformat()]),
+            date("not_equals", (left + timedelta(microseconds=1)).isoformat()),
+            skill("version_id", VERSION),
+            skill("version_id", OTHER_VERSION, group=1),
+        ],
+    ).build()
+    got = {
+        r["cohort_key"]: r["traces"]
+        for r in skill_query_client.query(sql, parameters=params).named_results()
+    }
+    assert got == {VERSION: 1, OTHER_VERSION: 1}

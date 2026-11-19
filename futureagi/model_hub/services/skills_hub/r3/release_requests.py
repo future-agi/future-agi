@@ -1128,14 +1128,16 @@ def _policy_changes(
             .select_related("version", "actor")
             .order_by("-created_at", "-revision")[:limit]
         )
-        for event in reversed(events):
+        for quarantine in reversed(events):
             # Revision 1 is the version's first event: it was not quarantined
             # before. A missing earlier event leaves the earlier state unknown.
             before = (
                 False
-                if event.revision == 1
+                if quarantine.revision == 1
                 else HubSkillContextQuarantine.objects.filter(
-                    **scope, version_id=event.version_id, revision=event.revision - 1
+                    **scope,
+                    version_id=quarantine.version_id,
+                    revision=quarantine.revision - 1,
                 )
                 .values_list("active", flat=True)
                 .first()
@@ -1146,14 +1148,17 @@ def _policy_changes(
                     "before": (
                         None
                         if before is None
-                        else {"version": event.version.number, "quarantined": before}
+                        else {
+                            "version": quarantine.version.number,
+                            "quarantined": before,
+                        }
                     ),
                     "after": {
-                        "version": event.version.number,
-                        "quarantined": event.active,
+                        "version": quarantine.version.number,
+                        "quarantined": quarantine.active,
                     },
-                    "changed_by": _person(event.actor),
-                    "changed_at": event.created_at,
+                    "changed_by": _person(quarantine.actor),
+                    "changed_at": quarantine.created_at,
                 }
             )
         if len(events) < delta:

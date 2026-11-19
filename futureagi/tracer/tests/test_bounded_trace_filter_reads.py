@@ -5083,9 +5083,11 @@ def test_observe_trace_list_uses_v2_builder_when_routing_is_disabled() -> None:
     CLICKHOUSE_V2={"QUERY_TYPES_V2_ONLY": "TRACE_LIST"},
 )
 @pytest.mark.parametrize("row_count", [1, 201])
-def test_trace_list_nonempty_page_enrichments_share_wall_budget(
-    row_count: int,
-) -> None:
+def test_trace_list_nonempty_page_enrichments_share_wall_budget(row_count: int) -> None:
+    _check_page_enrichments(row_count, expect_offer=row_count == 1)
+
+
+def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
     from tracer.views.trace import (
         TRACE_LIST_CANDIDATE_DEADLINE_MS,
         TRACE_LIST_ENRICHMENT_CHUNK_SIZE,
@@ -5140,7 +5142,11 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
                     "end_date": END,
                 }
                 assert "LIMIT 1" in query
-                data = [{"1": 1}] if row_count == 1 else []
+                data = (
+                    offer_query(query, params)
+                    if offer_query
+                    else ([{"1": 1}] if expect_offer else [])
+                )
             elif "content_trace_ids" in params:
                 data = [
                     {
@@ -5213,7 +5219,7 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
         row_count + TRACE_LIST_ENRICHMENT_CHUNK_SIZE - 1
     ) // TRACE_LIST_ENRICHMENT_CHUNK_SIZE
     assert payload["metadata"]["query_count"] == 2 * expected_chunks + 3
-    assert payload["metadata"]["skill_links_exist"] is (row_count == 1)
+    assert payload["metadata"]["skill_links_exist"] is expect_offer
     assert 0 <= payload["metadata"]["query_elapsed_ms"] < 3_000
     assert (
         bounded_read.call_args.kwargs["deadline_ms"] <= TRACE_LIST_CANDIDATE_DEADLINE_MS

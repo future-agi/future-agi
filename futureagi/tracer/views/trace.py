@@ -4960,7 +4960,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
-        if list_sort == LATENCY_DESC:
+        if isinstance(builder, RuntimeLatencyQueryBuilderV2):
             from tracer.services.clickhouse.query_service import QueryResult
 
             if not analytics.supports_per_query_read_settings:
@@ -4985,7 +4985,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     },
                 )
 
-            count_result = read_page(*builder.build_runtime_latency_page(list_sort))
+            count_result = read_page(
+                *builder.build_runtime_latency_page(
+                    list_sort, max_read_bytes=page_read_settings["max_bytes_to_read"]
+                )
+            )
             (receipt,) = count_result.data
             total_count = receipt["total"]
             ranked = builder.runtime_latency_page_rows(receipt["page"])
@@ -5317,11 +5321,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         ):
             # This is a column-availability hint, not delivery evidence. Probe
             # the narrow link table for the project/window, not this page's IDs.
+            from tracer.services.clickhouse.v2.query_builders.filters import (
+                ClickHouseFilterBuilderV2,
+            )
+
             start, end = builder.parse_time_range(filters)
+            live_loads = ClickHouseFilterBuilderV2(
+                project_id=str(project_id)
+            ).skill_live_rows_sql()
             tasks["skill_links"] = (
-                "SELECT 1 FROM skill_trace_links FINAL WHERE project_id = %(project_id)s "
-                "AND start_time >= %(start_date)s AND start_time < %(end_date)s "
-                "AND is_deleted = 0 AND status != 'ERROR' LIMIT 1",
+                f"SELECT 1 FROM ({live_loads}) LIMIT 1",
                 {"project_id": project_id, "start_date": start, "end_date": end},
             )
         content_task_names: list[str] = []

@@ -422,7 +422,7 @@ def closure_diff(before: Mapping[str, Mapping], after: Mapping[str, Mapping]):
         changed.append(
             {
                 "skill_id": skill_id,
-                "name": (new or old)["name"],
+                "name": (new if new is not None else before[skill_id])["name"],
                 "from_version": old["version"] if old else None,
                 "to_version": new["version"] if new else None,
                 "change": "added"
@@ -447,8 +447,10 @@ def trace_load_projection(*, rows, failed_rows, trace_ids, project_id, catalog):
         not isinstance(value, str) or not value for value in trace_ids
     ):
         raise _invalid("Supply at most 100 non-empty trace ids.")
-    grouped = {trace_id: {} for trace_id in trace_ids}
-    failed = {trace_id: Counter() for trace_id in trace_ids}
+    grouped: dict[str, dict[tuple, dict]] = {trace_id: {} for trace_id in trace_ids}
+    failed: dict[str, Counter[tuple[str, str]]] = {
+        trace_id: Counter() for trace_id in trace_ids
+    }
     for row in rows:
         trace_id = row["trace_id"]
         if str(row["project_id"]) != str(project_id) or trace_id not in grouped:

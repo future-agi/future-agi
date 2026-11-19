@@ -25,6 +25,7 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
+    SkillEvidenceWindow,
     boolean_meta_presence_condition,
     build_annotation_value_predicate,
     normalize_filter_op,
@@ -624,6 +625,7 @@ def compile_exact_graph_row_predicates(
     project_id: str,
     observe_type: str,
     annotation_label_ids: list[str] | tuple[str, ...] | None = None,
+    skill_window: SkillEvidenceWindow | None = None,
 ) -> ExactGraphRowPredicatePlan:
     """Compile graph filters without adding another physical ``spans`` read.
 
@@ -661,6 +663,7 @@ def compile_exact_graph_row_predicates(
         skill_builder = ClickHouseFilterBuilderV2(
             project_id=project_id,
             query_mode=normalized_observe_type,
+            skill_window=skill_window,
         )
         skill_predicate, skill_params = skill_builder.translate(skill_filters)
         skill_predicate, skill_params = _namespace_params(

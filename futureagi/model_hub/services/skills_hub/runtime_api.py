@@ -13,7 +13,11 @@ from uuid import UUID
 
 from django.utils import timezone
 
-from model_hub.models.skills_hub import HubSkillUsageDaily, HubSkillVersion
+from model_hub.models.skills_hub import (
+    HubSkillLabelEvent,
+    HubSkillUsageDaily,
+    HubSkillVersion,
+)
 from model_hub.models.skills_hub_v12 import (
     HubSkillContextBinding,
     HubSkillContextDependency,
@@ -297,6 +301,7 @@ class RuntimeFacts:
                 == str(self.query["context_version_id"])
             ]
         if self.query.get("_context_comparison"):
+            assert self.resource is not None  # An authorized context comparison.
             context_versions = self.resource.versions.all()
             self.loads = read_runtime_statement(
                 self.session,
@@ -420,7 +425,8 @@ class RuntimeFacts:
         members = {trace_key(row) for row in loads}
         traces = self.spans_by_trace
         versions = {str(row["skill_version_id"]) for row in loads}
-        roots, costs, tokens, scope_costs, overhead = [], [], [], [], []
+        roots, costs, tokens, scope_costs = [], [], [], []
+        overhead: list[float] = []
         any_errors = stamped = 0
         load_rows = [row for row in loads if row.get("is_load", True)]
         load_ids = {(trace_key(row), row["span_id"]) for row in load_rows}
@@ -456,7 +462,9 @@ class RuntimeFacts:
         # Multiple results/spans in a trace have equal trace weight: mean score,
         # and all results passing for the per-trace pass indicator. No averaging
         # per-agent rates or percentiles is used anywhere in these projections.
-        evaluated = defaultdict(lambda: defaultdict(list))
+        evaluated: defaultdict[
+            str, defaultdict[tuple[str, str], list[tuple[float, bool]]]
+        ] = defaultdict(lambda: defaultdict(list))
         from tracer.services.clickhouse.eval_expressions import EVAL_TRUTHY_OUTPUTS
 
         for row in self.evals:
@@ -617,6 +625,7 @@ class RuntimeFacts:
                 [item("skill.service", agent[1]), item("skill.agent", agent[2])]
             )
         if self.query.get("_context_comparison"):
+            assert self.resource is not None
             filters = [
                 {
                     "column_id": "fi.context.id",
@@ -684,8 +693,7 @@ class RuntimeFacts:
                 "filters": [cohort_filter(config.project_id, failed_ids)],
                 "source": {**base["source"], "metric": f"eval:{config_id}"},
             }
-        result = {
-            "project_id": project,
+        links = {
             "all": all_link,
             "failed": {
                 **base,
@@ -698,7 +706,6 @@ class RuntimeFacts:
                 "sort": {"column_id": "latency", "direction": "desc"},
                 "source": {**base["source"], "metric": "latency_p95"},
             },
-            "eval_failed": eval_links,
         }
         for kind in ("all", "failed", "slowest"):
             options = []
@@ -719,7 +726,7 @@ class RuntimeFacts:
                     else None
                 )
                 link = {
-                    **result[kind],
+                    **links[kind],
                     "project_id": project_id,
                     "filters": [cohort_filter(project_id, ids, latency_window=window)],
                 }
@@ -734,12 +741,12 @@ class RuntimeFacts:
                     }
                 )
             if options:
-                result[kind] = (
+                links[kind] = (
                     options[0]["link"]
                     if len(options) == 1
-                    else {**result[kind], "projects": options}
+                    else {**links[kind], "projects": options}
                 )
-        return result
+        return {"project_id": project, **links, "eval_failed": eval_links}
 
     def root_failed(self, project, trace_id):
         roots = sorted(
@@ -922,8 +929,8 @@ def usage(*, principal, workspace, query):
         groups[key].append(load)
     fetches = defaultdict(list)
     if group_by == "skill":
-        for key in facts.skills:
-            groups.setdefault((key,), [])
+        for skill_key in facts.skills:
+            groups.setdefault((skill_key,), [])
         for bucket in HubSkillUsageDaily.objects.filter(
             skill_id__in=facts.skills,
             day__gte=(facts.end - timedelta(days=7)).date(),
@@ -932,21 +939,20 @@ def usage(*, principal, workspace, query):
             fetches[str(bucket.skill_id)].append(
                 can_record(bucket.sdk_version, bucket.tracing_mode, bucket.sdk_language)
             )
-    events, previous_events = {}, {}
+    events: dict[str, HubSkillLabelEvent] = {}
+    previous_events: dict[str, HubSkillLabelEvent] = {}
     if group_by == "skill":
-        from model_hub.models.skills_hub import HubSkillLabelEvent
-
-        for event in HubSkillLabelEvent.objects.filter(
+        for move_event in HubSkillLabelEvent.objects.filter(
             skill_id__in=facts.skills,
             label="production",
             created_at__gte=comparison_start,
             created_at__lte=facts.end,
         ).order_by("-created_at", "-id"):
-            key = str(event.skill_id)
-            if key in events:
-                previous_events.setdefault(key, event)
+            event_key = str(move_event.skill_id)
+            if event_key in events:
+                previous_events.setdefault(event_key, move_event)
             else:
-                events[key] = event
+                events[event_key] = move_event
     rows = []
     for key, loads in groups.items():
         row = facts.row(
@@ -1273,7 +1279,7 @@ def usage(*, principal, workspace, query):
             }
             for key, dependency in linked.items()
         ]
-        loaded_versions = {str(row["skill_version_id"]) for row in facts.loads}
+        loaded_version_ids = {str(row["skill_version_id"]) for row in facts.loads}
         linked_versions = {str(row.child_version_id) for row in linked.values()}
         result["linked_not_loaded"] = [
             {
@@ -1283,7 +1289,7 @@ def usage(*, principal, workspace, query):
                 "version": row.child_version.number,
             }
             for key, row in linked.items()
-            if str(row.child_version_id) not in loaded_versions
+            if str(row.child_version_id) not in loaded_version_ids
         ]
         result["loaded_not_linked"] = [
             facts.row(
@@ -1294,7 +1300,7 @@ def usage(*, principal, workspace, query):
                 ],
                 version_id=version_id,
             )
-            for version_id in sorted(loaded_versions - linked_versions)
+            for version_id in sorted(loaded_version_ids - linked_versions)
         ]
         for row in result["rows"]:
             row["linked"] = row["version_id"] in linked_versions
@@ -1415,17 +1421,23 @@ def compare_metrics(before, after):
     )
     for key in sorted(old.keys() | new.keys()):
         a, b = old.get(key), new.get(key)
-        eligible = (
-            not low and a and b and min(a["evaluated"], b["evaluated"]) >= MIN_EVALUATED
+        present = b if b is not None else old[key]
+        delta = (
+            b["pass_rate"] - a["pass_rate"]
+            if not low
+            and a is not None
+            and b is not None
+            and min(a["evaluated"], b["evaluated"]) >= MIN_EVALUATED
+            else None
         )
         result.append(
             {
                 "metric": f"eval:{key}",
-                "name": (b or a)["name"],
+                "name": present["name"],
                 "before": a["pass_rate"] if a else None,
                 "after": b["pass_rate"] if b else None,
-                "delta": b["pass_rate"] - a["pass_rate"] if eligible else None,
-                "low_sample": not bool(eligible),
+                "delta": delta,
+                "low_sample": delta is None,
                 "before_traces": before["traces"],
                 "after_traces": after["traces"],
                 "before_coverage": a["coverage"] if a else 0,
@@ -1555,8 +1567,16 @@ def comparison(*, principal, workspace, query):
         before.loads, after.loads = [], []
         windows.update(complete=True, ends_at=None)
     versions = {row.number: str(row.pk) for row in resource.versions.all()}
-    old_id = versions.get(event.from_version) if event else None
-    new_id = versions.get(event.to_version) if event else None
+    old_id = (
+        versions.get(event.from_version)
+        if event and event.from_version is not None
+        else None
+    )
+    new_id = (
+        versions.get(event.to_version)
+        if event and event.to_version is not None
+        else None
+    )
     version_field = (
         "context_version_id" if resource.kind == "agent_context" else "skill_version_id"
     )
@@ -1627,7 +1647,7 @@ def comparison(*, principal, workspace, query):
             }
             for key in sorted(visible)
         ]
-        if event
+        if event and new_id is not None
         else []
     )
     for row in adoption:
@@ -1665,7 +1685,7 @@ def comparison(*, principal, workspace, query):
                 before.metrics([]), after.metrics(control_loads)
             ),
         }
-        if control_loads
+        if event and control_loads
         else None
     )
     all_before, all_after = before.metrics(old_loads), after.metrics(new_loads)

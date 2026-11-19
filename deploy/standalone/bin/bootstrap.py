@@ -690,10 +690,6 @@ def main() -> None:
     fingerprint = migrate_and_seed()
     set_phase("clickhouse")
     steps.clickhouse_native_schema(log, 600)
-    # The fresh-only native installer owns spans. Apply its additive Skills
-    # extension after that prerequisite exists, before any writer starts. The
-    # normal schema runner records its hash; historical backfill stays offline.
-    steps.call("ch25_apply_schema", log, files=["028_skill_attribution.sql"])
     steps.property_catalog(log)
     set_phase("schedules")
     steps.with_retries(

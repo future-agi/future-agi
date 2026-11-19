@@ -136,7 +136,7 @@ def filter_values(*, principal, workspace, query):
         raise SkillsHubError(
             "runtime_read_too_large", "Choose a skill to narrow this read.", status=503
         )
-    values = {}
+    values: dict[str, dict] = {}
     verified = []
     search = query["q"].casefold()
     for version in versions:

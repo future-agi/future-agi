@@ -669,3 +669,56 @@ def test_live_span_scope_and_legacy_array_filter(skill_query_client):
     ).build_filter_match_query([trace_id("scope")])
     rows = list(client.query(sql, parameters=params).named_results())
     assert len(rows) == 1 and str(rows[0]["trace_id"]) == trace_id("scope")
+
+
+@pytest.mark.integration
+def test_column_offer_uses_current_successful_sources(skill_query_client):
+    from tracer.tests.test_bounded_trace_filter_reads import END as page_end
+    from tracer.tests.test_bounded_trace_filter_reads import (
+        PROJECT_ID,
+        _check_page_enrichments,
+    )
+
+    client = skill_query_client
+
+    def probe(sql, params):
+        return list(client.query(sql, parameters=params).named_results())
+
+    # A normal root remains visible throughout; a failed-only load must not
+    # trigger the offer. Unverified successes are shown (not linked) by hydration.
+    start = (page_end - timedelta(minutes=1)).replace(tzinfo=UTC)
+    ordinary = span_row(
+        PROJECT_ID,
+        "column-offer",
+        name="request",
+        parent_span_id="",
+        start_time=start,
+        span_attributes={},
+    )
+    failed = span_row(PROJECT_ID, "column-offer", start_time=start, status="ERROR")
+    insert_rows(client, [ordinary, failed])
+    _check_page_enrichments(1, expect_offer=False, offer_query=probe)
+    load = span_row(PROJECT_ID, "column-offer", start_time=start)
+    load["span_attributes"]["fi.skill.digest"] = "unverified"
+    insert_rows(client, [load])
+    _check_page_enrichments(1, expect_offer=True, offer_query=probe)
+    insert_rows(
+        client,
+        [
+            {
+                **load,
+                "created_at": load["created_at"] + timedelta(seconds=1),
+                "deleted": True,
+                "span_attributes": {},
+            }
+        ],
+    )
+    assert client.query(
+        "SELECT count() FROM spans FINAL WHERE id = %(id)s AND is_deleted = 0",
+        parameters={"id": ordinary["id"]},
+    ).result_rows == [(1,)]
+    assert client.query(
+        "SELECT count() FROM skill_trace_links FINAL WHERE span_id = %(id)s AND is_deleted = 0",
+        parameters={"id": load["id"]},
+    ).result_rows == [(1,)]
+    _check_page_enrichments(1, expect_offer=False, offer_query=probe)

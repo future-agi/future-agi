@@ -413,6 +413,7 @@ class ComposeContractTests(unittest.TestCase):
                 "mock-llm",
                 "mock-slack",
                 "mock-google",
+                "skills-fakes",
                 "peerdb-server",
                 "peerdb-flow-worker",
                 "peerdb-flow-snapshot-worker",

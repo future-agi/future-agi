@@ -52,7 +52,7 @@ def fetch_metadata(headers) -> dict:
     version = _sdk_version(match[2]) if match else None
     return {
         "sdk_version": version,
-        "sdk_language": match[1] if version else None,
+        "sdk_language": match[1] if match and version else None,
         "tracing_mode": mode if mode in _TRACING_MODES else None,
     }
 
@@ -67,7 +67,7 @@ def can_record(
     Historical buckets without a language stay unknown, not implicitly Python.
     """
     version = _sdk_version(sdk_version)
-    minimum = MIN_TRACING_SDK.get(sdk_language)
+    minimum = MIN_TRACING_SDK.get(sdk_language) if sdk_language else None
     if version is None or minimum is None or tracing_mode not in ("on", "load_only"):
         return False
     return Version(version) >= Version(minimum)
@@ -78,10 +78,12 @@ def _scoped_resource(resource: HubSkill) -> HubSkill:
     # version/usage backbone but need the explicit-kind selector.
     if resource.kind == HubSkill.Kind.SKILL:
         return scoped_skill(resource)
+    if resource.kind != HubSkill.Kind.AGENT_CONTEXT:
+        raise SkillsHubError("resource_not_found", "Resource not found.", status=404)
     result = (
         resources_for_scope(
             scope=SkillScope(resource.organization_id, resource.workspace_id),
-            kind=resource.kind,
+            kind="agent_context",
         )
         .filter(pk=resource.pk)
         .first()
@@ -312,7 +314,9 @@ def consumers_7d(skill_ids: list[UUID]) -> dict[UUID, list[dict]]:
     if not skill_ids:
         return {}
     skills = _live_resources(skill_ids)
-    result = {pk: [] for pk in skills.values_list("id", flat=True)}
+    result: dict[UUID, list[dict]] = {
+        pk: [] for pk in skills.values_list("id", flat=True)
+    }
     today = timezone.now().date()
     rows = HubSkillUsageDaily.objects.filter(
         skill_id__in=result, day__gte=today - timedelta(days=6), day__lte=today

@@ -38,7 +38,7 @@ def latest_load(*, resource, workspace, since):
             workspace__is_default=True,
             workspace__organization_id=resource.organization_id,
         ) | Q(workspace__isnull=True)
-    projects = dict(
+    project_rows = dict(
         Project.no_workspace_objects.filter(
             scope,
             organization_id=resource.organization_id,
@@ -48,13 +48,13 @@ def latest_load(*, resource, workspace, since):
         .order_by("id")
         .values_list("id", "name")[: MAX_PROJECTS + 1]
     )
-    if len(projects) > MAX_PROJECTS:
+    if len(project_rows) > MAX_PROJECTS:
         raise SkillsHubError(
             "runtime_read_too_large",
             "Too many projects for this load read.",
             status=503,
         )
-    projects = {str(key): value for key, value in projects.items()}
+    projects = {str(key): value for key, value in project_rows.items()}
     versions = {
         str(key): value for key, value in resource.versions.values_list("id", "number")
     }
@@ -75,7 +75,7 @@ def latest_load(*, resource, workspace, since):
             "client": bucket.channel,
         }
     )
-    result = {"load": None, "fetch": fetch}
+    result: dict[str, dict | None] = {"load": None, "fetch": fetch}
     if not projects or not versions or since == now:
         return result
     builder = SkillRuntimeQueryBuilder(project_ids=projects, start=since, end=now)

@@ -31,6 +31,7 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
         if start.utcoffset() is None or end.utcoffset() is None or start >= end:
             raise ValueError("Runtime reads require a nonempty timezone-aware window")
         self.project_ids = projects
+        self.start, self.end = start, end
         self.params = {"project_ids": projects, "start_date": start, "end_date": end}
         self.compiler = ClickHouseFilterBuilderV2(project_ids=list(projects))
 
