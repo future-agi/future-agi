@@ -95,6 +95,7 @@ def _mock_ch():
     """Centroid store that accepts writes and reports no prior version."""
     db = MagicMock()
     db.return_value.client.execute.return_value = []
+    db.return_value.execute_read.return_value = []
     return db
 
 
@@ -110,9 +111,7 @@ class TestErrorCountIsDerived:
         cluster = _cluster(project)
         issue = _issue(project)
 
-        with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()
-        ):
+        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()):
             for _ in range(5):
                 assign_to_cluster(cluster.cluster_id, str(project.id), issue, _EMBED)
 
@@ -128,9 +127,7 @@ class TestErrorCountIsDerived:
         cluster = _cluster(project, "S-COUNT002")
         issues = [_issue(project) for _ in range(3)]
 
-        with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()
-        ):
+        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()):
             for issue in issues:
                 assign_to_cluster(cluster.cluster_id, str(project.id), issue, _EMBED)
 
@@ -143,9 +140,7 @@ class TestErrorCountIsDerived:
         cluster = _cluster(project, "S-COUNT003")
         first, second = _issue(project), _issue(project)
 
-        with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()
-        ):
+        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()):
             assign_to_cluster(cluster.cluster_id, str(project.id), first, _EMBED)
             assign_to_cluster(cluster.cluster_id, str(project.id), first, _EMBED)
             assign_to_cluster(cluster.cluster_id, str(project.id), second, _EMBED)
@@ -165,9 +160,7 @@ class TestErrorCountIsDerived:
         cluster = _cluster(project, "S-COUNT004", error_count=99)
         issue = _issue(project)
 
-        with patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()
-        ):
+        with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", _mock_ch()):
             assign_to_cluster(cluster.cluster_id, str(project.id), issue, _EMBED)
 
         cluster.refresh_from_db()

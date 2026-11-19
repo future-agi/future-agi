@@ -1,8 +1,11 @@
+import pytest
+
 from agentcc.serializers.contracts import (
     AgentccEmptyRequestSerializer,
     AgentccErrorResponseSerializer,
     APIKeyBulkResponseSerializer,
     GatewayConfigProviderSerializer,
+    GatewayHealthErrorResponseSerializer,
     GatewayMCPStatusResponseSerializer,
     GatewayProviderStatusSerializer,
     OrgConfigBulkResponseSerializer,
@@ -26,6 +29,82 @@ def test_agentcc_error_serializer_accepts_common_error_envelope():
     assert serializer.validated_data["status"] is False
     assert serializer.validated_data["attr"] == "name"
     assert serializer.validated_data["details"] == {"name": ["Unknown field."]}
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        "Invalid request.",
+        "",
+        {
+            "status": "unreachable",
+            "error": "Gateway offline",
+            "last_health_check": "2026-01-02T03:04:15Z",
+        },
+    ],
+)
+def test_gateway_health_error_round_trips_string_or_typed_object(result):
+    payload = {"status": False, "result": result}
+    serializer = GatewayHealthErrorResponseSerializer(data=payload)
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.data["result"] == result
+    assert serializer.data["status"] is False
+
+
+@pytest.mark.parametrize("missing", ["status", "error", "last_health_check"])
+def test_gateway_health_error_requires_typed_probe_fields(missing):
+    result = {
+        "status": "unreachable",
+        "error": "Gateway offline",
+        "last_health_check": "2026-01-02T03:04:15Z",
+    }
+    del result[missing]
+    serializer = GatewayHealthErrorResponseSerializer(
+        data={"status": False, "result": result}
+    )
+
+    assert not serializer.is_valid()
+    assert missing in serializer.errors["result"]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {},
+        [],
+        1,
+        False,
+        None,
+        {
+            "status": "healthy",
+            "error": "Gateway offline",
+            "last_health_check": "2026-01-02T03:04:15Z",
+        },
+        {
+            "status": "unreachable",
+            "error": {},
+            "last_health_check": "2026-01-02T03:04:15Z",
+        },
+        {
+            "status": "unreachable",
+            "error": "Gateway offline",
+            "last_health_check": "not-a-timestamp",
+        },
+        {
+            "status": "unreachable",
+            "error": "Gateway offline",
+            "last_health_check": None,
+        },
+    ],
+)
+def test_gateway_health_error_rejects_malformed_result(result):
+    serializer = GatewayHealthErrorResponseSerializer(
+        data={"status": False, "result": result}
+    )
+
+    assert not serializer.is_valid()
+    assert "result" in serializer.errors
 
 
 def test_agentcc_empty_request_serializer_rejects_non_empty_body():
@@ -121,9 +200,11 @@ def test_api_key_bulk_response_is_typed():
                     "name": "Production key",
                     "owner": "platform",
                     "key_hash": "sha256:abc",
+                    "key_prefix": "sk-agentcc-a...",
                     "models": ["gpt-4o"],
                     "providers": ["openai"],
                     "metadata": {"purpose": "gateway-startup"},
+                    "expires_at": None,
                 }
             ],
         }
@@ -171,6 +252,7 @@ def test_org_config_bulk_response_is_typed_by_org_id():
                     "model_map": {},
                 }
             },
+            "unbuilt_org_ids": ["5b0c2b1e-8f0a-4d7e-9c3a-2f1d6e4b7a90"],
         }
     )
 

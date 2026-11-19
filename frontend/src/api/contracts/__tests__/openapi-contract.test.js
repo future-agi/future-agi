@@ -13,6 +13,140 @@ describe("OpenAPI runtime contract", () => {
     vi.unstubAllEnvs();
   });
 
+  it("accepts a run seed as the decimal text a run shows, past what a JSON number keeps", () => {
+    const run = (seed) =>
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/run/",
+        method: "post",
+        data: { scenario_ids: ["refund"], trials: 1, seed },
+      });
+    expect(run("42")).toMatchObject({ ok: true });
+    expect(run("7902065059689103066")).toMatchObject({ ok: true });
+    // Past 2^63 - 1 it is still sent: the server refuses it with its own message, never a silent client gate.
+    expect(run("12345678901234567890123")).toMatchObject({ ok: true });
+  });
+
+  it("sends an actor check whatever id was typed, so the check itself says what is wrong with it", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "Priya Raman" },
+          id: "a".repeat(70),
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    // A value over a field's bound reaches the check too, which says so on that field.
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "x".repeat(501), max_turns: 0 },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts typed Error Feed thresholds in create, update and list contracts", () => {
+    const alertId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: {
+          kind: "error_feed",
+          trigger_type: "severity_reached",
+          severity_threshold: "high",
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: `/tracer/alerts/error_feed/${alertId}/`,
+        method: "patch",
+        data: { trigger_type: "occurrences_crossed", occurrence_threshold: 7 },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/alerts/",
+        method: "post",
+        data: { kind: "error_feed", occurrence_threshold: "7" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateContractedResponse({
+        config: { url: "/tracer/alerts/?kind=error_feed", method: "get" },
+        status: 200,
+        data: {
+          status: true,
+          result: {
+            alerts: [
+              {
+                id: alertId,
+                kind: "error_feed",
+                name: "Occurrence alert",
+                enabled: true,
+                project_id: null,
+                trigger_type: "occurrences_crossed",
+                occurrence_threshold: 7,
+                last_triggered_at: null,
+                failure_reason: null,
+              },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts an Observe eval log's 16-hex collector span id (TH-4804)", () => {
+    const traceId = "22222222-2222-4222-8222-222222222222";
+    const spanId = "f9da550bd36da78b";
+    const response = (sourceNavigation) => ({
+      config: { url: "/model-hub/get-eval-logs", method: "get" },
+      status: 200,
+      data: {
+        status: true,
+        result: {
+          log_id: "10000000-0000-4000-8000-000000000001",
+          created_at: "2026-11-11T22:40:00Z",
+          evaluation_id: "10000000-0000-4000-8000-000000000001",
+          source: "Tracer",
+          required_keys: ["output"],
+          values: { output: "stored input" },
+          output: { output: 1, reason: "judged the span" },
+          input_data_types: { output: "text" },
+          span_id: spanId,
+          trace_id: traceId,
+          ...sourceNavigation,
+        },
+      },
+    });
+
+    expect(validateContractedResponse(response())).toMatchObject({
+      ok: true,
+    });
+    expect(
+      validateContractedResponse(
+        response({
+          source_navigation: {
+            status: "ready",
+            kind: "trace",
+            project_id: "33333333-3333-4333-8333-333333333333",
+            trace_id: traceId,
+            span_id: spanId,
+            retryable: false,
+          },
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+  });
+
   it("keeps response contracts warn-only unless explicitly promoted to strict", () => {
     expect(shouldEnforceApiResponseContracts()).toBe(false);
 
@@ -87,6 +221,98 @@ describe("OpenAPI runtime contract", () => {
     expect(result.error.message).toContain(
       "request body contract validation failed",
     );
+  });
+
+  it("accepts an actor record of any fields on add and edit", () => {
+    const base =
+      "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actors/";
+    const manager = {
+      id: "manager",
+      name: "Priya Raman",
+      role: "store manager",
+      permitted_actions: ["refunds.approve"],
+      constraints: { may_agree: ["Refunds up to $500"], private: [] },
+      activation: {
+        trigger: { kind: "on_tool", tool: "refunds.request_approval" },
+        fallback: "silent",
+      },
+      loudness_ratio: null,
+    };
+    const colleague = {
+      id: "colleague",
+      name: "Jordan",
+      channel: "audio_mix",
+      loudness_ratio: 0.5,
+    };
+    for (const [url, method, actor] of [
+      [base, "post", manager],
+      [`${base}manager/`, "put", manager],
+      [base, "post", colleague],
+    ]) {
+      expect(
+        validateContractedRequestConfig({
+          url,
+          method,
+          data: { actor, expected_revision: 0 },
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  it("accepts actor limits as numbers, nulls and a model name", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-limits/",
+        method: "put",
+        data: {
+          limits: {
+            live_turns_per_actor: 7,
+            max_active: null,
+            max_messages: 12,
+            model: "gemini-3.7-flash",
+          },
+          expected_revision: 3,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts provider-ID harness requests without a source upload", () => {
+    const payload = {
+      schema_version: "futureagi.harness-job.v1",
+      agent: {
+        connector: "retell",
+        mode: "connect_only",
+        config: { agent_id: "agent_existing" },
+        secret_refs: {
+          RETELL_API_KEY: {
+            manager: "platform-vault",
+            key: "pending-retell_api_key",
+            version: "1",
+            purpose: "target_provider",
+          },
+        },
+      },
+      artifacts: { level: "full" },
+      credential_values: { RETELL_API_KEY: "key_for_preflight_only" },
+    };
+
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-jobs/preflight/",
+        method: "post",
+        data: payload,
+      }),
+    ).toMatchObject({ ok: true });
+
+    const { credential_values: _credentialValues, ...createPayload } = payload;
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-jobs/",
+        method: "post",
+        data: createPayload,
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("keeps generated alert-log mutation request bodies documented", () => {
@@ -281,12 +507,12 @@ describe("OpenAPI runtime contract", () => {
     expect(result).toMatchObject({ ok: true });
   });
 
-  it("does not enforce inferred legacy contracts until the endpoint is runtime-backed", () => {
+  it("enforces the bounded project-list query contract", () => {
     const endpoint = findOpenApiEndpoint(
       "/tracer/project/list_projects/",
       "get",
     );
-    expect(endpoint.contract.runtimeRequestValidation).toBe(false);
+    expect(endpoint.contract.runtimeRequestValidation).toBe(true);
 
     expect(
       validateContractedRequestConfig({
@@ -298,7 +524,21 @@ describe("OpenAPI runtime contract", () => {
           page_size: 25,
         },
       }),
-    ).toMatchObject({ ok: true, skipped: true });
+    ).toMatchObject({ ok: true });
+
+    for (const params of [
+      { project_type: "observe", page_number: -1, page_size: 25 },
+      { project_type: "observe", page_number: 0, page_size: 101 },
+      { project_type: "observe", page: 1, limit: 25 },
+    ]) {
+      expect(
+        validateContractedRequestConfig({
+          url: "/tracer/project/list_projects/",
+          method: "get",
+          params,
+        }).ok,
+      ).toBe(false);
+    }
   });
 
   it("validates list query params the way DRF query serializers receive them", () => {
@@ -527,6 +767,8 @@ describe("OpenAPI runtime contract", () => {
             metrics: [
               {
                 name: "eval-template-id",
+                property_id: "eval_template:eval-template-id",
+                property_kind: "eval_template",
                 display_name: "Choices eval",
                 category: "eval_metric",
                 source: "all",
@@ -594,6 +836,189 @@ describe("OpenAPI runtime contract", () => {
         tracesOfSessionResponse([{ trace_id: undefined }]),
       ),
     ).toMatchObject({ ok: false });
+  });
+
+  it("accepts array span attributes and JSON scalar picker values", () => {
+    const readState = {
+      query_complete: true,
+      query_status: "complete",
+      query_window_start: "2026-01-01T00:00:00Z",
+      query_window_end: "2026-01-08T00:00:00Z",
+    };
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-keys/?project_id=p1",
+          method: "get",
+        },
+        data: {
+          result: [{ key: "json_choices", type: "array", count: 4 }],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-values/?project_id=p1&key=json_choices",
+          method: "get",
+        },
+        data: {
+          result: [
+            { value: "Rejected", type: "array", count: 4 },
+            { value: 7, type: "array", count: 3 },
+            { value: false, type: "array", count: 2 },
+            { value: null, type: "array", count: 1 },
+          ],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts either project or workspace scope for span-attribute keys", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-keys/",
+        method: "get",
+        params: { workspace_scope: true, page_size: 50 },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-keys/",
+        method: "get",
+        params: { project_id: "c4de3065-12b5-488c-a814-aa1c8e3f856f" },
+      }),
+    ).toMatchObject({ ok: true });
+
+    // The workspace widening belongs only to key inventory. The detail
+    // endpoint remains project-scoped and must keep its required project_id.
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-detail/",
+        method: "get",
+        params: { key: "historical.attribute" },
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  describe.each([
+    ["/api/traces/span-attribute-detail/", "key", {}],
+    ["/api/traces/span-attribute-keys/", "q", {}],
+    ["/api/traces/span-attribute-values/", "key", {}],
+    [
+      "/tracer/observation-span/get_span_attributes_list/",
+      "q",
+      {
+        filters: JSON.stringify({
+          project_id: "c4de3065-12b5-488c-a814-aa1c8e3f856f",
+        }),
+      },
+    ],
+  ])(
+    "exact attribute-key request contract %s",
+    (route, field, observationParams) => {
+      // Acceptance checks only: the backend enforces the exact UTF-8 byte bound.
+      // Swagger query string constraints cannot express that byte-count contract.
+      it.each([
+        ["ascii-over-old-limit", "a".repeat(513)],
+        ["unicode-4096-bytes", "😀".repeat(1024)],
+        ["whitespace-only", " \t\n"],
+        ["nul", "\0"],
+        ["literal-plus", "a+b"],
+        ["literal-percent-zero", "%00"],
+        ["combined-exact-key", " 客户\t\0+%00\n "],
+      ])("preserves %s in params and encoded URL", (_label, key) => {
+        const scope =
+          field === "q" && observationParams.filters
+            ? observationParams
+            : { project_id: "c4de3065-12b5-488c-a814-aa1c8e3f856f" };
+        const params = { ...scope, [field]: key };
+        const encodedUrl = `${route}?${new URLSearchParams(params)}`;
+        expect(
+          new URL(encodedUrl, "http://offline.invalid").searchParams.get(field),
+        ).toBe(key);
+        for (const config of [
+          { url: route, method: "get", params },
+          { url: encodedUrl, method: "get" },
+        ]) {
+          const original = JSON.stringify(config);
+          const result = validateContractedRequestConfig(config);
+          expect(result.skipped).not.toBe(true);
+          expect(result.ok).toBe(true);
+          expect(JSON.stringify(config)).toBe(original);
+        }
+      });
+    },
+  );
+
+  it("retains attribute values search, required project, and inventory cursor limits", () => {
+    const project_id = "c4de3065-12b5-488c-a814-aa1c8e3f856f";
+    const valid = (url, params) =>
+      validateContractedRequestConfig({ url, method: "get", params }).ok;
+    const values = "/api/traces/span-attribute-values/";
+    expect(
+      valid(values, { project_id, key: "ordinary", q: "x".repeat(512) }),
+    ).toBe(true);
+    expect(
+      valid(values, { project_id, key: "ordinary", q: "x".repeat(513) }),
+    ).toBe(false);
+    expect(valid(values, { key: "ordinary" })).toBe(false);
+    for (const route of [values, "/api/traces/span-attribute-detail/"]) {
+      expect(valid(route, { project_id: "not-a-uuid", key: "ordinary" })).toBe(
+        false,
+      );
+      expect(valid(route, { project_id })).toBe(false);
+    }
+    const keys = "/api/traces/span-attribute-keys/";
+    expect(
+      valid(keys, { project_id, page_size: 50, cursor: "x".repeat(8192) }),
+    ).toBe(true);
+    expect(
+      valid(keys, { project_id, page_size: 50, cursor: "x".repeat(8193) }),
+    ).toBe(false);
+    expect(valid(keys, { project_id, page_size: 51 })).toBe(false);
+    expect(valid(keys, { project_id: "not-a-uuid" })).toBe(false);
+    expect(
+      valid("/tracer/observation-span/get_span_attributes_list/", {
+        q: "ordinary",
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts every JSON value shape in dashboard filter-picker options", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.DashboardFilterValueOption.properties.value[
+        "x-json-value"
+      ],
+    ).toBe(true);
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/tracer/dashboard/filter_values/?metric_name=final_status",
+          method: "get",
+        },
+        data: {
+          status: true,
+          result: {
+            values: [
+              { value: "Rechazado", label: "Rechazado" },
+              { value: 7, label: "7" },
+              { value: false, label: "false" },
+              { value: ["nested", 1], label: "nested array" },
+              { value: { nested: true }, label: "nested object" },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("accepts queue items with null names, listed assignees, and a null source preview", () => {

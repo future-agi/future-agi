@@ -72,10 +72,9 @@ export default function Evaluations({ control, setValue, isEvalsView }) {
                   }}
                   startIcon={
                     <SvgColor
+                      width={16}
                       src={`/assets/icons/evals_use_case/${button.icon}.svg`}
                       sx={{
-                        width: "16px",
-                        height: "16px",
                         color: iconColor(isSelected),
                       }}
                     />
@@ -125,7 +124,7 @@ export default function Evaluations({ control, setValue, isEvalsView }) {
             endAdornment: searchTerm && (
               <InputAdornment position="end">
                 <Iconify
-                  icon="mingcute:close-line"
+                  icon="solar:close-linear"
                   onClick={() => setSearchTerm("")}
                   sx={{ color: "text.disabled", cursor: "pointer" }}
                 />

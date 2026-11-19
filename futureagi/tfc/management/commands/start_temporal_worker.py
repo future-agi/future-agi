@@ -9,12 +9,138 @@ import asyncio
 import os
 import signal
 import threading
-from typing import TYPE_CHECKING, List
 
 from django.core.management.base import BaseCommand
 
-if TYPE_CHECKING:
-    from temporalio.worker import Worker
+from tfc.temporal.common.activity_thread import OwnThreadActivityInterceptor
+from tfc.temporal.common.media_tool_interceptor import MediaToolActivityInterceptor
+
+# Queues in this set have their own workload-level concurrency boundary. A
+# generic local ``--all-queues`` worker must not also poll them, otherwise its
+# much higher concurrency silently defeats that admission control.
+_DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation", "sql_workbench"})
+
+
+# Blocking provider calls share these queues with the short polls that must keep running.
+_OWN_THREAD_ACTIVITY_QUEUES = frozenset({"simulation_runner"})
+
+
+def _generic_all_queues(registered_queues: list[str]) -> list[str]:
+    """Return queues safe for the generic all-queues worker to poll."""
+
+    return [queue for queue in registered_queues if queue not in _DEDICATED_TASK_QUEUES]
+
+
+def _activity_thread_kwargs(queue_name: str) -> dict[str, list]:
+    """Return the interceptors that give a queue's activities their own thread."""
+
+    if queue_name in _OWN_THREAD_ACTIVITY_QUEUES:
+        return {"interceptors": [OwnThreadActivityInterceptor()]}
+    return {}
+
+
+def _worker_interceptors(queue_name: str) -> list:
+    """Every queue maps a missing ffmpeg to a non-retryable failure; some
+    queues also run each activity on its own thread."""
+
+    return [
+        MediaToolActivityInterceptor(),
+        *_activity_thread_kwargs(queue_name).get("interceptors", []),
+    ]
+
+
+def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
+    """Return queue-specific Temporal workflow cache settings.
+
+    Exact aggregation uses a single workflow-task slot as part of its strict
+    admission boundary. Temporal requires at least two workflow-task slots
+    when sticky workflow caching is enabled. These workflows are one-shot
+    activity runners, so caching them has no reuse benefit; disabling the
+    cache also keeps new work on the normal queue instead of waiting behind
+    sticky long polls.
+    """
+
+    if queue_name == "exact_aggregation":
+        return {"max_cached_workflows": 0}
+    return {}
+
+
+async def _wait_for_namespace(client, shutdown_event, log, *, retry_seconds=5):
+    """Wait for persistence readiness before starting SDK worker validation.
+
+    A reachable Temporal frontend is not enough: its namespace lookup also
+    needs PostgreSQL. SDK validation is fatal after its bounded RPC retries,
+    unlike ordinary polling, so do not start workers during that outage.
+    A refused persistence connection surfaces as UNAVAILABLE, but a hung one
+    trips this probe's client timeout, which the SDK reports as CANCELLED
+    ("Timeout expired"); both are the same outage and both keep waiting.
+    """
+    from datetime import timedelta
+
+    from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
+    from temporalio.service import RPCError, RPCStatusCode
+
+    while not shutdown_event.is_set():
+        try:
+            await client.workflow_service.describe_namespace(
+                DescribeNamespaceRequest(namespace=client.namespace),
+                retry=False,
+                timeout=timedelta(seconds=5),
+            )
+            return not shutdown_event.is_set()
+        except RPCError as exc:
+            if exc.status not in (
+                RPCStatusCode.UNAVAILABLE,
+                RPCStatusCode.DEADLINE_EXCEEDED,
+                RPCStatusCode.RESOURCE_EXHAUSTED,
+                RPCStatusCode.CANCELLED,
+            ):
+                raise
+            log.warning(
+                "temporal_namespace_unavailable",
+                status=exc.status.name,
+                message=exc.message,
+            )
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=retry_seconds)
+        except TimeoutError:
+            pass
+    return False
+
+
+def disable_litellm_logging_worker() -> None:
+    """Disable litellm's async logging worker to prevent event loop crashes.
+
+    The worker creates asyncio Queue/Task objects on temporary event loops
+    (from asyncio.run() in thread pool threads), which get destroyed when
+    those loops close — causing "Task was destroyed but it is pending".
+    Since we don't use litellm's callback system, disabling is safe.
+    Patch at BOTH class and instance level to cover all code paths.
+    """
+    try:
+        from litellm.litellm_core_utils.logging_worker import (
+            GLOBAL_LOGGING_WORKER,
+            LoggingWorker,
+        )
+    except ImportError:
+        return
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    async def _noop_worker_loop(self):
+        return
+
+    # Class-level
+    LoggingWorker.start = _noop
+    LoggingWorker.enqueue = _noop
+    LoggingWorker.ensure_initialized_and_enqueue = _noop
+    LoggingWorker._worker_loop = _noop_worker_loop
+
+    # Instance-level for the global singleton
+    GLOBAL_LOGGING_WORKER.start = _noop
+    GLOBAL_LOGGING_WORKER.enqueue = _noop
+    GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue = _noop
 
 
 class Command(BaseCommand):
@@ -119,35 +245,7 @@ class Command(BaseCommand):
         # Configure structured logging for Temporal workers
         configure_temporal_logging()
 
-        # Disable litellm's async logging worker to prevent event loop crashes.
-        # The worker creates asyncio Queue/Task objects on temporary event loops
-        # (from asyncio.run() in thread pool threads), which get destroyed when
-        # those loops close — causing "Task was destroyed but it is pending".
-        # Since we don't use litellm's callback system, disabling is safe.
-        # Patch at BOTH class and instance level to cover all code paths.
-        try:
-            from litellm.litellm_core_utils.logging_worker import (
-                GLOBAL_LOGGING_WORKER,
-                LoggingWorker,
-            )
-
-            _noop = lambda *a, **kw: None
-
-            async def _noop_worker_loop(self):
-                return
-
-            # Class-level
-            LoggingWorker.start = _noop
-            LoggingWorker.enqueue = _noop
-            LoggingWorker.ensure_initialized_and_enqueue = _noop
-            LoggingWorker._worker_loop = _noop_worker_loop
-
-            # Instance-level for the global singleton
-            GLOBAL_LOGGING_WORKER.start = _noop
-            GLOBAL_LOGGING_WORKER.enqueue = _noop
-            GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue = _noop
-        except ImportError:
-            pass
+        disable_litellm_logging_worker()
 
         task_queue = options["task_queue"]
         all_queues_mode = options["all_queues"]
@@ -173,7 +271,9 @@ class Command(BaseCommand):
                 if queue.strip()
             }
             queues_to_poll = [
-                queue for queue in get_all_queues() if queue not in excluded_queues
+                queue
+                for queue in _generic_all_queues(get_all_queues())
+                if queue not in excluded_queues
             ]
             # Get all unique workflows and activities across all queues
             workflows = get_all_workflows()
@@ -255,6 +355,9 @@ class Command(BaseCommand):
                 interceptors=interceptors,
             )
 
+            if not await _wait_for_namespace(client, shutdown_event, log):
+                return
+
             # Send reload signal to dispatcher if enabled
             if reload_dispatcher:
                 try:
@@ -270,12 +373,13 @@ class Command(BaseCommand):
                         client.get_workflow_handle(PHONE_NUMBER_DISPATCHER_WORKFLOW_ID)
                     )
 
-                    call_dispatcher_result, phone_number_dispatcher_result = (
-                        await asyncio.gather(
-                            call_dispatcher_workflow_handle.signal("reload"),
-                            phone_number_dispatcher_workflow_handle.signal("reload"),
-                            return_exceptions=True,
-                        )
+                    (
+                        call_dispatcher_result,
+                        phone_number_dispatcher_result,
+                    ) = await asyncio.gather(
+                        call_dispatcher_workflow_handle.signal("reload"),
+                        phone_number_dispatcher_workflow_handle.signal("reload"),
+                        return_exceptions=True,
                     )
 
                     if isinstance(call_dispatcher_result, Exception):
@@ -310,6 +414,8 @@ class Command(BaseCommand):
                     "graceful_shutdown_timeout": timedelta(seconds=graceful_timeout),
                     "max_heartbeat_throttle_interval": timedelta(seconds=5),
                 }
+                kwargs.update(_workflow_cache_kwargs(queue_name))
+                kwargs["interceptors"] = _worker_interceptors(queue_name)
 
                 # Resource-based tuning is disabled by default due to a known
                 # bug where workers stop polling queues.
@@ -334,7 +440,7 @@ class Command(BaseCommand):
                 return kwargs
 
             # Create workers for each queue
-            workers: List[Worker] = []
+            workers = []
             for queue_name in queues_to_poll:
                 worker_kwargs = create_worker_kwargs(queue_name)
                 workers.append(Worker(**worker_kwargs))
@@ -346,31 +452,29 @@ class Command(BaseCommand):
                 queues=queues_to_poll,
             )
 
-            # Run all workers concurrently until shutdown signal
-            async def run_single_worker(worker: Worker, queue_name: str):
-                async with worker:
-                    await shutdown_event.wait()
-                log.info("worker_shutdown", queue=queue_name)
-
-            # Start all workers concurrently
-            worker_tasks = [
-                asyncio.create_task(run_single_worker(w, q))
-                for w, q in zip(workers, queues_to_poll)
-            ]
-
-            # Wait for shutdown signal, then wait for all workers to finish
-            await shutdown_event.wait()
-            log.info("shutdown_signal_received")
-
-            # Wait for all worker tasks to complete
-            await asyncio.gather(*worker_tasks, return_exceptions=True)
+            # Supervise runs directly. A fatal SDK validation/poller failure
+            # must reach the command, not leave a live process waiting forever
+            # on a shutdown signal with no task-queue pollers. TaskGroup also
+            # cancels sibling runs if one fails during startup or execution.
+            async with asyncio.TaskGroup() as group:
+                for worker in workers:
+                    group.create_task(worker.run())
+                await shutdown_event.wait()
+                log.info("shutdown_signal_received")
+                await asyncio.gather(*(worker.shutdown() for worker in workers))
 
             log.info("all_workers_shutdown_complete")
 
+        # Any exit other than a clean shutdown must reach the supervisor as a
+        # failure (on-failure restart policies, crash alerts). Default to
+        # failure so an unexpected BaseException cannot be reported as clean.
+        exit_code = 1
         try:
             runner.run(run_worker())
+            exit_code = 0
         except KeyboardInterrupt:
             log.info("worker_interrupted", reason="keyboard")
+            exit_code = 0
         except Exception as e:
             log.exception("worker_error", error=str(e))
             raise
@@ -382,4 +486,4 @@ class Command(BaseCommand):
             log.info("shutdown_threads", active_threads=active_threads)
 
             # Force exit to avoid hanging on any remaining threads
-            os._exit(0)
+            os._exit(exit_code)

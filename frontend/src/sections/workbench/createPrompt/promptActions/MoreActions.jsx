@@ -52,12 +52,11 @@ export default function MoreActions({
         }}
       >
         <Button
+          size="small"
           sx={{
-            borderRadius: "4px",
             backgroundColor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
-            height: "30px",
             minWidth: "30px",
             paddingLeft: isMoreOpen ? "12px" : "8px",
             paddingRight: isMoreOpen ? "12px" : "8px",
@@ -71,9 +70,8 @@ export default function MoreActions({
           onClick={() => setMoreOpen(!isMoreOpen)}
           startIcon={
             <SvgColor
+              width={16}
               sx={{
-                width: "16px",
-                height: "16px",
                 color: "text.primary",
               }}
               src={
@@ -136,12 +134,11 @@ export default function MoreActions({
               }}
             >
               <Button
+                size="small"
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
-                  height: "30px",
                   whiteSpace: "nowrap",
                   cursor: "pointer",
                   "&:hover": {
@@ -161,9 +158,8 @@ export default function MoreActions({
                 }}
                 startIcon={
                   <SvgColor
+                    width={16}
                     sx={{
-                      width: "16px",
-                      height: "16px",
                       color:
                         loadingPrompt ||
                         currentTab === "Evaluation" ||
@@ -203,12 +199,10 @@ export default function MoreActions({
             >
               <IconButton
                 sx={{
-                  borderRadius: "4px",
                   backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
                   gap: theme.spacing(0.5),
-                  height: "30px",
                   whiteSpace: "nowrap",
                   "&:hover": {
                     backgroundColor: `${theme.palette.background.neutral} !important`,

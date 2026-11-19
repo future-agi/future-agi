@@ -18,7 +18,7 @@ export default function CustomInstruction({ control }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
     >
       <Stack
@@ -57,13 +57,10 @@ export default function CustomInstruction({ control }) {
             <Box
               sx={{
                 maxWidth: "199px",
-                borderRadius: 0.5,
+                borderRadius: "4px",
               }}
             >
-              <Typography
-                fontWeight={"fontWeightRegular"}
-                typography={"s2"}
-              >
+              <Typography fontWeight={"fontWeightRegular"} typography={"s2"}>
                 {watchedCustomInstructionDisabled
                   ? "Disable to write custom instructions for scenario creation"
                   : "Enable to auto-create scenarios using the agent definition"}

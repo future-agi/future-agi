@@ -1,0 +1,86 @@
+eval_id: 208
+name: intake_field_accuracy
+description: "Checks faithful capture of user information, retained corrections, and applicable collection or confirmation requirements."
+criteria: |-
+  Evaluate how faithfully the agent captures user-provided information, using the conversation as the reference.
+
+  ## Criteria
+  1. Compare each value and meaningful component, preserving its association with the correct entity, attribute, or purpose.
+  2. Retain explicit corrections and accepted updates; an unresolved mismatch or repeated reversion to a corrected wrong value is a capture failure.
+  3. Do not attribute invented information to the user; distinguish user statements from clearly labeled proposals or inferences.
+  4. Check only collection and confirmation requirements established by the conversation or supplied instructions; do not assume mandatory read-backs or domain-specific fields.
+
+  ## Anti-bias Rules
+  - Allow equivalent formats, faithful paraphrases, effective clarification, and a first restatement that is corrected and then retained.
+  - Exclude unclear or missing values from error judgments; do not reconstruct them or assume they were never supplied.
+  - Missing required information is a coverage gap, not fabrication, unless the agent invents it.
+  - Judge observable information capture separately from task completion or what may have been stored outside the conversation.
+
+  ## Scoring
+  - Score 0.0 for an unresolved incorrect or fabricated value, wrong field association, ignored correction, repeated loss of a corrected value, or broadly failed required intake.
+  - Score 0.5 when capture is broadly accurate, but an applicable collection or confirmation requirement is missed without acknowledgment and no 0.0 condition applies.
+  - Score 1.0 when assessable values and corrections are retained and applicable requirements are satisfied or unavailable information is explicitly flagged.
+
+  ## Explanation
+  Compare the user's value with the agent's representation; identify any unmet requirement or evidence limitation, including when no applicable information was supplied.
+
+  ## Input
+  <agent_prompt>{{agent_prompt}}</agent_prompt>
+  <conversation>{{conversation}}</conversation>
+
+eval_tags:
+- Agents
+- Conversation
+- Voice
+- Chatbot behaviors
+- Accuracy
+offered_in_environments: true
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  output: score
+  eval_type_id: AgentEvaluator
+  config_params_desc:
+    agent_prompt: The agent's system prompt (intake flow and the details it must collect)
+    conversation: The conversation to be evaluated (transcript or audio)
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+  rule_prompt: |-
+    Evaluate how faithfully the agent captures user-provided information, using the conversation as the reference.
+
+    ## Criteria
+    1. Compare each value and meaningful component, preserving its association with the correct entity, attribute, or purpose.
+    2. Retain explicit corrections and accepted updates; an unresolved mismatch or repeated reversion to a corrected wrong value is a capture failure.
+    3. Do not attribute invented information to the user; distinguish user statements from clearly labeled proposals or inferences.
+    4. Check only collection and confirmation requirements established by the conversation or supplied instructions; do not assume mandatory read-backs or domain-specific fields.
+
+    ## Anti-bias Rules
+    - Allow equivalent formats, faithful paraphrases, effective clarification, and a first restatement that is corrected and then retained.
+    - Exclude unclear or missing values from error judgments; do not reconstruct them or assume they were never supplied.
+    - Missing required information is a coverage gap, not fabrication, unless the agent invents it.
+    - Judge observable information capture separately from task completion or what may have been stored outside the conversation.
+
+    ## Scoring
+    - Score 0.0 for an unresolved incorrect or fabricated value, wrong field association, ignored correction, repeated loss of a corrected value, or broadly failed required intake.
+    - Score 0.5 when capture is broadly accurate, but an applicable collection or confirmation requirement is missed without acknowledgment and no 0.0 condition applies.
+    - Score 1.0 when assessable values and corrections are retained and applicable requirements are satisfied or unavailable information is explicitly flagged.
+
+    ## Explanation
+    Compare the user's value with the agent's representation; identify any unmet requirement or evidence limitation, including when no applicable information was supplied.
+
+    ## Input
+    <agent_prompt>{{agent_prompt}}</agent_prompt>
+    <conversation>{{conversation}}</conversation>

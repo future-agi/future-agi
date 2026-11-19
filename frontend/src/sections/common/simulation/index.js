@@ -15,6 +15,7 @@ export { default as BaseSelectionActions } from "./components/BaseSelectionActio
 // Constants
 export {
   statusStyles,
+  EXECUTION_STATUS_ROLE,
   STOPPABLE_STATUSES,
   TERMINAL_STATUSES,
 } from "./constants/statusStyles";

@@ -16,32 +16,36 @@ from model_hub.models.evals_metric import EvalTemplate
 # =============================================================================
 
 
+CREATE_V2_URL = "/model-hub/eval-templates/create-v2/"
+
+
+def _valid_payload(**overrides):
+    """Base valid payload for creating an eval."""
+    payload = {
+        "name": "my-test-eval",
+        "eval_type": "llm",
+        "instructions": "Evaluate if {{response}} matches {{expected}}.",
+        "model": "turing_large",
+        "output_type": "pass_fail",
+        "pass_threshold": 0.5,
+        "description": "A test eval",
+        "tags": ["test"],
+        "check_internet": False,
+    }
+    payload.update(overrides)
+    return payload
+
+
 @pytest.mark.e2e
 @pytest.mark.django_db
 class TestEvalTemplateCreateV2API:
-    url = "/model-hub/eval-templates/create-v2/"
-
-    def _valid_payload(self, **overrides):
-        """Base valid payload for creating an eval."""
-        payload = {
-            "name": "my-test-eval",
-            "eval_type": "llm",
-            "instructions": "Evaluate if {{response}} matches {{expected}}.",
-            "model": "turing_large",
-            "output_type": "pass_fail",
-            "pass_threshold": 0.5,
-            "description": "A test eval",
-            "tags": ["test"],
-            "check_internet": False,
-        }
-        payload.update(overrides)
-        return payload
+    url = CREATE_V2_URL
 
     # --- Happy path ---
 
     def test_create_pass_fail_eval(self, auth_client):
         """Create a Pass/Fail eval successfully."""
-        response = auth_client.post(self.url, self._valid_payload(), format="json")
+        response = auth_client.post(self.url, _valid_payload(), format="json")
         assert response.status_code == 200
         assert response.data["status"] is True
         result = response.data["result"]
@@ -59,7 +63,7 @@ class TestEvalTemplateCreateV2API:
         """Create a Percentage eval successfully."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(output_type="percentage", pass_threshold=0.7),
+            _valid_payload(output_type="percentage", pass_threshold=0.7),
             format="json",
         )
         assert response.status_code == 200
@@ -78,7 +82,7 @@ class TestEvalTemplateCreateV2API:
         """
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="deterministic-eval",
                 output_type="deterministic",
                 choice_scores={"yes": 1.0, "no": 0.0, "maybe": 0.5},
@@ -96,7 +100,7 @@ class TestEvalTemplateCreateV2API:
 
     def test_create_sets_backward_compat_fields(self, auth_client):
         """New eval also sets backward-compatible config fields."""
-        response = auth_client.post(self.url, self._valid_payload(), format="json")
+        response = auth_client.post(self.url, _valid_payload(), format="json")
         assert response.status_code == 200
         result = response.data["result"]
 
@@ -114,7 +118,7 @@ class TestEvalTemplateCreateV2API:
         from model_hub.models.evals_metric import EvalTemplateVersion
 
         response = auth_client.post(
-            self.url, self._valid_payload(name="versioned-eval"), format="json"
+            self.url, _valid_payload(name="versioned-eval"), format="json"
         )
         assert response.status_code == 200
         template_id = response.data["result"]["id"]
@@ -128,7 +132,7 @@ class TestEvalTemplateCreateV2API:
         """Deterministic eval sets choices_map for backward compat."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="choices-eval",
                 output_type="deterministic",
                 choice_scores={"yes": 1.0, "no": 0.0, "maybe": 0.5},
@@ -142,12 +146,14 @@ class TestEvalTemplateCreateV2API:
         assert template.config["choices_map"]["no"] == "fail"
         assert template.config["choices_map"]["maybe"] == "neutral"
         assert isinstance(template.choices, list)
+        assert template.multi_choice is False
+        assert template.config["multi_choice"] is False
 
     def test_create_with_tags(self, auth_client):
         """Tags are stored in eval_tags."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(tags=["safety", "llm"]),
+            _valid_payload(tags=["safety", "llm"]),
             format="json",
         )
         assert response.status_code == 200
@@ -163,7 +169,7 @@ class TestEvalTemplateCreateV2API:
         """Names with uppercase letters are rejected."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(name="MyEval"),
+            _valid_payload(name="MyEval"),
             format="json",
         )
         assert response.status_code == 400
@@ -172,7 +178,7 @@ class TestEvalTemplateCreateV2API:
         """Names with spaces are rejected."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(name="my eval"),
+            _valid_payload(name="my eval"),
             format="json",
         )
         assert response.status_code == 400
@@ -180,7 +186,7 @@ class TestEvalTemplateCreateV2API:
     def test_create_name_starting_with_hyphen_rejected(self, auth_client):
         response = auth_client.post(
             self.url,
-            self._valid_payload(name="-my-eval"),
+            _valid_payload(name="-my-eval"),
             format="json",
         )
         assert response.status_code == 400
@@ -188,12 +194,10 @@ class TestEvalTemplateCreateV2API:
     def test_create_duplicate_name_rejected(self, auth_client):
         """Duplicate names within org are rejected."""
         # Create first
-        auth_client.post(
-            self.url, self._valid_payload(name="unique-eval"), format="json"
-        )
+        auth_client.post(self.url, _valid_payload(name="unique-eval"), format="json")
         # Try duplicate
         response = auth_client.post(
-            self.url, self._valid_payload(name="unique-eval"), format="json"
+            self.url, _valid_payload(name="unique-eval"), format="json"
         )
         assert response.status_code == 400
         assert "already exists" in str(response.data["result"]).lower()
@@ -204,7 +208,7 @@ class TestEvalTemplateCreateV2API:
         """Instructions without template variables are rejected."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(instructions="No variables here."),
+            _valid_payload(instructions="No variables here."),
             format="json",
         )
         assert response.status_code == 400
@@ -214,7 +218,7 @@ class TestEvalTemplateCreateV2API:
         """Empty instructions are rejected."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(instructions=""),
+            _valid_payload(instructions=""),
             format="json",
         )
         assert response.status_code == 400
@@ -225,7 +229,7 @@ class TestEvalTemplateCreateV2API:
         System turn) and rejected this payload."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="var-in-user-turn-eval",
                 instructions="Judge the answer.",
                 messages=[
@@ -242,7 +246,7 @@ class TestEvalTemplateCreateV2API:
         Assistant turn only."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="var-in-assistant-turn-eval",
                 instructions="Judge the answer.",
                 messages=[
@@ -260,7 +264,7 @@ class TestEvalTemplateCreateV2API:
         template variable anywhere (instructions or messages) still fails."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="no-vars-any-turn-eval",
                 instructions="Judge the answer.",
                 messages=[
@@ -279,7 +283,7 @@ class TestEvalTemplateCreateV2API:
         """Deterministic output_type requires choice_scores."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="no-choices-eval",
                 output_type="deterministic",
                 choice_scores=None,
@@ -293,7 +297,7 @@ class TestEvalTemplateCreateV2API:
         """Choice scores outside 0-1 are rejected."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="bad-choices-eval",
                 output_type="deterministic",
                 choice_scores={"yes": 1.5, "no": -0.1},
@@ -306,7 +310,7 @@ class TestEvalTemplateCreateV2API:
         """Pass threshold outside 0-1 is rejected."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(pass_threshold=1.5),
+            _valid_payload(pass_threshold=1.5),
             format="json",
         )
         assert response.status_code == 400
@@ -317,7 +321,7 @@ class TestEvalTemplateCreateV2API:
         """Agent evals route to AgentEvaluator and persist agent-specific config."""
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="agent-eval",
                 eval_type="agent",
                 mode="quick",
@@ -386,7 +390,7 @@ class TestEvalTemplateCreateV2API:
         code = "def evaluate(response, expected):\n    return response == expected\n"
         response = auth_client.post(
             self.url,
-            self._valid_payload(
+            _valid_payload(
                 name="code-eval",
                 eval_type="code",
                 instructions="",
@@ -401,6 +405,32 @@ class TestEvalTemplateCreateV2API:
         assert template.config["eval_type_id"] == "CustomCodeEval"
         assert template.config["code"] == code
         assert template.config["language"] == "python"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("eval_type", ["llm", "agent"])
+def test_create_keeps_multi_choice(auth_client, eval_type):
+    """A choices eval created as multi-choice stays one, as an update saves
+    it: on the template, in its config and in V1's snapshot."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    response = auth_client.post(
+        CREATE_V2_URL,
+        _valid_payload(
+            name=f"multi-{eval_type}",
+            eval_type=eval_type,
+            output_type="deterministic",
+            choice_scores={"yes": 1.0, "no": 0.0, "maybe": 0.5},
+            multi_choice=True,
+        ),
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    template = EvalTemplate.objects.get(id=response.data["result"]["id"])
+    assert template.multi_choice is True
+    assert template.config["multi_choice"] is True
+    version = EvalTemplateVersion.objects.get(eval_template=template)
+    assert version.config_snapshot["multi_choice"] is True
 
 
 # =============================================================================

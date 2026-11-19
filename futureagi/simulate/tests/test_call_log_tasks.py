@@ -49,7 +49,9 @@ def keep_test_db_connection_open():
     transaction connection open while exercising the helper directly."""
     with (
         patch("ee.voice.tasks.call_log_tasks.close_old_connections", return_value=None),
-        patch("tfc.temporal.drop_in.decorator.close_old_connections", return_value=None),
+        patch(
+            "tfc.temporal.drop_in.decorator.close_old_connections", return_value=None
+        ),
     ):
         yield
 
@@ -524,9 +526,12 @@ class TestCallExecutionLogsViewEmpty:
 class TestCallExecutionDetailView:
     URL_TEMPLATE = "/simulate/call-executions/{}/"
 
-    def test_returns_actual_provider_from_stored_provider_payload(
-        self, auth_client, call_execution
+    @pytest.mark.parametrize("provider", ["vapi", "livekit", None])
+    def test_returns_target_provider_without_relabeling_transport_artifacts(
+        self, auth_client, call_execution, agent_definition, provider
     ):
+        agent_definition.provider = provider
+        agent_definition.save(update_fields=["provider"])
         call_execution.provider_call_data = {
             "livekit": {
                 "room_sid": "RM_test",
@@ -539,5 +544,44 @@ class TestCallExecutionDetailView:
 
         assert response.status_code == status.HTTP_200_OK
         payload = response.json()
-        assert payload["provider"] == "livekit"
+        assert payload["provider"] == (provider or "livekit")
         assert payload["attributes"]["raw_log"]["room_sid"] == "RM_test"
+
+    def test_reads_livekit_call_without_recording_or_vapi_key(
+        self, auth_client, call_execution, monkeypatch
+    ):
+        monkeypatch.delenv("VAPI_API_KEY", raising=False)
+        call_execution.provider_call_data = {"livekit": {"room_sid": "RM_test"}}
+        call_execution.save(update_fields=["provider_call_data"])
+
+        response = auth_client.get(self.URL_TEMPLATE.format(call_execution.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["recordings"] == {}
+
+    def test_reads_stored_vapi_recordings_without_vapi_key(
+        self, auth_client, call_execution, monkeypatch
+    ):
+        monkeypatch.delenv("VAPI_API_KEY", raising=False)
+        call_execution.provider_call_data = {
+            "vapi": {
+                "artifact": {
+                    "recording": {
+                        "stereoUrl": "https://example.com/stereo.wav",
+                        "mono": {"combinedUrl": "https://example.com/combined.wav"},
+                    }
+                }
+            }
+        }
+        call_execution.save(update_fields=["provider_call_data"])
+
+        response = auth_client.get(self.URL_TEMPLATE.format(call_execution.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        assert (
+            response.json()["recordings"]["stereo"] == "https://example.com/stereo.wav"
+        )
+        assert (
+            response.json()["recordings"]["combined"]
+            == "https://example.com/combined.wav"
+        )

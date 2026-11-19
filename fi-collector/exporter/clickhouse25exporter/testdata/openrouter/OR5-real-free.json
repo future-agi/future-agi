@@ -1,0 +1,370 @@
+{
+ "resourceSpans": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "openrouter"
+      }
+     },
+     {
+      "key": "project_name",
+      "value": {
+       "stringValue": "r2-openrouter-broadcast"
+      }
+     }
+    ]
+   },
+   "scopeSpans": [
+    {
+     "scope": {},
+     "spans": [
+      {
+       "traceId": "259fa0f9c305c0ee07224a74cc795d40",
+       "spanId": "74597871150ac906",
+       "name": "R2 free single",
+       "kind": 1,
+       "startTimeUnixNano": "1792973417989961984",
+       "endTimeUnixNano": "1792973420989675008",
+       "attributes": [
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "user_r2_alice"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "sess_r2_single_1"
+         }
+        },
+        {
+         "key": "trace.metadata.environment",
+         "value": {
+          "stringValue": "r2-release"
+         }
+        },
+        {
+         "key": "trace.metadata.case",
+         "value": {
+          "stringValue": "c1"
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter.api_key_name",
+         "value": {
+          "stringValue": "r2-release-key"
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter.provider_slug",
+         "value": {
+          "stringValue": "recursive"
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter_generation.usage",
+         "value": {
+          "doubleValue": 0.0
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter_generation.usage_is_estimated",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter_cost_allocation.cost_status",
+         "value": {
+          "stringValue": "reconciled"
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter_cost_allocation.input_tokens",
+         "value": {
+          "intValue": "11"
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter_cost_allocation.output_tokens",
+         "value": {
+          "intValue": "387"
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter_cost_allocation.non_cache_input_cost",
+         "value": {
+          "stringValue": "0.0"
+         }
+        },
+        {
+         "key": "trace.metadata.openrouter_cost_allocation.output_cost",
+         "value": {
+          "stringValue": "0.0"
+         }
+        }
+       ],
+       "status": {
+        "code": 1
+       }
+      },
+      {
+       "traceId": "259fa0f9c305c0ee07224a74cc795d40",
+       "spanId": "13d37b41acfb34dd",
+       "parentSpanId": "74597871150ac906",
+       "name": "recursive/flint-v1.0:free",
+       "kind": 3,
+       "startTimeUnixNano": "1792973418009961984",
+       "endTimeUnixNano": "1792973420979675136",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "chat"
+         }
+        },
+        {
+         "key": "gen_ai.system",
+         "value": {
+          "stringValue": "recursive"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "Recursive"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "recursive/flint-v1.0:free"
+         }
+        },
+        {
+         "key": "gen_ai.response.model",
+         "value": {
+          "stringValue": "recursive/flint-v1.0-20261021:free"
+         }
+        },
+        {
+         "key": "gen_ai.response.id",
+         "value": {
+          "stringValue": "gen-1792973418-uWKhSm1ZSVYIAeENYY4M"
+         }
+        },
+        {
+         "key": "gen_ai.response.finish_reason",
+         "value": {
+          "stringValue": "stop"
+         }
+        },
+        {
+         "key": "gen_ai.request.max_tokens",
+         "value": {
+          "intValue": "400"
+         }
+        },
+        {
+         "key": "gen_ai.request.temperature",
+         "value": {
+          "doubleValue": 0.7
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "11"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "387"
+         }
+        },
+        {
+         "key": "gen_ai.usage.total_tokens",
+         "value": {
+          "intValue": "398"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens.cached",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens.cache_write",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens.reasoning",
+         "value": {
+          "intValue": "454"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_cost",
+         "value": {
+          "doubleValue": 0.0
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_cost",
+         "value": {
+          "doubleValue": 0.0
+         }
+        },
+        {
+         "key": "gen_ai.usage.total_cost",
+         "value": {
+          "doubleValue": 0.0
+         }
+        },
+        {
+         "key": "span.input",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"content\":\"In one sentence, what is OpenTelemetry?\"}]"
+         }
+        },
+        {
+         "key": "span.output",
+         "value": {
+          "stringValue": "{\"role\":\"assistant\",\"content\":\"OpenTelemetry is an open-source, vendor-agnostic observability framework that provides standardized APIs and instrumentation libraries for generating, collecting, and exporting telemetry data (metrics, logs, and traces) from applications.\"}"
+         }
+        },
+        {
+         "key": "gen_ai.prompt",
+         "value": {
+          "stringValue": "[{\"role\":\"user\",\"content\":\"In one sentence, what is OpenTelemetry?\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.completion",
+         "value": {
+          "stringValue": "{\"role\":\"assistant\",\"content\":\"OpenTelemetry is an open-source, vendor-agnostic observability framework that provides standardized APIs and instrumentation libraries for generating, collecting, and exporting telemetry data (metrics, logs, and traces) from applications.\"}"
+         }
+        },
+        {
+         "key": "user.id",
+         "value": {
+          "stringValue": "user_r2_alice"
+         }
+        },
+        {
+         "key": "session.id",
+         "value": {
+          "stringValue": "sess_r2_single_1"
+         }
+        },
+        {
+         "key": "trace.metadata.environment",
+         "value": {
+          "stringValue": "r2-release"
+         }
+        },
+        {
+         "key": "trace.metadata.case",
+         "value": {
+          "stringValue": "c1"
+         }
+        },
+        {
+         "key": "span.metadata.openrouter_generation.cache_write_tokens",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "span.metadata.openrouter_generation.usage_is_estimated",
+         "value": {
+          "boolValue": false
+         }
+        },
+        {
+         "key": "span.metadata.openrouter_generation.usage",
+         "value": {
+          "doubleValue": 0.0
+         }
+        },
+        {
+         "key": "span.metadata.openrouter_generation.upstream_raw_response_usage",
+         "value": {
+          "stringValue": "{\"prompt_tokens\": 11, \"completion_tokens\": 387, \"total_tokens\": 398}"
+         }
+        },
+        {
+         "key": "span.metadata.openrouter_cost_allocation.cost_status",
+         "value": {
+          "stringValue": "reconciled"
+         }
+        },
+        {
+         "key": "span.metadata.openrouter_cost_allocation.output_cost",
+         "value": {
+          "stringValue": "0.0"
+         }
+        }
+       ],
+       "status": {
+        "code": 1
+       }
+      },
+      {
+       "traceId": "259fa0f9c305c0ee07224a74cc795d40",
+       "spanId": "b199aaae6147d494",
+       "parentSpanId": "13d37b41acfb34dd",
+       "name": "Provider Attempt",
+       "kind": 3,
+       "startTimeUnixNano": "1792973418019962112",
+       "endTimeUnixNano": "1792973420969675008",
+       "attributes": [
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "Recursive"
+         }
+        },
+        {
+         "key": "span.metadata.upstream_id.value",
+         "value": {
+          "stringValue": "chatcmpl-1792973418-uWKhSm1ZSVYIAeENYY4M"
+         }
+        },
+        {
+         "key": "span.metadata.upstream_id.source",
+         "value": {
+          "stringValue": "response_body_id"
+         }
+        },
+        {
+         "key": "span.metadata.gateway_request_id",
+         "value": {
+          "stringValue": "gw-9f1dae87"
+         }
+        },
+        {
+         "key": "span.metadata.endpoint_region",
+         "value": {
+          "stringValue": "us-east-1"
+         }
+        }
+       ],
+       "status": {
+        "code": 1
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, useTheme, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import PageHeadings from "../develop-detail/Common/PageHeadings";
@@ -36,24 +36,17 @@ const WorkbenchView = () => {
           title="Prompt management"
           description="Generate, test and refine prompts for your language Models"
         />
-        <Typography
-          variant="s1"
-          fontWeight="fontWeightMedium"
-          color="text.primary"
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 0.5,
-            cursor: "pointer",
-          }}
+        <Button
+          size="small"
+          variant="text"
+          color="inherit"
+          endIcon={
+            <Iconify icon="solar:question-circle-linear" color="text.primary" />
+          }
           onClick={() => setOpen(true)}
         >
           Help
-          <Iconify
-            icon="material-symbols-light:help-outline"
-            color="text.primary"
-          />
-        </Typography>
+        </Button>
       </Box>
       <InfoWorkbenchModal open={open} onClose={() => setOpen(false)} />
       <WorkbenchDetailView setHasData={setHasData} ref={gridRef} />

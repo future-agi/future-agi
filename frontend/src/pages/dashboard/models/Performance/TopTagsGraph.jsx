@@ -44,7 +44,7 @@ const TopTagsGraph = ({ data, type }) => {
   const chartOptions = {
     chart: {
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: theme.palette.text.secondary,
       toolbar: {
         show: true,
         tools: {
@@ -65,13 +65,13 @@ const TopTagsGraph = ({ data, type }) => {
       theme: isDark ? "dark" : "light",
     },
     grid: {
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: theme.palette.divider,
     },
     xaxis: {
       labels: {
         trim: true,
         style: {
-          //   fontSize: "10px",
+          //   fontSize: "12px",
         },
       },
     },

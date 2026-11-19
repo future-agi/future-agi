@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { alpha, Box, Divider, Typography } from "@mui/material";
+import { Box, Divider, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 
 import { buildParameterRows } from "./toolHoverState.utils";
@@ -55,8 +55,6 @@ const ToolHoverState = ({ config, disabledHover }) => {
         display: "flex",
         flexDirection: "column",
         gap: "4px",
-        boxShadow: (theme) =>
-          `4px 4px 16px 0px ${alpha(theme.palette.common.black, 0.1)}`,
       }}
     >
       <Box sx={{ width: "100%" }}>

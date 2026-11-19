@@ -59,10 +59,15 @@ export function useUrlState(key, defaultValue) {
 
       valueRef.current = nextValue;
       setStateValue(nextValue);
-      isInternalUpdate.current = true;
 
       const newSearchParams = new URLSearchParams(window.location.search);
-      newSearchParams.set(key, stringifyUrlValue(nextValue));
+      const nextUrlValue = stringifyUrlValue(nextValue);
+      // An unchanged URL never re-runs the sync effect below, so flagging it
+      // would leave the flag set and swallow the next external change (e.g.
+      // a tab switch that drops this key after a reload).
+      if (newSearchParams.get(key) === nextUrlValue) return;
+      isInternalUpdate.current = true;
+      newSearchParams.set(key, nextUrlValue);
       setSearchParamsRef.current(newSearchParams, { replace: options.replace });
     },
     [key],
@@ -70,11 +75,14 @@ export function useUrlState(key, defaultValue) {
 
   const removeValue = useCallback(
     (options = { replace: true }) => {
-      isInternalUpdate.current = true;
-
       const newSearchParams = new URLSearchParams(window.location.search);
-      newSearchParams.delete(key);
-      setSearchParamsRef.current(newSearchParams, { replace: options.replace });
+      if (newSearchParams.has(key)) {
+        isInternalUpdate.current = true;
+        newSearchParams.delete(key);
+        setSearchParamsRef.current(newSearchParams, {
+          replace: options.replace,
+        });
+      }
 
       valueRef.current = defaultValueRef.current;
       setStateValue(defaultValueRef.current);

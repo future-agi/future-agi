@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Chip,
   IconButton,
   InputAdornment,
@@ -10,6 +9,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 
@@ -29,7 +29,7 @@ export default function ConnectionInfo({ config }) {
   };
 
   return (
-    <Card variant="outlined" sx={{ p: theme.spacing(3), mb: theme.spacing(3) }}>
+    <Section variant="panel" sx={{ p: theme.spacing(3), mb: theme.spacing(3) }}>
       <Typography
         sx={{
           typography: "m2",
@@ -71,7 +71,7 @@ export default function ConnectionInfo({ config }) {
                     size="small"
                     onClick={() => handleCopy(mcpUrl, "MCP URL")}
                   >
-                    <Iconify icon="ph:copy" width={18} />
+                    <Iconify icon="solar:copy-linear" width={20} />
                   </IconButton>
                 </Tooltip>
               </InputAdornment>
@@ -81,8 +81,8 @@ export default function ConnectionInfo({ config }) {
 
         <Box display="flex" alignItems="center" gap={1}>
           <Iconify
-            icon="ph:shield-check"
-            width={18}
+            icon="solar:shield-check-linear"
+            width={20}
             sx={{ color: "success.main" }}
           />
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -91,6 +91,6 @@ export default function ConnectionInfo({ config }) {
           <Chip label="Secure" size="small" color="success" variant="soft" />
         </Box>
       </Box>
-    </Card>
+    </Section>
   );
 }

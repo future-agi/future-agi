@@ -14,18 +14,29 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 
 import structlog
+
 from ee.licensing.validator import hash_key
 
 logger = structlog.get_logger(__name__)
 
 REFRESH_MARGIN_SECONDS = 300  # Refresh 5 min before expiry
+MANAGED_STREAM_TIMEOUT_SECONDS = 300.0
+# The longest Retry-After an evaluation waits out before its one retry: a
+# gateway request window (60 s) plus the second its sliding window takes to
+# release the previous window's count. A longer hint (a quota, a provider
+# back-off) fails the evaluation at once: a retry sooner than the hint lands in
+# the window that refused it and spends the recovery on a second refusal.
+MAX_RETRY_AFTER_SECONDS = 61.0
 
 
 @dataclass
@@ -80,13 +91,14 @@ def invalidate_token() -> None:
 
 def _activate() -> ServiceToken | None:
     try:
+        from tfc.deployment_telemetry.config import get_version
         from tfc.deployment_telemetry.state import get_or_create_telemetry_state
 
         state = get_or_create_telemetry_state()
 
         payload = {
             "instance_id": str(state.instance_id),
-            "version": os.getenv("FUTURE_AGI_VERSION", "unknown"),
+            "version": get_version(),
         }
 
         license_key = _get_configured_license_key()
@@ -125,9 +137,32 @@ def _activate() -> ServiceToken | None:
         return None
 
 
+def parse_retry_after(value: str | None) -> float | None:
+    """Seconds named by a Retry-After header (delta-seconds or an HTTP date).
+
+    The value is kept as sent, floored at zero. The retry policy bounds the
+    wait, and must tell a window it can wait out from one it cannot: clamping
+    here made an hour-long hint look like a 30 s one.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            delay = parsedate_to_datetime(value).timestamp() - time.time()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    if not math.isfinite(delay):
+        return None
+    return max(0.0, delay)
+
+
 def _raise_for_managed_status(
     status_code: int,
     on_unauthorized: Callable[[], None],
+    *,
+    retry_after: str | None = None,
 ) -> None:
     if status_code == 401:
         on_unauthorized()
@@ -139,7 +174,11 @@ def _raise_for_managed_status(
             "FEATURE_DENIED", "Feature not included in license scope"
         )
     if status_code == 429:
-        raise ManagedServiceError("RATE_LIMITED", "Managed AI rate limit exceeded")
+        raise ManagedServiceError(
+            "RATE_LIMITED",
+            "Managed AI rate limit exceeded",
+            retry_after=parse_retry_after(retry_after),
+        )
     if status_code >= 500:
         raise ManagedServiceError(
             "SERVICE_ERROR", f"Managed AI service error ({status_code})"
@@ -154,6 +193,15 @@ def dispatch_managed_request(
     timeout: float,
     on_unauthorized: Callable[[], None],
 ) -> dict:
+    """POST to the managed gateway and map failures to typed errors.
+
+    Shared transport for both managed-AI auth models: the self-hosted
+    activation-token flow (``call_managed_service``) and the cloud
+    internal-key flow (``ee.licensing.managed_ai``). Only the 401 response
+    is handled differently between them, so callers pass ``on_unauthorized``
+    (which must raise); every other status maps identically here so the two
+    paths cannot drift.
+    """
     import httpx
 
     try:
@@ -173,7 +221,11 @@ def dispatch_managed_request(
             "GATEWAY_UNREACHABLE", "Cannot reach managed AI gateway"
         )
 
-    _raise_for_managed_status(response.status_code, on_unauthorized)
+    _raise_for_managed_status(
+        response.status_code,
+        on_unauthorized,
+        retry_after=response.headers.get("Retry-After"),
+    )
     return response.json()
 
 
@@ -184,7 +236,7 @@ async def dispatch_managed_stream(
     json_body: dict,
     timeout: float,
     on_unauthorized: Callable[[], None],
-) -> AsyncIterator[dict]:
+) -> AsyncGenerator[dict, None]:
     import httpx
 
     headers = {
@@ -195,9 +247,16 @@ async def dispatch_managed_stream(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
-                "POST", url, json=json_body, headers=headers
+                "POST",
+                url,
+                json=json_body,
+                headers=headers,
             ) as response:
-                _raise_for_managed_status(response.status_code, on_unauthorized)
+                _raise_for_managed_status(
+                    response.status_code,
+                    on_unauthorized,
+                    retry_after=response.headers.get("Retry-After"),
+                )
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
@@ -224,6 +283,12 @@ def call_managed_service(
     json_body: dict,
     timeout: float = 30.0,
 ) -> dict:
+    """Make an authenticated request to the FutureAGI managed gateway.
+
+    Self-hosted EE auth: exchange the license for a short-lived service
+    token, then call the gateway with it. Raises ManagedServiceError on
+    auth/service failures with typed codes.
+    """
     token = get_service_token()
     if token is None:
         raise ManagedServiceError("ACTIVATION_FAILED", "Could not obtain service token")
@@ -252,8 +317,8 @@ async def stream_managed_service(
     path: str = "/v1/chat/completions",
     *,
     json_body: dict,
-    timeout: float = 300.0,
-) -> AsyncIterator[dict]:
+    timeout: float = MANAGED_STREAM_TIMEOUT_SECONDS,
+) -> AsyncGenerator[dict, None]:
     token = await asyncio.to_thread(get_service_token)
     if token is None:
         raise ManagedServiceError("ACTIVATION_FAILED", "Could not obtain service token")
@@ -269,20 +334,24 @@ async def stream_managed_service(
             "TOKEN_EXPIRED", "Service token rejected — will refresh on next call"
         )
 
-    async for chunk in dispatch_managed_stream(
-        url=token.gateway_url.rstrip("/") + path,
-        api_key=token.access_token,
-        json_body=json_body,
-        timeout=timeout,
-        on_unauthorized=_on_unauthorized,
-    ):
-        yield chunk
+    async with aclosing(
+        dispatch_managed_stream(
+            url=token.gateway_url.rstrip("/") + path,
+            api_key=token.access_token,
+            json_body=json_body,
+            timeout=timeout,
+            on_unauthorized=_on_unauthorized,
+        )
+    ) as stream:
+        async for chunk in stream:
+            yield chunk
 
 
 class ManagedServiceError(Exception):
-    def __init__(self, code: str, detail: str):
+    def __init__(self, code: str, detail: str, *, retry_after: float | None = None):
         self.code = code
         self.detail = detail
+        self.retry_after = retry_after
         super().__init__(f"{code}: {detail}")
 
 

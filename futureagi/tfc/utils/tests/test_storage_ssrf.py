@@ -1,7 +1,7 @@
 """SSRF guard on tfc.utils.storage's URL-download helpers (TH-5648 follow-up)."""
 
 import io
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from PIL import Image
@@ -9,6 +9,7 @@ from PIL import Image
 from tfc.utils.ssrf_guard import SsrfBlocked, SsrfResponse, assert_url_host_public
 from tfc.utils.storage import (
     _ssrf_safe_get,
+    audio_bytes_from_url_or_base64,
     convert_image_from_url_to_base64,
     download_audio_from_url,
     download_document_from_url,
@@ -62,9 +63,10 @@ def test_ssrf_safe_get_converts_guard_rejection_to_request_exception():
     ],
 )
 def test_download_image_from_url_never_connects_to_blocked_target(url):
-    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls, patch(
-        "tfc.utils.ssrf_guard.urllib3.HTTPSConnectionPool"
-    ) as https_pool_cls:
+    with (
+        patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls,
+        patch("tfc.utils.ssrf_guard.urllib3.HTTPSConnectionPool") as https_pool_cls,
+    ):
         with pytest.raises(ValueError):
             download_image_from_url(url, max_retries=1)
         pool_cls.assert_not_called()
@@ -117,20 +119,26 @@ def test_ssrf_safe_get_preserves_ssrf_blocked():
 
 def test_download_image_from_url_fails_fast_on_ssrf_blocked():
     """The image retry loop must NOT sleep-and-retry on a permanent SSRF rejection."""
-    with patch(
-        "tfc.utils.storage.safe_fetch",
-        side_effect=SsrfBlocked("private IP"),
-    ), patch("tfc.utils.storage.time.sleep") as mock_sleep:
+    with (
+        patch(
+            "tfc.utils.storage.safe_fetch",
+            side_effect=SsrfBlocked("private IP"),
+        ),
+        patch("tfc.utils.storage.time.sleep") as mock_sleep,
+    ):
         with pytest.raises(ValueError, match="ERROR_DOWNLOADING_IMAGE"):
             download_image_from_url("http://169.254.169.254/img.png", max_retries=5)
     mock_sleep.assert_not_called()
 
 
 def test_download_document_from_url_fails_fast_on_ssrf_blocked():
-    with patch(
-        "tfc.utils.storage.safe_fetch",
-        side_effect=SsrfBlocked("private IP"),
-    ), patch("tfc.utils.storage.time.sleep") as mock_sleep:
+    with (
+        patch(
+            "tfc.utils.storage.safe_fetch",
+            side_effect=SsrfBlocked("private IP"),
+        ),
+        patch("tfc.utils.storage.time.sleep") as mock_sleep,
+    ):
         with pytest.raises(ValueError, match="ERROR_DOWNLOADING_DOCUMENT"):
             download_document_from_url("http://169.254.169.254/x.pdf", max_retries=5)
     mock_sleep.assert_not_called()
@@ -148,6 +156,7 @@ def test_download_image_from_url_passes_explicit_max_bytes():
         download_image_from_url("https://example.com/x.png")
     _, kwargs = mock_fetch.call_args
     from tfc.utils.storage import MAX_IMAGE_FILE_SIZE
+
     assert kwargs.get("max_bytes") == MAX_IMAGE_FILE_SIZE
 
 
@@ -155,12 +164,16 @@ def test_download_document_from_url_passes_explicit_max_bytes():
     with patch(
         "tfc.utils.storage.safe_fetch",
         return_value=SsrfResponse(
-            200, {"Content-Type": "application/pdf"}, b"%PDF-1.4\n%%EOF", "https://example.com/x.pdf"
+            200,
+            {"Content-Type": "application/pdf"},
+            b"%PDF-1.4\n%%EOF",
+            "https://example.com/x.pdf",
         ),
     ) as mock_fetch:
         download_document_from_url("https://example.com/x.pdf")
     _, kwargs = mock_fetch.call_args
     from tfc.utils.storage import MAX_DOCUMENT_FILE_SIZE
+
     assert kwargs.get("max_bytes") == MAX_DOCUMENT_FILE_SIZE
 
 
@@ -204,9 +217,7 @@ class TestIsOwnStorageUrl:
         )
 
     def test_rejects_non_http_scheme(self):
-        assert not is_own_storage_url(
-            "file:///fi-customer-data/x", "fi-customer-data"
-        )
+        assert not is_own_storage_url("file:///fi-customer-data/x", "fi-customer-data")
 
     def test_rejects_empty_bucket(self):
         assert not is_own_storage_url("https://example.com/x", "")
@@ -222,6 +233,54 @@ class TestIsOwnStorageUrl:
             "https://fi-customer-data.s3.attacker-amazonaws.com/x",
             "fi-customer-data",
         )
+
+    def test_matches_configured_internal_s3_endpoint(self):
+        with patch.dict("os.environ", {"S3_ENDPOINT_URL": "http://minio:9000"}):
+            assert is_own_storage_url(
+                "http://minio:9000/fi-customer-data/calls/recording.mp3",
+                "fi-customer-data",
+            )
+
+    def test_rejects_internal_endpoint_lookalike(self):
+        with patch.dict("os.environ", {"S3_ENDPOINT_URL": "http://minio:9000"}):
+            assert not is_own_storage_url(
+                "http://minio.attacker.test/fi-customer-data/calls/recording.mp3",
+                "fi-customer-data",
+            )
+
+
+def test_audio_from_own_storage_uses_client_instead_of_http_fetch():
+    response = MagicMock()
+    response.read.side_effect = [b"trusted-audio", b""]
+    client = MagicMock()
+    client.get_object.return_value = response
+    url = "http://minio:9000/fi-content-dev/calls/recording.mp3"
+
+    with (
+        patch.dict("os.environ", {"S3_ENDPOINT_URL": "http://minio:9000"}),
+        patch("tfc.utils.storage.UPLOAD_BUCKET_NAME", "fi-content-dev"),
+        patch("tfc.utils.storage.get_storage_client", return_value=client),
+        patch("tfc.utils.storage._ssrf_safe_get") as safe_get,
+    ):
+        result = audio_bytes_from_url_or_base64(
+            url, min_duration_seconds=None, pad_silence=False
+        )
+
+    assert result == b"trusted-audio"
+    client.get_object.assert_called_once_with("fi-content-dev", "calls/recording.mp3")
+    response.close.assert_called_once_with()
+    response.release_conn.assert_called_once_with()
+    safe_get.assert_not_called()
+
+
+def test_audio_from_untrusted_private_url_still_uses_ssrf_guard():
+    with patch("tfc.utils.storage._ssrf_safe_get", side_effect=SsrfBlocked("private")):
+        with pytest.raises(ValueError):
+            audio_bytes_from_url_or_base64(
+                "http://10.0.0.5/audio.mp3",
+                min_duration_seconds=None,
+                pad_silence=False,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -290,9 +349,10 @@ async def test_recording_rehost_blocks_ssrf_url_and_fails_open():
     from simulate.temporal.utils import async_storage
 
     blocked = "http://169.254.169.254/latest/meta-data/"
-    with patch.object(
-        async_storage, "_existing_rehosted_audio", return_value=None
-    ), patch.object(async_storage, "download_audio_from_url_async") as mock_dl:
+    with (
+        patch.object(async_storage, "_existing_rehosted_audio", return_value=None),
+        patch.object(async_storage, "download_audio_from_url_async") as mock_dl,
+    ):
         s3_url, size = await async_storage.convert_audio_url_to_s3_async_with_size(
             "call-1", blocked, "recording", provider="bland"
         )
