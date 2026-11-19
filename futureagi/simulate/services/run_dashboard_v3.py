@@ -39,7 +39,7 @@ from simulate.services.run_results_v3_expressions import (
     _json_text,
     _safe_json_float,
 )
-from simulate.services.run_results_v3_queries import _value_facets
+from simulate.services.run_results_v3_queries import FacetCount, _value_facets
 
 CHART_BUCKETS = 100
 NOT_REPORTED = "Not reported"
@@ -155,9 +155,9 @@ def _stats(
     }
 
 
-def _breakdown(counts: list[dict[str, Any]], key: str, label: str, total: int) -> dict:
+def _breakdown(counts: Sequence[FacetCount], key: str, label: str, total: int) -> dict:
     """``counts`` are ``{"value", "count"}`` rows in ``ORDER BY -count, value``."""
-    segments = [
+    segments: list[dict[str, Any]] = [
         {
             "label": str(row["value"] or NOT_REPORTED),
             "count": row["count"],
@@ -309,11 +309,18 @@ def _tool_stats(calls: Iterable[list[tuple[str, bool | None]]]) -> dict:
     }
 
 
+class SeriesBounds(TypedDict):
+    """The run's earliest and latest call start."""
+
+    first: datetime | None
+    last: datetime | None
+
+
 def _series(
     queryset: QuerySet,
     call_rows: Sequence[DashboardCallRow],
     total: int,
-    bounds: dict[str, Any],
+    bounds: SeriesBounds,
 ) -> list[dict]:
     if total <= CHART_BUCKETS:
         # ORDER BY started_at NULLS LAST, id; uuids compare bytewise, as UUID does.
@@ -348,10 +355,11 @@ def _series(
             }
             for index, row in enumerate(rows)
         ]
-    if not bounds["first"]:
+    first, last = bounds["first"], bounds["last"]
+    if not first or not last:
         return []
-    start = bounds["first"].timestamp()
-    width = max((bounds["last"].timestamp() - start) / (CHART_BUCKETS - 1), 1)
+    start = first.timestamp()
+    width = max((last.timestamp() - start) / (CHART_BUCKETS - 1), 1)
     rows = (
         queryset.filter(started_at__isnull=False)
         .order_by()
@@ -536,6 +544,8 @@ def build_run_dashboard(
     call_rows: Sequence[DashboardCallRow],
 ) -> dict[str, Any]:
     total = summary["total"]
+    # Charts built from the rows take their totals from the same rows.
+    row_total = len(call_rows)
     queryset = annotate_dashboard(queryset)
     voice_scope = Q(simulation_call_type="voice")
     latency_scope = Q(result_latency_ms__gte=0)
@@ -573,9 +583,7 @@ def build_run_dashboard(
     ).aggregate(
         voice_calls=Count("id", filter=voice_scope),
         csat=Avg("dashboard_csat"),
-        csat_measured=Count("dashboard_csat"),
         turns=Avg("result_turn_count"),
-        turns_measured=Count("result_turn_count"),
         cost_passed=Count(
             "id", filter=Q(result_cost_cents__isnull=False, result_outcome="passed")
         ),
@@ -722,7 +730,7 @@ def build_run_dashboard(
         "csat",
         "Avg CSAT (0–10)",
         values["csat"],
-        measured=values["csat_measured"],
+        measured=sum(row["dashboard_csat"] is not None for row in call_rows),
         note="Scorer CSAT on a 0–10 scale; a provider success flag is never counted",
     )
     metric(
@@ -765,7 +773,7 @@ def build_run_dashboard(
         "turns",
         f"Avg turns/{noun}",
         values["turns"],
-        measured=values["turns_measured"],
+        measured=sum(row["result_turn_count"] is not None for row in call_rows),
     )
     duration_stats = _stats(values, duration_fields, "stats_")
     metric(
@@ -844,9 +852,9 @@ def build_run_dashboard(
             "newly_passing": [],
             "newly_failing": [],
         },
-        "csat": csat_distribution(call_rows, total),
+        "csat": csat_distribution(call_rows, row_total),
         "agent_response_time": response_time_distribution(
-            call_rows, total, voice=is_voice
+            call_rows, row_total, voice=is_voice
         ),
         "pipeline_cost": [
             {
@@ -894,17 +902,17 @@ def build_run_dashboard(
                 breakdown_counts["dashboard_goal"],
                 "goal_outcome",
                 "Goal outcome breakdown",
-                total,
+                row_total,
             ),
             _breakdown(
                 breakdown_counts["dashboard_disconnection"],
                 "disconnection",
                 "How calls ended" if is_voice else "How chats ended",
-                total,
+                row_total,
             ),
             # Provider-only verdicts appear only when some call reports them.
             *[
-                _breakdown(breakdown_counts[field], key, label, total)
+                _breakdown(breakdown_counts[field], key, label, row_total)
                 for field, key, label in [
                     (
                         "dashboard_provider_success",
@@ -932,10 +940,10 @@ def build_run_dashboard(
         "series": _series(
             queryset,
             call_rows,
-            total,
-            {"first": values["series_first"], "last": values["series_last"]},
+            row_total,
+            SeriesBounds(first=values["series_first"], last=values["series_last"]),
         ),
-        "series_mode": "calls" if total <= CHART_BUCKETS else "time_buckets",
+        "series_mode": "calls" if row_total <= CHART_BUCKETS else "time_buckets",
         "series_limit": CHART_BUCKETS,
         "agent_latency_percentiles": [
             {"percentile": p, "value": latency[f"p{p}"]} for p in range(101)

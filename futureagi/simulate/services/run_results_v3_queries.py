@@ -6,7 +6,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeGuard, cast
+from typing import Any, TypedDict, TypeGuard, cast
 
 from django.core.cache import cache
 from django.db import connections, router
@@ -1235,9 +1235,16 @@ def _collation_order(values: list[str]) -> dict[str, int]:
         return {value: index for index, (value,) in enumerate(cursor.fetchall())}
 
 
+class FacetCount(TypedDict):
+    """How many rows hold ``value``."""
+
+    value: Any
+    count: int
+
+
 def _value_facets(
     rows: Sequence[Mapping[str, Any]], fields: dict[str, str]
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, list[FacetCount]]:
     """Count each field's values, ordered as ``ORDER BY -count, value`` would."""
     counts = {
         name: Counter(row[field] for row in rows) for name, field in fields.items()
@@ -1253,7 +1260,7 @@ def _value_facets(
     order = _collation_order(sorted(tied)) if tied else {}
     return {
         name: [
-            {"value": value, "count": count}
+            FacetCount(value=value, count=count)
             for value, count in sorted(
                 counter.items(),
                 key=lambda item: (-item[1], item[0] is None, order.get(item[0], 0)),
@@ -1402,7 +1409,10 @@ def run_call_facets(
     """Facets of the call-value rows; ``calls`` are the same calls, unannotated."""
     if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
         return cached
-    facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
+    facets = cast(
+        dict[str, list[dict[str, Any]]],
+        _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"}),
+    )
     facets["sub_goal"] = _sub_goal_facet(calls())
     facets["actor"] = cast(list[dict[str, Any]], _call_actor_facet(calls()))
     if facets_cache_key:
@@ -1672,8 +1682,10 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             -item["total"],
         )
     )
-    # One per-call row fetch feeds every count-only breakdown below and in the
-    # dashboard; aggregates with float/numeric averages stay in SQL.
+    # One per-call row read feeds the turn distribution below and every
+    # dashboard chart built from rows (breakdowns, CSAT, response time, tools,
+    # tails, short-run series), totals included; the dashboard aggregate holds
+    # the remaining SQL scalars (averages, sums, percentiles).
     call_rows = dashboard_call_rows(queryset=queryset)
     turn_counts = Counter(
         (row["result_turn_count"], row["result_outcome"])
