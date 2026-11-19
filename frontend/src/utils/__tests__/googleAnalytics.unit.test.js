@@ -284,6 +284,124 @@ describe("initGoogleAnalytics unit", () => {
       .filter((args) => args[0] === "event" && args[1] === "page_view")
       .map((args) => args[2]);
 
+  it("does not retry a partially queued login view on navigation or rebind", async () => {
+    window.history.replaceState(null, "", "/auth/jwt/login");
+    installPolicy();
+    const layer = [];
+    window.dataLayer = layer;
+    vi.spyOn(layer, "push").mockImplementation((command) => {
+      const length = Array.prototype.push.call(layer, command);
+      if (command[0] === "config") throw new Error("Queue unavailable");
+      return length;
+    });
+
+    const unbind = await loadAndInit();
+    expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(true);
+    window.history.pushState(null, "", "/dashboard");
+    expect(window.location.pathname).toBe("/dashboard");
+    unbind();
+    await loadAndInit();
+    expect(layer.map(([name]) => name)).toEqual(["js", "config"]);
+    expect(gtagScripts()).toHaveLength(0);
+  });
+
+  it.each(["initial bind", "same-path rebind"])(
+    "rejects a non-array queue at %s, even if it has a push method",
+    async (phase) => {
+      window.history.replaceState(null, "", "/auth/jwt/login");
+      installPolicy();
+      if (phase === "same-path rebind") {
+        const unbind = await loadAndInit();
+        unbind();
+      }
+      const push = vi.fn();
+      window.dataLayer = { push };
+      await loadAndInit();
+      expect(push).not.toHaveBeenCalled();
+      expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(true);
+      window.dataLayer = [];
+      window.history.replaceState(null, "", "/dashboard");
+      await loadAndInit();
+      expect(window.dataLayer).toHaveLength(0);
+      expect(gtagScripts()).toHaveLength(phase === "initial bind" ? 0 : 1);
+    },
+  );
+
+  it.each(["pushState", "replaceState"])(
+    "preserves %s errors, receiver, arguments and result when the queue fails",
+    async (method) => {
+      installPolicy();
+      const original = window.history[method];
+      const result = {};
+      const underlying = vi.fn(function (...args) {
+        Reflect.apply(original, this, args);
+        return result;
+      });
+      window.history[method] = underlying;
+      await loadAndInit();
+      const push = vi.spyOn(window.dataLayer, "push").mockImplementation(() => {
+        throw new Error("Queue unavailable");
+      });
+      const args = [{ tab: 1 }, "", "/dashboard/summary"];
+      // Native History rejects this receiver; no analytics should run.
+      expect(() => Reflect.apply(window.history[method], {}, args)).toThrow(
+        window.TypeError,
+      );
+      expect(push).not.toHaveBeenCalled();
+      expect(window.history[method](...args)).toBe(result);
+      expect(underlying).toHaveBeenLastCalledWith(...args);
+      expect(window.location.pathname).toBe("/dashboard/summary");
+      expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(true);
+      window.history[method](null, "", "/dashboard");
+      expect(push).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("leaves partially installed hooks inert if listener setup fails", async () => {
+    installPolicy();
+    const { initGoogleAnalytics } = await import("../googleAnalytics");
+    window.addEventListener.mockImplementationOnce(() => {
+      throw new Error("Listener unavailable");
+    });
+    initGoogleAnalytics(routes);
+    const push = window.history.pushState;
+    window.history.pushState(null, "", "/dashboard");
+    await loadAndInit();
+    expect(window.history.pushState).toBe(push);
+    expect(window.dataLayer).toHaveLength(0);
+    expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(true);
+  });
+
+  it.each(["popstate", "hashchange"])(
+    "isolates an unavailable queue in the %s listener",
+    async (type) => {
+      installPolicy();
+      await loadAndInit();
+      delete window.dataLayer;
+      // Call the listener directly: dispatchEvent does not rethrow its errors.
+      const [, listener] = windowListeners.find(([name]) => name === type);
+      listener(new Event(type));
+      expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(true);
+    },
+  );
+
+  it("does not let a failed opt-out write escape router cleanup", async () => {
+    installPolicy();
+    const unbind = await loadAndInit();
+    const flag = `ga-disable-${MEASUREMENT_ID}`;
+    Object.defineProperty(window, flag, {
+      configurable: true,
+      set() {
+        throw new Error("Opt-out unavailable");
+      },
+    });
+    unbind();
+    delete window[flag];
+    await loadAndInit();
+    window.history.pushState(null, "", "/dashboard");
+    expect(pageViews()).toHaveLength(1);
+  });
+
   it.each(["config", "event"])(
     "rechecks the current URL if the existing queue navigates during the first %s",
     async (commandName) => {

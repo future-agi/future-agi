@@ -35,25 +35,26 @@ jobs:
       - name: Install dependencies
         run: yarn
 
-      # GitHub expressions compare strings case-insensitively. Check the two
-      # refs in the shell before making the production GA setting available.
-      - name: Select build environment
-        id: build_env
+      # GitHub expressions compare strings case-insensitively. Check both refs
+      # in the shell for GA only. The global build flavor still follows the
+      # selected branch, even when main is built from a non-main dispatch.
+      - name: Select app analytics configuration
+        id: app_ga
         env:
           BUILD_BRANCH: ${{ inputs.branch }}
         run: |
-          flavor=dev
+          enabled=false
           if [ "$GITHUB_REF" = 'refs/heads/main' ] && [ "$BUILD_BRANCH" = 'main' ]; then
-            flavor=production
+            enabled=true
           fi
-          printf 'flavor=%s\n' "$flavor" >> "$GITHUB_OUTPUT"
+          printf 'enabled=%s\n' "$enabled" >> "$GITHUB_OUTPUT"
 
       - name: Create .env file from secrets
         env:
-          APP_GA_ID: ${{ steps.build_env.outputs.flavor == 'production' && secrets.PROD_VITE_APP_GA_ID || '' }}
+          APP_GA_ID: ${{ steps.app_ga.outputs.enabled == 'true' && secrets.PROD_VITE_APP_GA_ID || '' }}
         run: |
           cat <<EOF > .env
-          VITE_ENVIRONMENT=${{ steps.build_env.outputs.flavor }}
+          VITE_ENVIRONMENT=${{ inputs.branch == 'main' && 'production' || 'dev' }}
           VITE_OBSERVE_LIST_DEFAULT_PAGE_SIZE=25
           VITE_INTERACTIVE_REQUEST_TIMEOUT_MS=60000
           VITE_ANALYTICS_REQUEST_TIMEOUT_MS=60000

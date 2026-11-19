@@ -12,23 +12,23 @@
       (function () {
         var params = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth", "token", "code"];
         var marketplaceParams = ["onboarding_token", "onboarding_gcp_token"];
-        var paths = /^\/(?:auth\/jwt\/(?:verify|invitation\/accept|invitation\/set-password)\/|shared\/|sos(?:\/|$)|mcp\/(?:oauth\/)?authorize(?:\/|$))/i;
-        function restriction(value, depth) {
+        var paths = /^\/(?:auth\/jwt\/(?:verify|invitation\/accept|invitation\/set-password)\/|shared\/|sos(?:\/|$))/i;
+        var consentPath = /^\/mcp\/(?:oauth\/)?authorize(?:\/|$)/i;
+        function restriction(value, depth, base) {
           try {
-            var url = new URL(value, document.baseURI);
+            if (depth > 4) return "auth";
+            // URLSearchParams decodes once; login/register also read an encoded path.
+            if (depth && /^%2f/i.test(value)) value = decodeURIComponent(value);
+            var url = new URL(value, base || document.baseURI);
             var fragment = new URLSearchParams(url.hash.slice(1));
             function present(key) { return url.searchParams.has(key) || fragment.has(key); }
-            if (marketplaceParams.some(present)) return "marketplace";
-            // A login/register link can forward the destination in returnTo.
-            // URLSearchParams decodes once; registration also accepts an encoded path.
+            if (marketplaceParams.some(present)) return "document";
+            // The forwarding page itself must arrive tag-free when its return
+            // destination is restricted or can't be classified.
             var next = url.searchParams.get("returnTo");
-            if (next) {
-              if (depth >= 4) return "auth";
-              if (/^%2f/i.test(next)) next = decodeURIComponent(next);
-              var nested = restriction(next, depth + 1);
-              if (nested) return nested;
-            }
+            if (next && restriction(next, depth + 1, url.href)) return "document";
             var path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, "/");
+            if (consentPath.test(path)) return "document";
             return paths.test(path) || params.some(present) ? "auth" : null;
           } catch (error) {
             return "auth";
@@ -40,8 +40,8 @@
         var initiallyAllowed = allowed(window.location.href);
         Object.defineProperty(window, "__analyticsAllowedAtLoad", { value: initiallyAllowed });
         Object.defineProperty(window, "__analyticsUrlAllowed", { value: allowed });
-        Object.defineProperty(window, "__analyticsNeedsMarketplaceDocument", {
-          value: function (url) { return window.__analyticsTagStarted === true && restriction(url, 0) === "marketplace"; }
+        Object.defineProperty(window, "__analyticsNeedsFreshDocument", {
+          value: function (url) { return window.__analyticsTagStarted === true && restriction(url, 0) === "document"; }
         });
       })();
     </script>
@@ -103,7 +103,7 @@
           return true;
         }
 
-        var needsMarketplaceDocument = window.__analyticsNeedsMarketplaceDocument;
+        var needsFreshDocument = window.__analyticsNeedsFreshDocument;
         function guard(nativeMethod, receiver, args) {
           // Let native conversion/argument/structured-clone errors occur once,
           // before changing any state. Ordinary calls keep their exact values.
@@ -118,11 +118,9 @@
                 args = Array.prototype.slice.call(args);
                 args[2] = clean.href;
               }
-              // The router uses string URLs. Enter marketplace registration in a
-              // fresh, ineligible document, not the document that started tags.
-              // This does not revoke scripts already running in the old document.
-              if (target.href !== current.href &&
-                  needsMarketplaceDocument && needsMarketplaceDocument(target.href)) {
+              // Check the resolved router destination, including redirects from
+              // stored sign-in state that don't appear in the current address.
+              if (target.href !== current.href && needsFreshDocument && needsFreshDocument(target.href)) {
                 if (nativeMethod === nativeReplace) window.location.replace(target.href);
                 else window.location.assign(target.href);
                 return;
@@ -149,7 +147,7 @@
           }
           // On a browser traversal the address has already changed. Start the
           // guarded destination afresh before the router renders it here.
-          var newDocument = needsMarketplaceDocument && needsMarketplaceDocument(clean ? clean.href : window.location.href);
+          var newDocument = needsFreshDocument && needsFreshDocument(clean ? clean.href : window.location.href);
           if (!rejected && !newDocument) return;
           event.stopImmediatePropagation();
           if (clean) safelyReplace(clean);
