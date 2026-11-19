@@ -159,9 +159,10 @@ export const draftFilesOf = (done) =>
  * some failed ("Build without 1 failed file"); null when neither.
  */
 export function uploadsLabel({ uploading, failed, done }, verb = "Build") {
-  // A file failing mid-batch still counts toward the total and as finished.
+  // A failed file keeps its place in the total but doesn't move the count on,
+  // so a failure never reads as the next file starting.
   if (uploading.length)
-    return `Uploading ${done.length + failed.length + 1} of ${done.length + failed.length + uploading.length}…`;
+    return `Uploading ${done.length + 1} of ${done.length + failed.length + uploading.length}…`;
   if (failed.length)
     return `${verb} without ${failed.length} failed file${failed.length === 1 ? "" : "s"}`;
   return null;
