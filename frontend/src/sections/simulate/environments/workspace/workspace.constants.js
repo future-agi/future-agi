@@ -65,6 +65,7 @@ export const WORKSPACE_COPY = {
   back: "All environments",
   designSaved:
     "Saved as v1. Nothing runs until you connect an agent and start a run.",
+  designChatFrozen: "UI only: replying to the builder isn't wired yet",
   live: "Ready",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
@@ -141,6 +142,8 @@ export const WORKSPACE_COPY = {
       "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
+    design:
+      "UI only: runs start once this environment and its agent are on the server",
   },
   // The env-version pin: lists every version of the world, and makes an
   // earlier one the default.

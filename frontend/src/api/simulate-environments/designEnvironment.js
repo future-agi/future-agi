@@ -1,4 +1,5 @@
 import { designSummary } from "src/sections/simulate/environments/design/design";
+import { turnsOf } from "src/sections/simulate/environments/design/designTurns";
 import { useDesignDraftStore } from "src/sections/simulate/environments/design/useDesignDraftStore";
 import {
   BUILD_STATUS,
@@ -7,7 +8,7 @@ import {
 import { designBuildOf } from "./designBuild";
 
 // Stub of the environment an approved design builds, until the design job
-// (#3612) creates a real one: the workspace opens a draft's id as an
+// creates a real one: the workspace opens a draft's id as an
 // environment, read from the design draft store in this browser. The fetchers
 // in versions.js and draftReview.js answer from here for these ids, so nothing
 // is sent. See UI_ONLY_FEATURES.designBuild and connectAgent.
@@ -68,6 +69,18 @@ export function designEnvironmentOf(draft, now = Date.now()) {
         ? summary.records.map(({ name, rows, note }) => ({ name, rows, note }))
         : [],
     },
+    // World & tools reads the tables from here, as the environment detail sends them.
+    worldTables: done("records")
+      ? summary.records.map(({ name, rows, note }) => ({
+          name,
+          rows,
+          note,
+          fields: [],
+        }))
+      : [],
+    worldTotalRows: done("records")
+      ? summary.records.reduce((n, t) => n + t.rows, 0)
+      : 0,
     tools: done("tools")
       ? summary.tools.map(({ name, desc }) => ({ name, desc }))
       : [],
@@ -76,6 +89,8 @@ export function designEnvironmentOf(draft, now = Date.now()) {
       ? { id: agent.id, name: agent.name, active_version: agent.version }
       : null,
     designBuild: build,
+    // The design's builder chat, read only, with how the build went.
+    designChat: turnsOf(draft, summary, build),
   };
   const envState = done("scenarios")
     ? {
@@ -114,7 +129,20 @@ const iso = (ms) => new Date(ms).toISOString();
 export function designVersionsOf(envId) {
   const draft = draftOf(envId);
   const release = draft?.release;
-  if (!release) return { agent: [], environment: [], suite: [] };
+  const agent = draft?.connectedAgent || draft?.agent;
+  const agentRows = agent
+    ? [
+        {
+          id: `${envId}-agent-${agent.id}`,
+          label: agent.version || "v1",
+          status: "active",
+          is_default: true,
+          pickable: true,
+          summary: agent.name,
+        },
+      ]
+    : [];
+  if (!release) return { agent: agentRows, environment: [], suite: [] };
   const view = designEnvironmentOf(draft);
   const row = (piece, extra = {}) => ({
     id: `${envId}-${piece}-v1`,
@@ -127,7 +155,7 @@ export function designVersionsOf(envId) {
     ...extra,
   });
   return {
-    agent: [],
+    agent: agentRows,
     environment: [row("environment")],
     suite: [
       row("suite", { scenario_count: view.envState?.scenarios.length ?? 0 }),
@@ -269,6 +297,16 @@ export const connectDesignEnvAgent = (envId, agent) =>
     name: agent.name,
     version: agent.latestLabel || null,
   });
+
+// Writes a design's environment can't take until it's on the server.
+export const designNotSaved = () =>
+  Object.assign(
+    new Error("UI only: this environment isn't on the server yet."),
+    {
+      statusCode: 409,
+      error: "design_not_on_server",
+    },
+  );
 
 /** Save (POST .../drafts/save/): the build becomes v1. Answers like the API. */
 export function saveDesignDrafts(envId, name = "") {

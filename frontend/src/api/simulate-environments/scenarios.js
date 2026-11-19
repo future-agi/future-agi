@@ -1,7 +1,11 @@
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { isScenarioSampleMode } from "./scenariosSampleMode";
-import { designScenarioRowsOf, isDesignEnvId } from "./designEnvironment";
+import {
+  designNotSaved,
+  designScenarioRowsOf,
+  isDesignEnvId,
+} from "./designEnvironment";
 
 // Dev sample mode (?scnSample=1): serve the in-repo captured 20-row suite from
 // the fixtures emulator instead of the live endpoints. Dynamically imported so
@@ -72,6 +76,7 @@ export const listScenarios = async (jobId, params = {}) => {
 // delete (drop). The body is { rework, changes:[...] }; the response is
 // { receipts:[{ scenario, outcome, why }] }. There is no create route.
 export const amendScenarios = async (jobId, body) => {
+  if (isDesignEnvId(jobId)) throw designNotSaved();
   if (isScenarioSampleMode()) {
     const { amendScenarioFixture } = await sampleEmulator();
     return withSampleLatency(amendScenarioFixture(body));
