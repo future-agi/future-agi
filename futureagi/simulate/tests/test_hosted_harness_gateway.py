@@ -61,7 +61,6 @@ from simulate.services.hosted_harness_gateway import (
     _SIMULATOR_SECRETS_PATH,
     HostedHarnessGateway,
     HostedSourceAcquirer,
-    _add_scoped_guest_pin_policy,
     _authoring_archive_for,
     _authoring_ttl_seconds,
     _connector_egress_domains,
@@ -73,7 +72,6 @@ from simulate.services.hosted_harness_gateway import (
     _provider_import_authoring_material,
     _read_harness_spend,
     _resolved_egress_domains,
-    _scenarios_cli_command,
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
     attach_platform_simulator_secret_refs,
@@ -124,57 +122,12 @@ def _isolate_platform_simulator_environment(settings, monkeypatch):
         "ALK_HOSTED_AGENTCC_MODEL",
         "ALK_HARNESS",
         "ALK_HARNESS_MODEL",
-        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-        "ALK_CAB_GUEST_POC_PIN",
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
-
-
-def test_private_pin_policy_is_phone_scoped_and_fails_closed(monkeypatch) -> None:
-    monkeypatch.setenv("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "+15551234567")
-    monkeypatch.setenv("ALK_CAB_GUEST_POC_PIN", "7682")
-    job = SimpleNamespace(
-        organization_id="org-approved",
-        payload={
-            "agent": {
-                "connector": "phone",
-                "config": {"phone_number": "+15551234567"},
-            }
-        },
-    )
-    values = {}
-    assert _add_scoped_guest_pin_policy(values, job) is True
-    assert values == {
-        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER": "+15551234567",
-        "ALK_CAB_GUEST_POC_PIN": "7682",
-    }
-
-    values.clear()
-    job.organization_id = "org-other"
-    assert _add_scoped_guest_pin_policy(values, job) is True
-    assert values == {
-        "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER": "+15551234567",
-        "ALK_CAB_GUEST_POC_PIN": "7682",
-    }
-
-    values.clear()
-    job.payload["agent"]["config"]["phone_number"] = "+15557654321"
-    assert _add_scoped_guest_pin_policy(values, job) is False
-    assert values == {}
-
-
-def test_add_scenarios_carries_job_only_for_target_scoped_policy() -> None:
-    scoped = _scenarios_cli_command(
-        name="guest", count=12, guidance=[], include_job=True
-    )
-    generic = _scenarios_cli_command(name="guest", count=12, guidance=[])
-
-    assert "--job /work/job.json" in scoped
-    assert "--job /work/job.json" not in generic
 
 
 def test_guest_failure_cause_preserves_legacy_runnable_entrypoint_blocker() -> None:
@@ -203,8 +156,6 @@ def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatc
     monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-livekit-secret")
     monkeypatch.setenv("LIVEKIT_OUTBOUND_TRUNK_ID", "ST_platform-outbound")
     monkeypatch.setenv("PSTN_CALLER_NUMBER", "+14155550123")
-    monkeypatch.setenv("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "+15551234567")
-    monkeypatch.setenv("ALK_CAB_GUEST_POC_PIN", "7682")
 
     values = _platform_simulator_material()
 
@@ -218,8 +169,6 @@ def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatc
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
     assert values["SIP_OUTBOUND_TRUNK_ID"] == "ST_platform-outbound"
     assert values["SIP_OUTBOUND_FROM_NUMBER"] == "+14155550123"
-    assert "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER" not in values
-    assert "ALK_CAB_GUEST_POC_PIN" not in values
     assert values["ALK_HARNESS"] == "claude"
     assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
     assert values["ALK_CLAUDE_GATEWAY_URL"] == "https://gateway.futureagi.test"
