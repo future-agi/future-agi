@@ -35,7 +35,8 @@ describe("Run Simulation's Debug failures panel", () => {
     expect(screen.queryByText(OLD_NAMES)).toBeNull();
   });
 
-  it("offers to optimize the prompt", () => {
+  // Environments opens the same optimization form from "Launch optimization".
+  it("offers to launch an optimization", () => {
     render(
       <FixableRecommendations
         summary="Callers are put on hold too long."
@@ -45,7 +46,7 @@ describe("Run Simulation's Debug failures panel", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Optimize prompt" }),
+      screen.getByRole("button", { name: "Launch optimization" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(OLD_NAMES)).toBeNull();
   });
