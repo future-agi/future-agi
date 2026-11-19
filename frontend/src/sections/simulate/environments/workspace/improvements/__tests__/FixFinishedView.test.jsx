@@ -670,6 +670,7 @@ describe("Ship", () => {
 
   it.each([
     [
+      "a pull request with nothing held back",
       "fix-ready-github",
       "Open pull request",
       { held_back_scenario_keys: [] },
@@ -677,6 +678,7 @@ describe("Ship", () => {
       "Proven on the targets only: it opens as a draft pull request, marked Proven on the targets only in its title and body.",
     ],
     [
+      "a version with nothing held back",
       "fix-ready-archive",
       "Make default",
       { held_back_scenario_keys: [] },
@@ -684,6 +686,7 @@ describe("Ship", () => {
       "Proven on the targets only: nothing was held back to prove this change.",
     ],
     [
+      "a pull request with too few held back",
       "fix-ready-github",
       "Open pull request",
       {},
@@ -691,8 +694,8 @@ describe("Ship", () => {
       "Limited validation: it opens as a draft pull request, marked Limited validation in its title and body.",
     ],
   ])(
-    "says before %s ships how strong its result is",
-    async (id, button, request, limited, note) => {
+    "says how strong the result is before it ships %s",
+    async (_, id, button, request, limited, note) => {
       const user = userEvent.setup();
       updateFixtureFixRun(id, (f) => ({
         ...f,
