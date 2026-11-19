@@ -35,7 +35,14 @@ SPAN_CAPTURE_BYTES = 64 * 1024 * 1024
 
 
 def require_retirement_evidence(
-    writer, head, definitions, *, draft=None, cutoff=None, proposed=None
+    writer,
+    head,
+    definitions,
+    *,
+    draft=None,
+    cutoff=None,
+    proposed=None,
+    only_starts=None,
 ):
     """Prove coverage of every bucket this publication can replace or expire.
 
@@ -77,17 +84,24 @@ def require_retirement_evidence(
             (RETIRED_PARTS, "retired"),
         ):
             prefix = "field" if table == FIELD_VALUES else "metric"
-            sql, bound = committed_rows_select(
-                table,
-                head,
-                org_id=writer.org_id,
-                project_id=writer.lease.project_id,
-                key_in={
+            if only_starts and table == FIELD_VALUES:
+                # bucket_start is mutable on fields, unlike totals/retired keys.
+                sql, bound = _previous_fields(writer, head, definition, only_starts)
+            else:
+                membership = {
                     f"{prefix}_id": (definition.metric_id,),
                     f"{prefix}_version": (definition.version,),
-                },
-                param_prefix="retirement_proof_" + table.name,
-            )
+                }
+                if only_starts:
+                    membership["bucket_start"] = only_starts
+                sql, bound = committed_rows_select(
+                    table,
+                    head,
+                    org_id=writer.org_id,
+                    project_id=writer.lease.project_id,
+                    key_in=membership,
+                    param_prefix="retirement_proof_" + table.name,
+                )
             params = merge_bindings(params, bound)
             count = (
                 "countIf(level = 'span' AND status != 'open')"

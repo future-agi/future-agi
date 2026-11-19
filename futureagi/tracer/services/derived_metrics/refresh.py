@@ -40,7 +40,6 @@ from tracer.services.derived_metrics.bounded_reads import (
     MAX_KEY_IN_ITEMS,
     BucketFieldPlan,
     BucketRangeOverflow,
-    KeyRelation,
     capture_source_output,
     committed_key_pages,
     committed_key_ranges,
@@ -2199,34 +2198,6 @@ class RefreshWriter:
         has_fields = any(True for _ in self.plans(attempt, kind="field_values"))
         # The draft's frozen field batches, captured once (one batch per INSERT).
         overlay, overlay_params = captures.overlay(FIELD_VALUES)
-        if head and has_fields and any(d.level == "span" for d in definitions):
-            # A destination-quarter capture can move a span not named by discovery.
-            # Fold its former quarter from frozen fields, without recapturing it.
-            keys = FIELD_VALUES.logical_key
-            emitted = (
-                f"SELECT * FROM ({overlay}) WHERE level = 'span' AND is_deleted = 0"
-            )
-            previous, pp = committed_rows_select(
-                FIELD_VALUES,
-                head,
-                org_id=self.org_id,
-                project_id=self.lease.project_id,
-                key_relation=KeyRelation(
-                    keys, f"SELECT {', '.join(keys)} FROM ({emitted})", overlay_params
-                ),
-                param_prefix="span_emitted_before",
-            )
-            former = self.store.execute(
-                f"SELECT DISTINCT bucket_start FROM ({previous}) WHERE is_deleted = 0 "
-                f"AND bucket_start NOT IN (SELECT bucket_start FROM ({emitted}))",
-                pp,
-            )
-            # Only the emitted quarters were captured from source. A fold-only
-            # nomination must not claim source coverage during retention.
-            if former:
-                self.append(
-                    attempt, "dirty_before", [{"bucket_start": at} for (at,) in former]
-                )
         if has_fields:
             # Retain ALL existing checked proposals, including losers and
             # both open predicates. R01 changes only the prior lookup domain;
@@ -2269,10 +2240,19 @@ class RefreshWriter:
                         "state_first_seen": as_of,
                     },
                 )
-        for definition in definitions:
-            if definition.level != "user" and cutoff is None:
-                self._freeze_buckets(attempt, head, definition, overlay, overlay_params)
-        if cutoff is not None:
+        if cutoff is None:
+            former = captures.former_span_quarters(definitions) if has_fields else None
+            for definition in definitions:
+                if definition.level != "user":
+                    self._freeze_buckets(
+                        attempt,
+                        head,
+                        definition,
+                        overlay,
+                        overlay_params,
+                        former=former,
+                    )
+        else:
             from tracer.services.derived_metrics.backfill import (
                 retirement_definitions,
             )
@@ -2722,6 +2702,7 @@ class RefreshWriter:
         *,
         complete_fields=False,
         retired_override=None,
+        former=None,
         _dirty_starts=None,
     ):
         # Complete fields are already frozen final rows, not a SQL relation with
@@ -2732,33 +2713,56 @@ class RefreshWriter:
             bucket_metric=str(definition.metric_id),
             bucket_metric_version=definition.version,
         )
-        # Dirty BEFORE keys include starts lost after source/field OPTIMIZE.
-        dirty = set()
-        for chunk in attempt.ledger_chunks.filter(
-            part__in=["dirty_before", "dirty_after"]
-        ):
-            dirty.update(
-                entry["bucket_start"]
-                for entry in chunk.payload
-                if "bucket_start" in entry
-            )
+        from tracer.services.derived_metrics.changes import utc
+
+        fold_only = set()
         if _dirty_starts is not None:
-            dirty = set(_dirty_starts)
+            dirty = {utc(datetime.fromisoformat(str(at))) for at in _dirty_starts}
+        else:
+            # Dirty BEFORE keys include starts lost after source/field OPTIMIZE.
+            dirty, span_starts = set(), set()
+            for chunk in attempt.ledger_chunks.filter(
+                part__in=["dirty_before", "dirty_after"]
+            ):
+                for entry in chunk.payload:
+                    if "bucket_start" in entry:
+                        at = utc(datetime.fromisoformat(str(entry["bucket_start"])))
+                        dirty.add(at)
+                        if entry.get("level") == "span":
+                            span_starts.add(at)
+            if former and definition.level == "span":
+                fold_only = {
+                    utc(at)
+                    for (at,) in self.store.execute(
+                        f"SELECT bucket_start FROM ({former}) "
+                        "WHERE field_id = toUUID(%(bucket_metric)s) "
+                        "AND field_version = %(bucket_metric_version)s",
+                        params,
+                    )
+                } - span_starts
+                dirty.update(fold_only)
         floor = attempt.source_ceilings.get("retention_floor")
         if floor:
             floor = datetime.fromisoformat(str(floor))
-            dirty = {
-                value for value in dirty if datetime.fromisoformat(str(value)) >= floor
-            }
+            dirty = {at for at in dirty if at >= floor}
         # The exhaustive physical-key scan and frozen/digest ceremony are per
         # bounded SET of dirty quarters, not per quarter. The same pre-fold
         # statistics keep bucket_start in their key, so folding remains exact.
         # Physical row/byte caps and subdivision still apply to every input page.
         dirty = sorted(dirty)
         for offset in range(0, len(dirty), BUCKET_WINDOWS_PER_FOLD):
-            starts = tuple(
-                str(value) for value in dirty[offset : offset + BUCKET_WINDOWS_PER_FOLD]
-            )
+            moments = tuple(dirty[offset : offset + BUCKET_WINDOWS_PER_FOLD])
+            starts = tuple(str(at) for at in moments)
+            if proof_starts := tuple(at for at in moments if at in fold_only):
+                # A fold-only quarter has no source capture to replace missing
+                # historical evidence. Only a covered parent can safely shrink.
+                from tracer.services.derived_metrics.span_evidence import (
+                    require_retirement_evidence,
+                )
+
+                require_retirement_evidence(
+                    self, head, [definition], only_starts=proof_starts
+                )
             p = {**params, "dirty_starts": list(starts)}
             predicate = "bucket_start IN (SELECT parseDateTimeBestEffort(arrayJoin(%(dirty_starts)s), 'UTC'))"
             self.lease.keepalive()
@@ -2784,14 +2788,10 @@ class RefreshWriter:
                 subdivide=subdivide,
                 complete_fields=complete_fields,
             )
-            moments = tuple(datetime.fromisoformat(start) for start in starts)
             membership = {
                 "metric_id": (definition.metric_id,),
                 "metric_version": (definition.version,),
-                "bucket_start": tuple(
-                    at.replace(tzinfo=UTC) if at.tzinfo is None else at
-                    for at in moments
-                ),
+                "bucket_start": moments,
             }
             retired, rp = committed_rows_select(
                 RETIRED_PARTS,

@@ -23,7 +23,11 @@ from tracer.services.derived_metrics.deletion_protocol import capture_pin
 from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.retention import expire_project
-from tracer.services.derived_metrics.storage import FIELD_VALUES, SOURCE_DEPENDENCIES
+from tracer.services.derived_metrics.storage import (
+    BUCKET_TOTALS,
+    FIELD_VALUES,
+    SOURCE_DEPENDENCIES,
+)
 from tracer.tests.test_derived_metric_backfill import make_version
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
     live_writer,
@@ -65,7 +69,7 @@ class SpanHistory:
         owner = str(self.session)
         return Dependency(str(self.trace), name, owner, owner, "", "", at)
 
-    def refresh(self, version, *dependencies, prior=(), purpose="incremental"):
+    def refresh(self, version, *dependencies, prior=(), purpose="incremental", also=()):
         return self.writer.refresh(
             change_for(
                 self.session,
@@ -73,7 +77,7 @@ class SpanHistory:
                 prior=prior,
                 cursor=next(self.cursors),
             ),
-            [version],
+            [version, *also],
             self.scope,
             start=self.old - timedelta(hours=1),
             end=self.now,
@@ -93,7 +97,7 @@ class SpanHistory:
         assert outcome["purged"] and outcome["manifest"] == str(head.pk)
         return head
 
-    def source_values(self):
+    def source_values(self, quarter=None):
         # Independent oracle: choose the winning physical revision BEFORE the
         # retention/quarter predicates. An old revision or tombstone is not live.
         return self.writer.store.execute(
@@ -105,7 +109,7 @@ class SpanHistory:
             {
                 **self.scope.parameters(),
                 "trace": str(self.trace),
-                "quarter": self.quarter,
+                "quarter": quarter or self.quarter,
                 "cutoff": self.now - timedelta(days=1),
             },
         )
@@ -229,8 +233,14 @@ def test_corrected_span_follows_source_at_expiry_and_on_refresh(span_versions, p
     assert at_expiry == expected
 
 
-@pytest.mark.parametrize("days", [0, 1], ids=["ordinary", "retention-checkpoint"])
-def test_quarter_mate_move_refolds_former_quarter(span_versions, days):
+@pytest.mark.parametrize(
+    ("days", "retry"),
+    [(0, False), (0, True), (1, False)],
+    ids=["ordinary", "retry", "retention-checkpoint"],
+)
+def test_quarter_mate_move_refolds_former_quarter(
+    span_versions, monkeypatch, days, retry
+):
     case, _, version, _ = span_versions
     keep = case.revision("keep", case.quarter, 7, 1)
     mobile = case.revision("mobile", case.quarter, 5, 1)
@@ -243,19 +253,95 @@ def test_quarter_mate_move_refolds_former_quarter(span_versions, days):
     # The old quarter needs a fold from committed fields, not a source refresh.
     case.revision("keep", case.quarter, 99, 2)
     case.writer.retention_days = lambda: days
+    if retry:
+        # Fail AFTER the field and total batches were prepared. A takeover
+        # must rediscover the move, not promote the fold to source recovery.
+        def interrupt(*args, **kwargs):
+            raise RuntimeError("interrupted before seal")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(case.writer, "seal", interrupt)
+            with pytest.raises(RuntimeError, match="interrupted before seal"):
+                case.refresh(version, trigger, purpose="backfill")
+        assert (
+            MetricProjectRefresh.for_project(case.scope.project).head_manifest_id
+            == base.pk
+        )
     head = case.refresh(version, trigger, purpose="backfill")
     if days:
         assert head.published_by.purpose == "compaction"
+    assert case.source_values() == [("keep", 99)]
     assert case.field_values(head, version, case.quarter) == [("keep", 7)]
-    assert case.field_values(head, version, elsewhere) == [
-        ("mobile", 11),
-        ("trigger", 19),
-    ]
+    moved = case.source_values(elsewhere)
+    assert moved == [("mobile", 11), ("trigger", 19)]
+    assert case.field_values(head, version, elsewhere) == moved
     totals = metric_bucket_rows(case.writer, head, version)
     assert [(at, n, total, weight) for at, _, n, total, weight in totals] == [
         (case.quarter, 1, 7, 1),
-        (elsewhere, 2, 30, 2),
+        (elsewhere, *expected_totals(moved)[0]),
     ]
+
+
+@pytest.mark.parametrize("days", [0, 1], ids=["ordinary", "retention-checkpoint"])
+@pytest.mark.parametrize("covered", [True, False], ids=["covered", "missing-keep"])
+def test_former_quarter_uses_displaced_version_evidence(span_versions, days, covered):
+    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
+
+    case, first, second, _ = span_versions
+    keep = case.revision("keep", case.quarter, 7, 1)
+    mobile = case.revision("mobile", case.quarter, 5, 1)
+    base = case.refresh(second, keep, mobile, also=[first])
+    # Both versions have the same metric ID and totals. Simulate an older
+    # checkpoint with no v1 evidence and optional missing v2 evidence.
+    writer = case.writer
+    legacy = writer.begin(purpose="compaction")
+    writer.freeze_current(legacy, BUCKET_TOTALS, base)
+    writer.freeze_current(legacy, SOURCE_DEPENDENCIES, base)
+    writer.freeze_current(
+        legacy,
+        FIELD_VALUES,
+        base,
+        where="bucket_start != %(quarter)s OR (field_version = %(second)s AND "
+        "(%(covered)s OR JSONExtractString(unit_id, 2) != 'keep'))",
+        params={
+            "second": second.version,
+            "quarter": case.quarter,
+            "covered": int(covered),
+        },
+    )
+    writer.seal(legacy)
+    parent = writer.stage_and_publish(legacy)
+    assert case.field_values(parent, first, case.quarter) == []
+    assert case.totals(parent, first) == [(2, 12, 2)]
+
+    elsewhere = case.quarter + timedelta(hours=1)
+    case.revision("mobile", elsewhere, 11, 2)
+    trigger = case.revision("trigger", elsewhere, 19, 1)
+    writer.retention_days = lambda: days
+    if not covered:
+        # The displaced version itself lacks a historical member. Neither the
+        # unrelated total nor the newer destination capture can repair that gap.
+        with pytest.raises(MetricAdmissionUnproven, match="requires backfill"):
+            case.refresh(second, trigger, purpose="backfill", also=[first])
+        assert (
+            MetricProjectRefresh.for_project(case.scope.project).head_manifest_id
+            == parent.pk
+        )
+        return
+    head = case.refresh(second, trigger, purpose="backfill", also=[first])
+    if days:
+        assert head.published_by.purpose == "compaction"
+    # Both recipes really did capture the destination. Only v2 had a prior
+    # mobile field to displace from the original quarter.
+    moved = case.source_values(elsewhere)
+    assert moved == [("mobile", 11), ("trigger", 19)]
+    for version in (first, second):
+        assert case.field_values(head, version, elsewhere) == moved
+    assert case.source_values() == [("keep", 7)]
+    assert case.field_values(head, second, case.quarter) == case.source_values()
+    assert case.totals(head, second) == expected_totals(case.source_values())
+    assert case.field_values(head, first, case.quarter) == []
+    assert case.totals(head, first) == [(2, 12, 2)]
 
 
 def uncovered_span_head(span_versions):

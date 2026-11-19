@@ -293,6 +293,13 @@ def _frozen_batch_sources(writer, attempt, table):
         )
 
 
+_RECIPE_QUARTER_SCHEMA = (
+    ("field_id", "UUID"),
+    ("field_version", "UInt32"),
+    ("bucket_start", "DateTime('UTC')"),
+)
+
+
 class ProposalCaptures:
     """Pass-scoped session captures of one PREPARED proposal (SessionCapture).
 
@@ -339,6 +346,40 @@ class ProposalCaptures:
             "overlay",
         )
         return capture.select, {}
+
+    def former_span_quarters(self, definitions):
+        """Fold-only recipe/quarter keys, derived afresh on retries, never source work."""
+        from tracer.services.derived_metrics.bounded_reads import KeyRelation
+
+        if not self.head or not any(d.level == "span" for d in definitions):
+            return None
+        overlay, bound = self.overlay(FIELD_VALUES)
+        emitted = f"SELECT * FROM ({overlay}) WHERE level = 'span' AND is_deleted = 0"
+        keys = FIELD_VALUES.logical_key
+        previous, params = committed_rows_select(
+            FIELD_VALUES,
+            self.head,
+            org_id=self.writer.org_id,
+            project_id=self.writer.lease.project_id,
+            key_relation=KeyRelation(
+                keys, f"SELECT {', '.join(keys)} FROM ({emitted})", bound
+            ),
+            param_prefix="span_emitted_before",
+        )
+        # At most one former key per emitted identity. Keep it relational for
+        # checkpoint key paging; never cross these starts with all recipes.
+        columns = ", ".join(name for name, _ in _RECIPE_QUARTER_SCHEMA)
+        sql = (
+            f"SELECT DISTINCT {columns} FROM ({previous}) WHERE is_deleted = 0 "
+            f"AND ({columns}) NOT IN (SELECT {columns} FROM ({emitted}))"
+        )
+        capture = self._capture(
+            "former_span_quarters",
+            _RECIPE_QUARTER_SCHEMA,
+            lambda: [(sql, params)],
+            "former_span_quarters",
+        )
+        return capture.select if capture.digest[0] else None
 
     def proposal(self, table):
         """Committed head collapsed with this draft's overlay (one generation)."""
@@ -935,6 +976,7 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures, scratch
             )
         )
     )
+    former = captures.former_span_quarters(span_definitions)
     draft_ledger = {}
     if span_definitions and not logical_expiry and not current_cleanup:
         for chunk in draft.ledger_chunks.exclude(part="cleanup_intent"):
@@ -957,7 +999,9 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures, scratch
         overlay, overlay_params = captures.overlay(FIELD_VALUES)
         for definition in definitions:
             if definition.level != "user":
-                writer._freeze_buckets(draft, head, definition, overlay, overlay_params)
+                writer._freeze_buckets(
+                    draft, head, definition, overlay, overlay_params, former=former
+                )
         return draft
     # Span checkpoints also scrub unproven conversation/user owner links from
     # retained span dependencies and PG preimages. Without an actual privacy
@@ -1090,6 +1134,7 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures, scratch
         retained=retained,
         params=params,
         proposal_totals=captures.proposal(BUCKET_TOTALS),
+        extra_keys=former,
         dirty_entries=(
             entry
             for part in ("dirty_before", "dirty_after")
@@ -1134,11 +1179,7 @@ def _checkpoint_key_pages(store, keys, params):
         SessionCapture,
     )
 
-    schema = (
-        ("field_id", "UUID"),
-        ("field_version", "UInt32"),
-        ("bucket_start", "DateTime('UTC')"),
-    )
+    schema = _RECIPE_QUARTER_SCHEMA
     fields = tuple(name for name, _ in schema)
     totals = ("metric_id", "metric_version", "bucket_start")
     # These three RowBinary types are fixed width (16 + 4 + 4). Let the
