@@ -890,7 +890,7 @@ def _preflight_checks(
             "Credentials accepted by provider",
             key_probes,
             "no credential values were submitted to verify",
-            "Replace {aliases} with a key the provider accepts",
+            "Replace {aliases} with a value the provider accepts",
         )
     )
     checks.append(
