@@ -298,14 +298,18 @@ export default function VersionsPanel({ env }) {
         }}
       >
         <Box sx={{ ...card, overflow: "hidden" }}>
+          {/* The card's width depends on the chat panel, not the viewport, so
+              the filter wraps under the text once the text would get narrow. */}
           <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={2}
-            alignItems={{ sm: "flex-start" }}
+            direction="row"
+            flexWrap="wrap"
+            useFlexGap
+            gap={2}
+            alignItems="flex-start"
             justifyContent="space-between"
             sx={{ px: 2.5, py: 2 }}
           >
-            <Box sx={{ minWidth: 0 }}>
+            <Box sx={{ flex: "1 1 280px", minWidth: 0 }}>
               <Typography sx={{ typography: "s1", fontWeight: 600 }}>
                 {COPY.title}
               </Typography>
