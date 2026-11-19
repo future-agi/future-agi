@@ -16,7 +16,7 @@ export const hasStoredAnalysis = (issue) => Boolean(issue?.fix_hypothesis);
 export const missingAnalysisReason = (issue) =>
   issue?.source === "eval"
     ? "This issue was grouped from eval results, so the Error Feed stored no likely cause or suggested change for it."
-    : "This issue was grouped by an older version of the Error Feed, which did not store a likely cause or a suggested change.";
+    : "The Error Feed stored no likely cause or suggested change for this issue.";
 
 // What the issue page shows under each label, in order. Without a stored
 // analysis the description is an eval's explanation (or absent), not a cause.
@@ -38,6 +38,15 @@ export const analysisRows = (issue) => {
 };
 
 const day = (iso) => (iso ? String(iso).slice(0, 10) : null);
+
+const traces = (count) =>
+  `${count.toLocaleString()} trace${count === 1 ? "" : "s"}`;
+
+// Title and caption may be blank on the wire; build the line from what is set.
+const insightLine = ({ title, value, caption }) => {
+  const body = [value, caption].filter(Boolean).join(". ");
+  return title ? `- **${title}**: ${body}` : `- ${body}`;
+};
 
 // A fence one backtick longer than any run inside the text keeps it intact.
 const fenced = (text) => {
@@ -71,30 +80,30 @@ const traceSection = (trace) => {
  * Markdown document. Built from data already on the page; no model call.
  */
 export const analysisToMarkdown = (issue, overview) => {
-  const traces = (overview?.representative_traces ?? []).slice(
+  const sample = (overview?.representative_traces ?? []).slice(
     0,
     SAMPLE_TRACE_LIMIT,
   );
-  const total = overview?.representative_total ?? traces.length;
-  const insights = overview?.pattern_summary?.insights ?? [];
+  const insights = (overview?.pattern_summary?.insights ?? []).filter(
+    (i) => i.value || i.caption,
+  );
   const meta = [
     issue.cluster_id,
-    `${(issue.trace_count ?? 0).toLocaleString()} traces`,
+    traces(issue.trace_count ?? 0),
     day(issue.first_seen) && `first seen ${day(issue.first_seen)}`,
     day(issue.last_seen) && `last seen ${day(issue.last_seen)}`,
   ].filter(Boolean);
+  // A fallback title can be the multi-line mechanism; a heading takes one line.
+  const title = String(issue.error?.name || issue.cluster_id).split("\n")[0];
 
   return [
-    `# ${issue.error?.name ?? issue.cluster_id}`,
+    `# ${title}`,
     meta.join(" · "),
     !hasStoredAnalysis(issue) && `> ${missingAnalysisReason(issue)}`,
     ...analysisRows(issue).map(([label, text]) => `## ${label}\n\n${text}`),
-    insights.length &&
-      `## Pattern\n\n${insights
-        .map((i) => `- **${i.title}**: ${i.value}. ${i.caption}`)
-        .join("\n")}`,
-    traces.length
-      ? `## Sample traces\n\n${traces.length} of ${total.toLocaleString()} traces.\n\n${traces
+    insights.length && `## Pattern\n\n${insights.map(insightLine).join("\n")}`,
+    sample.length
+      ? `## Sample traces\n\nThe ${traces(sample.length)} seen most recently.\n\n${sample
           .map(traceSection)
           .join("\n\n")}`
       : "## Sample traces\n\nNo traces to show.",

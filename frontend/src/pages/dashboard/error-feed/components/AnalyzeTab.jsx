@@ -1359,14 +1359,16 @@ const STARTER_SUGGESTIONS = [
 
 function StoredAnalysis({ error, readOnly, showInDepth, onExplain }) {
   return (
+    // The scroller around it is already the panel; a hairline separates an
+    // in-depth thread that follows.
     <Box
       sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        bgcolor: "background.paper",
-        py: 0.75,
+        pb: 0.75,
         flexShrink: 0,
+        ...(!showInDepth && {
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }),
       }}
     >
       {!hasStoredAnalysis(error) && (

@@ -189,8 +189,8 @@ export default function ErrorFeedDetailView() {
     };
   }, [detail]);
 
-  // On a shared issue the runner only seeds the saved analysis for the Fix
-  // tab; it never opens Falcon or starts a run.
+  // On a shared issue the runner only seeds the saved analysis for the Root
+  // cause tab; it never opens Falcon or starts a run.
   useAnalyzeRunner(currentError?.cluster_id, currentError, {
     enabled: !shared,
   });

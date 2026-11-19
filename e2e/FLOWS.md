@@ -1112,7 +1112,7 @@
 2. read the issue on Overview
 3. pick another trace in Traces affected
 4. open a trace from the Traces tab
-5. open the Trends and Fix tabs
+5. open the Trends and Root cause tabs
 6. open a restricted share link while signed out
 
 **Browser observations:**
@@ -1121,6 +1121,7 @@
 - the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
 - picking a trace reads the sidebar through the share token for exactly that trace
 - opening a trace reads it through the share token and shows its spans
+- Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue

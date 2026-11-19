@@ -58,10 +58,10 @@ describe("issue analysis", () => {
     ).toBe(false);
   });
 
-  it("says why an eval or an older scan issue has no stored analysis", () => {
+  it("says why an eval or a scan issue has no stored analysis", () => {
     expect(missingAnalysisReason({ source: "eval" })).toMatch(/eval results/);
-    expect(missingAnalysisReason({ source: "scanner" })).toMatch(
-      /older version of the Error Feed/,
+    expect(missingAnalysisReason({ source: "scanner" })).toBe(
+      "The Error Feed stored no likely cause or suggested change for this issue.",
     );
   });
 });
@@ -84,7 +84,7 @@ describe("analysisToMarkdown", () => {
     expect(section(md, "Pattern")).toBe(
       "- **Common tool**: 17 / 38. **refund_order** runs in most failing traces",
     );
-    expect(md).toContain("2 of 92 traces.");
+    expect(md).toContain("The 2 traces seen most recently.");
     expect(md).toContain("### t-1");
     expect(md).toContain("### t-2");
     expect(md).toContain("Judge reason: Refunded one item of two");
@@ -111,8 +111,33 @@ describe("analysisToMarkdown", () => {
       overview({ representative_traces: many, representative_total: 200 }),
     );
 
-    expect(md).toContain(`${SAMPLE_TRACE_LIMIT} of 200 traces.`);
+    expect(md).toContain(
+      `The ${SAMPLE_TRACE_LIMIT} traces seen most recently.`,
+    );
     expect(md.match(/^### /gm)).toHaveLength(SAMPLE_TRACE_LIMIT);
+  });
+
+  it("keeps the heading, counts and pattern lines well formed", () => {
+    const md = analysisToMarkdown(
+      issue({
+        error: { name: "First line of a mechanism.\nSecond line." },
+        trace_count: 1,
+      }),
+      overview({
+        pattern_summary: {
+          insights: [
+            { title: "", value: "82%", caption: "" },
+            { title: "Empty", value: "", caption: "" },
+          ],
+        },
+        representative_traces: [trace("t-1")],
+      }),
+    );
+
+    expect(md.split("\n")[0]).toBe("# First line of a mechanism.");
+    expect(md).toContain("S-1A2B3C4D · 1 trace ·");
+    expect(section(md, "Pattern")).toBe("- 82%");
+    expect(md).toContain("The 1 trace seen most recently.");
   });
 
   it("exports what an eval issue has and says why the rest is missing", () => {

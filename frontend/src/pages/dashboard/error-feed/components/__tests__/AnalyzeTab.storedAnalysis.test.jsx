@@ -75,7 +75,7 @@ describe("Root cause tab", () => {
     ).toBeInTheDocument();
   });
 
-  it("says an older scan issue was grouped before the analysis was stored", () => {
+  it("says a scan issue without a stored analysis has none", () => {
     render(
       <AnalyzeTab
         error={{
@@ -89,7 +89,9 @@ describe("Root cause tab", () => {
     );
 
     expect(
-      screen.getByText(/older version of the Error Feed/),
+      screen.getByText(
+        "The Error Feed stored no likely cause or suggested change for this issue.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Likely cause")).not.toBeInTheDocument();
   });
