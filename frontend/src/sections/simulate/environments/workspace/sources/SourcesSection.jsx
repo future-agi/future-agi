@@ -5,7 +5,8 @@ import {
   Box,
   Button,
   ButtonBase,
-  CircularProgress,
+  Collapse,
+  Fade,
   IconButton,
   Stack,
   Typography,
@@ -21,7 +22,9 @@ import {
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
 import SectionCard from "../../components/SectionCard";
+import ShimmerText from "../../components/ShimmerText";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import AddSourceMenu from "./AddSourceMenu";
 import KnowledgeBasePicker from "./KnowledgeBasePicker";
 import ProposalsDrawer from "./ProposalsDrawer";
@@ -80,6 +83,20 @@ export default function SourcesSection({
   // empty response, which mustn't wipe the review.
   const [review, setReview] = usePendingSourceReview(envId);
   const [reviewOpen, setReviewOpen] = useState(false);
+  // The last review stays in its drawer while it slides shut. A review that
+  // follows an ended one gets a new `round`, so it starts with fresh picks; a
+  // merge into the open one keeps them.
+  const [shown, setShown] = useState({ review, round: 0, ended: false });
+  if (!review && shown.review && !shown.ended)
+    setShown({ ...shown, ended: true });
+  if (review && review !== shown.review)
+    setShown({
+      review,
+      round: shown.round + (shown.ended ? 1 : 0),
+      ended: false,
+    });
+  const reduce = usePrefersReducedMotion();
+  const timeout = reduce ? 0 : "auto";
   const { openSource } = useSourceParams();
   const addRef = useRef(null);
   // `supplying`, from a file's Supply the records, opens the Add source menu.
@@ -150,7 +167,11 @@ export default function SourcesSection({
       action={
         <Stack direction="row" spacing={1} alignItems="center">
           <UiOnlyFlag feature="environmentSources" />
-          {!readOnly && review && !reviewOpen && (
+          <Fade
+            in={!readOnly && Boolean(review) && !reviewOpen}
+            timeout={reduce ? 0 : undefined}
+            unmountOnExit
+          >
             <Button
               size="small"
               variant="outlined"
@@ -158,7 +179,7 @@ export default function SourcesSection({
             >
               {PROPOSALS_COPY.reopen}
             </Button>
-          )}
+          </Fade>
           {!readOnly && (
             <Button
               ref={addRef}
@@ -183,7 +204,7 @@ export default function SourcesSection({
         command={dataImportCommand(envId, sources[0])}
       />
 
-      {sources.length > 0 && (
+      <Collapse in={sources.length > 0} timeout={timeout} unmountOnExit>
         <Box>
           <Box
             sx={{
@@ -205,18 +226,29 @@ export default function SourcesSection({
               </Typography>
             ))}
           </Box>
+          {/* A file added later slides in under the others. */}
           {sources.map((source) => (
-            <SourceRow
+            <Collapse
               key={source.source_id}
-              source={source}
-              formats={capabilities?.upload?.formats}
-              readOnly={readOnly}
-              onOpen={openSource}
-              onRemove={() => setRemoving(source)}
-              onReviewRefresh={onReviewRefresh}
-            />
+              in
+              appear
+              timeout={timeout}
+              sx={{
+                "& + &": { borderTop: "1px solid", borderColor: "divider" },
+              }}
+            >
+              <SourceRow
+                source={source}
+                formats={capabilities?.upload?.formats}
+                readOnly={readOnly}
+                onOpen={openSource}
+                onRemove={() => setRemoving(source)}
+                onReviewRefresh={onReviewRefresh}
+                timeout={timeout}
+              />
+            </Collapse>
           ))}
-          {saved.length > 0 && (
+          <Collapse in={saved.length > 0} timeout={timeout} unmountOnExit>
             <Box
               sx={{
                 px: 1.5,
@@ -243,11 +275,11 @@ export default function SourcesSection({
                 </Typography>
               </CustomTooltip>
             </Box>
-          )}
+          </Collapse>
         </Box>
-      )}
+      </Collapse>
 
-      {removed.length > 0 && (
+      <Collapse in={removed.length > 0} timeout={timeout} unmountOnExit>
         <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", px: 1.5, pt: 1.25 }}
@@ -255,46 +287,48 @@ export default function SourcesSection({
             {COPY.removed(removed.length)}
           </Typography>
           {removed.map((source) => (
-            <Stack
-              key={source.source_id}
-              direction="row"
-              alignItems="center"
-              spacing={1.5}
-              sx={{ px: 1.5, py: 0.75 }}
-            >
-              <Typography
-                noWrap
-                sx={{ typography: "s1", flex: 1, minWidth: 0 }}
+            <Collapse key={source.source_id} in appear timeout={timeout}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1.5}
+                sx={{ px: 1.5, py: 0.75 }}
               >
-                {source.name}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {COPY.removedNote}
-              </Typography>
-              {!readOnly && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => {
-                    restore(source.source_id);
-                    enqueueSnackbar(COPY.restored(source.name), {
-                      variant: "success",
-                    });
-                  }}
+                <Typography
+                  noWrap
+                  sx={{ typography: "s1", flex: 1, minWidth: 0 }}
                 >
-                  {COPY.restore}
-                </Button>
-              )}
-            </Stack>
+                  {source.name}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {COPY.removedNote}
+                </Typography>
+                {!readOnly && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => {
+                      restore(source.source_id);
+                      enqueueSnackbar(COPY.restored(source.name), {
+                        variant: "success",
+                      });
+                    }}
+                  >
+                    {COPY.restore}
+                  </Button>
+                )}
+              </Stack>
+            </Collapse>
           ))}
         </Box>
-      )}
+      </Collapse>
 
-      {review && !readOnly && (
+      {!readOnly && (
         <ProposalsDrawer
           envId={envId}
-          prepared={review}
-          open={reviewOpen}
+          prepared={shown.review}
+          round={shown.round}
+          open={Boolean(review) && reviewOpen}
           onClose={() => setReviewOpen(false)}
           onDone={endReview}
           onOpenSource={(id, at) => {
@@ -344,6 +378,7 @@ function SourceRow({
   onOpen,
   onRemove,
   onReviewRefresh,
+  timeout,
 }) {
   const reading = source.status === "reading";
   const { label, problem } = stateOf(source, formats);
@@ -359,11 +394,7 @@ function SourceRow({
   const usedBy = usageOf(source).count;
 
   return (
-    <Box
-      sx={{
-        "& + &": { borderTop: "1px solid", borderColor: "divider" },
-      }}
-    >
+    <Box>
       <Box
         sx={{
           display: "grid",
@@ -410,19 +441,7 @@ function SourceRow({
           </Typography>
         </CustomTooltip>
         {reading ? (
-          <Stack direction="row" alignItems="center" spacing={0.75}>
-            <CircularProgress
-              size={12}
-              thickness={5}
-              sx={{ color: "text.secondary", flexShrink: 0 }}
-            />
-            <Typography
-              noWrap
-              sx={{ typography: "s1", color: "text.secondary" }}
-            >
-              {COPY.state.reading}
-            </Typography>
-          </Stack>
+          <ShimmerText noWrap>{COPY.state.reading}</ShimmerText>
         ) : (
           <CustomTooltip show={Boolean(problem)} arrow title={problem?.hint}>
             <Typography
@@ -471,27 +490,27 @@ function SourceRow({
           </CustomTooltip>
         )}
       </Box>
-      {(personal || changed) && (
-        <Stack spacing={0.5} sx={{ px: 1.5, pb: 1 }}>
-          {changed && (
-            <RowLine
-              text={COPY.changedUpstream}
-              action={COPY.reviewRefresh}
-              onAction={readOnly ? null : () => onReviewRefresh?.(source)}
-            />
-          )}
-          {personal && (
-            <RowLine
-              warning
-              text={COPY.personal}
-              action={COPY.choose}
-              onAction={
-                readOnly ? null : () => onOpen(source.source_id, "privacy")
-              }
-            />
-          )}
-        </Stack>
-      )}
+      <Collapse in={changed} timeout={timeout} unmountOnExit>
+        <Box sx={{ px: 1.5, pb: personal ? 0.5 : 1 }}>
+          <RowLine
+            text={COPY.changedUpstream}
+            action={COPY.reviewRefresh}
+            onAction={readOnly ? null : () => onReviewRefresh?.(source)}
+          />
+        </Box>
+      </Collapse>
+      <Collapse in={personal} timeout={timeout} unmountOnExit>
+        <Box sx={{ px: 1.5, pb: 1 }}>
+          <RowLine
+            warning
+            text={COPY.personal}
+            action={COPY.choose}
+            onAction={
+              readOnly ? null : () => onOpen(source.source_id, "privacy")
+            }
+          />
+        </Box>
+      </Collapse>
     </Box>
   );
 }
@@ -515,6 +534,8 @@ SourceRow.propTypes = {
   onOpen: PropTypes.func.isRequired,
   onRemove: PropTypes.func.isRequired,
   onReviewRefresh: PropTypes.func,
+  // The row lines' Collapse timeout; 0 under reduced motion.
+  timeout: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
 };
 
 function RowLine({ text, action, onAction, warning = false }) {

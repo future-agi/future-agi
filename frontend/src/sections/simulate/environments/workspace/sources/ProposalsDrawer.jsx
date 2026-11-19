@@ -1,20 +1,16 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import {
   useAcceptSource,
   useEnvironmentSources,
   useSetPersonalData,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
+import ShimmerText from "../../components/ShimmerText";
 import SideDrawer from "../../components/SideDrawer";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import AddSourceMenu from "./AddSourceMenu";
 import ProposalItem from "./ProposalItem";
 import { applyFileChoice, columnsOf } from "./personalData";
@@ -43,11 +39,13 @@ const PreparedShape = PropTypes.shape({
 
 /**
  * Review proposed changes from one prepare response, as a side drawer.
- * Closing keeps the review; `onDone` ends it (rejected or added).
+ * Closing keeps the review; `onDone` ends it (rejected or added). Mounted
+ * before the first review and after the last, so it slides both ways.
  */
 export default function ProposalsDrawer({
   envId,
-  prepared,
+  prepared = null,
+  round = 0,
   open,
   onClose,
   onDone,
@@ -58,57 +56,72 @@ export default function ProposalsDrawer({
 }) {
   const { data: summary } = useEnvironmentSources(envId);
   const live = new Set(
-    (summary?.sources || prepared.ui.sources).map((one) => one.source_id),
+    (summary?.sources || prepared?.ui.sources || []).map(
+      (one) => one.source_id,
+    ),
   );
   return (
     // Kept mounted so closing mid-review keeps checks, edits and picks.
-    <SideDrawer open={open} onClose={onClose} width={560} keepMounted>
-      <Stack sx={{ height: "100%" }}>
-        <Box
-          sx={{
-            px: 2.5,
-            pt: 2,
-            pb: 1.25,
-            pr: 6,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography sx={{ typography: "m1" }}>{COPY.title}</Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-            {COPY.subtitle(
-              // A file refused by its extension was never read.
-              prepared.ui.sources
-                .filter(
-                  (source) =>
-                    source.status !== "unsupported" &&
-                    live.has(source.source_id),
-                )
-                .map((source) => source.name),
-            )}
-          </Typography>
-        </Box>
-        <Box sx={{ flex: 1, minHeight: 0 }}>
-          <Proposals
-            key={prepared.import_ref}
-            layout="drawer"
-            envId={envId}
-            prepared={prepared}
-            onDone={onDone}
-            onOpenSource={onOpenSource}
-            onAddFiles={onAddFiles}
-            onAddKb={onAddKb}
-            onReviewChanges={onReviewChanges}
-          />
-        </Box>
-      </Stack>
+    <SideDrawer
+      open={open && Boolean(prepared)}
+      onClose={onClose}
+      width={560}
+      keepMounted
+    >
+      {prepared && (
+        <Stack sx={{ height: "100%" }}>
+          <Box
+            sx={{
+              px: 2.5,
+              pt: 2,
+              pb: 1.25,
+              pr: 6,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography sx={{ typography: "m1" }}>{COPY.title}</Typography>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
+              {COPY.subtitle(
+                // A file refused by its extension was never read.
+                prepared.ui.sources
+                  .filter(
+                    (source) =>
+                      source.status !== "unsupported" &&
+                      live.has(source.source_id),
+                  )
+                  .map((source) => source.name),
+              )}
+            </Typography>
+          </Box>
+          <Box sx={{ flex: 1, minHeight: 0 }}>
+            <Proposals
+              key={`${round}:${prepared.import_ref}`}
+              layout="drawer"
+              envId={envId}
+              prepared={prepared}
+              onDone={onDone}
+              onOpenSource={onOpenSource}
+              onAddFiles={onAddFiles}
+              onAddKb={onAddKb}
+              onReviewChanges={onReviewChanges}
+            />
+          </Box>
+        </Stack>
+      )}
     </SideDrawer>
   );
 }
 
 ProposalsDrawer.propTypes = {
   envId: PropTypes.string.isRequired,
-  prepared: PreparedShape.isRequired,
+  // The review to show; null before the first one.
+  prepared: PreparedShape,
+  // Bumped when a review ends, so the next one starts with fresh picks.
+  round: PropTypes.number,
   open: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
   onDone: PropTypes.func.isRequired,
@@ -154,19 +167,22 @@ export function Proposals({
     (summary?.sources || []).map((source) => [source.source_id, source]),
   );
   const progress = readProgress(prepared, summary?.sources);
-  const items = progress.items
-    .filter((item) => !leftOut.has(item.id))
-    .map((item) => {
-      if (item.kind === "conflict" && picks[item.id])
-        return { ...item, blocking: false, pick: picks[item.id] };
-      if (item.kind === "personal")
-        return {
-          ...item,
-          choice: live.get(item.sourceId)?.ui?.personal_choice || null,
-        };
-      if (edits[item.id] != null) return { ...item, edited: edits[item.id] };
-      return item;
-    });
+  const readingIds = new Set(progress.reading.map((one) => one.source_id));
+  // Left-out items still render, so they can fold away rather than vanish.
+  const all = progress.items.map((item) => {
+    if (item.kind === "conflict" && picks[item.id])
+      return { ...item, blocking: false, pick: picks[item.id] };
+    if (item.kind === "personal")
+      return {
+        ...item,
+        choice: live.get(item.sourceId)?.ui?.personal_choice || null,
+      };
+    if (edits[item.id] != null) return { ...item, edited: edits[item.id] };
+    return item;
+  });
+  const items = all.filter((item) => !leftOut.has(item.id));
+  const reduce = usePrefersReducedMotion();
+  const timeout = reduce ? 0 : "auto";
   const checked = items
     .filter((item) => !unchecked.has(item.id))
     .map((item) => item.id);
@@ -344,80 +360,93 @@ export function Proposals({
       <Box
         sx={drawer ? { flex: 1, minHeight: 0, overflowY: "auto" } : undefined}
       >
-        {progress.reading.map((source) => (
-          <Stack
+        {/* A file's Reading line folds away as its proposals slide in. */}
+        {prepared.ui.sources.map((source) => (
+          <Collapse
             key={source.source_id}
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{
-              px: inset,
-              py: 1.25,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
+            in={readingIds.has(source.source_id)}
+            timeout={timeout}
+            unmountOnExit
           >
-            <CircularProgress
-              size={14}
-              thickness={5}
-              sx={{ color: "text.secondary", flexShrink: 0 }}
-            />
-            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-              {COPY.reading(source.name)}
-            </Typography>
-          </Stack>
-        ))}
-        {groupProposals(items).map(({ group, items: inGroup }, index) => (
-          <Box key={group}>
-            <Typography
+            <ShimmerText
               sx={{
-                typography: "m3",
-                color: "text.primary",
                 px: inset,
-                pt: index ? 2 : 1.5,
-                pb: 0.75,
-                ...(index > 0 && {
-                  borderTop: "1px solid",
-                  borderColor: "divider",
-                }),
+                py: 1.25,
+                borderBottom: "1px solid",
+                borderColor: "divider",
               }}
             >
-              {group}
-              <Box
-                component="span"
-                sx={{ color: "text.tertiary", fontWeight: 400, ml: 0.75 }}
-              >
-                {inGroup.length}
-              </Box>
-            </Typography>
-            {inGroup.map((item) => (
-              <ProposalItem
-                key={item.id}
-                item={item}
-                inset={inset}
-                checked={checked.includes(item.id)}
-                hideCheckbox={onlyOne}
-                edit={item.edited}
-                onToggle={() => toggle(item.id)}
-                onEdit={(text) =>
-                  setEdits((current) => ({ ...current, [item.id]: text }))
-                }
-                onOpenSource={onOpenSource}
-                onPick={(option) =>
-                  setPicks((current) => ({ ...current, [item.id]: option }))
-                }
-                onSupply={setSupplyAnchor}
-                onLeaveOut={() => leaveOut(item)}
-                onChoose={(choice) => choose(item.sourceId, choice)}
-                personalReplaced={
-                  item.kind === "table" &&
-                  live.get(item.cite?.sourceId)?.ui?.personal_choice ===
-                    "replace"
-                }
-              />
-            ))}
-          </Box>
+              {COPY.reading(source.name)}
+            </ShimmerText>
+          </Collapse>
         ))}
+        {groupProposals(all).map(({ group, items: inGroup }, index) => {
+          const shown = inGroup.filter((item) => !leftOut.has(item.id));
+          return (
+            <Collapse
+              key={group}
+              in={shown.length > 0}
+              appear
+              timeout={timeout}
+              unmountOnExit
+            >
+              <Typography
+                sx={{
+                  typography: "m3",
+                  color: "text.primary",
+                  px: inset,
+                  pt: index ? 2 : 1.5,
+                  pb: 0.75,
+                  ...(index > 0 && {
+                    borderTop: "1px solid",
+                    borderColor: "divider",
+                  }),
+                }}
+              >
+                {group}
+                <Box
+                  component="span"
+                  sx={{ color: "text.tertiary", fontWeight: 400, ml: 0.75 }}
+                >
+                  {shown.length}
+                </Box>
+              </Typography>
+              {inGroup.map((item) => (
+                <Collapse
+                  key={item.id}
+                  in={!leftOut.has(item.id)}
+                  appear
+                  timeout={timeout}
+                  unmountOnExit
+                >
+                  <ProposalItem
+                    item={item}
+                    inset={inset}
+                    checked={checked.includes(item.id)}
+                    hideCheckbox={onlyOne}
+                    edit={item.edited}
+                    onToggle={() => toggle(item.id)}
+                    onEdit={(text) =>
+                      setEdits((current) => ({ ...current, [item.id]: text }))
+                    }
+                    onOpenSource={onOpenSource}
+                    onPick={(option) =>
+                      setPicks((current) => ({ ...current, [item.id]: option }))
+                    }
+                    onSupply={setSupplyAnchor}
+                    onLeaveOut={() => leaveOut(item)}
+                    onChoose={(choice) => choose(item.sourceId, choice)}
+                    personalReplaced={
+                      item.kind === "table" &&
+                      live.get(item.cite?.sourceId)?.ui?.personal_choice ===
+                        "replace"
+                    }
+                  />
+                </Collapse>
+              ))}
+            </Collapse>
+          );
+        })}
       </Box>
       {showFooter && (
         <Stack
