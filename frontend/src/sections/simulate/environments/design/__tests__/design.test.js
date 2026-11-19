@@ -39,16 +39,13 @@ describe("design", () => {
     expect(done.approveBlocked).toBe(false);
   });
 
-  it("blocks approval when the only file doesn't say what the agent does", () => {
-    const s = designSummary(
-      draft({ files: [file("CONTRIBUTING.md")], readUntil: 1 }),
-      2,
-    );
-    expect(s.records).toEqual([]);
-    expect(s.tools).toEqual([]);
-    expect(s.rules).toEqual([]);
-    expect(s.scenarios).toEqual([]);
-    expect(s.approveBlocked).toBe(true);
+  it("blocks approval only when there is nothing to build from", () => {
+    const at = (extra) => designSummary(draft({ readUntil: 1, ...extra }), 2);
+    const noTools = at({ files: [file("CONTRIBUTING.md")] });
+    expect(noTools.tools).toEqual([]);
+    expect(noTools.approveBlocked).toBe(false);
+    expect(at({ description: "It helps people." }).approveBlocked).toBe(true);
+    expect(at({ files: [file("notes.pages")] }).approveBlocked).toBe(true);
   });
 
   it("offers a stand-in for what can't be built and adds it once simulated", () => {

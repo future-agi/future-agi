@@ -86,22 +86,22 @@ export function turnsOf(draft, summary, build) {
       ? ` I couldn't read ${names(summary.unusable)}.`
       : "";
     const read = names(summary.sources);
-    const ask = summary.sources.length
-      ? "What does the agent do? For example: it triages new issues, labels and assigns them and closes duplicates."
-      : "What does the agent work with, and what can it do? For example: customers and their orders; it can look up an order and refund up to $200.";
+    const ask =
+      "What does the agent work with, and what can it do? For example: customers and their orders; it can look up an order and refund up to $200.";
     const counts = [
       count(summary.records.length, "kind of record", "kinds of record"),
       count(summary.tools.length, "tool"),
       count(summary.rules.length, "rule"),
     ].filter(Boolean);
-    // Only an agent's build can have nothing found and still not be blocked.
     const found = counts.length
       ? `The design has ${counts.join(", ")}, each saying where it came from.${unread} It's on the right.`
-      : `No records, tools or rules yet.${unread} The tools are read from the agent's code when it builds.`;
+      : `No records, tools or rules yet.${unread} ${
+          summary.brief.agent
+            ? "The tools are read from the agent's code when it builds."
+            : "The files go in as background for the agent."
+        }`;
     text = summary.approveBlocked
-      ? read
-        ? `I read ${read}, but it doesn't say what the agent does.${unread} There's nothing to build yet. ${ask}`
-        : `There's nothing to build yet.${unread} ${ask}`
+      ? `There's nothing to build yet.${unread} ${ask}`
       : `${read ? `I read ${read}. ` : ""}${found} Nothing is built until you approve.`;
   }
   turns.push({ id: "found", role: "builder", steps: [{ kind: "note", text }] });

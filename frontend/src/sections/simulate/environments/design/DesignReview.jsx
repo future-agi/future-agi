@@ -221,12 +221,9 @@ export default function DesignReview({
     ["Agent", brief.agent || "None yet. Connect one after you save."],
   ];
 
-  const readable = sources.map((f) => f.name).join(", ");
   const blocker =
     !reading && approveBlocked
-      ? draft.files.length && readable
-        ? `${readable} ${sources.length === 1 ? "doesn't" : "don't"} say what the agent does. Describe it, for example "it triages new issues: labels, assigns and closes duplicates", or add a file that does.`
-        : `There's nothing to build yet. Say what the agent does and works with, for example "customers and their orders; it can look up an order and refund up to $200".`
+      ? `There's nothing to build yet. Say what the agent does and works with, for example "customers and their orders; it can look up an order and refund up to $200".`
       : null;
   // The last blocker, so its words stay while it collapses away.
   const shownBlocker = useRef(blocker);
