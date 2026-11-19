@@ -392,6 +392,7 @@ export default function RunDialog({
 
   return (
     <Dialog
+      data-scenario-run-dialog=""
       open={open}
       onClose={submitting ? undefined : onClose}
       fullWidth

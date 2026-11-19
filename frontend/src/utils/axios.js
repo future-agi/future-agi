@@ -1630,6 +1630,8 @@ export const endpoints = {
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/",
         { agent_id: agent, version_id: version },
       ),
+    observabilityProvider: (id) =>
+      apiPath("/tracer/observability-provider/{id}/", { id }),
     verifyApiKey: apiPath("/tracer/observability-provider/verify_api_key/"),
     verifyAssistantId: apiPath(
       "/tracer/observability-provider/verify_assistant_id/",

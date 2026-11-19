@@ -230,6 +230,30 @@
 - public soft deletion excludes retained predicates without changing source spans
 - sibling project, owner B organization and owner A explicit other workspace cannot read target Scores/catalog/results
 
+### ANNOT-E2E-005 — queue members drill into disagreements and recover from unavailable items
+
+**Goal:** A queue member opens the exact disagreed item in the appropriate workspace and can recover when that item is unavailable
+
+**Spec:** `flows/annotations/agreement-drilldown.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed synthetic dataset rows, numeric labels and four non-admin queue roles through public APIs
+2. read zero, three and twenty-five disagreements; open the exact capped list with five more
+3. use keyboard open, traversal, Escape and Enter to inspect the exact item in each role
+4. read a long label in light and dark without horizontal overflow
+5. open an unassigned and a deleted item, read a persistent explanation and return to the queue
+6. resolve disagreements, then remove a label and delete its synthetic scores; reconnect after each real stale interval and see the popup close
+
+**Backend state verified:**
+
+- four non-admin viewer_roles and real agreement responses match the seeded 0/3/25 conflicts and capped item sets
+- each role opens the exact source row and permitted score authors in review or annotate mode
+- unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
+- score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
@@ -1719,6 +1743,26 @@
 - Prompt Injection invalid drafts make no policy write; correction preserves exact HIGH sensitivity, supported category, unknown metadata and intended key in API, PostgreSQL, pushed config and reopened JSON, with a safe uncached echo
 - an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON
 - an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL
+
+### GW-E2E-020 — named providers save their native API format
+
+**Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
+
+**Spec:** `flows/gateway/provider-format.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Add Provider and switch from OpenAI to Anthropic, Google and Azure in turn
+2. see the selected native API format, with no incompatible choices
+3. save each provider with a synthetic endpoint, key and unique manually entered model
+4. reopen each saved provider and see the same API format
+5. switch from Anthropic back to OpenAI, then to Custom and choose a format explicitly
+
+**Backend state verified:**
+
+- the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
 
 ## knowledge-base
 
