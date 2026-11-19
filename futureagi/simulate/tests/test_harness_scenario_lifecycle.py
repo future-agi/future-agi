@@ -931,6 +931,28 @@ def test_legacy_cases_a_validate_would_hold_for_no_negative_control_are_counted(
     counts = lifecycle_counts(views)
 
     assert counts["legacy_without_control"] == 1
+
+
+def test_cases_kept_without_a_control_are_counted_from_current_and_legacy_proofs(
+    user, workspace, storage
+):
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+
+    environment = _environment(user, workspace, storage, "lc-no-control")
+    _suite(environment, _ten())
+    proofs = dict.fromkeys(KEYS, PROVED)
+    proofs[REFUND_KEYS[0]] = {
+        **ASSUMED,
+        "assumed": [],
+        "blocked_reason": "no_negative_control",
+    }
+    proofs[REFUND_KEYS[1]] = {"holds": True}
+    proofs[REFUND_KEYS[2]] = ASSUMED
+    _proofs(environment, proofs)
+
+    counts = lifecycle_counts(_views(environment).values())
+
+    assert (counts["kept_as_written"], counts["legacy_without_control"]) == (3, 2)
     assert counts["kept_as_written"] == 3
 
 
