@@ -1,0 +1,224 @@
+{
+  "description": "Exact EE auto-reload cap, consent and explicit charge-now contract reconciliation. Only these before/after pairs are accepted; additional drift still fails.",
+  "source_merge_base": "5ccdf25c7591210ab65bbfb4677717fb1dee600d",
+  "swagger": {
+    "paths": {
+      "/usage/update-auto-reload-settings/": {
+        "before": {
+          "post": {
+            "operationId": "usage_update-auto-reload-settings_create",
+            "description": "",
+            "parameters": [
+              {
+                "name": "data",
+                "in": "body",
+                "required": true,
+                "schema": {
+                  "$ref": "#/definitions/AutoReloadSettingsRequest"
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/AutoReloadUpdateResponse"
+                }
+              },
+              "400": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "401": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "402": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "403": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "404": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "500": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "default": {
+                "description": "Default error response",
+                "schema": {
+                  "$ref": "#/definitions/ManagementAPIErrorResponse"
+                }
+              }
+            },
+            "tags": ["usage"],
+            "x-runtime-request-validation": true,
+            "x-runtime-response-validation": true
+          },
+          "parameters": []
+        },
+        "after": {
+          "post": {
+            "operationId": "usage_update-auto-reload-settings_create",
+            "description": "Owner/Admin only. Enabling needs a positive cap and consent, recorded\non the Stripe customer against the current default card. Saving never\ncharges; ``autoreload_charge_now`` asks for one capped reload now.\nDisabling clears the consent.",
+            "parameters": [
+              {
+                "name": "data",
+                "in": "body",
+                "required": true,
+                "schema": {
+                  "$ref": "#/definitions/AutoReloadSettingsRequest"
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/AutoReloadUpdateResponse"
+                }
+              },
+              "400": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "401": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "402": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "403": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "404": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "500": {
+                "description": "",
+                "schema": {
+                  "$ref": "#/definitions/UsageErrorResponse"
+                }
+              },
+              "default": {
+                "description": "Default error response",
+                "schema": {
+                  "$ref": "#/definitions/ManagementAPIErrorResponse"
+                }
+              }
+            },
+            "tags": ["usage"],
+            "x-runtime-request-validation": true,
+            "x-runtime-response-validation": true
+          },
+          "parameters": []
+        }
+      }
+    },
+    "definitions": {
+      "AutoReloadSettingsRequest": {
+        "before": {
+          "required": [
+            "autoreload_enabled",
+            "autoreload_walletamount",
+            "autoreload_walletthreshold"
+          ],
+          "type": "object",
+          "properties": {
+            "autoreload_enabled": {
+              "title": "Autoreload enabled",
+              "type": "boolean"
+            },
+            "autoreload_walletamount": {
+              "title": "Autoreload walletamount",
+              "type": "string",
+              "format": "decimal"
+            },
+            "autoreload_walletthreshold": {
+              "title": "Autoreload walletthreshold",
+              "type": "string",
+              "format": "decimal"
+            }
+          }
+        },
+        "after": {
+          "required": [
+            "autoreload_enabled",
+            "autoreload_walletamount",
+            "autoreload_walletthreshold"
+          ],
+          "type": "object",
+          "properties": {
+            "autoreload_enabled": {
+              "title": "Autoreload enabled",
+              "type": "boolean"
+            },
+            "autoreload_walletamount": {
+              "title": "Autoreload walletamount",
+              "type": "string",
+              "format": "decimal"
+            },
+            "autoreload_walletthreshold": {
+              "title": "Autoreload walletthreshold",
+              "type": "string",
+              "format": "decimal"
+            },
+            "autoreload_maxcharge": {
+              "title": "Autoreload maxcharge",
+              "type": "string",
+              "format": "decimal",
+              "x-nullable": true
+            },
+            "autoreload_consent": {
+              "title": "Autoreload consent",
+              "type": "boolean",
+              "default": false
+            },
+            "autoreload_charge_now": {
+              "title": "Autoreload charge now",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      }
+    }
+  },
+  "zod": {
+    "UsageUpdateAutoReloadSettingsCreateBody": {
+      "before": "UsageUpdateAutoReloadSettingsCreateBody = zod . object ( { autoreload_enabled : zod . boolean ( ) , autoreload_walletamount : zod . string ( ) , autoreload_walletthreshold : zod . string ( ) } )",
+      "after": "UsageUpdateAutoReloadSettingsCreateBody = zod . object ( { autoreload_enabled : zod . boolean ( ) , autoreload_walletamount : zod . string ( ) , autoreload_walletthreshold : zod . string ( ) , autoreload_maxcharge : zod . string ( ) . optional ( ) , autoreload_consent : zod . boolean ( ) . default ( false ) , autoreload_charge_now : zod . boolean ( ) . default ( false ) } )"
+    }
+  }
+}

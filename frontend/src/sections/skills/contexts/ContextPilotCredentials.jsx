@@ -1,0 +1,468 @@
+import { useEffect, useState } from "react";
+import PropTypes from "prop-types";
+import {
+  Alert,
+  Button,
+  IconButton,
+  ListItemIcon,
+  Menu,
+  MenuItem,
+  Stack,
+  Table,
+  TableBody,
+  TableContainer,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Tooltip,
+  Typography,
+  useMediaQuery,
+} from "@mui/material";
+import { useTheme } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
+import StatusBadge from "src/components/status-badge";
+import Iconify from "src/components/iconify";
+import IdentityChip from "../components/IdentityChip";
+import When from "../components/When";
+import TechnicalDetails from "../components/TechnicalDetails";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import {
+  useContextCredentials,
+  useIssueContextCredential,
+  useRevokeContextCredential,
+} from "src/api/skills";
+
+const EXPIRY_DAYS = [1, 7, 30];
+const DAY_MS = 86_400_000;
+
+// A key is purpose-bound: consume only, one resource, and either one exact version
+// or (skills only) one named label. The grant must match the selector the install
+// command asks for, because the server answers 403 for anything else.
+export function consumeCredentialInput({
+  kind = "agent_context",
+  resourceId,
+  labels = [],
+  versionIds = [],
+  days,
+  now = Date.now(),
+}) {
+  if (!resourceId || !EXPIRY_DAYS.includes(days) || (!labels.length && !versionIds.length))
+    throw new Error("Choose an exact version or a label, and an expiry.");
+  return {
+    purpose: "consume",
+    grants: [{ kind, resourceId, labels, versionIds }],
+    bindingIds: [],
+    expiresAt: new Date(now + days * DAY_MS).toISOString(),
+  };
+}
+
+// A context key is purpose-bound: consume only, this context, this exact
+// version. No labels, so a later release cannot be delivered through it.
+export function pilotCredentialInput({
+  contextId,
+  versionId,
+  days,
+  now = Date.now(),
+}) {
+  if (!contextId || !versionId || !EXPIRY_DAYS.includes(days))
+    throw new Error("Choose an exact version and an expiry.");
+  return consumeCredentialInput({
+    kind: "agent_context",
+    resourceId: contextId,
+    versionIds: [versionId],
+    days,
+    now,
+  });
+}
+
+export const grantsResource = (credential, kind, resourceId) =>
+  credential.purpose === "consume" &&
+  credential.grants.some(
+    (grant) => grant.kind === kind && grant.resourceId === resourceId,
+  );
+
+export const grantsContext = (credential, contextId) =>
+  grantsResource(credential, "agent_context", contextId);
+
+// Does this key grant exactly what the install command will ask for?
+export const grantMatches = (credential, { kind, resourceId, label, versionId }) =>
+  credential.purpose === "consume" &&
+  credential.grants.some(
+    (grant) =>
+      grant.kind === kind &&
+      grant.resourceId === resourceId &&
+      (label ? grant.labels?.includes(label) : grant.versionIds?.includes(versionId)),
+  );
+
+const credentialStatus = (credential, now = Date.now()) => {
+  if (credential.revokedAt) return "revoked";
+  if (Date.parse(credential.expiresAt) <= now) return "expired";
+  return "active";
+};
+
+const newKey = () => crypto.randomUUID();
+
+function CredentialActions({ credential, status, onRevoke }) {
+  const [anchor, setAnchor] = useState(null);
+  return (
+    <>
+      <IconButton
+        size="small"
+        aria-label={`Actions for credential ${credential.id.slice(0, 8)}`}
+        onClick={(event) => setAnchor(event.currentTarget)}
+      >
+        <Iconify icon="solar:menu-dots-bold" width={16} />
+      </IconButton>
+      <Menu
+        anchorEl={anchor}
+        open={Boolean(anchor)}
+        onClose={() => setAnchor(null)}
+      >
+        <MenuItem
+          onClick={async () => {
+            setAnchor(null);
+            try { await navigator.clipboard.writeText(credential.id); enqueueSnackbar("Copied"); } catch { enqueueSnackbar("Couldn't copy the key ID", { variant: "error" }); }
+          }}
+        >
+          <ListItemIcon>
+            <Iconify icon="solar:copy-linear" width={16} />
+          </ListItemIcon>
+          Copy key ID
+        </MenuItem>
+        <MenuItem
+          disabled={status === "revoked"}
+          onClick={() => {
+            setAnchor(null);
+            onRevoke(credential);
+          }}
+        >
+          <ListItemIcon>
+            <Iconify icon="solar:forbidden-circle-linear" width={16} />
+          </ListItemIcon>
+          Revoke
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+CredentialActions.propTypes = {
+  credential: PropTypes.object.isRequired,
+  status: PropTypes.string.isRequired,
+  onRevoke: PropTypes.func.isRequired,
+};
+
+// A revoked key no longer expires in any useful sense, so it shows "Revoked" and nothing else.
+function CredentialRow({ credential, versionLabel, onRevoke }) {
+  const status = credentialStatus(credential);
+  return (
+    <TableRow hover sx={{ height: ROW_HEIGHT.default }}>
+      <TableCell>
+        <Typography variant="s1">
+          <Tooltip title={`Key ${credential.id}`} describeChild>
+            <span tabIndex={0}>Read-only key</span>
+          </Tooltip>
+          {credential.createdAt && <Typography component="span" variant="s3" color="text.secondary">{" · created "}<When value={credential.createdAt} sx={{ display: 'inline-block', '&::first-letter': { textTransform: 'lowercase' } }} /></Typography>}
+        </Typography>
+      </TableCell>
+      <TableCell>
+        <Typography variant="s1">{versionLabel(credential)}</Typography>
+      </TableCell>
+      <TableCell>
+        {status !== "revoked" && (
+          <Typography variant="s1">
+            <When value={credential.expiresAt} kind="expiry" />
+          </Typography>
+        )}
+      </TableCell>
+      <TableCell>
+        <StatusBadge status={status} {...(status === "revoked" ? { role: "neutral", variant: "badge" } : {})} />
+      </TableCell>
+      <TableCell align="right">
+        <CredentialActions credential={credential} status={status} onRevoke={onRevoke} />
+      </TableCell>
+    </TableRow>
+  );
+}
+CredentialRow.propTypes = {
+  credential: PropTypes.object.isRequired,
+  versionLabel: PropTypes.func.isRequired,
+  onRevoke: PropTypes.func.isRequired,
+};
+
+// Below sm the key list is stacked rows: "Read-only key · v2 · Expires in 26 min", the status and the menu on
+// one line. The key ID rides in the name's tooltip instead of a column.
+function CredentialStackRow({ credential, versionLabel, onRevoke }) {
+  const status = credentialStatus(credential);
+  return (
+    <Stack
+      role="listitem"
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{ py: 1, borderBottom: 1, borderColor: "divider", minWidth: 0 }}
+    >
+      <Typography variant="s1" sx={{ flex: 1, minWidth: 0 }}>
+        <Tooltip title={`Key ${credential.id}`} describeChild>
+          <span tabIndex={0}>Read-only key</span>
+        </Tooltip>
+        {credential.createdAt && <>{" · created "}<When value={credential.createdAt} sx={{ display: 'inline-block', '&::first-letter': { textTransform: 'lowercase' } }} /></>}
+        {" · "}
+        {versionLabel(credential)}
+        {status !== "revoked" && (
+          <>
+            {" · "}
+            <When value={credential.expiresAt} kind="expiry" />
+          </>
+        )}
+      </Typography>
+      <StatusBadge status={status} {...(status === "revoked" ? { role: "neutral", variant: "badge" } : {})} />
+      <CredentialActions credential={credential} status={status} onRevoke={onRevoke} />
+    </Stack>
+  );
+}
+CredentialStackRow.propTypes = CredentialRow.propTypes;
+
+// Intent: an admin issues and later revokes the isolated credential a pilot
+// install uses, next to the exact version it is bound to.
+export default function ContextPilotCredentials({
+  contextId,
+  resourceId = contextId,
+  kind = "agent_context",
+  label,
+  snapshot,
+  canIssue,
+  onAvailabilityChange,
+  showHeading = true,
+}) {
+  const theme = useTheme();
+  const phone = useMediaQuery(theme.breakpoints.down("sm"));
+  const [days, setDays] = useState(7);
+  const [issueKey, setIssueKey] = useState(newKey);
+  const [copyState, setCopyState] = useState("");
+  const [revoking, setRevoking] = useState(null);
+  // Revoked keys stay out of the way (they are history). One you revoke here stays listed for this visit, so the
+  // action you just took is confirmed on the row; after a reload it folds into the collapsed group.
+  const [showRevoked, setShowRevoked] = useState(false);
+  const [justRevoked, setJustRevoked] = useState([]);
+  const list = useContextCredentials(
+    { page: 1, pageSize: 100 },
+    { enabled: canIssue },
+  );
+  const issue = useIssueContextCredential();
+  const revoke = useRevokeContextCredential();
+  const issued = issue.data;
+  const noun = kind === "skill" ? "skill" : "context";
+  const rows = (list.data?.results ?? []).filter((row) =>
+    grantMatches(row, { kind, resourceId, label, versionId: snapshot.versionId }),
+  );
+  const hasKey = !list.isError && rows.some((row) => credentialStatus(row) === 'active');
+  const folded = rows.filter((row) => credentialStatus(row) === 'revoked' && !justRevoked.includes(row.id));
+  const visible = showRevoked ? rows : rows.filter((row) => !folded.includes(row));
+  useEffect(() => { onAvailabilityChange?.(hasKey); }, [hasKey, onAvailabilityChange]);
+  const versionLabel = (credential) => {
+    const ids = credential.grants.flatMap((grant) => grant.versionIds);
+    const named = credential.grants.flatMap((grant) => grant.labels ?? []);
+    if (!ids.length && named.length) return named.length === 1 ? `${named[0]} label` : `${named.length} labels`;
+    return ids.length === 1 && ids[0] === snapshot.versionId
+      ? `v${snapshot.version}`
+      : `${ids.length} exact ${ids.length === 1 ? 'version' : 'versions'}`;
+  };
+  if (!canIssue)
+    return (
+      <Typography variant="s3" color="text.secondary">Ask a workspace admin for access.</Typography>
+    );
+  return (
+    <>
+      <Stack spacing={1.5}>
+        {showHeading && <Typography variant="m3">{label ? `Create a read-only key for the ${label} label` : `Create a read-only key for v${snapshot.version}`}</Typography>}
+        <Typography variant="s3" color="text.secondary">
+          {label
+            ? `Read-only, and limited to the ${label} label of this ${noun}. It reads whichever version that label points to when you run a plan, so an update can see a new release. It can't read drafts, other labels or other ${noun}s. The secret is shown once and is never placed in a command.`
+            : `Read-only, and bound to v${snapshot.version} of this ${noun}. It can't read drafts, other versions or moving labels. The secret is shown once and is never placed in a command.`}
+        </Typography>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+          <TextField
+            select
+            size="small"
+            label="Expires after"
+            value={days}
+            onChange={(event) => setDays(Number(event.target.value))}
+            sx={{ minWidth: 160 }}
+          >
+            {EXPIRY_DAYS.map((value) => (
+              <MenuItem key={value} value={value}>
+                {value === 1 ? "1 day" : `${value} days`}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Button
+            color="primary"
+            variant={hasKey ? "outlined" : "contained"}
+            disabled={issue.isPending}
+            onClick={() => {
+              setCopyState("");
+              issue.mutate(
+                {
+                  ...(label
+                    ? consumeCredentialInput({ kind, resourceId, labels: [label], days })
+                    : consumeCredentialInput({ kind, resourceId, versionIds: [snapshot.versionId], days })),
+                  idempotencyKey: issueKey,
+                },
+                { onSuccess: () => setIssueKey(newKey()) },
+              );
+            }}
+          >
+            Create key
+          </Button>
+        </Stack>
+        {issue.isError && (
+          <Alert severity="error">
+            Could not create the key. Retrying reuses the same request.
+          </Alert>
+        )}
+        {issued && (
+          <Alert severity={issued.secretAvailable ? "success" : "warning"}>
+            <Stack spacing={1}>
+              <Typography variant="s1">
+                {label ? `Read-only key created for the ${label} label.` : `Read-only key created for v${snapshot.version}.`}
+                {issued.secretAvailable
+                  ? " Copy it now; it isn't shown again. The install steps below say where to set it."
+                  : " This was a replay; the secret is no longer available. Create a new key."}
+              </Typography>
+              <TechnicalDetails title="Technical details"><IdentityChip value={issued.id} kind="id" label="Key ID" /></TechnicalDetails>
+              {issued.secretAvailable && (
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "flex-start", sm: "center" }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={async () => {
+                      try {
+                        if (!navigator.clipboard?.writeText)
+                          throw new Error("Unavailable");
+                        await navigator.clipboard.writeText(issued.secret);
+                        setCopyState("copied");
+                      } catch {
+                        setCopyState("failed");
+                      }
+                    }}
+                  >
+                    Copy key secret
+                  </Button>
+                  {copyState === "copied" && (
+                    <Typography variant="s3" role="status">
+                      Copied. Store it in your secret manager.
+                    </Typography>
+                  )}
+                  {copyState === "failed" && (
+                    <Typography variant="s3" role="status">
+                      Clipboard unavailable. Revoke this key and create
+                      another from a browser with clipboard access.
+                    </Typography>
+                  )}
+                </Stack>
+              )}
+            </Stack>
+          </Alert>
+        )}
+        {!list.isError && !list.isLoading && !hasKey && (
+          <Typography variant="s3">No active keys yet.</Typography>
+        )}
+        {list.isError ? (
+          <Alert severity="error">
+            Could not load keys.{" "}
+            <Button size="small" onClick={() => list.refetch()}>
+              Retry
+            </Button>
+          </Alert>
+        ) : visible.length > 0 && phone ? (
+          <Stack role="list" aria-label={`Pilot credentials for this ${noun}`} sx={{ minWidth: 0 }}>
+            {visible.map((row) => (
+              <CredentialStackRow
+                key={row.id}
+                credential={row}
+                versionLabel={versionLabel}
+                onRevoke={setRevoking}
+              />
+            ))}
+          </Stack>
+        ) : visible.length > 0 ? (
+          <TableContainer><Table size="small" aria-label={`Pilot credentials for this ${noun}`}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Key</TableCell>
+                <TableCell>Version</TableCell>
+                <TableCell>Expires</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="right" />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {visible.map((row) => (
+                <CredentialRow
+                  key={row.id}
+                  credential={row}
+                  versionLabel={versionLabel}
+                  onRevoke={setRevoking}
+                />
+              ))}
+            </TableBody>
+          </Table></TableContainer>
+        ) : null}
+        {!list.isError && folded.length > 0 && (
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            aria-expanded={showRevoked}
+            sx={{ alignSelf: "flex-start" }}
+            onClick={() => setShowRevoked((current) => !current)}
+          >
+            {showRevoked ? `Hide revoked keys (${folded.length})` : `Show revoked keys (${folded.length})`}
+          </Button>
+        )}
+        {revoke.isError && (
+          <Alert severity="error">
+            Revocation was not confirmed. Check the status and try again.
+          </Alert>
+        )}
+      </Stack>
+      <ConfirmDialog
+        open={Boolean(revoking)}
+        onClose={() => setRevoking(null)}
+        title="Revoke key"
+        content={
+          revoking
+            ? `Key ${revoking.id.slice(0, 8)} stops working for every new resolve, download and access check. Installed files stay until you remove them.`
+            : ""
+        }
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            disabled={revoke.isPending}
+            onClick={() =>
+              revoke.mutate(
+                { credentialId: revoking.id },
+                { onSuccess: () => { setJustRevoked((current) => [...current, revoking.id]); setRevoking(null); } },
+              )
+            }
+          >
+            Revoke
+          </Button>
+        }
+      />
+    </>
+  );
+}
+ContextPilotCredentials.propTypes = {
+  contextId: PropTypes.string,
+  resourceId: PropTypes.string,
+  kind: PropTypes.oneOf(["agent_context", "skill"]),
+  label: PropTypes.string,
+  snapshot: PropTypes.object.isRequired,
+  canIssue: PropTypes.bool,
+  onAvailabilityChange: PropTypes.func,
+  showHeading: PropTypes.bool,
+};

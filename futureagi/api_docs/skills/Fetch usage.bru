@@ -1,0 +1,17 @@
+meta {
+  name: Fetch usage
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/usage/?days=7
+  body: none
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}

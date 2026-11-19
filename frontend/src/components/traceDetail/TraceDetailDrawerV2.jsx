@@ -1,4 +1,11 @@
-import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, {
+  Suspense,
+  lazy,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
@@ -6,18 +13,23 @@ import {
   AlertTitle,
   Box,
   Button,
+  Chip,
+  Collapse,
   Drawer,
   Menu,
   MenuItem,
   Portal,
+  Skeleton,
+  Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useSharedIssueTrace } from "src/api/shared-links";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import axios, { endpoints, traceSkillsEndpoint } from "src/utils/axios";
 import { modelCatalogQuery } from "src/api/model/model";
 import { useCreatePromptDraft } from "src/api/develop/prompt";
 import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
@@ -63,6 +75,23 @@ import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
 import ContentSkeleton from "src/components/content-skeleton";
+import { Link as RouterLink } from "react-router-dom";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import {
+  CONTENTS_MISMATCH,
+  EVIDENCE,
+  SKILLS_LOADED,
+  askedFor,
+  askedForVersion,
+  failedLoadChip,
+  versionName,
+} from "src/sections/skills/runtime/runtimeCopy";
+import {
+  OBSERVE_SKILL_COPY,
+  mapTraceSkillsDetail,
+  skillRuntimeHref,
+  traceSkillsChipText,
+} from "src/sections/projects/LLMTracing/skillFilters";
 
 const PANEL_WIDTH = "60vw";
 
@@ -94,6 +123,8 @@ export function TraceDetailSpanFilterPanel({
       propertyNamespace="traces"
       attributeSource="spans"
       isSpansView
+      // The drawer filters spans on the client; SKILL items are list filters.
+      skillFields={false}
     />
   );
 }
@@ -132,6 +163,350 @@ const ACTION_ITEMS = [
 function getSpan(entry) {
   return entry?.observation_span || {};
 }
+
+// ── Skills loaded (SKILL-TRACES §7.2, UX-04, UX-13) ─────────────────────
+// One chip in the drawer's chip row: "Skills: refund-policy v3, tone v1",
+// with "· 1 failed to load". It expands into rows ordered by first load; the
+// open state is remembered per viewer. Reads §6.6 endpoint 7 once per trace.
+
+// The agent panel (§7.5, lane ST10) loads only when an agent is opened.
+const AgentPanel = lazy(() => import("src/sections/skills/runtime/AgentPanel"));
+// The §3.4 agent key [project, service, agent] as AgentPanel's input (the
+// same mapping as its agentPanelInput, kept here so the drawer does not load
+// the Skills runtime module until an agent is opened).
+const agentFromKey = (key, name) => ({
+  projectId: key[0],
+  service: key[1] ?? "",
+  agentName: key[2] ?? "",
+  name: name || key[2] || key[1] || undefined,
+  nameSource: key[2] ? "agent" : key[1] ? "service" : "project",
+});
+
+const SKILLS_EXPANDED_KEY = "trace-detail-skills-expanded";
+const readExpanded = () => {
+  try {
+    return localStorage.getItem(SKILLS_EXPANDED_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+const writeExpanded = (value) => {
+  try {
+    localStorage.setItem(SKILLS_EXPANDED_KEY, value ? "1" : "0");
+  } catch {
+    /* per-viewer convenience only */
+  }
+};
+
+export function useTraceSkillsDetail({ traceId, projectId, enabled }) {
+  const query = useQuery({
+    queryKey: ["observe", "trace-skills-detail", projectId, traceId],
+    queryFn: async ({ signal }) => {
+      const url = traceSkillsEndpoint();
+      const detail = { skills: [], failed: [], contexts: [], linked_not_loaded: [], linked_version_differences: [] };
+      let cursor;
+      const seenCursors = new Set();
+      do {
+        const response = await axios.post(url, {
+          projection: "detail", project_id: projectId, trace_id: traceId,
+          ...(cursor ? { cursor } : {}),
+        }, { signal });
+        const page = response.data.result;
+        for (const key of ["skills", "failed", "contexts", "linked_not_loaded"]) {
+          detail[key].push(...page[key]);
+        }
+        detail.linked_version_differences.push(...(page.linked_version_differences ?? []));
+        detail.coverage = page.coverage;
+        cursor = page.next_cursor;
+        if (cursor && (seenCursors.has(cursor) || seenCursors.size >= 100)) {
+          throw new Error("Trace skills pagination did not complete.");
+        }
+        if (cursor) seenCursors.add(cursor);
+      } while (cursor);
+      return mapTraceSkillsDetail(detail);
+    },
+    enabled: Boolean(enabled && traceId && projectId),
+    retry: false,
+    staleTime: 60 * 1000,
+    meta: { errorHandled: true },
+  });
+  return query;
+}
+
+export function TraceSkillsStrip({ query, onSelectSpan }) {
+  const [expanded, setExpanded] = useState(readExpanded);
+  const [agent, setAgent] = useState(null);
+  const toggle = () =>
+    setExpanded((previous) => {
+      writeExpanded(!previous);
+      return !previous;
+    });
+  if (query.isPending && query.fetchStatus !== "idle") {
+    return (
+      <Box sx={{ px: 2, py: 0.75 }}>
+        <Skeleton
+          variant="rounded"
+          width={180}
+          height={22}
+          aria-label={SKILLS_LOADED}
+        />
+      </Box>
+    );
+  }
+  if (query.isError) {
+    return (
+      <Box sx={{ px: 2, py: 0.75 }}>
+        <Chip
+          size="small"
+          variant="outlined"
+          label={OBSERVE_SKILL_COPY.skillsUnavailable}
+          onDelete={() => query.refetch()}
+          deleteIcon={
+            <Iconify
+              icon="solar:refresh-linear"
+              width={14}
+              aria-label={OBSERVE_SKILL_COPY.retry}
+            />
+          }
+        />
+      </Box>
+    );
+  }
+  const detail = query.data;
+  const chipText = traceSkillsChipText(detail);
+  if (!chipText) return null;
+  const failedCount = detail.failed.length;
+  return (
+    <Box sx={{ px: 2, py: 0.75, borderBottom: "1px solid", borderColor: "divider" }}>
+      <Chip
+        size="small"
+        clickable
+        onClick={toggle}
+        aria-expanded={expanded}
+        data-trace-skills-chip=""
+        label={chipText}
+        color={failedCount && !detail.skills.length ? "error" : "default"}
+        variant="outlined"
+        icon={
+          <Iconify
+            icon={
+              expanded
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
+            width={12}
+          />
+        }
+        sx={{ maxWidth: "100%" }}
+      />
+      <Collapse in={expanded} unmountOnExit>
+        <Stack
+          component="ul"
+          aria-label={SKILLS_LOADED}
+          spacing={0.5}
+          sx={{ listStyle: "none", m: 0, mt: 1, p: 0 }}
+        >
+          {detail.skills.map((row) => {
+            const asked =
+              row.requestedLabel != null
+                ? askedFor(row.requestedLabel)
+                : row.requestedVersion != null
+                  ? askedForVersion(row.requestedVersion)
+                  : null;
+            const howHref = skillRuntimeHref(row.skillId, row.version);
+            const agentInput = row.agentKey
+              ? agentFromKey(row.agentKey, row.agent)
+              : null;
+            return (
+              <Stack
+                component="li"
+                key={`${row.versionId || row.name}:${row.agent || ""}:${row.evidence || ""}`}
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                useFlexGap
+                sx={{
+                  flexWrap: "wrap",
+                  px: 1,
+                  py: 0.5,
+                  borderRadius: "4px",
+                  cursor: row.spanIds.length ? "pointer" : "default",
+                  "&:hover": { bgcolor: "action.hover" },
+                }}
+                onClick={() => row.spanIds[0] && onSelectSpan(row.spanIds[0])}
+              >
+                <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                  {row.name || OBSERVE_SKILL_COPY.unknownSkill}
+                </Typography>
+                <Chip size="small" label={versionName(row.version)} />
+                {asked && <Chip size="small" variant="outlined" label={asked} />}
+                {row.evidence && (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={EVIDENCE[row.evidence] || row.evidence}
+
+                  />
+                )}
+                {row.agent &&
+                  (agentInput ? (
+                    <Typography
+                      variant="caption"
+                      component="button"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setAgent(agentInput);
+                      }}
+                      sx={{
+                        border: 0,
+                        p: 0,
+                        bgcolor: "transparent",
+                        color: "primary.main",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {row.agent}
+                    </Typography>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      {row.agent}
+                    </Typography>
+                  ))}
+                {row.loads != null && (
+                  <Typography variant="caption" color="text.secondary">
+                    {OBSERVE_SKILL_COPY.loadsCount(row.loads)}
+                  </Typography>
+                )}
+                {row.digestStatus && <Tooltip
+                  title={
+                    row.digestStatus === "mismatch"
+                      ? CONTENTS_MISMATCH
+                      : OBSERVE_SKILL_COPY.digestVerified
+                  }
+                >
+                  <Box component="span" sx={{ display: "inline-flex" }}>
+                    <Iconify
+                      icon={
+                        row.digestStatus === "mismatch"
+                          ? "solar:danger-triangle-linear"
+                          : "solar:check-circle-linear"
+                      }
+                      width={14}
+                      sx={{
+                        color:
+                          row.digestStatus === "mismatch"
+                            ? "warning.main"
+                            : "text.secondary",
+                      }}
+                      aria-label={
+                        row.digestStatus === "mismatch"
+                          ? CONTENTS_MISMATCH
+                          : OBSERVE_SKILL_COPY.digestVerified
+                      }
+                    />
+                  </Box>
+                </Tooltip>}
+                {howHref && (
+                  <Typography
+                    variant="caption"
+                    component={RouterLink}
+                    to={howHref}
+                    onClick={(event) => event.stopPropagation()}
+                    sx={{ color: "primary.main", ml: "auto" }}
+                  >
+                    {OBSERVE_SKILL_COPY.howVersionIsDoing(row.version)}
+                  </Typography>
+                )}
+              </Stack>
+            );
+          })}
+          {detail.failed.map((row, index) => (
+            <Stack
+              component="li"
+              key={`failed:${row.skillName}:${index}`}
+              direction="row"
+              spacing={1}
+              alignItems="center"
+              sx={{
+                px: 1,
+                py: 0.5,
+                borderRadius: "4px",
+                color: "error.main",
+                cursor: row.spanId ? "pointer" : "default",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+              onClick={() => row.spanId && onSelectSpan(row.spanId)}
+            >
+              <Typography variant="caption" sx={{ color: "error.main" }}>
+                {failedLoadChip(row.skillName, row.errorType || "other")}
+              </Typography>
+            </Stack>
+          ))}
+        </Stack>
+        {detail.versionDifferences.map((row) => (
+          <Typography key={JSON.stringify(row)} variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, px: 1 }}>
+            {`${row.name}: loaded ${row.loaded.map(versionName).join(', ')}; ${row.context} ${versionName(row.contextVersion)} links to ${versionName(row.linked)}.`}
+          </Typography>
+        ))}
+        {detail.linkedNotLoaded.length > 0 && detail.context && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mt: 0.5, px: 1 }}
+          >
+            {OBSERVE_SKILL_COPY.linkedNotLoaded({
+              context: detail.context.name || OBSERVE_SKILL_COPY.context,
+              version: detail.context.version,
+              names: detail.linkedNotLoaded,
+            })}
+          </Typography>
+        )}
+        {detail.context && (
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            sx={{ mt: 0.5, px: 1 }}
+          >
+            <Typography variant="caption" color="text.secondary">
+              {OBSERVE_SKILL_COPY.context}
+            </Typography>
+            <Typography
+              variant="caption"
+              component={RouterLink}
+              to={`/dashboard/skills/contexts/${detail.context.id}`}
+              sx={{ color: "primary.main" }}
+            >
+              {detail.context.name || OBSERVE_SKILL_COPY.shortId(detail.context.id)}
+              {detail.context.version != null
+                ? ` ${versionName(detail.context.version)}`
+                : ""}
+            </Typography>
+            {(detail.context.bindingName || detail.context.bindingId) && (
+              <Chip
+                size="small"
+                variant="outlined"
+                label={`${OBSERVE_SKILL_COPY.connectedApp}: ${detail.context.bindingName || OBSERVE_SKILL_COPY.shortId(detail.context.bindingId)}`}
+
+              />
+            )}
+          </Stack>
+        )}
+      </Collapse>
+      {agent && (
+        <Suspense fallback={null}>
+          <AgentPanel open onClose={() => setAgent(null)} agent={agent} />
+        </Suspense>
+      )}
+    </Box>
+  );
+}
+
+TraceSkillsStrip.propTypes = {
+  query: PropTypes.object.isRequired,
+  onSelectSpan: PropTypes.func.isRequired,
+};
 
 const TraceDetailDrawerV2 = ({
   traceId,
@@ -549,6 +924,15 @@ const TraceDetailDrawerV2 = ({
   } = sharedToken ? sharedTrace : ownTrace;
   // A failed refresh must not present cached spans or totals as current data.
   const data = isError ? undefined : traceData;
+  // Skills loaded in this trace (SKILL-TRACES §7.2), behind skillTraces.
+  // Shared-link viewers are not signed in, so they never read it.
+  const skillTracesEnabled = useSkillTracesEnabled();
+  const traceSkillsQuery = useTraceSkillsDetail({
+    traceId,
+    projectId,
+    enabled: open && skillTracesEnabled && !sharedToken,
+  });
+  const skillCoverage = traceSkillsQuery.data?.coverage ?? null;
   const accessDenied = error?.statusCode === 401 || error?.statusCode === 403;
 
   const handleRefresh = useCallback(() => {
@@ -1205,6 +1589,12 @@ const TraceDetailDrawerV2 = ({
         {!isError && !isLoading && (
           <CaptureCoverageNotice coverage={data?.capture_coverage} />
         )}
+        {skillTracesEnabled && !sharedToken && !isError && !isLoading && (
+          <TraceSkillsStrip
+            query={traceSkillsQuery}
+            onSelectSpan={(spanId) => setSelectedSpanId(spanId)}
+          />
+        )}
 
         {/* Main content area */}
         <Box
@@ -1330,6 +1720,7 @@ const TraceDetailDrawerV2 = ({
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
                     drawerOpen={open}
+                    skillCoverage={skillCoverage}
                   />
                 </Box>
               )}
@@ -1415,6 +1806,7 @@ const TraceDetailDrawerV2 = ({
                     onSelectSpan={handleViewSpan}
                     initialEvalFocus={initialEvalFocus}
                     drawerOpen={open}
+                    skillCoverage={skillCoverage}
                   />
                 ) : (
                   /* Summary when no span selected */

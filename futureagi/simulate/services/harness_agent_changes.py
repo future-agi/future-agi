@@ -24,6 +24,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from model_hub.services.skills_hub.errors import SkillsHubError
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
@@ -56,6 +57,7 @@ from simulate.services.harness_github import (
     within_share,
 )
 from simulate.services.hosted_harness import HostedHarnessError
+from tfc.utils.github_public import sha_response
 
 logger = logging.getLogger(__name__)
 
@@ -250,18 +252,20 @@ def github_head(
         reserve=reserve,
         owner=repository.split("/")[0],
     )
-    if response.status == "not_modified" and cached.get("sha"):
-        return HeadResult("not_modified", cached["sha"])
-    if response.status == "not_modified":
-        return HeadResult("error")
-    if response.status != "ok":
+    if response.status not in {"ok", "not_modified"}:
         return HeadResult(response.status)
-    sha = str(response.body or "").strip()
-    if not _SHA.fullmatch(sha):
+    try:
+        pair = sha_response(
+            status_code=304 if response.status == "not_modified" else 200,
+            body=str(response.body or "").encode("utf-8"),
+            etag=response.etag,
+            cached=cached,
+        )
+    except SkillsHubError:
         return HeadResult("error")
-    # Kept past the poll interval, so the next tick can ask with its ETag.
-    cache.set(key, {"etag": response.etag, "sha": sha}, _DAY)
-    return HeadResult("ok", sha)
+    # Cache SHA and ETag together; a conditional response never invents either.
+    cache.set(key, pair, _DAY)
+    return HeadResult(response.status, pair["sha"])
 
 
 def _observed(environment: HostedHarnessJob, watched: WatchedSource, head: str) -> bool:

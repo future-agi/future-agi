@@ -1,0 +1,17 @@
+meta {
+  name: List labels
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{backend_url}}/model-hub/skills/{{skill_id}}/labels/
+  body: none
+  auth: none
+}
+
+headers {
+  X-Api-Key: {{api_key}}
+  X-Secret-Key: {{secret_key}}
+  X-Workspace-Id: {{workspace_id}}
+}

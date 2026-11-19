@@ -181,10 +181,14 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         raw_replica_shard_count: int = 1,
         raw_trace_candidate_predicate: str = "",
         raw_trace_candidate_params: dict[str, Any] | None = None,
+        split_by: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
+        if split_by not in {None, "skill_version"}:
+            raise ValueError("Unsupported graph split_by")
+        self.split_by = split_by
         self.interval = interval
         self.system_metric_filters = system_metric_filters or {}
         self.exact_snapshot = bool(exact_snapshot)
@@ -230,6 +234,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
+        if self.split_by:
+            return self.build_skill_cohort_query(dimension=self.split_by)
 
         # Determine if we have attribute filters that prevent using the
         # pre-aggregated table.
@@ -272,11 +278,142 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             return self._build_raw_query(extra_where)
         return self._build_agg_query()
 
+    def build_skill_cohort_query(self, *, dimension: str) -> tuple[str, dict[str, Any]]:
+        """Trace-grain metrics, deduplicated before joining overlapping cohorts.
+
+        Reuse the exact graph row predicates, including eval and raw-array
+        filters, so every series measures the same whole request as the list.
+        No load count is substituted for trace count and child errors do not
+        become failed requests. Each trace contributes once per bucket/cohort.
+        """
+        from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+            compile_exact_graph_row_predicates,
+        )
+        from tracer.services.clickhouse.query_builders.filters import (
+            resolve_skill_cohort_catalog,
+        )
+        from tracer.services.clickhouse.v2.query_builders.filters import (
+            ClickHouseFilterBuilderV2,
+        )
+
+        if self.observe_type != "trace":
+            raise ValueError("Skill cohort graphs require trace grain")
+        if self.start_date is None or self.end_date is None:
+            self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.params.update(start_date=self.start_date, end_date=self.end_date)
+        catalog = resolve_skill_cohort_catalog([str(self.project_id)])
+        plan = compile_exact_graph_row_predicates(
+            self.filters,
+            project_id=str(self.project_id),
+            observe_type="trace",
+            annotation_label_ids=self.annotation_label_ids,
+        )
+        self.params.update(plan.params)
+        compiler = ClickHouseFilterBuilderV2(project_id=str(self.project_id))
+        cohort_source, cohort_params = compiler.skill_cohort_rows_sql(
+            self.filters,
+            dimension=dimension,
+            verified_identities=catalog["identities"],
+        )
+        self.params.update(cohort_params)
+        # The load's timestamp selects the cohort. Metrics belong to the
+        # whole trace: a root just before the window is not an incomplete
+        # request, and children just after it still contribute cost/tokens.
+        # Restrict by cohort identities before replay, not by span timestamp.
+        scalar_columns = [
+            "is_deleted",
+            "start_time",
+            "parent_span_id",
+            "status",
+            "latency_ms",
+            "cost",
+            "total_tokens",
+        ]
+        scalar_values = list(scalar_columns)
+        for index, predicate in enumerate(plan.predicates):
+            scalar_values.append(f"toUInt8(ifNull(({predicate}), 0))")
+            scalar_columns.append(f"graph_row_match_{index}")
+        projections = ", ".join(
+            f"tupleElement(cohort_span_state, {index}) AS {name}"
+            for index, name in enumerate(scalar_columns, start=1)
+        )
+        source = f"""(
+            SELECT project_id, trace_id, id, {projections}
+            FROM (
+                SELECT project_id, trace_id, id,
+                    argMax(tuple({", ".join(scalar_values)}), _version) AS cohort_span_state
+                FROM spans
+                PREWHERE {self.project_filter_sql()}
+                WHERE (project_id, trace_id) IN (
+                    SELECT project_id, trace_id FROM skill_cohorts
+                )
+                GROUP BY project_id, trace_id, id
+            )
+            WHERE cohort_span_state.1 = 0
+        ) AS cohort_live_spans"""
+        groups = plan.match_condition_groups or tuple(
+            ((index, required),) for index, required in enumerate(plan.required_matches)
+        )
+        having = (
+            " AND ".join(
+                "("
+                + " OR ".join(
+                    f"max(graph_row_match_{index}) = {int(required)}"
+                    for index, required in group
+                )
+                + ")"
+                for group in groups
+            )
+            or "1 = 1"
+        )
+        bucket = self.time_bucket_expr(self.interval)
+        root = "ifNull(parent_span_id, '') = ''"
+        # Match shared runtime metrics: a trace can contain multiple root spans,
+        # but failed requests and latency belong to the same canonical root
+        # (earliest start, then span id), not any error and the slowest root.
+        query = f"""
+        WITH skill_cohorts AS (
+            SELECT project_id, trace_id, cohort_key, {bucket}(start_time) AS time_bucket
+            FROM ({cohort_source})
+            GROUP BY project_id, trace_id, cohort_key, time_bucket
+        ), skill_trace_metrics AS (
+            SELECT project_id, trace_id,
+                countIf({root}) > 0 AS has_root,
+                argMinIf(tuple(status, latency_ms), tuple(start_time, id), {root}) AS canonical_root,
+                canonical_root.1 = 'ERROR' AS failed,
+                canonical_root.2 AS root_latency,
+                sum(cost) AS trace_cost,
+                sum(total_tokens) AS trace_tokens
+            FROM {source}
+            GROUP BY project_id, trace_id
+            HAVING {having}
+        )
+        SELECT c.time_bucket AS time_bucket, c.cohort_key AS cohort_key,
+            count() AS traces,
+            countIf(t.has_root AND t.failed) AS failed_requests,
+            countIf(NOT t.has_root) AS incomplete,
+            countIf(t.has_root AND t.failed) / nullIf(countIf(t.has_root), 0) AS failed_request_rate,
+            if(countIf(t.has_root) = 0, NULL,
+               quantileExactIf(0.5)(t.root_latency, t.has_root)) AS latency_p50,
+            if(countIf(t.has_root) = 0, NULL,
+               quantileExactIf(0.95)(t.root_latency, t.has_root)) AS latency_p95,
+            avg(t.trace_cost) AS cost_per_trace,
+            sum(t.trace_cost) AS total_cost,
+            avg(t.trace_tokens) AS tokens_per_trace,
+            sum(t.trace_tokens) AS total_tokens
+        FROM skill_cohorts AS c
+        INNER JOIN skill_trace_metrics AS t
+            ON c.project_id = t.project_id AND c.trace_id = t.trace_id
+        GROUP BY c.time_bucket, c.cohort_key
+        ORDER BY c.time_bucket, c.cohort_key
+        """
+        return query, self.params
+
     def format_result(
         self,
         rows: list[tuple],
         columns: list[str],
-    ) -> dict[str, list[dict[str, Any]]]:
+    ) -> dict[str, Any]:
         """Post-process raw ClickHouse rows into the standard response dict.
 
         Expected columns from the query:
@@ -290,6 +427,43 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             Dict with keys ``latency``, ``tokens``, ``cost``, ``traffic``.
         """
         assert self.start_date is not None and self.end_date is not None
+        if self.split_by:
+            from tracer.services.clickhouse.query_builders.filters import (
+                resolve_skill_cohort_catalog,
+            )
+
+            labels = resolve_skill_cohort_catalog([str(self.project_id)])[
+                "skill_version"
+            ]
+            series = {}
+            for raw_row in rows:
+                row = (
+                    dict(raw_row)
+                    if isinstance(raw_row, dict)
+                    else dict(zip(columns, raw_row, strict=True))
+                )
+                key = str(row.pop("cohort_key"))
+                timestamp = row.pop("time_bucket")
+                row["timestamp"] = (
+                    timestamp.isoformat()
+                    if hasattr(timestamp, "isoformat")
+                    else str(timestamp)
+                )
+                if row.get("traces", 0) == row.get("incomplete", 0):
+                    row["latency_p50"] = row["latency_p95"] = None
+                series.setdefault(
+                    key,
+                    {
+                        "version_id": key,
+                        "label": labels.get(key, "Unknown skill"),
+                        "data": [],
+                    },
+                )["data"].append(row)
+            return {
+                "split_by": self.split_by,
+                "series": list(series.values()),
+                "totals_note": "cohorts overlap; not additive",
+            }
 
         # Build per-metric data lists
         latency_data: list[dict[str, Any]] = []

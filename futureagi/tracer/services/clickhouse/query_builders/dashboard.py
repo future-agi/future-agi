@@ -13,6 +13,7 @@ Supports four metric types:
 - **custom_attribute** -- ``span_attr_num`` / ``span_attr_str`` map columns on ``spans``
 """
 
+import json
 import logging
 import math
 import re
@@ -426,6 +427,16 @@ def _prefix_spans_columns(clause: str) -> str:
     and filter values are data: a key named ``start_time`` must never become
     ``s.start_time`` inside quotes.
     """
+
+    if clause.startswith("/* skill membership */"):
+        # The shared compiler owns all subquery aliases. Only qualify the
+        # outer composite identity; rewriting nested project/date columns
+        # would accidentally correlate a whole-window membership read.
+        return re.sub(
+            r"\(project_id, trace_id\) ((?:NOT )?IN) \(SELECT project_id, trace_id FROM",
+            r"(s.project_id, s.trace_id) \1 (SELECT project_id, trace_id FROM",
+            clause,
+        )
 
     # Odd pieces are complete SQL single-quoted literals (including doubled
     # quote escapes); rewrite only the even, executable SQL pieces.
@@ -842,10 +853,29 @@ class DashboardQueryBuilder:
         Returns:
             (sql_string, params_dict)
         """
+        skill_dimensions = [
+            bd
+            for bd in self.breakdowns
+            if bd.get("type", "system_metric") == "system_metric"
+            and bd.get("name") in {"skill", "skill_version", "skill_agent"}
+        ]
+        if skill_dimensions:
+            return self._build_skill_cohort_metric(metric, skill_dimensions)
         metric_type = metric.get("type", "system_metric")
         metric_name = metric.get("id") or metric.get("name", "")
         aggregation = metric.get("aggregation", "avg")
         per_metric_filters = metric.get("filters", [])
+        from tracer.services.clickhouse.query_builders.filters import is_skill_filter
+
+        if metric_type in {"eval_metric", "annotation_metric"} and any(
+            is_skill_filter(item.get("canonical_filter", item))
+            for item in self.global_filters + per_metric_filters
+        ):
+            # Those metric sources have their own membership adapters; until
+            # they preserve grouped SKILL leaves, never silently drop them.
+            raise InvalidMetricCombinationError(
+                "SKILL filters on eval/annotation dashboard metrics are not yet supported."
+            )
 
         start_date, end_date = self.parse_time_range()
         bucket_fn = GRANULARITY_TO_CH.get(self.granularity, "toStartOfDay")
@@ -884,6 +914,81 @@ class DashboardQueryBuilder:
             )
         else:
             raise ValueError(f"Unknown metric type: {metric_type}")
+
+    def _build_skill_cohort_metric(
+        self, metric: dict, dimensions: list[dict]
+    ) -> tuple[str, dict]:
+        """Cohorts cannot use the ordinary per-span dashboard aggregation.
+
+        Unsupported combinations fail visibly rather than silently counting
+        load spans, averaging per-project percentiles or summing overlaps.
+        """
+        from tracer.services.clickhouse.query_builders.time_series import (
+            TimeSeriesQueryBuilder,
+        )
+
+        if (
+            len(self.project_ids) != 1
+            or len(dimensions) != 1
+            or len(self.breakdowns) != 1
+        ):
+            raise InvalidMetricCombinationError(
+                "Skill cohorts currently require one project and one skill breakdown."
+            )
+        if metric.get("type", "system_metric") != "system_metric":
+            raise InvalidMetricCombinationError(
+                "This metric is not supported for skill cohorts."
+            )
+        name = str(metric.get("id") or metric.get("name", "")).lower()
+        aggregation = metric.get("aggregation", "avg")
+        expressions = {
+            ("trace_count", "count_distinct"): "traces",
+            ("traces", "count_distinct"): "traces",
+            ("failed_requests", "count"): "failed_requests",
+            ("failed_requests", "avg"): "failed_request_rate",
+            ("latency", "p50"): "latency_p50",
+            ("latency", "p95"): "latency_p95",
+            ("cost", "avg"): "cost_per_trace",
+            ("cost", "sum"): "total_cost",
+            ("tokens", "avg"): "tokens_per_trace",
+            ("tokens", "sum"): "total_tokens",
+        }
+        expression = expressions.get((name, aggregation))
+        if expression is None:
+            raise InvalidMetricCombinationError(
+                "Choose traces, failed requests, root latency p50/p95, or cost/tokens per trace for a skill cohort."
+            )
+        filters = []
+        for item in self.global_filters + metric.get("filters", []):
+            if item.get("source", "traces") not in {"traces", ""}:
+                raise InvalidMetricCombinationError(
+                    "Skill cohorts require trace-source filters."
+                )
+            canonical = item.get("canonical_filter", item)
+            if "filter_config" not in canonical:
+                raise InvalidMetricCombinationError(
+                    "Skill cohorts require canonical filters."
+                )
+            filters.append(canonical)
+        start, end = self.parse_time_range()
+        builder = TimeSeriesQueryBuilder(
+            project_id=str(self.project_ids[0]),
+            filters=filters,
+            interval=self.granularity,
+            start_date=start,
+            end_date=end,
+            observe_type="trace",
+            exact_snapshot=True,
+        )
+        sql, params = builder.build_skill_cohort_query(dimension=dimensions[0]["name"])
+        return (
+            "SELECT time_bucket, cohort_key AS breakdown_value, "
+            + expression
+            + " AS value FROM ("
+            + sql
+            + ")",
+            params,
+        )
 
     @staticmethod
     def _reject_unknown_cataloged_system_dimension(
@@ -2979,6 +3084,25 @@ class DashboardQueryBuilder:
             bd.get("name") == "project" for bd in self.breakdowns
         )
 
+        skill_dimension = next(
+            (
+                bd.get("name")
+                for bd in self.breakdowns
+                if bd.get("type", "system_metric") == "system_metric"
+                and bd.get("name") in {"skill", "skill_version", "skill_agent"}
+            ),
+            None,
+        )
+        skill_labels = {}
+        if skill_dimension in {"skill", "skill_version"}:
+            from tracer.services.clickhouse.query_builders.filters import (
+                resolve_skill_cohort_catalog,
+            )
+
+            skill_labels = resolve_skill_cohort_catalog(self.project_ids)[
+                skill_dimension
+            ]
+
         for metric_info, rows in metric_results:
             metric_name = metric_info.get("name", "")
             metric_id = metric_info.get("id", "")
@@ -2989,6 +3113,14 @@ class DashboardQueryBuilder:
             series_data: dict[str, dict[str, Any]] = {}
             for row in rows:
                 breakdown_key = str(row.get("breakdown_value", "total"))
+                if skill_dimension in {"skill", "skill_version"}:
+                    breakdown_key = skill_labels.get(breakdown_key, "Unknown skill")
+                elif skill_dimension == "skill_agent":
+                    project, service, agent = json.loads(breakdown_key)
+                    project_name = (project_name_map or {}).get(project, project)
+                    breakdown_key = (
+                        f"{agent or 'Unnamed agent'} / {service} / {project_name}"
+                    )
                 # Resolve project UUID to name if breaking down by project
                 if has_project_breakdown and project_name_map:
                     if " / " in breakdown_key:
@@ -3045,6 +3177,8 @@ class DashboardQueryBuilder:
                 "series_total": series_total,
                 "series_truncated": len(series) < series_total,
             }
+            if skill_dimension:
+                formatted_metric["totals_note"] = "cohorts overlap; not additive"
             for metadata_field in DASHBOARD_QUERY_METADATA_FIELDS:
                 if metadata_field in metric_info:
                     formatted_metric[metadata_field] = metric_info[metadata_field]
@@ -3257,6 +3391,15 @@ class DashboardQueryBuilder:
             if bd_source in ("datasets", "simulation"):
                 continue
 
+            if bd_type == "system_metric" and bd_name in {
+                "skill",
+                "skill_version",
+                "skill_agent",
+            }:
+                result.append(
+                    {"type": "skill_cohort", "expr": "cohort_key", "join": None}
+                )
+                continue
             if bd_type == "system_metric":
                 breakdown_expr = self._breakdown_column_expression(bd_name)
                 if breakdown_expr is not None:
@@ -3446,8 +3589,28 @@ class DashboardQueryBuilder:
         all_filters = [
             f for f in all_filters if f.get("source", "traces") in ("traces", "")
         ]
+        from tracer.services.clickhouse.query_builders.filters import is_skill_filter
+        from tracer.services.clickhouse.v2.query_builders.filters import (
+            ClickHouseFilterBuilderV2,
+        )
+
+        skill_filters = [
+            item.get("canonical_filter", item)
+            for item in all_filters
+            if is_skill_filter(item.get("canonical_filter", item))
+        ]
+        if skill_filters:
+            skill_builder = ClickHouseFilterBuilderV2(project_ids=self.project_ids)
+            try:
+                predicate, skill_params = skill_builder.translate(skill_filters)
+            except ValueError as exc:
+                raise InvalidMetricCombinationError(str(exc)) from exc
+            clauses.append("/* skill membership */ " + predicate)
+            params.update(skill_params)
         idx = 0
         for filter_index, f in enumerate(all_filters):
+            if is_skill_filter(f.get("canonical_filter", f)):
+                continue
             f_type = f.get("metric_type", "")
             if f_type == "system_metric":
                 f_name = (f.get("metric_name", "") or "").lower()

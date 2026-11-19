@@ -765,6 +765,13 @@ class _TraceRootReplayV2:
             "toJSONString(metadata) AS metadata" if alias == "metadata" else alias
             for _, alias in fields[5:]
         ]
+        if self.has_runtime_cohort() and not content:
+            selected = [
+                f"if(latest_parent_span_id IS NULL OR latest_parent_span_id = '', {column}, NULL) AS {column}"
+                if column in {"status", "latency_ms"}
+                else column
+                for column in selected
+            ]
         if content:
             selected.extend(self._root_replay_content_extra_select())
             if trace_rollup:
@@ -807,7 +814,7 @@ class _TraceRootReplayV2:
         {self._root_replay_content_join_sql() if content else ""}
         {self._trace_rollup_join_sql(prefix) if trace_rollup else ""}
         WHERE latest_is_deleted = 0
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+          {"" if self.has_runtime_cohort() else "AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')"}
           {project_version}
         ORDER BY start_time DESC, trace_id DESC, project_id DESC
         LIMIT {len(identities)}

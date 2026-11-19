@@ -68,6 +68,10 @@ export default function StatusBadge({
           alignItems: "center",
           gap: 0.75,
           minWidth: 0,
+          // A column-flex parent stretches inline-flex children; a status
+          // stays the width of its label in stacks and rows alike.
+          width: "fit-content",
+          maxWidth: "100%",
           ...sx,
         }}
         {...other}
@@ -110,6 +114,7 @@ export default function StatusBadge({
         bgcolor: colors.bg,
         color: colors.fg,
         flexShrink: 0,
+        width: "fit-content",
         maxWidth: "100%",
         ...sx,
       }}

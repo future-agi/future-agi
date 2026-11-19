@@ -2166,7 +2166,7 @@ _CANDIDATE_RESIDUAL_KEYS = {
     "my_annotations",
     *ClickHouseFilterBuilder._ENDUSER_STRING_COLUMNS,
 }
-_CANDIDATE_RESIDUAL_TYPES = {"ANNOTATION", "EVAL_METRIC"}
+_CANDIDATE_RESIDUAL_TYPES = {"ANNOTATION", "EVAL_METRIC", "SKILL"}
 
 
 def _is_candidate_residual_filter(item: dict[str, Any]) -> bool:
@@ -2188,6 +2188,21 @@ def partition_trace_filter_plans(
 ) -> tuple[list[LatestFilterPredicate], list[dict[str, Any]]]:
     """Split scalar latest predicates from candidate-scoped relational ones."""
 
+    from tracer.services.clickhouse.query_builders.filters import (
+        is_skill_filter,
+        validate_skill_filter_groups,
+    )
+
+    if any(
+        is_skill_filter(item) and item.get("column_id") == "skill.in_scope"
+        for item in filters
+    ):
+        raise UnsupportedFilterShapeError("skill.in_scope is span-grain only")
+
+    try:
+        validate_skill_filter_groups(filters)
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
     supported: list[dict[str, Any]] = []
     residual: list[dict[str, Any]] = []
     for item in filters:
@@ -2214,6 +2229,14 @@ def partition_span_filter_plans(
 ) -> tuple[list[LatestFilterPredicate], list[dict[str, Any]]]:
     """Span equivalent of :func:`partition_trace_filter_plans`."""
 
+    from tracer.services.clickhouse.query_builders.filters import (
+        validate_skill_filter_groups,
+    )
+
+    try:
+        validate_skill_filter_groups(filters)
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
     supported: list[dict[str, Any]] = []
     residual: list[dict[str, Any]] = []
     for item in filters:
@@ -2276,6 +2299,7 @@ def targets_trace_filter_domain(filters: list[dict[str, Any]]) -> bool:
             in {
                 "ANNOTATION",
                 "EVAL_METRIC",
+                "SKILL",
                 "SPAN_ATTRIBUTE",
                 "SYSTEM_METRIC",
                 "TRACE_END_USER",
@@ -2308,6 +2332,7 @@ def targets_span_filter_domain(filters: list[dict[str, Any]]) -> bool:
             in {
                 "ANNOTATION",
                 "EVAL_METRIC",
+                "SKILL",
                 "SPAN_ATTRIBUTE",
                 "SYSTEM_METRIC",
                 "TRACE_END_USER",

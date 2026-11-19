@@ -111,7 +111,7 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
-function renderGraph({ selectedTab = "trace" } = {}) {
+function renderGraph({ selectedTab = "trace", filters = [] } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -120,7 +120,7 @@ function renderGraph({ selectedTab = "trace" } = {}) {
     <QueryClientProvider client={queryClient}>
       <GraphSection
         selectedTab={selectedTab}
-        filters={[]}
+        filters={filters}
         showCompare={false}
         selectedGraphProperty="latency"
         selectedGraphEvals={[]}
@@ -144,6 +144,31 @@ function renderGraph({ selectedTab = "trace" } = {}) {
 }
 
 describe("GraphSection exact graph boundary", () => {
+  it("toggles the contracted split without reusing an unsplit snapshot", async () => {
+    const version = "00000000-0000-4000-8000-000000000001";
+    axios.post.mockImplementation(async (_url, body) => ({ data: { status: true, result: {
+      metric_name: "Root latency p95", query_complete: true, query_exact: true,
+      query_status: "complete", query_sampled: false,
+      ...(body.split_by ? {
+        split_by: "skill_version", data: [], totals_note: "cohorts overlap; not additive",
+        series: [{ version_id: version, label: "Example v1", data: [{
+          timestamp: "2026-08-02T00:00:00Z", value: 456, traces: 12, incomplete: 0,
+        }] }],
+      } : { data: [{ timestamp: "2026-08-02T00:00:00Z", value: 123, primary_traffic: 12 }] }),
+    } } }));
+    renderGraph({ filters: [{ column_id: "skill.version_id", filter_config: {
+      col_type: "SKILL", filter_type: "text", filter_op: "equals", filter_value: version,
+    } }] });
+    fireEvent.click(screen.getByRole("button", { name: "Select latency" }));
+    await waitFor(() => expect(screen.getByTestId("apex-chart")).toHaveAttribute("data-primary-first-y", "123"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Split by skill version" }));
+    await waitFor(() => expect(axios.post.mock.calls.some((call) => call[1].split_by === "skill_version")).toBe(true));
+    expect(await screen.findAllByText("Example v1")).toHaveLength(2);
+    expect(screen.getByTestId("apex-chart")).toHaveAttribute("data-primary-first-y", "456");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Split by skill version" }));
+    await waitFor(() => expect(screen.getByTestId("apex-chart")).toHaveAttribute("data-primary-first-y", "123"));
+    expect(screen.queryByText("Example v1")).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

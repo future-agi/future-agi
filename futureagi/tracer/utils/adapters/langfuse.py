@@ -34,6 +34,7 @@ from tracer.utils.adapters.base import (
     set_io_value,
     strip_keys,
 )
+from tracer.utils.adapters.langfuse_skills import normalize_langfuse_skills
 from tracer.utils.otel import SpanAttributes
 
 # Langfuse observation type → fi.span.kind
@@ -88,6 +89,7 @@ class LangfuseAdapter(BaseTraceAdapter):
         return any(k.startswith("langfuse.") for k in attributes)
 
     def normalize(self, attributes: dict[str, Any]) -> dict[str, Any]:
+        retained_skill_metadata = normalize_langfuse_skills(attributes)
         # --- Extract values from langfuse.* attributes before stripping ---
         obs_type = attributes.get("langfuse.observation.type", "").lower()
         model = attributes.get("langfuse.observation.model.name")
@@ -202,6 +204,7 @@ class LangfuseAdapter(BaseTraceAdapter):
             attributes[SpanAttributes.METADATA] = metadata
 
         attributes["gen_ai.trace.source"] = self.source_name
+        attributes.update(retained_skill_metadata)
         return attributes
 
 

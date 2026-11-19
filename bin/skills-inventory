@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Read-only local inventory. Python's isolated mode ignores cwd/PYTHONPATH hooks.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "${SKILLS_INVENTORY_PYTHON:-python3}" -I "$ROOT/scripts/skills_inventory.py" "$@"

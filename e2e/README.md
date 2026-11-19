@@ -467,6 +467,65 @@ An assertion that cannot fail is worse than no assertion, because it reads as co
   `status = 'completed'`, so a row that arrived and failed is distinguishable from a row the mirror
   has not delivered yet.
 
+### Skills v1.1 transport fixtures
+
+The managed overlays start `skills-fakes` on container port 8080 and host
+`127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28084}`. `lib/skills-fixtures.ts` registers an
+isolated synthetic-credential namespace, declarative OpenAI tool/answer rules and
+recorded synthetic GitHub metadata/ref/archive responses. Unknown credentials,
+unrecorded URLs and ambiguous rules fail closed; the service never proxies live
+GitHub or model providers. Dispose only the namespace your test created. Its
+bounded ledger records request/response hashes and synthetic protocol messages,
+never authorization headers. Do not send private inputs or real provider keys.
+
+Only the E2E settings module reads `E2E_SKILLS_FIXTURES=1`. Its app config wraps the
+transport at the last boundary, preserving the actual scoped connection resolver,
+LiteLLM protocol normalization, reservations, native `tasks_l` workflow, GitHub
+parser, shared rate budgets, rights checks and source/draft CAS. The fake endpoint
+is a fixed internal address, not a configurable production endpoint. The test
+settings' `gpt-4o-mini` entry qualifies this fixture protocol only; it does not add
+a model to the production verified list. API and workers must use the same E2E
+settings. Both overlays use the image's pinned local LiteLLM price map, rather
+than fetching a moving GitHub price catalog. Standalone uses read-only test-overlay mounts; Distributed copies these
+modules into its E2E backend image. Neither changes the normal backend image.
+
+Qualify this seam before writing dependent flows:
+
+```bash
+node --test e2e/scripts/skills-fakes.test.mjs
+PYTHONPATH="$PWD/futureagi" flock /tmp/ctxhub-pytest.lock \
+  futureagi/.venv/bin/python -m pytest e2e/stack/backend/test_skills_transport.py
+E2E_STACK=standalone bin/e2e test harness/skills-v11-transport.spec.ts --workers=1
+```
+
+`e2e/stack/backend/prove_skills_boundary.py` additionally runs in separately built
+normal and E2E backend containers, with networking disabled. Its `production`,
+`overlay-off` and `overlay-on` modes assert module absence/presence, switch
+inertness, unchanged real endpoint selection and preservation of no-retry flags.
+Mount only that probe file read-only, set `PYTHONPATH=/app/backend` and
+`NO_STARTUP_DB_MUTATIONS=true`, and invoke it with the container's Python. A fake
+run is not real-provider verification, GitHub conformance or native-agent evidence.
+The GitHub seam keeps the production **60-second ref/metadata freshness** and
+**3/org, 10/Skills, 50/global REST calls per hour** (including lower deployment
+limits). `SkillsFixtures.advanceGitHubTime(seconds)` advances only that scenario's
+GitHub cache/rate-policy time, by a positive integer up to seven days in total.
+Every operation reads a frozen clock from the owner of its recorded repository.
+Real Redis counters and single-flight leases remain in use, namespaced per scenario;
+no shared cache is cleared and no limit is raised. The clock starts at a fixed hour.
+Advancing 60 seconds expires freshness; advancing 3600 seconds also opens the next
+budget period. The real socket/job deadlines, preview expiry and all other scenarios
+are unaffected. Call the control only after prior work has settled; it is not a
+concurrent clock scheduler. Unknown/disposed fixture policies fail closed.
+
+Changing a recording alone must still return the cached SHA. The transport harness
+checks that behavior at 59 seconds, refusal of the fourth organization REST request
+at 60 seconds, then fresh resolution with the paired ETag after period rollover.
+The update flow advances one period before root continuation and the later update,
+so the continuation cannot pass merely by hitting a fresh ref cache. This models
+a later user check without sleeps, SQL changes or treating `unchanged_commit` as
+proof of replacement. Only the E2E overlay installs the clock/cache adapters; the
+normal image and the disabled overlay retain the original clock and cache policy.
+
 ### Harness self-tests
 
 `harness/` holds the tests of the harness itself — provisioning, the probe, OTLP seeding, and the
@@ -479,7 +538,20 @@ bin/e2e test harness/
 
 Local runs use 3 workers (4 or more concurrent browsers overwhelm the stack's single-Granian-worker
 backend and the SPA never finishes booting); CI uses 2. Also available from `e2e/`: `yarn typecheck`
-and `yarn selftest` (unit tests for the catalog generator).
+and `yarn selftest` (unit tests for the catalog, harness scripts, and round-3 Skills primitives).
+The required CI `yarn catalog:check` step also runs `selftest`, discovering every
+`scripts/**/*.test.mjs` and `harness/skills-r3/**/*.test.mjs` suite except the separate docs gate.
+These are harness regressions, not complete product-journey or native qualification evidence.
+
+Run tests on the assigned temporary cloud VM, not on a shared local host. The documentation suite
+has a separate explicit gate because it requires the independently pinned docs repository:
+
+```bash
+CTXHUB_DOCS_ROOT=/absolute/pinned/docs-checkout yarn selftest:docs
+```
+
+Retain that checkout's commit/tree with the result. Missing docs fail this command; a passing
+`selftest` alone does not establish documentation qualification.
 
 ---
 
@@ -778,3 +850,35 @@ judge model to compose its own JSON — which is why `EVAL-E2E-001` authors its 
 - Frontend test conventions: [`../frontend/TESTING.md`](../frontend/TESTING.md)
 - Architecture spec and decision record:
   [`../../internal-docs/e2e-testing-setup/02-architecture.md`](../../internal-docs/e2e-testing-setup/02-architecture.md)
+
+### Standalone native and managed-model qualifications
+
+Ordinary standalone E2E and F10 use the managed-mock topology. It retains the
+internal executor link required by the existing canary tests; the app has no
+interface on the Skills native network. Native drivers and F6 require the
+explicit `native` topology and prepared native runtime inputs (including the
+retained-CI fixture); do not treat a managed-mock run as native evidence. On the
+isolated test VM, with `E2E_STACK=standalone` and `DOCKER_CONTEXT=default`:
+
+```sh
+E2E_STANDALONE_NETWORK=managed-mock bin/e2e up
+E2E_STANDALONE_NETWORK=managed-mock bin/e2e test flows/skills/skill-traces.spec.ts -g 'SKILLS-E2E-110'
+E2E_STANDALONE_NETWORK=native bin/e2e up  # only with the complete native fixture set
+```
+
+Run the two topologies sequentially. Neither mode grants native guests an external network.
+
+### Pinning the Skills test packages
+
+The pair is locked **after** all three candidates have been built (the SDK itself
+pins the product commit). The release owner records the SHA-256 of `pair.json`
+independently of the package directory. Its JSON form is `{"schema":1,
+"sources":{"product":"<commit>","sdk":"<commit>","traceai":"<commit>"},
+"artifacts":{...}}`. Supply one `{"file":"<basename>","sha256":"<digest>"}`
+record for each of `sdk_python`, `traceai_python`, `sdk_ts`, `traceai_ts`, and
+`semconv_ts`. Wheels and npm archives must have their real distribution names
+and versions. Set `CTXHUB_APP_COMMIT`, `SDK_COMMIT`, `TRACEAI_COMMIT`, and
+`SKILL_TRACE_PAIR_SHA256` from the independent build receipts, then run
+`e2e/stack/prepare-skill-traces.sh packages <dist>` on the isolated standalone
+stack; `interpreters <dist> <new-dir>` prepares traced and plain Python installs.
+A self-computed checksum of unknown packages is not a release receipt.

@@ -22,6 +22,11 @@ const emptyObserveListBody = {
 };
 
 describe("Observe API response contracts", () => {
+  it.each([true, false])("retains the project skill link probe (%s)", (exists) => {
+    const result = { ...emptyObserveListBody.result, metadata: { total_rows: 0, skill_links_exist: exists } };
+    expect(parseTraceObserveListResponse({ status: true, result }).metadata.skill_links_exist).toBe(exists);
+  });
+
   it.each([
     ["trace", parseTraceObserveListResponse],
     ["span", parseSpanObserveListResponse],

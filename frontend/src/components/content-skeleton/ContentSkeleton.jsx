@@ -62,7 +62,7 @@ export default function ContentSkeleton({
       aria-live="polite"
       aria-busy="true"
       aria-label={label}
-      sx={{ width: 1, ...sx }}
+      sx={{ width: 1, "& .MuiSkeleton-root": { bgcolor: "divider" }, ...sx }}
       {...other}
     >
       <Rows count={rows ?? 6} />
