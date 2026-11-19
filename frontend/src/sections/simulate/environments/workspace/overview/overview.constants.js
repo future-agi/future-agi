@@ -197,6 +197,7 @@ export const CHECKLIST_COPY = {
   title: "Next steps",
   subtitle: (done, total) =>
     `${done} of ${total} complete, ${total - done} left to run your first simulation`,
+  connectSubtitle: "Connect the agent this environment tests to run it",
   created: {
     title: "Environment created",
     body: (name) => `${name} is set up and ready for configuration.`,
@@ -204,6 +205,8 @@ export const CHECKLIST_COPY = {
   agent: {
     title: "Connect an agent",
     body: "Wire your agent so it can act against the environment. This flow lets you connect one after the fact.",
+    saveFirst:
+      "Save v1 first with Review and save at the top. Then connect the agent this environment tests.",
     cta: "Connect agent",
   },
   scenarios: {
