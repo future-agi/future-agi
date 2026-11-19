@@ -39,7 +39,7 @@ describe("AnalyzeTab on a shared issue", () => {
     expect(
       screen.getByText("The prompt says refunds are usually allowed."),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Suggested change")).toBeInTheDocument();
+    expect(await screen.findByText("In-depth suggestion")).toBeInTheDocument();
     expect(screen.queryByText("Fix")).not.toBeInTheDocument();
     expect(
       screen.getByText("Showing the last saved analysis"),

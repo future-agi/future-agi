@@ -873,7 +873,7 @@ function SynthesisCard({ synthesis }) {
               bgcolor: "status.success.bg",
             }}
           >
-            Suggested change
+            In-depth suggestion
           </Typography>
           <Box sx={{ flex: 1 }}>
             <AnalyzeMarkdown

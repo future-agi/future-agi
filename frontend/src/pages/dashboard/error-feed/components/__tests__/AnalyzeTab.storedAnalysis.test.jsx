@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import AnalyzeTab from "../AnalyzeTab";
 import { useErrorFeedStore } from "../../store";
+import { hydrateFromCache } from "../../clusterAnalyzeSocket";
 
 vi.mock("../../useAnalyzeRunner", () => ({
   useFollowUpRunner: () => ({ runFollowUp: vi.fn() }),
@@ -38,6 +39,28 @@ describe("Root cause tab", () => {
     expect(screen.getByText("Wrong if")).toBeInTheDocument();
     expect(screen.getByText(grouped.falsifier)).toBeInTheDocument();
     expect(pendingRuns()).toEqual({});
+  });
+
+  it("labels the stored change and the in-depth suggestion apart", async () => {
+    hydrateFromCache({
+      clusterId: grouped.cluster_id,
+      rca: {
+        synthesis: "The agent reads only the first line item.",
+        fix: "Loop over every line item in refund_order.",
+        confidence: "H",
+      },
+    });
+
+    render(<AnalyzeTab error={grouped} />);
+
+    const stored = screen.getByText("Suggested change");
+    const inDepth = await screen.findByText("In-depth suggestion");
+    expect(screen.getAllByText("Suggested change")).toHaveLength(1);
+    expect(screen.getAllByText("In-depth suggestion")).toHaveLength(1);
+    expect(stored.parentElement).toHaveTextContent(grouped.fix_hypothesis);
+    expect(inDepth.parentElement).toHaveTextContent(
+      "Loop over every line item in refund_order.",
+    );
   });
 
   it("starts the in-depth analysis only from its button", async () => {
