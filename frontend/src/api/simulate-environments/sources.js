@@ -1,5 +1,10 @@
 import { useCallback } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
 import { ModelHubKnowledgeBaseFilesCreateBody } from "src/generated/api-contracts/api.zod";
 import axios, { endpoints } from "src/utils/axios";
@@ -175,82 +180,135 @@ export const usePrepareUploadSource = (envId) =>
     ),
   );
 
-// The person's Knowledge bases and their files, from the Knowledge base API.
-// shortcut: the first 100 of each; page them when a workspace has more.
-const KB_PAGE_SIZE = 100;
+// The person's Knowledge bases and their files, from the Knowledge base API,
+// a page at a time. Both endpoints count `total_rows` after search but before
+// status, so rows the picker hides still use up a page.
+const KB_PAGE_SIZE = 20;
+// "Add all" reads every page of the Knowledge base, so it takes bigger ones.
+const KB_COPY_PAGE_SIZE = 100;
 const kbListKey = ["knowledge-base", "env-sources-picker"];
 
-const knowledgeBasesQuery = {
-  queryKey: kbListKey,
-  queryFn: async () => {
-    const { data } = await axios.get(endpoints.knowledge.list, {
-      params: { page_size: KB_PAGE_SIZE },
-    });
-    return (data?.result?.table_data || []).map((kb) => ({
-      kb_id: kb.id,
-      name: kb.name,
-      file_count: kb.files_uploaded,
-      updated_at: kb.updated_at,
-    }));
-  },
-  staleTime: 60 * 1000,
-  meta: { errorHandled: true },
-};
+// Failed ones have no file read; Deleting ones are on their way out.
+const KB_HIDDEN = new Set(["Failed", "Deleting"]);
+// PartialCompleted: some files failed, the rest are ready.
+export const isKbReady = (kb) =>
+  kb.status === "Completed" || kb.status === "PartialCompleted";
+export const isKbFileReady = (file) => file.status === "Completed";
 
-const knowledgeBaseFilesQuery = (kbId) => ({
-  queryKey: [...kbListKey, kbId],
-  queryFn: async () => {
-    const body = checked(ModelHubKnowledgeBaseFilesCreateBody, {
-      kb_id: kbId,
-      page_number: 0,
-      page_size: KB_PAGE_SIZE,
-    });
-    const { data } = await axios.post(endpoints.knowledge.files, body);
-    return (data?.result?.table_data || []).map((file) => ({
-      file_id: file.id,
-      name: file.name,
-      size: file.file_size,
-    }));
+// Neither endpoint orders its rows, so one can repeat across pages.
+const pagedQuery = (queryKey, fetchPage) => ({
+  queryKey,
+  queryFn: ({ pageParam }) => fetchPage(pageParam),
+  initialPageParam: 0,
+  getNextPageParam: (last, pages, lastPage) =>
+    last.raw > 0 && (lastPage + 1) * KB_PAGE_SIZE < last.total
+      ? lastPage + 1
+      : undefined,
+  select: ({ pages }) => {
+    const seen = new Set();
+    return pages
+      .flatMap((page) => page.rows)
+      .filter((row) => !seen.has(row.id) && seen.add(row.id));
   },
+  // "always": a Knowledge base made in another tab shows on coming back,
+  // even within the minute the list stays fresh.
+  refetchOnWindowFocus: "always",
   staleTime: 60 * 1000,
   meta: { errorHandled: true },
 });
 
-export const useKnowledgeBases = ({ enabled = true } = {}) =>
-  useQuery({ ...knowledgeBasesQuery, enabled });
-
-export const useKnowledgeBaseFiles = (kbId) =>
-  useQuery({ ...knowledgeBaseFilesQuery(kbId), enabled: Boolean(kbId) });
-
-// mutate({ selection: { kind: "knowledge_base", kb_id, file_ids | whole_collection } }).
-// The Knowledge base and its files are real; copying them in is the stub.
-export const usePrepareKbSource = (envId) => {
-  const queryClient = useQueryClient();
-  return usePrepare(envId, async ({ selection }) => {
-    const kbs = await queryClient.ensureQueryData(knowledgeBasesQuery);
-    const kb = kbs.find((one) => one.kb_id === selection.kb_id);
-    if (!kb) throw new Error("Knowledge base not found");
-    const files = await queryClient.ensureQueryData(
-      knowledgeBaseFilesQuery(kb.kb_id),
-    );
-    return files
-      .filter(
-        (file) =>
-          selection.whole_collection ||
-          selection.file_ids?.includes(file.file_id),
-      )
-      .map((file) => ({
-        name: file.name,
-        size: file.size,
-        origin: {
-          kind: "knowledge_base",
-          kb_id: kb.kb_id,
-          file_id: file.file_id,
-          collection: kb.name,
-        },
-      }));
+const knowledgeBasesQuery = (search) =>
+  pagedQuery([...kbListKey, "list", search], async (pageNumber) => {
+    const { data } = await axios.get(endpoints.knowledge.list, {
+      params: {
+        ...(search && { search }),
+        page_number: pageNumber,
+        page_size: KB_PAGE_SIZE,
+      },
+    });
+    // An organisation with no Knowledge bases gets no `table_data`.
+    const rows = data?.result?.table_data || [];
+    return {
+      raw: rows.length,
+      total: data?.result?.total_rows ?? 0,
+      rows: rows
+        .filter((kb) => !KB_HIDDEN.has(kb.status))
+        .map((kb) => ({
+          id: kb.id,
+          name: kb.name,
+          status: kb.status,
+          file_count: kb.files_uploaded,
+          updated_at: kb.updated_at,
+        })),
+    };
   });
+
+const fetchKbFiles = async (kbId, search, pageNumber, pageSize) => {
+  const body = checked(ModelHubKnowledgeBaseFilesCreateBody, {
+    kb_id: kbId,
+    ...(search && { search }),
+    page_number: pageNumber,
+    page_size: pageSize,
+  });
+  const { data } = await axios.post(endpoints.knowledge.files, body);
+  const rows = data?.result?.table_data || [];
+  return {
+    raw: rows.length,
+    total: data?.result?.total_rows ?? 0,
+    rows: rows
+      .filter((file) => file.status !== "Deleting")
+      .map((file) => ({
+        id: file.id,
+        name: file.name,
+        size: file.file_size,
+        status: file.status,
+      })),
+  };
 };
+
+// Every ready file in the Knowledge base, whatever the picker has loaded.
+const readyKbFiles = async (kbId) => {
+  const ready = [];
+  for (let page = 0; ; page += 1) {
+    const { raw, total, rows } = await fetchKbFiles(
+      kbId,
+      "",
+      page,
+      KB_COPY_PAGE_SIZE,
+    );
+    ready.push(...rows.filter(isKbFileReady));
+    if (!raw || (page + 1) * KB_COPY_PAGE_SIZE >= total) return ready;
+  }
+};
+
+// `data` is the rows loaded so far; fetchNextPage loads the next page.
+export const useKnowledgeBases = ({ enabled = true, search = "" } = {}) =>
+  useInfiniteQuery({ ...knowledgeBasesQuery(search), enabled });
+
+export const useKnowledgeBaseFiles = (kbId, { search = "" } = {}) =>
+  useInfiniteQuery({
+    ...pagedQuery([...kbListKey, "files", kbId, search], (pageNumber) =>
+      fetchKbFiles(kbId, search, pageNumber, KB_PAGE_SIZE),
+    ),
+    enabled: Boolean(kbId),
+  });
+
+// mutate({ selection: { kind: "knowledge_base", kb, files | whole_collection } }),
+// `kb` and `files` as the picker lists them. "Add all" copies the ready files.
+// The Knowledge base and its files are real; copying them in is the stub.
+export const usePrepareKbSource = (envId) =>
+  usePrepare(envId, async ({ selection: { kb, files, whole_collection } }) =>
+    (whole_collection ? await readyKbFiles(kb.id) : files).map((file) => ({
+      name: file.name,
+      size: file.size,
+      origin: {
+        kind: "knowledge_base",
+        kb_id: kb.id,
+        file_id: file.id,
+        collection: kb.name,
+      },
+    })),
+  );
 
 // Personal-data choices as a change summary words them.
 const PERSONAL_CHOICES = {
