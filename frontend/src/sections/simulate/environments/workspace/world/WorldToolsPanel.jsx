@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { Box } from "@mui/material";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import WorldInternalsSection from "../contract/WorldInternalsSection";
@@ -8,8 +7,7 @@ import SourcesSection from "../sources/SourcesSection";
 import SourceDrawer from "../sources/SourceDrawer";
 import ReviewRefreshDrawer from "../sources/ReviewRefreshDrawer";
 import useKnowledgeBaseChanges from "../sources/useKnowledgeBaseChanges";
-
-const SOURCE_PARAMS = ["source", "sourceTab", "at"];
+import useSourceParams from "../sources/useSourceParams";
 
 /**
  * World & tools: what the world is (the capability graph), the files it is
@@ -23,25 +21,15 @@ export default function WorldToolsPanel({
   graphData,
   onReviewChanges,
 }) {
-  const [params, setParams] = useSearchParams();
+  const { sourceId, sourceTab, at, closeSource } = useSourceParams();
   const [refreshing, setRefreshing] = useState(null);
+  // Supply the records closes the file and opens Sources' Add source menu.
+  const [supplying, setSupplying] = useState(false);
   useKnowledgeBaseChanges(env.id);
   const reviewRefresh = locked
     ? undefined
     : (source) => setRefreshing(source.source_id);
   const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
-  const sourceId = params.get("source");
-  const sourceTab = params.get("sourceTab");
-  const at = params.get("at");
-  const closeSource = () =>
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        SOURCE_PARAMS.forEach((key) => next.delete(key));
-        return next;
-      },
-      { replace: true },
-    );
   return (
     <Box sx={{ p: 2 }}>
       {hasWorld && (
@@ -59,6 +47,8 @@ export default function WorldToolsPanel({
         readOnly={locked}
         onReviewChanges={onReviewChanges}
         onReviewRefresh={reviewRefresh}
+        supplying={supplying && !sourceId}
+        onSupplied={() => setSupplying(false)}
       />
       <WorldInternalsSection
         env={env}
@@ -77,6 +67,10 @@ export default function WorldToolsPanel({
           readOnly={locked}
           onClose={closeSource}
           onReviewRefresh={reviewRefresh}
+          onSupply={() => {
+            closeSource();
+            setSupplying(true);
+          }}
         />
       )}
       {refreshing && (

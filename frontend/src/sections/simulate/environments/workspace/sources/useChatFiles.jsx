@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import {
   useEnvironmentSources,
@@ -13,6 +12,7 @@ import { CHAT_FILES_COPY as COPY, spliceTurns } from "./chatFiles";
 import { Proposals } from "./ProposalsDrawer";
 import { readProgress } from "./proposals";
 import { overUploadLimit } from "./sources.constants";
+import useSourceParams from "./useSourceParams";
 
 let nextId = 0;
 
@@ -25,7 +25,7 @@ let nextId = 0;
 export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
   const envId = env?.id;
   const [entries, setEntries] = useState([]);
-  const [, setParams] = useSearchParams();
+  const sourceParams = useSourceParams();
   const { data: summary } = useEnvironmentSources(envId);
   const { data: capabilities } = useSourceCapabilities(envId);
   const { data: versions } = useEnvironmentVersions(envId, {
@@ -71,17 +71,7 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
 
   // World & tools, with the file open at `at` when a source is given.
   const openSource = (sourceId, at) =>
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        ["source", "sourceTab", "at"].forEach((key) => next.delete(key));
-        next.set("tab", "world");
-        if (sourceId) next.set("source", sourceId);
-        if (at) next.set("at", at);
-        return next;
-      },
-      { replace: true },
-    );
+    sourceParams.openSource(sourceId, null, at);
 
   const nextLabel = nextVersion(versions?.defaults?.environment);
 

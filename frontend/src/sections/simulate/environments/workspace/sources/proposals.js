@@ -1,3 +1,5 @@
+import { plural } from "./sources.constants";
+
 // Review proposed changes: what the builder read in uploaded files, grouped
 // by what each change touches (the same areas as Review changes).
 
@@ -114,7 +116,7 @@ export const mergePrepared = (current, next) => {
   };
 };
 
-// #4158 knows two modes; "Keep" and "No personal data present" both leave the values as they are.
+// The sources API knows two modes; "Keep" and "No personal data present" both leave the values as they are.
 const PERSONAL_MODE = { replace: "synthetic_replace" };
 const SYNTHETIC_COLUMNS = ["replace", "mask"];
 
@@ -190,8 +192,6 @@ export const reviewDecisions = (
     ),
   };
 };
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export const PROPOSALS_COPY = {
   title: "Review proposed changes",
