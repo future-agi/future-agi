@@ -100,6 +100,7 @@ const storeCleanReferrer = (instance) => {
   if (cleaned !== stored) instance.register({ $initial_referrer: cleaned });
 };
 
+let mixpanelInitialized = false;
 if (MIXPANEL_ENABLED) {
   try {
     mixpanel.init(MIXPANEL_TOKEN, {
@@ -132,6 +133,7 @@ if (MIXPANEL_ENABLED) {
       },
       ...(MIXPANEL_HOST && { api_host: MIXPANEL_HOST }),
     });
+    mixpanelInitialized = true;
   } catch (error) {
     logger.error("Failed to initialize Mixpanel:", error);
   }
@@ -326,6 +328,23 @@ export const trackError = (properties, where) => {
   }
 };
 
+// Read the identity restored by this document's SDK, without sending an event.
+export const hasMixpanelMember = (id, orgId) => {
+  try {
+    if (!mixpanelInitialized || mixpanel.has_opted_out_tracking() !== false)
+      return false;
+    const orgs = mixpanel.get_property("org_id");
+    return (
+      mixpanel.get_distinct_id() === id &&
+      Array.isArray(orgs) &&
+      orgs.length === 1 &&
+      orgs[0] === orgId
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const identifyUser = (userData = {}) => {
   const { id, email } = userData;
   logger.debug("identifyUser userData", userData);
@@ -364,6 +383,7 @@ export const identifyUser = (userData = {}) => {
     mixpanel.get_group("org_id", userData?.organization?.id).set_once({
       "Organization Name": userData?.organization?.name,
     });
+    return hasMixpanelMember(id, userData?.organization?.id);
   } catch (error) {
     logger.error("Failed to identify user:", error);
     trackError({

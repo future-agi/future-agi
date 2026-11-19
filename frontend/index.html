@@ -22,14 +22,19 @@
             var url = new URL(value, base || document.baseURI);
             var fragment = new URLSearchParams(url.hash.slice(1));
             function present(key) { return url.searchParams.has(key) || fragment.has(key); }
-            if (marketplaceParams.some(present)) return "document";
-            // The forwarding page itself must arrive tag-free when its return
-            // destination is restricted or can't be classified.
+            var path;
+            try { path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, "/"); }
+            catch (error) { /* An unclassifiable path is denied below. */ }
+            // A return to another origin is not a handoff to this app's consent page.
+            var local = !depth || url.origin === new URL(base).origin;
+            if (consentPath.test(path)) return local ? "consent" : "document";
+            // A forwarding page inherits consent only from an actual consent
+            // destination. Other restricted or unclassifiable returns stay tag-free.
             var next = url.searchParams.get("returnTo");
-            if (next && restriction(next, depth + 1, url.href)) return "document";
-            var path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, "/");
-            if (consentPath.test(path)) return "document";
-            return paths.test(path) || params.some(present) ? "auth" : null;
+            var forwarded = next && restriction(next, depth + 1, url.href);
+            if (local && forwarded === "consent") return "consent";
+            if (forwarded || marketplaceParams.some(present)) return "document";
+            return path === undefined || paths.test(path) || params.some(present) ? "auth" : null;
           } catch (error) {
             return "auth";
           }
@@ -37,11 +42,32 @@
         function allowed(value) {
           return !window.__authHandoffScrubFailed && !window.__authLateMarkerScrubFailed && !restriction(value, 0);
         }
-        var initiallyAllowed = allowed(window.location.href);
-        Object.defineProperty(window, "__analyticsAllowedAtLoad", { value: initiallyAllowed });
+        var arrival = restriction(window.location.href, 0);
+        Object.defineProperty(window, "__analyticsAllowedAtLoad", {
+          value: !window.__authHandoffScrubFailed && !window.__authLateMarkerScrubFailed && !arrival
+        });
+        Object.defineProperty(window, "__analyticsConsentHandoffAtLoad", { value: arrival === "consent" });
         Object.defineProperty(window, "__analyticsUrlAllowed", { value: allowed });
         Object.defineProperty(window, "__analyticsNeedsFreshDocument", {
-          value: function (url) { return window.__analyticsTagStarted === true && restriction(url, 0) === "document"; }
+          value: function (url) {
+            if (window.__analyticsTagStarted !== true) return false;
+            var kind = restriction(url, 0);
+            return kind === "document" || kind === "consent";
+          }
+        });
+        Object.defineProperty(window, "__analyticsNavigateDocument", {
+          value: function (method, href) {
+            var cancel;
+            try {
+              if (restriction(href, 0) === "consent") cancel = window.__prepareConsentIdentityHandoff?.();
+            } catch (error) { /* Analytics is optional. */ }
+            try {
+              return method === "reload" ? window.location.reload() : window.location.replace(href);
+            } catch (error) {
+              try { if (typeof cancel === "function") cancel(); } catch (ignored) { /* Preserve the navigation error. */ }
+              throw error;
+            }
+          }
         });
       })();
     </script>
@@ -77,6 +103,9 @@
         var nativePush = history.pushState;
         var nativeReplace = history.replaceState;
         var scrubCodeUrl = window.__takeSamlUrlSanitizer();
+        var navigateDocument = window.__analyticsNavigateDocument || function (method, href) {
+          return method === "reload" ? window.location.reload() : window.location.replace(href);
+        };
 
         function scrubbed(value) {
           var url = new URL(value, document.baseURI);
@@ -104,36 +133,71 @@
         }
 
         var needsFreshDocument = window.__analyticsNeedsFreshDocument;
+        function canRewrite(current, target) {
+          if (target.protocol !== current.protocol || target.host !== current.host ||
+              target.username !== current.username || target.password !== current.password) return false;
+          if (current.protocol === "https:" || current.protocol === "http:") return true;
+          if (current.protocol === "file:") return current.pathname === target.pathname;
+          return current.href.split("#")[0] === target.href.split("#")[0];
+        }
         function guard(nativeMethod, receiver, args) {
-          // Let native conversion/argument/structured-clone errors occur once,
-          // before changing any state. Ordinary calls keep their exact values.
-          if (receiver === history && args.length >= 3 && typeof args[2] === "string") {
+          var result;
+          // Brand, arity and nullable URL checks precede Web IDL conversions.
+          // Without a tag, leave object conversion and late callback cleanup to
+          // the existing native path. With a tag we must inspect *any* URL type.
+          if (receiver === history && args.length >= 3 && args[2] !== null && args[2] !== undefined &&
+              (typeof args[2] === "string" || window.__analyticsTagStarted === true)) {
+            // DOMString title, then nullable USVString URL. ToString with the
+            // string hint (unlike String(Symbol())) rejects symbols. Pass the
+            // primitives on so native code never invokes caller conversions twice.
+            args[1] = `${args[1]}`;
+            args[2] = `${args[2]}`;
             var target;
-            try { target = new URL(args[2], document.baseURI); } catch (error) { /* Native call below owns errors. */ }
+            // The empty History URL keeps the document URL, even with <base>.
+            try { if (args[2] !== "") target = new URL(args[2], document.baseURI); } catch (error) { /* Native owns invalid URLs. */ }
             var current = new URL(window.location.href);
-            if (target && target.origin === current.origin && target.username === current.username && target.password === current.password) {
+            // Invalid rewrites (including a blob URL with the same origin) go
+            // through History unchanged so it owns serialization and URL errors.
+            if (target && canRewrite(current, target)) {
               var clean = scrubbed(target.href);
               if (clean) {
                 target = clean;
-                args = Array.prototype.slice.call(args);
                 args[2] = clean.href;
               }
-              // Check the resolved router destination, including redirects from
-              // stored sign-in state that don't appear in the current address.
               if (target.href !== current.href && needsFreshDocument && needsFreshDocument(target.href)) {
-                if (nativeMethod === nativeReplace) window.location.replace(target.href);
-                else window.location.assign(target.href);
-                return;
+                // Let History serialize for storage and enforce its own limits
+                // before starting a handoff. Push creates the slot; replace reuses
+                // it. Never put the protected URL into this document's history.
+                var previousState = history.state;
+                args[2] = current.href;
+                if (target.href.split("#")[0] === current.href.split("#")[0]) {
+                  // Location.replace of a fragment alone is not a document load.
+                  var slot = new URL(current.href);
+                  slot.searchParams.append("__document_navigation", "");
+                  args[2] = slot.href;
+                }
+                result = Reflect.apply(nativeMethod, receiver, args);
+                try { navigateDocument("replace", target.href); }
+                catch (error) {
+                  // Recover the visible entry, not by traversing the stack (which
+                  // would be async and could move a different, later navigation).
+                  try { nativeReplace.call(history, previousState, "", current.href); } catch (ignored) { /* Preserve the original error. */ }
+                  throw error;
+                }
+                return result;
               }
+              // Keep the inspected destination pinned if serializing caller state
+              // synchronously changes the document's base URL.
+              if (window.__analyticsTagStarted === true) args[2] = target.href;
             }
           }
-          var result = Reflect.apply(nativeMethod, receiver, args);
+          result = Reflect.apply(nativeMethod, receiver, args);
           if (receiver === history) discardLateMarker();
           return result;
         }
 
-        history.pushState = function pushState() { return guard(nativePush, this, arguments); };
-        history.replaceState = function replaceState() { return guard(nativeReplace, this, arguments); };
+        history.pushState = function pushState() { "use strict"; return guard(nativePush, this, arguments); };
+        history.replaceState = function replaceState() { "use strict"; return guard(nativeReplace, this, arguments); };
         function onNavigation(event) {
           // HashChangeEvent.newURL retains the original marker even after the
           // address is scrubbed. Stop only these rejected protocol events before
@@ -151,7 +215,7 @@
           if (!rejected && !newDocument) return;
           event.stopImmediatePropagation();
           if (clean) safelyReplace(clean);
-          if (newDocument && !window.__authLateMarkerScrubFailed) window.location.reload();
+          if (newDocument && !window.__authLateMarkerScrubFailed) navigateDocument("reload", window.location.href);
         }
         window.addEventListener("hashchange", onNavigation, true);
         window.addEventListener("popstate", onNavigation, true);
