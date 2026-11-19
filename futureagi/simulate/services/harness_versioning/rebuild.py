@@ -471,13 +471,25 @@ def stop_rebuild(
 # --- closing -------------------------------------------------------------------------
 
 
-def fail_command(message_id: Any) -> None:
-    """Mark one waiting builder message failed, so no sandbox runs it."""
-    if message_id:
-        Message.no_workspace_objects.filter(
-            id=message_id,
-            state__in=(Message.State.QUEUED, Message.State.DELIVERED),
-        ).update(state=Message.State.FAILED, updated_at=timezone.now())
+def fail_command(message_id: Any, *, reason: str = "") -> None:
+    """Mark one waiting builder message failed, so no sandbox runs it; ``reason`` is
+    kept on its payload as ``failure_reason``."""
+    if not message_id:
+        return
+    waiting = Message.no_workspace_objects.filter(
+        id=message_id,
+        state__in=(Message.State.QUEUED, Message.State.DELIVERED),
+    )
+    values: dict[str, Any] = {
+        "state": Message.State.FAILED,
+        "updated_at": timezone.now(),
+    }
+    if reason:
+        found = waiting.values_list("payload", flat=True)[:1]
+        if not found:
+            return
+        values["payload"] = {**(found[0] or {}), "failure_reason": reason}
+    waiting.update(**values)
 
 
 def fail_nudge_turn(nudge: HarnessNudge) -> None:
@@ -2025,7 +2037,7 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     validation left unmade, and a retry per version whose activation waited for a busy
     environment. Least recently ticked first, so every organization's rows come round."""
     from simulate.models import HarnessAgentVersionRuntime
-    from simulate.services.harness_readiness import fix_driver
+    from simulate.services.harness_readiness import fix_check
     from simulate.services.harness_versioning.validation import unfinished_moves
     from simulate.tasks import harness_nudges as tasks
 
@@ -2059,7 +2071,7 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     return {
         "environments": len(environments) + len(unmade),
         "versions": len(versions),
-        "fixes": fix_driver.tick(limit=limit),
+        "fixes": fix_check.tick(limit=limit),
     }
 
 

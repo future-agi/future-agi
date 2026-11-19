@@ -329,6 +329,9 @@ class TestRows:
         ]
         assert routing["evidence"] == [{"check": "action_behavior", "result": "1/2"}]
         assert routing["fix"]["target"] == "issue_refund"
+        assert routing["fix"]["action"] == (
+            "Rebuild this environment so the test world's probe passes for issue_refund"
+        )
 
     def test_runtime_only_tool_is_partial(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "rd-runtime-only")
@@ -1783,7 +1786,7 @@ class TestConsequence:
             "Audio checks do not apply to a chat connection"
         )
         assert rows["browser"]["consequence"].startswith("No check measures this yet")
-        assert report["rules_version"] == "9"
+        assert report["rules_version"] == "10"
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
     @pytest.mark.parametrize(
@@ -2115,13 +2118,12 @@ class TestAgentGap:
                 "type": "tool_not_in_world",
                 "category": "tool_routing",
                 "target": "send_email",
-                "action": "Add send_email to this environment in the builder, or test"
-                " this agent version in an environment that has it",
+                "action": "Rebuild this environment from this agent version so the"
+                " test world has send_email, or test this agent version in an"
+                " environment that has it",
                 "would": "send_email is simulated in the test world and its probe passes",
                 "recheck": None,
-                "message": "The agent calls send_email, which this environment does not"
-                " have: add send_email to the test world so the agent's calls land"
-                " there and its probe passes.",
+                "message": None,
             }
             assert discovery["consequence"].startswith(
                 "In a run, send_email would reach outside the test world"

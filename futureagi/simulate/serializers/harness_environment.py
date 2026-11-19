@@ -1290,7 +1290,34 @@ class HarnessCapabilityFixResultSerializer(serializers.Serializer):
     suite = RunVersionLabelSerializer(
         allow_null=True, help_text="The suite version the fix saved, if moved."
     )
+    checked = serializers.BooleanField(
+        help_text="The saved versions were re-checked; else the state is unconfirmed."
+    )
     fix_id = serializers.UUIDField()
+
+
+# What refuses a fix POST now: fix_runs._hold.
+_FIX_HELD = (
+    "fix_needs_defaults",
+    "chat_unavailable",
+    "rebuild_running",
+    "fix_running",
+    "unsaved_changes",
+)
+
+
+class HarnessCapabilityFixActionSerializer(serializers.Serializer):
+    available = serializers.BooleanField(
+        help_text="The builder chat can fix this row and no fix is on it."
+    )
+    held = serializers.ChoiceField(
+        choices=_FIX_HELD,
+        allow_null=True,
+        help_text=(
+            "Why a fix POST would be refused now; null when it would be taken or the"
+            " row is not available. Usage limits are checked on the POST only."
+        ),
+    )
 
 
 class HarnessCapabilityRowSerializer(serializers.Serializer):
@@ -1335,6 +1362,11 @@ class HarnessCapabilityRowSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text="What a saved fix did for this row, on the versions it saved from.",
+    )
+    fix_action = HarnessCapabilityFixActionSerializer(
+        required=False,
+        allow_null=True,
+        help_text="Whether Fix can run on this row now; on live reads only.",
     )
 
 
@@ -1408,6 +1440,28 @@ class HarnessReadinessFixPairingSerializer(serializers.Serializer):
     suite_version = RunVersionLabelSerializer(allow_null=True)
 
 
+class HarnessReadinessFixOutcomeSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(
+        choices=(
+            "fixed",
+            "partly_fixed",
+            "could_not_fix",
+            "saved_unchecked",
+            "unsaved",
+            "draft_gone",
+        ),
+        help_text=(
+            "fixed / partly_fixed / could_not_fix by the rows' lines; saved_unchecked:"
+            " saved but the re-check didn't finish; unsaved: the fix's changes wait in"
+            " unsaved changes nobody edited since; draft_gone: they no longer wait"
+            " there."
+        ),
+    )
+    fixed = serializers.IntegerField(min_value=0)
+    total = serializers.IntegerField(min_value=0, help_text="The rows the run tried.")
+    message = serializers.CharField(allow_blank=True)
+
+
 class HarnessReadinessFixSerializer(serializers.Serializer):
     """A run readiness fix: the builder chat fixing rows, then a save and re-check."""
 
@@ -1431,6 +1485,16 @@ class HarnessReadinessFixSerializer(serializers.Serializer):
     )
     draft = serializers.BooleanField(
         help_text="Ended without saving; its changes wait in unsaved edits."
+    )
+    active = serializers.BooleanField(help_text="The run is still working.")
+    accepts_rows = serializers.BooleanField(
+        help_text=(
+            "The run takes more rows in this state; each row's fix_action says"
+            " whether a POST would be taken now."
+        )
+    )
+    outcome = HarnessReadinessFixOutcomeSerializer(
+        allow_null=True, help_text="How the run came out; null while it is active."
     )
     error = HarnessReadinessFixErrorSerializer(allow_null=True)
     pairing = HarnessReadinessFixPairingSerializer(

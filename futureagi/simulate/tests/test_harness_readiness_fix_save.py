@@ -3,6 +3,7 @@ of the new defaults, the verdict, the endings that did not save, and the manual-
 guard while a fix waits on the person."""
 
 import json
+import sys
 import uuid
 from datetime import timedelta
 from unittest.mock import patch
@@ -19,8 +20,8 @@ from simulate.models import (
     HostedHarnessJob,
     ReadinessFixRun,
 )
-from simulate.services import harness_readiness
-from simulate.services.harness_readiness import fix_driver, fix_runs, fix_save
+from simulate.services import harness_readiness, harness_usage
+from simulate.services.harness_readiness import fix_check, fix_runs, fix_save
 from simulate.services.harness_versioning import (
     archives,
     candidate_promotion,
@@ -30,6 +31,8 @@ from simulate.services.harness_versioning import (
     validation,
 )
 from simulate.services.harness_versioning.assembly import CERTIFICATE, SEALED_MANIFEST
+from simulate.services.harness_versioning.drafts import DraftWrite
+from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
     FAILED_PROBE,
@@ -79,14 +82,23 @@ DRAFT_UNSAVED = "draft_unsaved"
 
 def _settled(user, workspace, storage, capture, key, rows=ROWS):
     """A run whose one command's turn wrote the environment draft and settled."""
+    environment, run, message, conversation = _dispatched(
+        user, workspace, storage, key, rows
+    )
+    _write_and_settle(environment, message, conversation, storage, capture)
+    run.refresh_from_db()
+    assert run.commands[0]["outcome"]["wrote"] is True
+    environment.refresh_from_db()
+    return environment, run
+
+
+def _write_and_settle(environment, message, conversation, storage, capture):
+    """The dispatched command's turn writes the environment draft and publishes."""
     from simulate.services.hosted_harness_gateway import (
         with_authoring_basis,
         with_draft_basis,
     )
 
-    environment, run, message, conversation = _dispatched(
-        user, workspace, storage, key, rows
-    )
     token = drafts.compose_workspace(environment, conversation).token
     body = with_draft_basis(
         with_authoring_basis(
@@ -105,18 +117,14 @@ def _settled(user, workspace, storage, capture, key, rows=ROWS):
     )
     with capture(execute=True):
         _publish(conversation, sequence)
-    run.refresh_from_db()
-    assert run.commands[0]["outcome"]["wrote"] is True
-    environment.refresh_from_db()
-    return environment, run
 
 
 def _check(environment, capture=None):
     if capture is None:
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         return
     with capture(execute=True):
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
 
 def _validating(user, workspace, storage, capture, key, rows=ROWS):
@@ -236,6 +244,19 @@ def _assert_unsaved(run, environment, code):
     }
 
 
+def _assert_unchecked(run, environment):
+    """Saved, but the re-check never finished: never read as fixed."""
+    run.refresh_from_db()
+    environment.refresh_from_db()
+    found = fix_runs.serialize(run, environment)["outcome"]
+    assert run.autosave["checked"] is False
+    assert (found["kind"], found["fixed"], found["total"]) == (
+        "saved_unchecked",
+        1,
+        2,
+    )
+
+
 # --- the save ---------------------------------------------------------------------
 
 
@@ -315,6 +336,13 @@ class TestSaved:
         assert environment.suite_version_id == base[1]
         assert run.autosave["agent_version_id"] == str(environment.agent_version_id)
         assert drafts.open_draft(environment, "environment") is None
+        assert run.autosave["checked"] is True
+        assert body["outcome"] == {
+            "kind": "partly_fixed",
+            "fixed": 1,
+            "total": 2,
+            "message": "Fixed 1 of 2",
+        }
 
     def test_the_run_is_saved_once_when_the_run_update_is_lost(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
@@ -531,6 +559,7 @@ class TestRecheck:
         assert run.result_environment_version_id is not None
         assert _states(run) == {"state": "fixed", "tool_routing": "could_not_fix"}
         assert _lines(run)["tool_routing"][1]["code"] == "check_unavailable"
+        _assert_unchecked(run, environment)
 
     def test_a_refused_recheck_gives_the_verdict_at_once(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
@@ -552,6 +581,69 @@ class TestRecheck:
         assert (run.state, run.autosave["recheck"]) == ("done", "unavailable")
         assert _states(run) == {"state": "fixed", "tool_routing": "could_not_fix"}
         assert _lines(run)["tool_routing"][1]["code"] == "check_unavailable"
+        _assert_unchecked(run, environment)
+
+    def test_a_usage_refused_recheck_gives_the_verdict_at_once(
+        self,
+        user,
+        workspace,
+        storage,
+        tasks,
+        django_capture_on_commit_callbacks,
+        monkeypatch,
+    ):
+        from ee.usage.exceptions import UsageLimitExceeded
+        from ee.usage.schemas.events import CheckResult
+
+        environment, run = _validating(
+            user, workspace, storage, django_capture_on_commit_callbacks, "fs-usage"
+        )
+        _certify_set(environment, storage)
+        monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+        refusal = UsageLimitExceeded(
+            CheckResult(
+                allowed=False, reason="out of credits", error_code="BUDGET_PAUSED"
+            )
+        )
+        with (
+            patch.object(validation, "needs_reading", return_value=True),
+            patch.object(fix_save.reports, "recheck", side_effect=refusal),
+        ):
+            _check(environment)
+
+        run.refresh_from_db()
+        assert (run.state, run.autosave["recheck"]) == ("done", "unavailable")
+        assert _lines(run)["tool_routing"][1]["code"] == "check_unavailable"
+
+    def test_a_recheck_never_imports_ee_on_oss(
+        self,
+        user,
+        workspace,
+        storage,
+        tasks,
+        django_capture_on_commit_callbacks,
+        monkeypatch,
+    ):
+        environment, _ = _validating(
+            user, workspace, storage, django_capture_on_commit_callbacks, "fs-oss"
+        )
+        _certify_set(environment, storage)
+        environment_version, suite_version = _set_versions(environment)
+        pairing = _pinned(
+            environment,
+            environment_version=environment_version,
+            suite_version=suite_version,
+        )
+        monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+        # Any import of the ee module now fails.
+        monkeypatch.setitem(sys.modules, "ee.usage.exceptions", None)
+        with (
+            patch.object(validation, "needs_reading", return_value=True),
+            patch.object(
+                fix_save.reports, "recheck", side_effect=_refused("usage_blocked")
+            ),
+        ):
+            assert fix_save._recheck(pairing) == "unavailable"
 
     def test_a_check_already_reading_tools_is_waited_on(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
@@ -633,18 +725,18 @@ class TestRecheck:
         _age(
             run,
             "failing_since",
-            fix_driver.CHECK_FAILING_GIVE_UP + timedelta(minutes=1),
+            fix_check.CHECK_FAILING_GIVE_UP + timedelta(minutes=1),
         )
 
         with (
-            patch.object(fix_driver, "_check", side_effect=RuntimeError("boom")),
+            patch.object(fix_check, "_check", side_effect=RuntimeError("boom")),
             patch.object(
                 fix_save,
                 "saved_pairing",
                 side_effect=HarnessEnvironmentVersion.DoesNotExist,
             ),
         ):
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert (run.state, run.error) == ("done", None)
@@ -662,11 +754,11 @@ class TestRecheck:
         _age(
             run,
             "failing_since",
-            fix_driver.CHECK_FAILING_GIVE_UP + timedelta(minutes=1),
+            fix_check.CHECK_FAILING_GIVE_UP + timedelta(minutes=1),
         )
 
-        with patch.object(fix_driver, "_check", side_effect=RuntimeError("boom")):
-            fix_driver.check(environment.id)
+        with patch.object(fix_check, "_check", side_effect=RuntimeError("boom")):
+            fix_check.check(environment.id)
 
         run.refresh_from_db()
         environment.refresh_from_db()
@@ -674,6 +766,7 @@ class TestRecheck:
         assert fix_runs.serialize(run, environment)["saved"]["environment"]
         assert _states(run) == {"state": "fixed", "tool_routing": "could_not_fix"}
         assert _lines(run)["tool_routing"][1]["code"] == "check_unavailable"
+        _assert_unchecked(run, environment)
 
 
 # --- not saved --------------------------------------------------------------------
@@ -933,6 +1026,29 @@ class TestNotSaved:
 
         _check(environment)
 
+        _assert_unsaved(run, environment, "draft_changed")
+
+    def test_a_turn_of_the_persons_own_during_the_run_is_not_autosaved(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        from simulate.models import HostedHarnessConversationMessage as Message
+        from simulate.services import hosted_harness_conversation as hhc
+
+        environment, run = _settled(
+            user, workspace, storage, django_capture_on_commit_callbacks, "fs-mine"
+        )
+        mine = hhc.enqueue_message(
+            environment, content="mine", client_request_id="mine"
+        )[1]
+        Message.no_workspace_objects.filter(id=mine.id).update(state="completed")
+
+        with (
+            patch.object(drafts, "chat_busy", return_value=False),
+            patch.object(candidates, "validate_drafts") as validate,
+        ):
+            _check(environment)
+
+        validate.assert_not_called()
         _assert_unsaved(run, environment, "draft_changed")
 
     def test_drafts_discarded_meanwhile_fail_the_run(
@@ -1261,7 +1377,7 @@ class TestQuestions:
             user, workspace, storage, django_capture_on_commit_callbacks, "fq-day"
         )
         self._asked(
-            environment, ago=fix_driver.FIX_QUESTION_GIVE_UP + timedelta(minutes=1)
+            environment, ago=fix_check.FIX_QUESTION_GIVE_UP + timedelta(minutes=1)
         )
 
         _check(environment)
@@ -1435,3 +1551,38 @@ class TestFixWaiting:
         settings.HARNESS_READINESS_FIX_ENABLED = False
 
         assert _code(environment, draft, user, path) != "fix_waiting"
+
+
+def _edit(environment, user):
+    first, *rest = suite_documents(drafts.edit_sides(environment)["suite"])
+    return drafts.write_suite_edit(
+        environment, [{**first, "instruction": "Ask again."}, *rest], user=user
+    )
+
+
+class TestFixEdits:
+    @pytest.mark.parametrize("state", ["fixing", "waiting_on_you", "saving"])
+    def test_an_edit_of_the_persons_is_refused_while_the_fix_may_save(
+        self, user, workspace, storage, state
+    ):
+        environment, _ = _waiting(
+            user, workspace, storage, f"fe-{state}", state=state, asked=False
+        )
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _edit(environment, user)
+
+        assert (refused.value.code, refused.value.status_code) == ("fix_running", 409)
+
+    def test_not_refused_once_the_fix_saved(self, user, workspace, storage):
+        environment, _ = _waiting(
+            user, workspace, storage, "fe-checking", state="checking", asked=False
+        )
+
+        assert isinstance(_edit(environment, user), DraftWrite)
+
+    def test_not_refused_while_fix_is_off(self, user, workspace, storage, settings):
+        environment, _ = _waiting(user, workspace, storage, "fe-off", asked=False)
+        settings.HARNESS_READINESS_FIX_ENABLED = False
+
+        assert isinstance(_edit(environment, user), DraftWrite)

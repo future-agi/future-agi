@@ -1,31 +1,25 @@
-"""Run readiness Fix autosave: once every command settled, save the builder's drafts
-through Validate and Save, re-check the new defaults, and give each line its verdict.
-
-``advance`` is a state machine over ``run.autosave["phase"]``: ``validate`` and
-``validating`` while the run is ``saving``, then ``checking``. Each step re-reads the
-run under ``fix_runs``' lock order and does nothing unless the run is still where the
-step read it, so a repeated check changes nothing. A run that cannot save ends through
-``fix_runs.end_without_save``: ``done`` while an open draft holds its changes, else
-``failed``.
-"""
+"""Run readiness Fix autosave: once every command settled, Validate and Save the
+drafts (phases ``validate``, ``validating``), re-check (``checking``), then give each
+line its verdict. Each step is a no-op unless the run is still where it was read."""
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any
 
+import structlog
 from django.utils import timezone
 
 from simulate.models import HostedHarnessConversationMessage, HostedHarnessJob
 from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.models.readiness_fix import APPENDABLE, ReadinessFixRun
-from simulate.services.harness_readiness import fix_driver, fix_runs
+from simulate.services.harness_readiness import fix_check, fix_driver, fix_runs
 from simulate.services.harness_readiness import report as reports
 from simulate.services.harness_readiness.catalogue import Pairing
 from simulate.services.harness_readiness.evidence import certified, pair_bundle
+from simulate.services.harness_usage import usage_limit_error
 from simulate.services.harness_versioning import (
     candidate_promotion,
     candidate_sets,
@@ -43,7 +37,9 @@ from simulate.services.harness_versioning.draft_pieces import (
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+Message = HostedHarnessConversationMessage
 
 State = ReadinessFixRun.State
 SAVE_WAIT_GIVE_UP = timedelta(minutes=15)
@@ -69,41 +65,31 @@ _PROMOTE_ENDS = frozenset(
     }
 )
 _MESSAGES = {
-    "chat_working": "The builder chat kept working, so the fix wasn't saved; save the"
-    " changes when it finishes",
-    "environment_busy": "The environment was busy, so the fix wasn't saved; save the"
-    " changes when it finishes",
-    "environment_building": "The environment was building, so the fix wasn't saved;"
-    " save the changes when it finishes",
-    "rebuild_running": "An update was running, so the fix wasn't saved; save the"
-    " changes when it finishes",
-    "draft_stale": "The environment changed while the fix ran; discard or re-apply the"
-    " changes in chat",
-    "draft_changed": "The unsaved changes moved while the fix saved them; review and"
-    " save them",
-    "review_stale": "The changes moved while the fix saved them; review and save them",
-    "review_undecided": "Some changes have review decisions; finish reviewing them,"
-    " then save",
-    "validation_unavailable": "The changes couldn't be validated here; review and save"
-    " them",
-    "validation_failed": "The fix's changes failed validation; review them in chat",
-    "validation_timed_out": "Validating the changes took too long; review and save"
-    " them",
-    "defaults_moved": "The versions changed while the fix saved; validate and save the"
-    " changes",
-    "not_validated": "The changes weren't validated; validate and save them",
-    "idempotency_key_reused": "The fix's save was refused; review and save the changes",
-    "validation_refused": "The changes couldn't be validated; review and save them",
-    "no_changes": "The builder chat made no changes to save",
-    "draft_discarded": "The fix's changes were discarded before they were saved",
+    "chat_working": "Not saved: the builder chat was busy; save when it's done",
+    "environment_busy": "Not saved: the environment was busy; save when it's done",
+    "environment_building": "Not saved: the environment was building; save later",
+    "rebuild_running": "Not saved: an update was running; save when it's done",
+    "draft_stale": "The environment changed; discard or re-apply the changes in chat",
+    "draft_changed": "The changes moved while saving; review and save them",
+    "review_stale": "The changes moved while saving; review and save them",
+    "review_undecided": "Finish reviewing the changes, then save",
+    "validation_unavailable": "Couldn't validate here; review and save the changes",
+    "validation_failed": "The changes failed validation; review them in chat",
+    "validation_timed_out": "Validation took too long; review and save the changes",
+    "defaults_moved": "The versions changed; validate and save the changes",
+    "not_validated": "Not validated; validate and save the changes",
+    "idempotency_key_reused": "The save was refused; review and save the changes",
+    "validation_refused": "Couldn't validate; review and save the changes",
+    "no_changes": "The builder chat made no changes",
+    "draft_discarded": "The changes were discarded before saving",
 }
 # What a line kept in an open draft says, when its ending code says more.
 _LINE_MESSAGES = {"draft_stale": _MESSAGES["draft_stale"]}
-_CHECK_UNAVAILABLE = "The re-check didn't finish; re-check the versions"
+_CHECK_UNAVAILABLE = "Re-check didn't finish; re-check the versions"
 
 
 def _phase(run: ReadinessFixRun) -> str | None:
-    return (run.autosave or {}).get("phase")
+    return fix_runs.autosave(run).get("phase")
 
 
 def _since(run: ReadinessFixRun, key: str = "since") -> Any:
@@ -163,7 +149,7 @@ def _end(
     *,
     detail: str | None = None,
 ) -> bool:
-    logger.info("harness_fix_not_saved run=%s code=%s detail=%s", run.id, code, detail)
+    logger.info("harness_fix_not_saved", run=str(run.id), code=code, detail=detail)
     fix_runs.end_without_save(
         run,
         code,
@@ -219,7 +205,7 @@ def _enter_saving(run: ReadinessFixRun) -> bool:
         if locked is None:
             return False
         _head, current = locked
-        if current.id != run.id or not fix_driver._all_settled(current):
+        if current.id != run.id or not fix_check._all_settled(current):
             return False
         question = fix_driver._open_question(fix_driver._lock_conversation(run.job_id))
         if question is None:
@@ -236,8 +222,8 @@ def _enter_saving(run: ReadinessFixRun) -> bool:
             .values_list("created_at", flat=True)
             .first()
         )
-    if asked is not None and timezone.now() - asked > fix_driver.FIX_QUESTION_GIVE_UP:
-        _end(run, "question_unanswered", fix_driver._UNANSWERED)
+    if asked is not None and timezone.now() - asked > fix_check.FIX_QUESTION_GIVE_UP:
+        _end(run, "question_unanswered", fix_check._UNANSWERED)
     return False
 
 
@@ -257,6 +243,9 @@ def _validate(run: ReadinessFixRun) -> bool:
         return _end(run, "draft_stale")
     if drafts.chat_busy(head):
         return _wait(run, "chat_working")
+    if _person_turned(run):
+        # Autosave saves the whole draft: the person's edits are theirs to save.
+        return _end(run, "draft_changed")
     reviewed = review.draft_review(head)
     tries = int((run.autosave or {}).get("validate_tries") or 0)
     try:
@@ -277,6 +266,32 @@ def _validate(run: ReadinessFixRun) -> bool:
         **_phase_values(
             "validating", candidates=body["candidates"], validate_tries=tries + 1
         ),
+    )
+
+
+def _person_turned(run: ReadinessFixRun) -> bool:
+    """A turn of the person's own ran in the chat during the run: not a fix command,
+    nor an answer to its question sent before the command settled."""
+    ours: set[str] = set()
+    for cmd in run.commands:
+        if cmd.get("message_id"):
+            ours.add(str(cmd["message_id"]))
+        settled = fix_driver._time(cmd.get("settled_at"))
+        ours.update(
+            str(reply.id)
+            for reply in fix_runs.replies(cmd)
+            if settled is None or reply.created_at <= settled
+        )
+    return (
+        Message.no_workspace_objects.filter(
+            conversation__job_id=run.job_id,
+            role=Message.Role.USER,
+            created_at__gt=run.created_at,
+            state__in=(Message.State.DELIVERED, Message.State.COMPLETED),
+        )
+        .exclude(id__in=ours)
+        .exclude(payload__command_kind__in=fix_runs._CONTROL_KINDS)
+        .exists()
     )
 
 
@@ -404,10 +419,10 @@ def _promote(run: ReadinessFixRun) -> bool:
             _checking_values(head, current)
             fix_runs.store(current, before)
             logger.info(
-                "harness_fix_saved run=%s environment_version=%s suite_version=%s",
-                current.id,
-                current.result_environment_version_id,
-                current.result_suite_version_id,
+                "harness_fix_saved",
+                run=str(current.id),
+                environment_version=str(current.result_environment_version_id),
+                suite_version=str(current.result_suite_version_id),
             )
             return True
     return _promote_refused(run, refused)
@@ -509,12 +524,9 @@ def _live_check(pairing: Pairing) -> bool:
 
 
 def _recheck(pairing: Pairing) -> str:
-    """Re-check the saved pairing unless Validate already certified this assembly and
-    no tools are left to read: ``started`` (a check runs, also one already running),
-    ``skipped`` (the verdict reads now), or ``unavailable`` (refused or cannot run;
-    the verdict cannot tell, as past the deadline)."""
-    from ee.usage.exceptions import UsageLimitExceeded
-
+    """Re-check the saved pairing unless Validate certified it and no tools are left
+    to read: ``started`` (a check runs), ``skipped`` (the verdict reads now) or
+    ``unavailable`` (refused or can't run; the verdict can't tell)."""
     if _live_check(pairing):
         return "started"
     agent = pairing.agent_version
@@ -527,11 +539,14 @@ def _recheck(pairing: Pairing) -> str:
         return "skipped"
     try:
         started = reports.recheck(pairing)
-    except (UsageLimitExceeded, HostedHarnessError) as exc:
+    except Exception as exc:
+        refused = exc if isinstance(exc, HostedHarnessError) else usage_limit_error(exc)
+        if refused is None:
+            raise
         logger.info(
-            "harness_fix_recheck_refused environment=%s error=%s",
-            pairing.environment.id,
-            getattr(exc, "code", type(exc).__name__),
+            "harness_fix_recheck_refused",
+            environment=str(pairing.environment.id),
+            error=refused.code,
         )
         return "unavailable"
     if started["state"] == "validating" or _live_check(pairing):
@@ -589,7 +604,7 @@ def end_saved(run: ReadinessFixRun) -> None:
         head = nudges._head(run.job_id)
         pairing = saved_pairing(head, current) if head is not None else None
     except Exception:  # noqa: BLE001 - e.g. a result version deleted for good
-        logger.exception("harness_fix_saved_pairing_unreadable run=%s", run.id)
+        logger.exception("harness_fix_saved_pairing_unreadable", run=str(run.id))
         pairing = None
     _finish(current, pairing, state=State.DONE, timed_out=True)
 
@@ -612,7 +627,7 @@ def _report(pairing: Pairing | None, *, safe: bool = False) -> Mapping[str, Any]
         return reports.readiness_report(pairing)
     except Exception:  # noqa: BLE001 - ending the run must not fail on the read
         logger.exception(
-            "harness_fix_verdict_unreadable environment=%s", pairing.environment.id
+            "harness_fix_verdict_unreadable", environment=str(pairing.environment.id)
         )
         return {"rows": [], "computed_at": None}
 
@@ -664,4 +679,6 @@ def _finish(
         current = locked[1]
         before = fix_runs.snapshot(current)
         _verdict(current, report, state=state, timed_out=timed_out)
+        # Whether the verdict read a finished re-check; the outcome reads it.
+        current.autosave = {**(current.autosave or {}), "checked": not timed_out}
         fix_runs.store(current, before)

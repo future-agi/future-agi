@@ -1,25 +1,16 @@
-"""Run readiness Fix driver: send a run's commands to the builder chat one at a time,
-follow their turns, and settle each command from how its turn ended.
-
-Every transition takes the environment head, then the run, then the conversation
-(``fix_runs``' lock order), re-reads the run and does nothing unless it is still in
-the state the transition expects, so redelivered or replayed events change nothing.
-
-A command's turn may ask the person a question. The answer is a new message: the
-turn waiting on it runs on with it, or, if that turn already ended, the answer gets a
-turn of its own. ``current_command_id`` moves to an answer only when its own turn
-starts.
-"""
+"""Run readiness Fix driver: send a run's commands to the builder chat one at a time
+and follow their turns. Locks head, run, then conversation; each transition re-reads
+the run and does nothing unless it is still where the transition expects."""
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
+import structlog
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -34,10 +25,11 @@ from simulate.models.readiness_fix import ACTIVE, APPENDABLE, ReadinessFixRun
 from simulate.services import hosted_harness_conversation as hhc
 from simulate.services.harness_agent_versions import _busy
 from simulate.services.harness_readiness import fix_groups, fix_runs
+from simulate.services.harness_readiness.fix_runs import FixCommand
 from simulate.services.harness_versioning import drafts, nudges, rebuild
 from simulate.services.hosted_harness import HostedHarnessError
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 State = ReadinessFixRun.State
 Message = HostedHarnessConversationMessage
@@ -54,22 +46,12 @@ EVENT_KINDS = frozenset(
 )
 _QUESTION_KINDS = ("question_requested", "confirmation_requested")
 _DISPATCHABLE = (State.QUEUED, State.FIXING)
-FIX_DISPATCH_GIVE_UP = timedelta(minutes=30)
-FIX_QUESTION_GIVE_UP = timedelta(hours=24)
-CHECK_FAILING_GIVE_UP = timedelta(minutes=10)
-PROMPT_MAX = 500
-# How each give-up settles: (outcome turn, code).
-_GIVE_UPS = {
-    "not_started": ("not_started", "not_started"),
-    "stuck": ("stuck", "stuck"),
-    "turn_interrupted": ("interrupted", "turn_interrupted"),
-    "publish_failed": ("failed", "publish_failed"),
-    "question_unanswered": ("failed", "question_unanswered"),
-}
-_UNANSWERED = (
-    "The builder chat's question went unanswered; answer it in chat, then try the"
-    " fix again"
-)
+# Served question text; the full question is in the chat.
+PROMPT_MAX = 140
+# The builder's own words on a line it made no change for.
+REASON_MAX = 300
+# What the builder appends after its reply; not why it made no change.
+_HEALTH_SUFFIX = "\n\nStill open from the last health check"
 
 
 # --- reading --------------------------------------------------------------------
@@ -98,9 +80,9 @@ def _lock_conversation(environment_id: Any) -> HostedHarnessConversation | None:
     )
 
 
-def _ids(run: ReadinessFixRun, cmd: Mapping[str, Any]) -> list[str]:
-    """Every message of the command: itself, the answers to its questions, and the one
-    whose turn started last."""
+def _ids(run: ReadinessFixRun, cmd: FixCommand) -> list[str]:
+    """Every message of the command: itself, its answers, and the one whose turn
+    started last."""
     return list(
         dict.fromkeys(
             str(one)
@@ -116,9 +98,9 @@ def _ids(run: ReadinessFixRun, cmd: Mapping[str, Any]) -> list[str]:
 
 @dataclass(frozen=True)
 class _Flight:
-    """Where the command's turn is: ``current`` is the message whose turn runs or
-    ran last; ``pending`` an answer sent after that turn ended, waiting for a turn of
-    its own; ``started``/``ended`` the current turn's events."""
+    """Where the command's turn is: ``current`` runs or ran last, ``started`` and
+    ``ended`` are its events, ``pending`` a live answer waiting for its own turn (an
+    answer to a turn that already ended gets one; ``current`` moves when it starts)."""
 
     ids: list[str]
     current: str
@@ -130,7 +112,7 @@ class _Flight:
 def _flight(
     conversation: HostedHarnessConversation | None,
     run: ReadinessFixRun,
-    cmd: Mapping[str, Any],
+    cmd: FixCommand,
 ) -> _Flight:
     ids = _ids(run, cmd)
     events = Event.no_workspace_objects.filter(conversation=conversation)
@@ -159,13 +141,13 @@ def _flight(
     )
     pending = None
     if ended is not None and conversation is not None:
-        # An answer the turn took before ALK ended it belongs to that turn; one the
-        # chat never took, or sent after the turn ended, waits for a turn of its own.
+        # A live answer the chat never took, or sent after the turn ended, waits for
+        # its own turn; one the turn took, or the chat failed or ended, does not.
         ended_at = ended.emitted_at or ended.created_at
         pending = next(
             (
                 reply
-                for reply in fix_runs.replies(cmd)
+                for reply in fix_runs.live_replies(cmd)
                 if str(reply.id) != current
                 and (
                     reply.sequence > conversation.command_acked_through
@@ -184,8 +166,7 @@ def _settles(flight: _Flight, command_id: str) -> bool:
 
 
 def _fail(message: Message, conversation: HostedHarnessConversation | None) -> None:
-    """Fail a waiting message so no sandbox runs it; never an answer the chat already
-    took, which the turn it answered consumed."""
+    """Fail a waiting message so no sandbox runs it; never an answer the chat took."""
     taken = conversation is not None and (
         message.sequence <= conversation.command_acked_through
     )
@@ -195,10 +176,9 @@ def _fail(message: Message, conversation: HostedHarnessConversation | None) -> N
 
 def run_for_command(
     command: Message | None,
-) -> tuple[ReadinessFixRun, dict[str, Any]] | None:
-    """The run and command a builder message belongs to: a fix's own command (even
-    once its run ended, so a late write is recognized), or the person's answer to its
-    question. No query for any other message, nor for an answer while Fix is off."""
+) -> tuple[ReadinessFixRun, FixCommand] | None:
+    """The run and command of a fix's own message (even once its run ended) or of the
+    person's answer to its question; no query for other messages or while off."""
     if command is None:
         return None
     payload = command.payload or {}
@@ -240,11 +220,11 @@ def _turn_command(conversation: HostedHarnessConversation, sequence: int) -> str
 def question_command(
     conversation: HostedHarnessConversation,
     run: ReadinessFixRun,
-    cmd: Mapping[str, Any],
+    cmd: FixCommand,
     question_id: Any,
 ) -> bool:
-    """Whether the question was asked in a turn of ``cmd``: the command itself, or an
-    answer chained from one of its questions."""
+    """Whether a turn of ``cmd``, or of an answer chained from its questions, asked
+    the question."""
     known = set(_ids(run, cmd))
     target = question_id
     for _ in range(8):
@@ -279,11 +259,11 @@ def _open_question(conversation: HostedHarnessConversation | None) -> str | None
     return str((conversation.blocking_input or {})["message_id"])
 
 
-def _remember(cmd: dict[str, Any], question_id: str) -> None:
+def _remember(cmd: FixCommand, question_id: str) -> None:
     cmd["questions"] = list(dict.fromkeys([*(cmd.get("questions") or ()), question_id]))
 
 
-def _ask(run: ReadinessFixRun, cmd: dict[str, Any], question_id: str) -> None:
+def _ask(run: ReadinessFixRun, cmd: FixCommand, question_id: str) -> None:
     prompt = (
         Message.no_workspace_objects.filter(id=question_id)
         .values_list("content", flat=True)
@@ -297,16 +277,46 @@ def _ask(run: ReadinessFixRun, cmd: dict[str, Any], question_id: str) -> None:
         "waiting_on_you",
         fix_runs.reason(
             "builder_question",
-            (prompt or "")[:PROMPT_MAX] or "The builder chat asked a question",
+            _clip(prompt or "") or "The builder chat asked a question",
         ),
     )
     run.state = State.WAITING_ON_YOU
 
 
+def _clip(text: str) -> str:
+    return text if len(text) <= PROMPT_MAX else text[: PROMPT_MAX - 1].rstrip() + "…"
+
+
+def _builder_said(
+    conversation: HostedHarnessConversation | None,
+    turn: Event,
+    started: Event | None,
+) -> str:
+    """The builder's last reply in ``turn``, ending with why it made no change; ""
+    for none, or one that failed or was cut off."""
+    if conversation is None:
+        return ""
+    said = Event.no_workspace_objects.filter(
+        conversation=conversation, kind="assistant_message", sequence__lt=turn.sequence
+    )
+    if turn.invocation_id:
+        said = said.filter(invocation_id=turn.invocation_id)
+    else:
+        said = said.filter(sequence__gt=started.sequence if started is not None else 0)
+    payload = said.order_by("-sequence").values_list("payload", flat=True).first() or {}
+    if payload.get("error") or payload.get("interrupted"):
+        return ""
+    text = str(payload.get("text") or "").split(_HEALTH_SUFFIX)[0].strip()
+    if len(text) <= REASON_MAX:
+        return text
+    # Text from before a replay of the turn can lead it: the end says why.
+    return "…" + text[-(REASON_MAX - 1) :].lstrip()
+
+
 def _own_question(
     conversation: HostedHarnessConversation | None,
     run: ReadinessFixRun,
-    cmd: Mapping[str, Any],
+    cmd: FixCommand,
 ) -> str | None:
     """The open question in the chat, when a turn of ``cmd`` asked it."""
     question = _open_question(conversation)
@@ -315,7 +325,7 @@ def _own_question(
     return question if question_command(conversation, run, cmd, question) else None
 
 
-def _answered(run: ReadinessFixRun, cmd: dict[str, Any]) -> None:
+def _answered(run: ReadinessFixRun, cmd: FixCommand) -> None:
     """The person answered: the command's lines and the run work on."""
     run.question_message_id = None
     fix_runs.set_lines(run, cmd["n"], "fixing", states=("queued", "waiting_on_you"))
@@ -325,7 +335,7 @@ def _answered(run: ReadinessFixRun, cmd: dict[str, Any]) -> None:
 # --- dispatch -------------------------------------------------------------------
 
 
-def _next(run: ReadinessFixRun) -> dict[str, Any] | None:
+def _next(run: ReadinessFixRun) -> FixCommand | None:
     """The lowest queued command that carries rows; row-less ones are never sent."""
     return next(
         (one for one in run.commands if one["state"] == "queued" and one["rows"]),
@@ -387,26 +397,23 @@ def dispatch(environment_id: Any, *, start_runtime: bool = True) -> bool:
             },
             expected_revision=revision,
         )
-        cmd.update(
-            state="dispatched",
-            message_id=str(message.id),
-            dispatched_at=timezone.now().isoformat(),
-        )
+        cmd["state"] = "dispatched"
+        cmd["message_id"] = str(message.id)
+        cmd["dispatched_at"] = timezone.now().isoformat()
         fix_runs.set_lines(run, cmd["n"], "fixing", states=("queued",))
         run.current_command_id = message.id
         run.question_message_id = None
         run.state = State.FIXING
         fix_runs.store(run, before)
         if first:
-            # The run's first sandbox starts from the defaults it is based on; its
-            # later commands and answers keep that working copy.
+            # The first sandbox starts from the run's base; later commands keep it.
             rebuild._expire_chat_lease(conversation)
-    logger.info("harness_fix_dispatched run=%s message=%s", run.id, message.id)
+    logger.info("harness_fix_dispatched", run=str(run.id), message=str(message.id))
     if start_runtime and rebuild.sandbox_provider_configured():
         try:
             rebuild._start_runtime(str(conversation.id))
         except Exception:  # noqa: BLE001 - the recovery sweep starts it
-            logger.exception("harness_fix_runtime_schedule_failed run=%s", run.id)
+            logger.exception("harness_fix_runtime_schedule_failed", run=str(run.id))
     return True
 
 
@@ -421,7 +428,7 @@ def on_conversation_event(
     message_id: Any,
 ) -> None:
     """After an event of the environment's own chat commits: follow the fix's turn.
-    Never raises; the check reconciles anything missed. Nothing while Fix is off."""
+    Never raises (the check reconciles a miss); nothing while Fix is off."""
     if kind not in EVENT_KINDS or not fix_groups.enabled():
         return
     try:
@@ -451,7 +458,7 @@ def on_conversation_event(
         fix_runs.schedule_check(environment_id)
     except Exception:  # noqa: BLE001 - the check reconciles it
         logger.exception(
-            "harness_fix_event_failed conversation=%s kind=%s", conversation_id, kind
+            "harness_fix_event_failed", conversation=str(conversation_id), kind=kind
         )
 
 
@@ -479,7 +486,8 @@ def _turn_started(environment_id: Any, command_id: Any) -> None:
             # An answer's own turn: the question it answered is closed.
             _answered(run, cmd)
         run.current_command_id = command_id
-        cmd.update(started_at=timezone.now().isoformat(), interrupted_at=None)
+        cmd["started_at"] = timezone.now().isoformat()
+        cmd["interrupted_at"] = None
         fix_runs.set_lines(run, cmd["n"], "fixing", states=("queued",))
         if run.question_message_id is None:
             run.state = State.FIXING
@@ -530,8 +538,9 @@ def _turn_completed(environment_id: Any, payload: Mapping[str, Any]) -> None:
         if question is not None:
             _ask(run, cmd, question)  # in case its event was missed
         else:
-            if run.state == State.WAITING_ON_YOU and fix_runs.replies(cmd):
-                _answered(run, cmd)  # answered inside this turn
+            if run.state == State.WAITING_ON_YOU:
+                # Answered inside this turn, or its question ended with it.
+                _answered(run, cmd)
             if payload.get("interrupted") or outcome == "interrupted":
                 fix_runs.settle(
                     run,
@@ -581,7 +590,7 @@ def _question_asked(environment_id: Any, question_id: Any) -> None:
 
 
 def _settle_published(
-    fix: tuple[ReadinessFixRun, dict[str, Any]],
+    fix: tuple[ReadinessFixRun, FixCommand],
     turn: Any,
     settle: Any,
 ) -> None:
@@ -609,10 +618,10 @@ def _settle_published(
 
 
 def on_published(
-    fix: tuple[ReadinessFixRun, dict[str, Any]], turn: Any, *, wrote: bool
+    fix: tuple[ReadinessFixRun, FixCommand], turn: Any, *, wrote: bool
 ) -> None:
-    """A fix turn's checkpoint published (or it had none): the command settled, unless
-    its turn waits on the person's answer. Idempotent; never raises."""
+    """A fix turn's checkpoint published (or it had none): settle the command unless
+    it waits on the person's answer. Idempotent; never raises."""
     if not fix_groups.enabled():
         return
 
@@ -622,16 +631,32 @@ def on_published(
             # Partial work published; the turn the answer drives settles it.
             cmd["wrote"] = wrote_any
             return
+        # Read before settling, which clears the command's turn.
+        said = (
+            ""
+            if wrote_any
+            else _builder_said(
+                conversation, turn, _flight(conversation, run, cmd).started
+            )
+        )
         fix_runs.settle(run, cmd, turn="success", wrote=wrote_any)
+        if said:
+            fix_runs.set_lines(
+                run,
+                cmd["n"],
+                "could_not_fix",
+                fix_runs.reason("no_changes", said),
+                states=("fixing",),
+            )
 
     try:
         _settle_published(fix, turn, settle)
     except Exception:  # noqa: BLE001 - the check retries the landing
-        logger.exception("harness_fix_published_failed run=%s", fix[0].id)
+        logger.exception("harness_fix_published_failed", run=str(fix[0].id))
 
 
 def on_publish_refused(
-    fix: tuple[ReadinessFixRun, dict[str, Any]], exc: HostedHarnessError, turn: Any
+    fix: tuple[ReadinessFixRun, FixCommand], exc: HostedHarnessError, turn: Any
 ) -> None:
     """The fix turn's change was refused for good. Never raises."""
     if not fix_groups.enabled():
@@ -643,38 +668,75 @@ def on_publish_refused(
             cmd,
             turn="publish_refused",
             code=exc.code,
-            message="The builder's change could not be kept",
+            message="The change couldn't be kept",
             conversation=_conversation,
         )
 
     try:
         _settle_published(fix, turn, settle)
     except Exception:  # noqa: BLE001 - the check gives the landing up
-        logger.exception("harness_fix_publish_refused_failed run=%s", fix[0].id)
+        logger.exception("harness_fix_publish_refused_failed", run=str(fix[0].id))
+
+
+def _answered_command(
+    command: Message,
+) -> tuple[ReadinessFixRun, FixCommand] | None:
+    """The run (locked) and command whose question ``command`` answers, within its
+    head; no query for other messages or while Fix is off."""
+    if not command.reply_to or not fix_groups.enabled():
+        return None
+    question = str(command.reply_to)
+    run = (
+        fix_runs._runs(command.conversation.job_id)
+        .select_for_update()
+        .filter(commands__contains=[{"questions": [question]}])
+        .order_by("-created_at")
+        .first()
+    )
+    cmd = (
+        next(
+            (one for one in run.commands if question in (one.get("questions") or ())),
+            None,
+        )
+        if run is not None
+        else None
+    )
+    return (run, cmd) if run is not None and cmd is not None else None
 
 
 def draft_command(command: Message | None) -> tuple[str, dict[str, Any]] | None:
-    """``None`` drops a fix command's write: its run ended, or the command settled or
-    is not the one in flight; its sandbox is then given up, once. ``("", {})`` keeps
-    any other write, the person's answers included. Called under the head lock."""
-    payload = (command.payload or {}) if command is not None else {}
-    if command is None or not payload.get("_fix_run_id"):
+    """``None`` drops a fix write whose run ended or command is not in flight, and
+    gives its sandbox up once; ``("", {})`` keeps any other, and an answer sent after
+    its command settled (the person's own write). Under the head lock."""
+    if command is None:
         return "", {}
-    run = (
-        ReadinessFixRun.no_workspace_objects.select_for_update()
-        .filter(id=payload["_fix_run_id"])
-        .first()
-    )
-    cmd = fix_runs.command(run, payload.get("_fix_command")) if run else None
+    payload = command.payload or {}
+    if payload.get("_fix_run_id"):
+        run = (
+            ReadinessFixRun.no_workspace_objects.select_for_update()
+            .filter(id=payload["_fix_run_id"])
+            .first()
+        )
+        cmd = fix_runs.command(run, payload.get("_fix_command")) if run else None
+        own = cmd is not None and str(cmd["message_id"]) == str(command.id)
+    else:
+        fix = _answered_command(command)
+        if fix is None:
+            return "", {}
+        run, cmd = fix
+        settled = _time(cmd.get("settled_at"))
+        if settled is not None and command.created_at > settled:
+            return "", {}
+        own = True
     if (
         run is not None
         and cmd is not None
+        and own
         and run.state in ACTIVE
         and cmd["state"] == "dispatched"
-        and str(cmd["message_id"]) == str(command.id)
     ):
         return "", {}
-    logger.info("harness_fix_late_write message=%s", command.id)
+    logger.info("harness_fix_late_write", message=str(command.id))
     if run is not None and cmd is not None and not cmd.get("retired"):
         before = fix_runs.snapshot(run)
         fix_runs.retire(run, cmd)
@@ -686,9 +748,8 @@ def draft_command(command: Message | None) -> tuple[str, dict[str, Any]] | None:
 
 
 def holds_conversation(conversation: HostedHarnessConversation) -> bool:
-    """The active run's command or an answer to it is queued or delivered in this
-    conversation: stall recovery leaves it, and messages behind it, to the fix check.
-    Holding fails nothing; an answer a turn took is never failed."""
+    """The active run's command or an answer is queued or delivered here: stall
+    recovery leaves it, and what is behind it, to the fix check. Fails nothing."""
     if not fix_groups.enabled() or conversation.job.environment_id is not None:
         return False
     run = fix_runs.active_run(conversation.job_id)
@@ -730,8 +791,7 @@ def only_agent_moved(
     command: Message | None, environment: HostedHarnessJob, basis: str
 ) -> bool:
     """The fix's own turn saved while only the default agent moved since its
-    workspace was built: the run's environment and suite are still its base, and the
-    workspace was built on them, so its checkpoint is kept."""
+    workspace was built on the run's base, so its checkpoint is kept."""
     if command is None or not fix_groups.enabled():
         return False
     if not (command.payload or {}).get("_fix_run_id") and not command.reply_to:
@@ -754,367 +814,3 @@ def only_agent_moved(
     return rebuild.held_basis(
         basis, run.base_environment_version, run.base_suite_version, list(held)
     )
-
-
-# --- the check ------------------------------------------------------------------
-
-
-def check(environment_id: Any) -> None:
-    """Move the environment's fix along: reconcile a question, end a command whose
-    turn can't go on, dispatch the next one, and hand a settled run to autosave. A
-    check failing for ``CHECK_FAILING_GIVE_UP`` ends the run. While Fix is switched
-    off, runs are left alone."""
-    if not fix_groups.enabled():
-        return
-    run = fix_runs.active_run(environment_id)
-    if run is None:
-        return
-    try:
-        _check(environment_id)
-    except Exception:  # noqa: BLE001 - recorded; the tick runs it again
-        logger.exception("harness_fix_check_failed environment=%s", environment_id)
-        _record_failure(run)
-    else:
-        _clear_failure(run)
-
-
-def _record_failure(run: ReadinessFixRun) -> None:
-    now = timezone.now()
-    with transaction.atomic():
-        if nudges._head(run.job_id, lock=True) is None:
-            return
-        run = fix_runs.lock_run(run.id)
-        if run.state not in ACTIVE:
-            return
-        autosave = dict(run.autosave or {})
-        since = _time(autosave.get("failing_since"))
-        if since is None:
-            autosave["failing_since"] = now.isoformat()
-            ReadinessFixRun.no_workspace_objects.filter(id=run.id).update(
-                autosave=autosave
-            )
-    if since is not None and now - since > CHECK_FAILING_GIVE_UP:
-        if run.state == State.CHECKING or fix_runs._saved(run):
-            from simulate.services.harness_readiness import fix_save
-
-            # It saved: it ends done, its re-check given up.
-            fix_save.end_saved(run)
-            return
-        fix_runs.end_without_save(
-            run, "internal_error", "The fix stopped on an error; try again"
-        )
-
-
-def _clear_failure(run: ReadinessFixRun) -> None:
-    if not (run.autosave or {}).get("failing_since"):
-        return
-    with transaction.atomic():
-        if nudges._head(run.job_id, lock=True) is None:
-            return
-        run = fix_runs.lock_run(run.id)
-        autosave = {
-            key: value
-            for key, value in (run.autosave or {}).items()
-            if key != "failing_since"
-        }
-        ReadinessFixRun.no_workspace_objects.filter(id=run.id).update(
-            autosave=autosave or None
-        )
-
-
-def _check(environment_id: Any) -> None:
-    _reconcile_question(environment_id)
-    _give_up(environment_id)
-    if not dispatch(environment_id):
-        if _dispatch_deadline(environment_id):
-            return
-        _note_busy(environment_id)
-    with _locked(environment_id) as locked:
-        if locked is not None:
-            _head, run = locked
-            before = fix_runs.snapshot(run)
-            fix_runs.promote_waiting(run)
-            fix_runs.store(run, before)
-    settled = fix_runs.active_run(environment_id)
-    if settled is not None and (
-        settled.state in (State.SAVING, State.CHECKING) or _all_settled(settled)
-    ):
-        _hand_off(settled)
-
-
-def _reconcile_question(environment_id: Any) -> None:
-    """The chat asks a question of the fix's turn, or its answer was sent."""
-    with _locked(environment_id) as locked:
-        if locked is None:
-            return
-        _head, run = locked
-        cmd = fix_runs.in_flight(run)
-        if run.state not in APPENDABLE:
-            return
-        before = fix_runs.snapshot(run)
-        conversation = _lock_conversation(environment_id)
-        if cmd is None:
-            if run.state == State.WAITING_ON_YOU and _question_closed(
-                conversation, run
-            ):
-                run.question_message_id = None
-                run.state = State.FIXING
-            fix_runs.store(run, before)
-            return
-        question = _own_question(conversation, run, cmd)
-        if question is not None:
-            _ask(run, cmd, question)
-        elif run.state == State.WAITING_ON_YOU and (
-            fix_runs.replies(cmd) or _question_closed(conversation, run)
-        ):
-            # Answered, or its turn ended without an answer (it was stopped).
-            _answered(run, cmd)
-        fix_runs.store(run, before)
-
-
-def _question_closed(
-    conversation: HostedHarnessConversation | None, run: ReadinessFixRun
-) -> bool:
-    """The turn that asked the run's question was interrupted or completed after
-    asking; a sandbox restart alone, which may leave it unasked for a while, is not."""
-    question = run.question_message_id
-    if question is None:
-        return True
-    if conversation is None:
-        return False
-    asked = (
-        Event.no_workspace_objects.filter(
-            conversation=conversation, message_id=question, kind__in=_QUESTION_KINDS
-        )
-        .order_by("-sequence")
-        .values_list("sequence", flat=True)
-        .first()
-    )
-    return (
-        asked is not None
-        and Event.no_workspace_objects.filter(
-            conversation=conversation,
-            kind__in=("turn_interrupted", "turn_completed"),
-            sequence__gt=asked,
-        ).exists()
-    )
-
-
-def _interrupted_at(
-    conversation: HostedHarnessConversation | None,
-    cmd: Mapping[str, Any],
-    flight: _Flight,
-) -> datetime | None:
-    """When the current turn was interrupted: as recorded, or from an interrupt event
-    after its start that the hook missed."""
-    recorded = _time(cmd["interrupted_at"])
-    if flight.started is not None and recorded is not None:
-        # One recorded before the current turn started is a previous turn's.
-        if recorded < flight.started.created_at:
-            recorded = None
-    if recorded is None and conversation is not None and flight.started is not None:
-        event = (
-            Event.no_workspace_objects.filter(
-                conversation=conversation,
-                kind="turn_interrupted",
-                sequence__gt=flight.started.sequence,
-            )
-            .order_by("sequence")
-            .first()
-        )
-        recorded = event.created_at if event is not None else None
-    if recorded is None:
-        return None
-    # An answer sent after the interrupt restarts the wait.
-    answered = [reply.created_at for reply in fix_runs.replies(cmd)]
-    return max([recorded, *answered])
-
-
-def _working_since(cmd: Mapping[str, Any], flight: _Flight) -> datetime:
-    """When the current turn last had work: its start, or the latest answer, so time
-    paused on a question does not count."""
-    started = flight.started.created_at if flight.started is not None else None
-    answered = [reply.created_at for reply in fix_runs.replies(cmd)]
-    return max(one for one in (started, *answered) if one is not None)
-
-
-def _give_up(environment_id: Any) -> None:
-    """Settle the in-flight command when its turn can't go on; retry a lost landing
-    outside the locks. An unanswered question ends the run: the chat stays held by
-    it, so no later command could go out."""
-    now = timezone.now()
-    retry: tuple[str, int] | None = None
-    code = None
-    with _locked(environment_id) as locked:
-        if locked is None:
-            return
-        _head, run = locked
-        cmd = fix_runs.in_flight(run)
-        if run.state not in APPENDABLE or cmd is None:
-            return
-        conversation = _lock_conversation(environment_id)
-        before = fix_runs.snapshot(run)
-        flight = _flight(conversation, run, cmd)
-        message = (
-            flight.pending
-            or Message.no_workspace_objects.filter(id=flight.current).first()
-        )
-        question = _own_question(conversation, run, cmd)
-        interrupted = _interrupted_at(conversation, cmd, flight)
-        if message is None:
-            code = "not_started"
-        elif flight.pending is not None or flight.started is None:
-            # Waiting for a turn of its own.
-            if rebuild._not_started(message, conversation, now):
-                if flight.pending is not None:
-                    # Sent after its turn ended: no turn will take it, even acked.
-                    rebuild.fail_command(flight.pending.id)
-                else:
-                    _fail(message, conversation)
-                code = "not_started"
-        elif message.state == Message.State.FAILED:
-            code = "not_started"
-        elif question is not None:
-            asked = Message.no_workspace_objects.filter(id=question).first()
-            if asked is not None and now - asked.created_at > FIX_QUESTION_GIVE_UP:
-                code = "question_unanswered"
-        elif flight.ended is not None:
-            payload = flight.ended.payload or {}
-            waited = now - flight.ended.created_at
-            # A replayed ending is the promotion's to decide, as a success's is.
-            replayed = bool(payload.get("replayed"))
-            if not replayed and (
-                payload.get("interrupted") or payload.get("outcome") == "interrupted"
-            ):
-                fix_runs.settle(
-                    run,
-                    cmd,
-                    turn="interrupted",
-                    code="turn_interrupted",
-                    conversation=conversation,
-                )
-            elif not replayed and payload.get("outcome") == "failed":
-                fix_runs.settle(
-                    run,
-                    cmd,
-                    turn="failed",
-                    code="turn_failed",
-                    conversation=conversation,
-                )
-            elif waited > rebuild.NUDGE_LANDING_RETRY_AFTER and (
-                conversation is not None
-                and cmd.get("landing_retried") != flight.ended.sequence
-            ):
-                # Tried once per turn before giving up, however late the check comes.
-                cmd["landing_retried"] = flight.ended.sequence
-                retry = (str(conversation.id), flight.ended.sequence)
-            elif waited > rebuild.NUDGE_LANDING_GIVE_UP:
-                code = "publish_failed"
-        elif interrupted is not None:
-            if now - interrupted > rebuild.NUDGE_NOT_STARTED_AFTER:
-                code = "turn_interrupted"
-        elif now - _working_since(cmd, flight) > rebuild.NUDGE_STUCK_AFTER and (
-            rebuild._no_runtime(conversation, now)
-        ):
-            _fail(message, conversation)
-            code = "stuck"
-        if code is not None:
-            turn, settled_code = _GIVE_UPS[code]
-            fix_runs.settle(
-                run, cmd, turn=turn, code=settled_code, conversation=conversation
-            )
-        fix_runs.store(run, before)
-    if code == "question_unanswered":
-        fix_runs.end_without_save(run, "question_unanswered", _UNANSWERED)
-    if retry is not None:
-        try:
-            hhc.promote_turn_checkpoint(*retry)
-        except HostedHarnessError as exc:
-            logger.info(
-                "harness_fix_landing_retry_refused environment=%s code=%s",
-                environment_id,
-                exc.code,
-            )
-
-
-def _note_busy(environment_id: Any) -> None:
-    """The next command could not go out: its dispatch deadline counts from the
-    first check that found the chat busy (not from a time Fix was switched off)."""
-    with _locked(environment_id) as locked:
-        if locked is None:
-            return
-        _head, run = locked
-        cmd = _next(run)
-        if (
-            run.state not in _DISPATCHABLE
-            or fix_runs.in_flight(run) is not None
-            or cmd is None
-            or cmd.get("busy_since")
-        ):
-            return
-        before = fix_runs.snapshot(run)
-        cmd["busy_since"] = timezone.now().isoformat()
-        fix_runs.store(run, before)
-
-
-def _dispatch_deadline(environment_id: Any) -> bool:
-    """End a run whose next command found the chat busy for too long."""
-    run = fix_runs.active_run(environment_id)
-    if (
-        run is None
-        or run.state not in _DISPATCHABLE
-        or fix_runs.in_flight(run) is not None
-    ):
-        return False
-    cmd = _next(run)
-    since = _time(cmd.get("busy_since")) if cmd is not None else None
-    if since is None or timezone.now() - since <= FIX_DISPATCH_GIVE_UP:
-        return False
-    fix_runs.end_without_save(
-        run, "chat_busy", "The builder chat stayed busy; try the fix again"
-    )
-    return True
-
-
-def _all_settled(run: ReadinessFixRun) -> bool:
-    return run.state in APPENDABLE and (
-        all(one["state"] == "settled" for one in run.commands)
-        and not any(
-            line["state"] in ("queued", "waiting_on_other") for line in run.lines
-        )
-    )
-
-
-def _hand_off(run: ReadinessFixRun) -> None:
-    """Every command settled: autosave, the recheck and the verdict take over."""
-    from simulate.services.harness_readiness import fix_save
-
-    fix_save.advance(run)
-
-
-def tick(*, limit: int = 200) -> int:
-    """A check per environment with an active run, least recently ticked first and
-    one organization at a time. Nothing while Fix is switched off."""
-    from simulate.tasks import harness_nudges as tasks
-
-    if not fix_groups.enabled():
-        return 0
-    environments = rebuild._fair(
-        ReadinessFixRun.no_workspace_objects.filter(state__in=ACTIVE)
-        .order_by("updated_at")
-        .values_list("organization_id", "job_id"),
-        limit,
-    )
-    ReadinessFixRun.no_workspace_objects.filter(
-        job_id__in=environments, state__in=ACTIVE
-    ).update(updated_at=timezone.now())
-    for environment_id in environments:
-        try:
-            tasks.schedule_fix_check(environment_id)
-        except Exception as exc:  # noqa: BLE001 - the next tick schedules it
-            logger.warning(
-                "harness_fix_check_schedule_failed environment=%s error=%s",
-                environment_id,
-                type(exc).__name__,
-            )
-    return len(environments)

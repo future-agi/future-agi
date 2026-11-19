@@ -2,6 +2,7 @@
 
 import uuid
 
+import django.contrib.postgres.indexes
 import django.db.models.deletion
 import django.utils.timezone
 from django.conf import settings
@@ -143,7 +144,12 @@ class Migration(migrations.Migration):
                 "indexes": [
                     models.Index(
                         fields=["job", "-created_at"], name="idx_rfix_job_created"
-                    )
+                    ),
+                    django.contrib.postgres.indexes.GinIndex(
+                        fields=["commands"],
+                        name="idx_rfix_commands",
+                        opclasses=["jsonb_path_ops"],
+                    ),
                 ],
                 "constraints": [
                     models.UniqueConstraint(

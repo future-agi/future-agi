@@ -2,6 +2,7 @@
 its progress on the readiness rows."""
 
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -14,12 +15,13 @@ from simulate.models import (
     HostedHarnessJob,
     ReadinessFixRun,
 )
+from simulate.models.readiness_fix import OPEN_LINE
 from simulate.serializers.harness_environment import (
     HarnessCapabilitySelectionReportSerializer,
     HarnessReadinessFixResponseSerializer,
 )
 from simulate.services import harness_readiness
-from simulate.services.harness_readiness import fix_runs
+from simulate.services.harness_readiness import fix_groups, fix_runs
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
     BASE,
@@ -55,8 +57,11 @@ FE_FIELDS |= {"finished_at", "error"}
 
 
 @pytest.fixture(autouse=True)
-def fix_on(settings):
+def fix_on(settings, monkeypatch):
     settings.HARNESS_READINESS_FIX_ENABLED = True
+    # Production never gives a failed probe to the builder: this only gives the run
+    # mechanics a second builder row, independent of ``state``.
+    monkeypatch.setitem(fix_groups._BUILDER, "action_failed", ROUTING_MESSAGE)
     with patch(
         "simulate.services.harness_versioning.rebuild.sandbox_provider_configured",
         return_value=True,
@@ -66,7 +71,7 @@ def fix_on(settings):
 
 def _broken(user, workspace, storage, key):
     """An environment whose ``state``, ``reset`` (gated on ``state``) and
-    ``tool_routing`` rows are the builder's to fix."""
+    ``tool_routing`` (by ``fix_on``) rows are the builder's to fix."""
     environment = _environment(
         user, workspace, storage, f"{key}-{uuid.uuid4().hex[:6]}"
     )
@@ -102,6 +107,16 @@ def _run(environment):
 
 def _set_state(environment, state):
     ReadinessFixRun.no_workspace_objects.filter(job=environment).update(state=state)
+
+
+def _could_not_fix(environment, row):
+    """The row's open line could not be fixed."""
+    run = _run(environment)
+    open_lines = [
+        one for one in run.lines if one["row_id"] == row and one["state"] in OPEN_LINE
+    ]
+    open_lines[-1]["state"] = "could_not_fix"
+    run.save(update_fields=["lines"])
 
 
 def _chat(environment, **fields):
@@ -170,7 +185,20 @@ class TestRead:
 
         assert body["fix"] == run
         assert FE_FIELDS <= set(run)
-        assert set(run) == FE_FIELDS | {"group", "started_at", "lines", "pairing"}
+        assert set(run) == FE_FIELDS | {
+            "group",
+            "started_at",
+            "lines",
+            "pairing",
+            "active",
+            "accepts_rows",
+            "outcome",
+        }
+        assert (run["active"], run["accepts_rows"], run["outcome"]) == (
+            True,
+            True,
+            None,
+        )
         assert run["updated_at"] == _run(environment).state_changed_at.isoformat()
         assert run["pairing"]["environment_version"]["id"] == str(
             environment.environment_version_id
@@ -199,11 +227,14 @@ class TestStart:
         assert response.status_code == 202, response.content
         fix = response.json()["fix"]
         assert (fix["state"], fix["rows"]) == ("queued", ["tool_routing", "state"])
-        assert fix["queue"] == [{"message": f"{ROUTING_MESSAGE}\n{STATE_MESSAGE}"}]
+        assert fix["queue"] == [
+            {"message": "Controlled tool routing, Seeded world state"}
+        ]
         assert (fix["saved"], fix["draft"], fix["error"]) == (None, False, None)
         run = _run(environment)
         assert len(run.commands) == 1
         assert run.commands[0]["rows"] == ["tool_routing", "state"]
+        assert run.commands[0]["message"] == f"{ROUTING_MESSAGE}\n{STATE_MESSAGE}"
         assert run.commands[0]["state"] == "queued"
         assert [(one["row_id"], one["state"], one["command"]) for one in run.lines] == [
             ("tool_routing", "queued", 1),
@@ -224,7 +255,12 @@ class TestStart:
 
         # ``reset`` waits on ``state``: the same message, sent once.
         assert fix["rows"] == ["tool_routing", "state", "reset"]
-        assert fix["queue"] == [{"message": f"{ROUTING_MESSAGE}\n{STATE_MESSAGE}"}]
+        assert fix["queue"] == [
+            {
+                "message": "Controlled tool routing, Seeded world state, World resets"
+                " between cases"
+            }
+        ]
         assert [one["state"] for one in fix["lines"]] == ["queued"] * 3
 
     def test_a_repeated_key_returns_the_run_unchanged(
@@ -233,10 +269,47 @@ class TestStart:
         environment = _broken(user, workspace, storage, "fr-replay")
         first = _post(auth_client, environment.id, key="k1", rows=["state"]).json()
 
-        again = _post(auth_client, environment.id, key="k1", rows=["tool_routing"])
+        again = _post(auth_client, environment.id, key="k1", rows=["state"])
 
         assert again.status_code == 202
         assert again.json() == first
+        assert len(_run(environment).commands) == 1
+
+    def test_a_key_reused_for_another_request_is_refused(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-reused")
+        _post(auth_client, environment.id, key="k1", rows=["state"])
+        before = _run(environment)
+
+        other_rows = _post(auth_client, environment.id, key="k1", rows=["tool_routing"])
+        no_rows = _post(auth_client, environment.id, key="k1")
+        other_picks = _post(
+            auth_client,
+            environment.id,
+            key="k1",
+            rows=["state"],
+            environment_version_id=environment.environment_version_id,
+        )
+
+        for response in (other_rows, no_rows, other_picks):
+            _refused(response, "idempotency_key_reused")
+        after = _run(environment)
+        assert len(after.commands) == 1
+        assert after.lines == before.lines
+
+    def test_rows_in_another_order_replay(self, user, workspace, storage, auth_client):
+        environment = _broken(user, workspace, storage, "fr-reorder")
+        first = _post(
+            auth_client, environment.id, key="k1", rows=["state", "tool_routing"]
+        )
+
+        again = _post(
+            auth_client, environment.id, key="k1", rows=["tool_routing", "state"]
+        )
+
+        assert again.status_code == 202, again.content
+        assert again.json() == first.json()
         assert len(_run(environment).commands) == 1
 
     def test_a_repeated_key_replays_even_once_the_run_ended(
@@ -297,7 +370,7 @@ class TestAppend:
 
         fix = _post(auth_client, environment.id, rows=["tool_routing"]).json()["fix"]
 
-        assert fix["queue"] == [{"message": ROUTING_MESSAGE}]
+        assert fix["queue"] == [{"message": "Controlled tool routing"}]
 
     @pytest.mark.parametrize("state", ["saving", "checking"])
     def test_refused_while_the_run_saves(
@@ -345,6 +418,49 @@ class TestAppend:
 
         assert fix["rows"] == ["tool_routing", "state"]
         assert _run(environment).commands[1]["rows"] == ["state"]
+        # The latest line per row, in the order the rows were first tried.
+        assert [(one["row_id"], one["state"]) for one in fix["lines"]] == [
+            ("state", "queued"),
+            ("tool_routing", "queued"),
+        ]
+        assert len(_run(environment).lines) == 3
+
+    def test_a_row_is_tried_at_most_three_times(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-tries")
+        _post(auth_client, environment.id, rows=["state", "tool_routing"])
+        for _ in range(2):
+            _could_not_fix(environment, "state")
+            response = _post(auth_client, environment.id, rows=["state"])
+            assert response.status_code == 202, response.content
+        _could_not_fix(environment, "state")
+
+        _refused(_post(auth_client, environment.id, rows=["state"]), "fix_tries_used")
+
+        run = _run(environment)
+        assert [one["row_id"] for one in run.lines].count("state") == 3
+        assert len(run.commands) == 3
+        fix = _fix_get(auth_client, environment.id).json()["fix"]
+        assert [one["row_id"] for one in fix["lines"]] == ["state", "tool_routing"]
+
+    def test_an_exhausted_row_is_left_out_of_a_post(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-tries-mixed")
+        _post(auth_client, environment.id, rows=["state", "tool_routing"])
+        for _ in range(2):
+            _could_not_fix(environment, "state")
+            _post(auth_client, environment.id, rows=["state"])
+        _could_not_fix(environment, "state")
+        _could_not_fix(environment, "tool_routing")
+
+        response = _post(auth_client, environment.id, rows=["state", "tool_routing"])
+
+        assert response.status_code == 202, response.content
+        run = _run(environment)
+        assert run.commands[-1]["rows"] == ["tool_routing"]
+        assert [one["row_id"] for one in run.lines].count("state") == 3
 
     def test_a_gate_row_rides_on_its_open_gate(
         self, user, workspace, storage, auth_client
@@ -366,7 +482,7 @@ class TestAppend:
         assert run.commands[1]["state"] == "settled"
         assert run.commands[1]["settled_at"] is None
         assert run.commands[1]["outcome"]["turn"] == "not_needed"
-        assert fix["queue"] == [{"message": STATE_MESSAGE}]
+        assert fix["queue"] == [{"message": "Seeded world state"}]
         assert fix["rows"] == ["state", "reset"]
 
     def test_a_gate_only_post_replays_unchanged(
@@ -760,6 +876,8 @@ class TestOverlay:
             "state": "fixed",
             "environment": ref,
             "suite": None,
+            # Not re-checked: the run never recorded a finished re-check.
+            "checked": False,
             "fix_id": str(run.id),
         }
         assert rows["tool_routing"]["fix_result"]["state"] == "could_not_fix"
@@ -806,3 +924,382 @@ class TestOverlay:
         after = _progress(_get(auth_client, environment.id).json())
 
         assert (before, after) == ({"state": "could_not_fix"}, {})
+
+    @pytest.mark.parametrize(
+        ("state", "line"), [("fixing", "fixing"), ("failed", "could_not_fix")]
+    )
+    def test_a_later_run_keeps_the_saved_result_on_its_base(
+        self, user, workspace, storage, auth_client, state, line
+    ):
+        environment = _broken(user, workspace, storage, f"fr-ov-later-{state[:4]}")
+        base_env = environment.environment_version
+        saved_env = _copy_version(base_env)
+        saved = _closed_run(
+            environment,
+            "done",
+            lines={"state": "fixed"},
+            result_environment_version=saved_env,
+            result_suite_version_id=environment.suite_version_id,
+            autosave={"checked": True},
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            environment_version_id=saved_env.id
+        )
+        environment.refresh_from_db()
+        later = _closed_run(environment, state, lines={"tool_routing": line})
+
+        base = _get(auth_client, environment.id, environment_version_id=base_env.id)
+        current = _get(auth_client, environment.id).json()
+
+        result = _rows(base.json())["state"]["fix_result"]
+        ref = {"id": str(saved_env.id), "label": f"v{saved_env.version_number}"}
+        assert (result["fix_id"], result["environment"], result["checked"]) == (
+            str(saved.id),
+            ref,
+            True,
+        )
+        assert _progress(current) == {"tool_routing": line}
+        assert _rows(current)["tool_routing"]["fix_progress"]["fix_id"] == str(later.id)
+        assert HarnessCapabilitySelectionReportSerializer(data=base.json()).is_valid()
+
+    def test_the_newest_run_saved_from_the_base_wins(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-ov-newest")
+        base_env = environment.environment_version
+        older_env = _copy_version(base_env)
+        newer_env = _copy_version(older_env)
+        for saved_env in (older_env, newer_env):
+            newest = _closed_run(
+                environment,
+                "done",
+                lines={"state": "fixed"},
+                result_environment_version=saved_env,
+                result_suite_version_id=environment.suite_version_id,
+            )
+
+        body = _get(auth_client, environment.id).json()
+
+        result = _rows(body)["state"]["fix_result"]
+        assert (result["fix_id"], result["environment"]["id"]) == (
+            str(newest.id),
+            str(newer_env.id),
+        )
+
+
+def _actions(body):
+    return {row["id"]: row["fix_action"] for row in body["rows"]}
+
+
+def _hold_needs_defaults(environment, auth_client):
+    """The defaults moved off the read versions, which still need fixes."""
+    base_env = environment.environment_version_id
+    moved = _copy_version(environment.environment_version)
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        environment_version_id=moved.id
+    )
+    return {"environment_version_id": base_env}, "state"
+
+
+def _hold_chat(environment, auth_client):
+    _chat(environment, state=HostedHarnessConversation.State.RETIRED)
+    return {}, "state"
+
+
+def _hold_rebuild(environment, auth_client):
+    HarnessNudge.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        target="suite",
+        state="queued",
+    )
+    return {}, "state"
+
+
+def _hold_saving(environment, auth_client):
+    """A run saving ``state``; ``tool_routing`` is outside it."""
+    _post(auth_client, environment.id, rows=["state"])
+    _set_state(environment, "saving")
+    return {}, "tool_routing"
+
+
+def _hold_unsaved(environment, auth_client):
+    _draft(environment.suite_version)
+    return {}, "state"
+
+
+class TestFixAction:
+    def test_the_rows_a_fix_can_take(self, user, workspace, storage, auth_client):
+        environment = _broken(user, workspace, storage, "fr-act")
+
+        body = _get(auth_client, environment.id).json()
+
+        actions = _actions(body)
+        free = {"available": True, "held": None}
+        assert (actions["state"], actions["tool_routing"]) == (free, free)
+        # Supported: nothing for the builder chat to fix.
+        assert actions["start"] == {"available": False, "held": None}
+        serializer = HarnessCapabilitySelectionReportSerializer(data=body)
+        assert serializer.is_valid(), serializer.errors
+
+    @pytest.mark.parametrize(
+        ("code", "setup"),
+        [
+            ("fix_needs_defaults", _hold_needs_defaults),
+            ("chat_unavailable", _hold_chat),
+            ("rebuild_running", _hold_rebuild),
+            ("fix_running", _hold_saving),
+            ("unsaved_changes", _hold_unsaved),
+        ],
+    )
+    def test_held_says_what_the_post_refuses(
+        self, user, workspace, storage, auth_client, code, setup
+    ):
+        environment = _broken(user, workspace, storage, f"fr-held-{code[:8]}")
+        picks, row = setup(environment, auth_client)
+
+        body = _get(auth_client, environment.id, **picks).json()
+        response = _post(auth_client, environment.id, rows=[row], **picks)
+
+        assert _actions(body)[row] == {"available": True, "held": code}
+        _refused(response, code)
+        serializer = HarnessCapabilitySelectionReportSerializer(data=body)
+        assert serializer.is_valid(), serializer.errors
+
+    def test_a_row_in_the_running_fix_is_not_available(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-act-open")
+        _post(auth_client, environment.id, rows=["state"])
+
+        actions = _actions(_get(auth_client, environment.id).json())
+
+        assert actions["state"] == {"available": False, "held": None}
+        # The run takes more rows: nothing holds the others.
+        assert actions["tool_routing"] == {"available": True, "held": None}
+
+    def test_a_row_that_could_not_be_fixed_is_available_again(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-act-again")
+        _post(auth_client, environment.id, rows=["state"])
+        _could_not_fix(environment, "state")
+
+        actions = _actions(_get(auth_client, environment.id).json())
+
+        assert actions["state"] == {"available": True, "held": None}
+
+    def test_a_row_tried_enough_is_not_available(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-act-tries")
+        _post(auth_client, environment.id, rows=["state"])
+        for _ in range(2):
+            _could_not_fix(environment, "state")
+            _post(auth_client, environment.id, rows=["state"])
+        _could_not_fix(environment, "state")
+
+        actions = _actions(_get(auth_client, environment.id).json())
+
+        assert actions["state"] == {"available": False, "held": None}
+        _refused(_post(auth_client, environment.id, rows=["state"]), "fix_tries_used")
+
+    def test_a_failing_hold_check_never_fails_the_read(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _broken(user, workspace, storage, "fr-act-boom")
+
+        with patch(
+            "simulate.services.harness_readiness.fix_runs._chat_unavailable",
+            side_effect=RuntimeError("boom"),
+        ):
+            response = _get(auth_client, environment.id)
+
+        assert response.status_code == 200, response.content
+        assert _actions(response.json())["state"] == {"available": True, "held": None}
+
+    def test_switched_off_and_the_cached_report_have_none(
+        self, user, workspace, storage, auth_client, settings
+    ):
+        environment = _broken(user, workspace, storage, "fr-act-off")
+        _get(auth_client, environment.id)
+        cached = harness_readiness.readiness_report(_pairing(environment))
+        settings.HARNESS_READINESS_FIX_ENABLED = False
+
+        body = _get(auth_client, environment.id).json()
+
+        assert all("fix_action" not in row for row in body["rows"])
+        assert all("fix_action" not in row for row in cached["rows"])
+
+
+def _serialized(environment, run):
+    environment.refresh_from_db()
+    run.refresh_from_db()
+    return fix_runs.serialize(run, environment)
+
+
+def _outcome(environment, run):
+    return _serialized(environment, run)["outcome"]
+
+
+def _saved_run(environment, lines, **fields):
+    return _closed_run(
+        environment,
+        "done",
+        lines=lines,
+        result_environment_version=_copy_version(environment.environment_version),
+        result_suite_version_id=environment.suite_version_id,
+        **fields,
+    )
+
+
+def _with_reason(run, row, message):
+    for line in run.lines:
+        if line["row_id"] == row:
+            line["reason"] = {"code": "still_failing", "message": message}
+    run.save(update_fields=["lines"])
+
+
+class TestOutcome:
+    def test_none_while_the_run_works(self, user, workspace, storage, auth_client):
+        environment = _broken(user, workspace, storage, "fr-out-saving")
+        _post(auth_client, environment.id, rows=["state"])
+        _set_state(environment, "saving")
+
+        fix = _fix_get(auth_client, environment.id).json()["fix"]
+
+        assert (fix["active"], fix["accepts_rows"], fix["outcome"]) == (
+            True,
+            False,
+            None,
+        )
+
+    @pytest.mark.parametrize(
+        ("lines", "expected"),
+        [
+            ({"state": "fixed"}, ("fixed", 1, 1, "Fixed")),
+            (
+                {"state": "fixed", "tool_routing": "could_not_fix"},
+                ("partly_fixed", 1, 2, "Fixed 1 of 2"),
+            ),
+            ({"tool_routing": "could_not_fix"}, ("could_not_fix", 0, 1, "Still")),
+        ],
+    )
+    def test_a_checked_save_counts_its_lines(
+        self, user, workspace, storage, lines, expected
+    ):
+        environment = _broken(user, workspace, storage, "fr-out-saved")
+        run = _saved_run(environment, lines, autosave={"checked": True})
+        _with_reason(run, "tool_routing", "Still")
+
+        body = _serialized(environment, run)
+
+        found = body["outcome"]
+        assert (found["kind"], found["fixed"], found["total"], found["message"]) == (
+            expected
+        )
+        assert (body["active"], body["accepts_rows"]) == (False, False)
+        serializer = HarnessReadinessFixResponseSerializer(data={"fix": body})
+        assert serializer.is_valid(), serializer.errors
+
+    @pytest.mark.parametrize("autosave", [{"checked": False}, {}])
+    def test_a_save_not_re_checked_says_so(self, user, workspace, storage, autosave):
+        environment = _broken(user, workspace, storage, "fr-out-unchecked")
+        run = _saved_run(environment, {"state": "fixed"}, autosave=autosave)
+
+        found = _outcome(environment, run)
+
+        assert (found["kind"], found["fixed"], found["total"]) == (
+            "saved_unchecked",
+            1,
+            1,
+        )
+        assert found["message"]
+
+    def test_unsaved_while_the_fixs_draft_waits(self, user, workspace, storage):
+        environment = _broken(user, workspace, storage, "fr-out-unsaved")
+        _draft(environment.suite_version)
+        run = _closed_run(
+            environment,
+            "done",
+            lines={"state": "waiting_on_you"},
+            error={"code": "validation_failed", "message": "It failed"},
+        )
+
+        body = _serialized(environment, run)
+
+        assert body["draft"] is True
+        assert body["outcome"] == {
+            "kind": "unsaved",
+            "fixed": 0,
+            "total": 1,
+            "message": "It failed",
+        }
+
+    def test_draft_gone_once_the_draft_is_edited_after_the_end(
+        self, user, workspace, storage
+    ):
+        environment = _broken(user, workspace, storage, "fr-out-edited")
+        _draft(environment.environment_version)
+        later = _draft(environment.suite_version)
+        run = _closed_run(environment, "done", lines={"state": "waiting_on_you"})
+        type(later).no_workspace_objects.filter(id=later.id).update(
+            updated_at=run.finished_at + timedelta(seconds=1)
+        )
+
+        body = _serialized(environment, run)
+
+        # ``draft`` reads only that a draft is open.
+        assert (body["draft"], body["outcome"]["kind"]) == (True, "draft_gone")
+
+    def test_draft_gone_once_the_draft_is_discarded(self, user, workspace, storage):
+        environment = _broken(user, workspace, storage, "fr-out-discarded")
+        draft = _draft(environment.suite_version)
+        run = _closed_run(environment, "done", lines={"state": "waiting_on_you"})
+        type(draft).no_workspace_objects.filter(id=draft.id).update(status="discarded")
+
+        body = _serialized(environment, run)
+
+        assert (body["draft"], body["outcome"]["kind"]) == (False, "draft_gone")
+
+    def test_a_failed_run_could_not_fix(self, user, workspace, storage):
+        environment = _broken(user, workspace, storage, "fr-out-failed")
+        run = _closed_run(
+            environment,
+            "failed",
+            lines={"state": "could_not_fix"},
+            error={"code": "turn_failed", "message": "The turn failed"},
+        )
+
+        found = _outcome(environment, run)
+
+        assert (found["kind"], found["message"]) == ("could_not_fix", "The turn failed")
+
+    def test_a_failed_run_counts_rows_already_supported(self, user, workspace, storage):
+        environment = _broken(user, workspace, storage, "fr-out-nochange")
+        run = _closed_run(
+            environment,
+            "failed",
+            lines={"state": "fixed"},
+            error={"code": "no_changes", "message": "No changes"},
+        )
+
+        found = _outcome(environment, run)
+
+        assert found == {
+            "kind": "fixed",
+            "fixed": 1,
+            "total": 1,
+            "message": "No changes",
+        }
+
+    def test_counts_each_row_once(self, user, workspace, storage):
+        environment = _broken(user, workspace, storage, "fr-out-twice")
+        run = _saved_run(environment, {"state": "fixed"}, autosave={"checked": True})
+        run.lines = [{**run.lines[0], "state": "could_not_fix"}, *run.lines]
+        run.save(update_fields=["lines"])
+
+        found = _outcome(environment, run)
+
+        assert (found["kind"], found["fixed"], found["total"]) == ("fixed", 1, 1)

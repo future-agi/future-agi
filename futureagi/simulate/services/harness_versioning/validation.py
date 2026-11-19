@@ -890,10 +890,15 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
     if job.cancel_reason == CHECK_TIMED_OUT:
         code = CHECK_TIMED_OUT
         failure = {"message": _FAILED_REASONS[CHECK_TIMED_OUT]}
+    # A check our sandbox could not run after the gateway's bounded retries reads
+    # unavailable; a job that was never scheduled had no retries and is validated again.
     cause = (
         code
         if code in ("certify_incomplete", CHECK_TIMED_OUT)
-        or failure.get("domain") == "infrastructure"
+        or (
+            failure.get("domain") == "infrastructure"
+            and code != "scheduler_unavailable"
+        )
         else (
             platform_failure(failure, (bundle.error or {}).get("failed_actions"))
             if code == "authoring_runtime_validation_failed"

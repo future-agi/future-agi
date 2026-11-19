@@ -19,11 +19,17 @@ from simulate.models import (
     ReadinessFixRun,
 )
 from simulate.services import hosted_harness_conversation as hhc
-from simulate.services.harness_readiness import fix_driver, fix_runs, fix_save
+from simulate.services.harness_readiness import (
+    fix_check,
+    fix_driver,
+    fix_runs,
+    fix_save,
+)
 from simulate.services.harness_versioning import drafts, rebuild
 from simulate.services.hosted_harness import HostedHarnessError, canonical_digest
 from simulate.tasks import harness_nudges as nudge_tasks
 from simulate.tasks import hosted_harness_conversation as conversation_tasks
+from simulate.tests import alk_turn_events as alk
 from simulate.tests.test_harness_readiness import BASE
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixtures
     readiness_on as readiness_on,
@@ -103,9 +109,10 @@ def _dispatched(user, workspace, storage, key, rows=("state",)):
 
 
 def _feed(conversation, capture, *events, execute=True, acked=None, emitted=None):
-    """Ingest ``(kind, payload[, message_id])`` events from a live chat sandbox; the
-    callbacks after commit run unless ``execute`` is false. The chat takes every
-    message unless ``acked`` says up to which; ``emitted`` dates the events."""
+    """Ingest ``(kind, payload[, message_id[, invocation_id]])`` events from a live
+    chat sandbox; the callbacks after commit run unless ``execute`` is false. The chat
+    takes every message unless ``acked`` says up to which; ``emitted`` dates the
+    events."""
     hhc.issue_conversation_capability(
         conversation,
         endpoint_base_url="https://platform.example",
@@ -124,9 +131,9 @@ def _feed(conversation, capture, *events, execute=True, acked=None, emitted=None
             "conversation_id": str(conversation.id),
             "sequence": sequence,
             "kind": kind,
-            "message_id": str(rest[0]) if rest else None,
+            "message_id": str(rest[0]) if rest and rest[0] else None,
             "stage": "scenarios",
-            "invocation_id": "turn-1",
+            "invocation_id": rest[1] if len(rest) > 1 else "turn-1",
             "function_call_id": None,
             "emitted_at": (emitted or datetime.now(UTC))
             .isoformat()
@@ -312,12 +319,7 @@ class TestDispatch:
         assert not fix_driver.dispatch(environment.id, start_runtime=False)
         _feed(conversation, django_capture_on_commit_callbacks, _started(mine))
         assert not fix_driver.dispatch(environment.id, start_runtime=False)
-        _feed(
-            conversation,
-            django_capture_on_commit_callbacks,
-            _asked(),
-            _completed(mine),
-        )
+        _feed(conversation, django_capture_on_commit_callbacks, _asked())
         # A question the person has not answered holds the chat.
         conversation.refresh_from_db()
         assert conversation.state == "waiting_for_user"
@@ -325,6 +327,11 @@ class TestDispatch:
         assert _run(environment).state == "queued"
         # A question in the person's own turn is not the fix's.
         assert _lines(_run(environment)) == [("state", "queued")]
+        # Its turn ended unanswered: the question ended with it.
+        _feed(conversation, django_capture_on_commit_callbacks, _completed(mine))
+        conversation.refresh_from_db()
+        assert (conversation.state, conversation.blocking_input) == ("warm_idle", None)
+        assert rebuild._chat_idle(conversation)
 
     def test_the_next_command_waits_until_the_first_settles(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
@@ -366,7 +373,7 @@ class TestDispatch:
         _publish(conversation, sequence)
 
         with patch.object(fix_save, "advance") as advance:
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
 
         assert (
             Message.no_workspace_objects.filter(
@@ -531,7 +538,7 @@ class TestTurnEvents:
         assert run.lines[0]["state"] == "could_not_fix"
         assert run.lines[0]["reason"] == {
             "code": "conversation_checkpoint_stale",
-            "message": "The builder's change could not be kept",
+            "message": "The change couldn't be kept",
         }
 
     def test_an_interrupted_turn_not_started_again_could_not_fix(
@@ -549,11 +556,11 @@ class TestTurnEvents:
         run.refresh_from_db()
         assert run.commands[0]["interrupted_at"]
         assert run.lines[0]["state"] == "fixing"
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         assert _run(environment).commands[0]["state"] == "dispatched"
         _interrupted_long_ago(run)
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert run.commands[0]["outcome"]["code"] == "turn_interrupted"
@@ -575,7 +582,7 @@ class TestTurnEvents:
 
         run.refresh_from_db()
         assert run.commands[0]["interrupted_at"] is None
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         assert _run(environment).commands[0]["state"] == "dispatched"
 
     def test_a_question_waits_on_the_answer_through_two_rounds(
@@ -584,12 +591,11 @@ class TestTurnEvents:
         environment, run, message, conversation = _dispatched(
             user, workspace, storage, "fd-question"
         )
-        sequence = _feed(
+        _feed(
             conversation,
             django_capture_on_commit_callbacks,
             _started(message),
             _asked("Which table?"),
-            _completed(message),
         )
         run.refresh_from_db()
         assert run.state == "waiting_on_you"
@@ -598,26 +604,22 @@ class TestTurnEvents:
             "code": "builder_question",
             "message": "Which table?",
         }
-        # The turn's partial work publishes; the command is not settled.
-        _publish(conversation, sequence)
-        assert _run(environment).commands[0]["state"] == "dispatched"
         assert not fix_driver.dispatch(environment.id, start_runtime=False)
 
         for round_, last in ((1, False), (2, True)):
             reply = _answer(environment, _question_id(conversation))
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
             assert _run(environment).state == "fixing"
+            # The answer's own turn (as after a restart) asks again, then ends.
             events = [_started(reply)]
-            if not last:
-                events.append(_asked(f"Round {round_}?"))
-            events.append(_completed(reply))
+            events.append(_completed(reply) if last else _asked(f"Round {round_}?"))
             sequence = _feed(conversation, django_capture_on_commit_callbacks, *events)
             run.refresh_from_db()
             assert run.current_command_id == reply.id
             if not last:
                 assert run.state == "waiting_on_you"
                 assert run.lines[0]["reason"]["message"] == f"Round {round_}?"
-            _publish(conversation, sequence)
+        _publish(conversation, sequence)
 
         run.refresh_from_db()
         assert run.state == "fixing"
@@ -634,7 +636,7 @@ class TestTurnEvents:
         _feed(conversation, django_capture_on_commit_callbacks, _asked(), execute=False)
         assert _run(environment).state == "fixing"
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).state == "waiting_on_you"
 
@@ -702,7 +704,7 @@ class TestTurnEvents:
 
         with _retires() as retired:
             with django_capture_on_commit_callbacks(execute=True):
-                fix_driver.check(environment.id)
+                fix_check.check(environment.id)
             _promote(
                 conversation, message, key, digest, django_capture_on_commit_callbacks
             )
@@ -714,6 +716,92 @@ class TestTurnEvents:
         assert drafts.draft_refs(environment) == refs
         assert retired == [str(environment.id)]
 
+    def test_an_answer_whose_command_ended_writes_no_draft(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-answer-ended"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _started(message),
+            _asked(),
+        )
+        reply = _answer(environment, _question_id(conversation))
+        _feed(conversation, django_capture_on_commit_callbacks)  # the chat takes it
+        key, digest = _checkpoint(environment, conversation, reply, storage)
+        fix_runs.end_without_save(run, "chat_busy", "stopped")
+        refs = drafts.draft_refs(environment)
+
+        with _retires() as retired:
+            for _ in range(2):
+                _promote(
+                    conversation, reply, key, digest, django_capture_on_commit_callbacks
+                )
+
+        run.refresh_from_db()
+        assert drafts.draft_refs(environment) == refs
+        # Given up when the run ended, not again.
+        assert retired == []
+        assert run.commands[0]["retired"] is True
+
+    def test_an_answer_whose_run_was_marked_ended_is_dropped_and_retired_once(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-answer-late"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _started(message),
+            _asked(),
+        )
+        reply = _answer(environment, _question_id(conversation))
+        key, digest = _checkpoint(environment, conversation, reply, storage)
+        _feed(conversation, django_capture_on_commit_callbacks, _started(reply))
+        ReadinessFixRun.no_workspace_objects.filter(id=run.id).update(state="failed")
+        refs = drafts.draft_refs(environment)
+
+        with _retires() as retired:
+            for _ in range(2):  # re-promoted: still dropped, retired once
+                _promote(
+                    conversation, reply, key, digest, django_capture_on_commit_callbacks
+                )
+
+        assert drafts.draft_refs(environment) == refs
+        assert retired == [str(environment.id)]
+        assert _lease_expired(conversation)
+
+    def test_an_answer_sent_after_its_command_ended_is_the_persons_write(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-answer-after-end"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _started(message),
+            _asked(),
+        )
+        fix_runs.end_without_save(run, "question_unanswered", fix_check._UNANSWERED)
+        reply = _answer(environment, _question_id(conversation))
+        key, digest = _checkpoint(environment, conversation, reply, storage)
+        refs = drafts.draft_refs(environment)
+
+        with _retires() as retired:
+            _promote(
+                conversation, reply, key, digest, django_capture_on_commit_callbacks
+            )
+
+        # The run told the person to answer it: the answer's edit is kept.
+        assert drafts.draft_refs(environment) != refs
+        assert retired == []
+        run.refresh_from_db()
+        assert run.error["code"] == "question_unanswered"
+
 
 class TestDeadlines:
     def test_a_command_never_taken_is_not_started(
@@ -722,11 +810,11 @@ class TestDeadlines:
         environment, run, message, _conversation = _dispatched(
             user, workspace, storage, "fd-queued"
         )
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         assert _run(environment).commands[0]["state"] == "dispatched"
         _age(message, timedelta(minutes=16))
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert run.commands[0]["outcome"]["turn"] == "not_started"
@@ -741,11 +829,11 @@ class TestDeadlines:
             user, workspace, storage, "fd-taken"
         )
         Message.no_workspace_objects.filter(id=message.id).update(state="delivered")
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         assert _run(environment).commands[0]["state"] == "dispatched"
         _age(message, timedelta(minutes=16), "updated_at")
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["outcome"]["turn"] == "not_started"
 
@@ -763,7 +851,7 @@ class TestDeadlines:
             conversation=conversation, kind="turn_started"
         ).update(created_at=timezone.now() - timedelta(minutes=61))
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert run.commands[0]["outcome"]["turn"] == "stuck"
@@ -787,11 +875,11 @@ class TestDeadlines:
         )
         ended.update(created_at=timezone.now() - timedelta(minutes=6))
         with patch.object(hhc, "promote_turn_checkpoint") as retried:
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
         retried.assert_called_once_with(str(conversation.id), sequence)
         ended.update(created_at=timezone.now() - timedelta(minutes=16))
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["outcome"]["code"] == "publish_failed"
 
@@ -806,13 +894,12 @@ class TestDeadlines:
             django_capture_on_commit_callbacks,
             _started(message),
             _asked(),
-            _completed(message),
         )
         Message.no_workspace_objects.filter(id=_question_id(conversation)).update(
             created_at=timezone.now() - LONG_AGO
         )
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert run.commands[0]["outcome"]["code"] == "question_unanswered"
@@ -824,13 +911,13 @@ class TestDeadlines:
         environment = _broken(user, workspace, storage, "fd-chat-busy")
         run = _start(environment, user)
         hhc.enqueue_message(environment, content="mine", client_request_id="mine")
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         run.refresh_from_db()
         assert run.state == "queued"
         assert run.commands[0]["busy_since"]
         _busy_since(run, 0, timedelta(minutes=31))
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert (run.state, run.error["code"]) == ("failed", "chat_busy")
@@ -853,11 +940,11 @@ class TestDeadlines:
         _publish(conversation, sequence)
         _draft(environment.environment_version)
         hhc.enqueue_message(environment, content="mine", client_request_id="mine")
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         run.refresh_from_db()
         _busy_since(run, 1, timedelta(minutes=31))
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert (run.state, run.error["code"]) == ("done", "chat_busy")
@@ -872,9 +959,9 @@ class TestDeadlines:
         environment = _broken(user, workspace, storage, "fd-errors")
         _start(environment, user)
 
-        with patch.object(fix_driver, "_check", side_effect=RuntimeError("boom")):
+        with patch.object(fix_check, "_check", side_effect=RuntimeError("boom")):
             for _ in range(6):
-                fix_driver.check(environment.id)
+                fix_check.check(environment.id)
             run = _run(environment)
             assert run.state == "queued"
             since = run.autosave["failing_since"]
@@ -886,7 +973,7 @@ class TestDeadlines:
                 }
             )
             assert since
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
 
         run = _run(environment)
         assert (run.state, run.error["code"]) == ("failed", "internal_error")
@@ -896,12 +983,12 @@ class TestDeadlines:
     ):
         environment = _broken(user, workspace, storage, "fd-reset")
         _start(environment, user)
-        with patch.object(fix_driver, "_check", side_effect=RuntimeError("boom")):
-            fix_driver.check(environment.id)
+        with patch.object(fix_check, "_check", side_effect=RuntimeError("boom")):
+            fix_check.check(environment.id)
         changed = _run(environment).state_changed_at
 
-        with patch.object(fix_driver, "_check"):
-            fix_driver.check(environment.id)
+        with patch.object(fix_check, "_check"):
+            fix_check.check(environment.id)
 
         run = _run(environment)
         assert (run.autosave, run.state_changed_at) == (None, changed)
@@ -922,7 +1009,7 @@ class TestStallAndBasis:
         assert counts["abandoned"] == 0
         message.refresh_from_db()
         assert message.state == "queued"
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         assert _run(environment).commands[0]["outcome"]["turn"] == "not_started"
 
     def test_a_settled_command_restarts_the_wait_of_messages_behind_it(
@@ -1047,8 +1134,8 @@ class TestGuards:
             state="waiting_on_you"
         )
         fix_runs.require_no_fix_waiting(environment)
-        assert fix_driver.tick() == 0
-        fix_driver.check(environment.id)
+        assert fix_check.tick() == 0
+        fix_check.check(environment.id)
         assert _run(environment).state == "waiting_on_you"
 
     def test_deleting_the_environment_stops_its_fix(
@@ -1109,7 +1196,7 @@ class TestTick:
         environment = _broken(user, workspace, storage, "fd-check")
         _start(environment, user)
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run = _run(environment)
         assert run.state == "fixing"
@@ -1138,7 +1225,7 @@ class TestAnswers:
         _feed(conversation, django_capture_on_commit_callbacks)
         _age(reply, timedelta(minutes=16), "updated_at")
         _age(reply, timedelta(minutes=16))
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         run.refresh_from_db()
         assert (run.state, run.commands[0]["state"]) == ("fixing", "dispatched")
         assert run.current_command_id == message.id
@@ -1237,7 +1324,7 @@ class TestMoreTurns:
             _started(message),
             _completed(message, "failed", replayed=True),
         )
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["state"] == "dispatched"
 
@@ -1259,7 +1346,7 @@ class TestMoreTurns:
             conversation=conversation, kind="turn_interrupted"
         ).update(created_at=timezone.now() - timedelta(minutes=16))
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["outcome"]["code"] == "turn_interrupted"
 
@@ -1272,7 +1359,7 @@ class TestMoreTurns:
         _feed(conversation, django_capture_on_commit_callbacks, _started(message))
         Message.no_workspace_objects.filter(id=message.id).update(state="failed")
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["outcome"]["turn"] == "not_started"
 
@@ -1374,7 +1461,7 @@ class TestRetire:
         _interrupted_long_ago(run)
 
         with _retires() as retired, django_capture_on_commit_callbacks(execute=True):
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert run.commands[0]["outcome"]["code"] == "turn_interrupted"
@@ -1534,7 +1621,6 @@ class TestAgentMove:
             django_capture_on_commit_callbacks,
             _started(message),
             _asked(),
-            _completed(message),
         )
         _move_to(environment, storage, a2)
         reply = _answer(environment, _question_id(conversation))
@@ -1610,6 +1696,7 @@ class TestSwitchedOff:
             )
             assert fix_driver.last_settled_at(environment.id) is None
             assert fix_driver.run_for_command(reply) is None
+            assert fix_driver.draft_command(reply) == ("", {})
             fix_driver.on_published((run, run.commands[0]), None, wrote=False)
 
         assert _run(environment).commands[0]["state"] == "dispatched"
@@ -1642,7 +1729,7 @@ class TestReverify:
         _interrupted_long_ago(run)
 
         with django_capture_on_commit_callbacks(execute=True):
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["outcome"]["code"] == "turn_interrupted"
         assert _lease_expired(conversation)
@@ -1668,7 +1755,7 @@ class TestReverify:
             conversation=conversation
         ).update(state="expired")
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["state"] == "dispatched"
 
@@ -1709,6 +1796,35 @@ class TestReverify:
         assert run.commands[0]["outcome"]["turn"] == "success"
         assert run.current_command_id is None
 
+    def test_a_failed_answer_does_not_hold_its_command(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-failed-answer"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _started(message),
+            _asked(),
+        )
+        # Answered as the turn ended; the chat never took it.
+        reply = _answer(environment, _question_id(conversation))
+        sequence = _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _completed(message),
+            acked=message.sequence,
+            emitted=datetime.now(UTC),
+        )
+        rebuild.fail_command(reply.id)
+
+        _publish(conversation, sequence)
+
+        run.refresh_from_db()
+        assert run.commands[0]["outcome"]["turn"] == "success"
+        assert _lines(run) == [("state", "fixing")]
+
     def test_a_failed_command_fails_its_untaken_answer(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
     ):
@@ -1720,18 +1836,24 @@ class TestReverify:
             django_capture_on_commit_callbacks,
             _started(message),
             _asked(),
-            ("turn_interrupted", {"command_message_id": str(message.id)}),
         )
         reply = _answer(environment, _question_id(conversation))
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            ("turn_interrupted", {"command_message_id": str(message.id)}),
+            acked=message.sequence,
+        )
         _interrupted_long_ago(run)
         # Answered right after the interrupt; the wait counts from the answer.
         _age(reply, timedelta(minutes=16))
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["outcome"]["code"] == "turn_interrupted"
         reply.refresh_from_db()
         assert reply.state == "failed"
+        assert reply.payload["failure_reason"] == "fix_ended"
 
     def test_stopping_fails_an_untaken_answer_but_not_a_taken_one(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
@@ -1754,6 +1876,8 @@ class TestReverify:
         taken.refresh_from_db()
         untaken.refresh_from_db()
         assert (taken.state, untaken.state) == ("delivered", "failed")
+        assert untaken.payload["failure_reason"] == "fix_ended"
+        assert "failure_reason" not in taken.payload
 
     def test_a_late_landing_is_tried_once_before_it_is_given_up(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
@@ -1772,9 +1896,9 @@ class TestReverify:
         ).update(created_at=timezone.now() - timedelta(minutes=30))
 
         with patch.object(hhc, "promote_turn_checkpoint") as retried:
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
             assert _run(environment).commands[0]["state"] == "dispatched"
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
 
         retried.assert_called_once_with(str(conversation.id), sequence)
         assert _run(environment).commands[0]["outcome"]["code"] == "publish_failed"
@@ -1787,14 +1911,14 @@ class TestReverify:
         mine = hhc.enqueue_message(
             environment, content="mine", client_request_id="mine"
         )[1]
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
         _busy_since(run, 0, timedelta(minutes=31))
         Message.no_workspace_objects.filter(id=mine.id).update(state="completed")
         HostedHarnessConversation.no_workspace_objects.filter(
             id=mine.conversation_id
         ).update(state="warm_idle", command_acked_through=mine.sequence)
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert (run.state, run.commands[0]["state"]) == ("fixing", "dispatched")
@@ -1820,7 +1944,7 @@ class TestReverify:
             execute=False,
         )
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["state"] == "dispatched"
 
@@ -1846,6 +1970,259 @@ class TestReverify:
         assert mine.state == "queued"
 
 
+class TestProducerEvents:
+    """The builder's own event sequences (``alk_turn_events``) through the driver."""
+
+    def _ignored_answer(self, user, workspace, storage, capture, key, emitted):
+        """Asked; the person answers; the sandbox restarts twice and the retried turn
+        is cut off again, its ending dated ``emitted``; ALK then ignores the answer."""
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, key
+        )
+        question = str(uuid.uuid4())
+        _feed(
+            conversation,
+            capture,
+            *alk.fill(alk.STARTED + alk.ASKED, command=message.id, question=question),
+            acked=message.sequence,
+        )
+        reply = _answer(environment, question)
+        _feed(
+            conversation,
+            capture,
+            *alk.fill(alk.RETRIED + alk.CUT_OFF_AGAIN, command=message.id),
+            acked=message.sequence,
+            emitted=emitted,
+        )
+        _feed(
+            conversation,
+            capture,
+            *alk.fill(alk.IGNORED_ANSWER, answer=reply.id),
+            acked=reply.sequence,
+        )
+        fix_check.check(environment.id)
+        reply.refresh_from_db()
+        assert reply.state == "completed"
+        return _run(environment)
+
+    def test_an_answer_the_chat_ignores_does_not_hold_the_command(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        # The cut-off was emitted before the answer was sent, and ingested after.
+        run = self._ignored_answer(
+            user,
+            workspace,
+            storage,
+            django_capture_on_commit_callbacks,
+            "fd-alk-ignored",
+            datetime.now(UTC) - timedelta(minutes=1),
+        )
+
+        assert run.commands[0]["state"] == "settled"
+        assert run.commands[0]["outcome"]["code"] == "turn_interrupted"
+
+    def test_an_answer_queued_before_the_cut_off_does_not_hold_the_command(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        run = self._ignored_answer(
+            user,
+            workspace,
+            storage,
+            django_capture_on_commit_callbacks,
+            "fd-alk-queued",
+            None,
+        )
+
+        assert run.commands[0]["outcome"]["code"] == "turn_interrupted"
+
+    def test_a_resumed_turn_runs_on_and_settles(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-alk-resumed"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.STARTED + alk.RESUMED, command=message.id),
+            acked=message.sequence,
+        )
+        run.refresh_from_db()
+        assert run.commands[0]["interrupted_at"] is None
+        sequence = _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.COMPLETED, command=message.id),
+            acked=message.sequence,
+        )
+
+        _publish(conversation, sequence)
+
+        run.refresh_from_db()
+        assert run.commands[0]["outcome"] == {
+            "turn": "success",
+            "code": None,
+            "wrote": False,
+        }
+
+    def test_a_turn_cut_off_again_after_its_retry_could_not_fix(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-alk-cut-off"
+        )
+
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(
+                alk.STARTED + alk.RETRIED + alk.CUT_OFF_AGAIN, command=message.id
+            ),
+            acked=message.sequence,
+        )
+
+        run.refresh_from_db()
+        assert run.commands[0]["outcome"] == {
+            "turn": "interrupted",
+            "code": "turn_interrupted",
+            "wrote": False,
+        }
+        assert _lines(run) == [("state", "could_not_fix")]
+
+    def test_a_stopped_turn_could_not_fix(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-alk-stopped"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.STARTED, command=message.id),
+            acked=message.sequence,
+        )
+        control = hhc.enqueue_message(
+            environment, content="stop", client_request_id="stop", kind="interrupt"
+        )[1]
+
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.STOPPED, command=message.id, control=control.id),
+            acked=control.sequence,
+        )
+
+        run.refresh_from_db()
+        assert run.commands[0]["outcome"]["code"] == "turn_interrupted"
+        control.refresh_from_db()
+        assert control.state == "completed"
+
+    def test_a_control_with_no_turn_running_is_not_the_fixs(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-alk-control"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.STARTED, command=message.id),
+            acked=message.sequence,
+        )
+        control = hhc.enqueue_message(
+            environment, content="stop", client_request_id="stop", kind="interrupt"
+        )[1]
+
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.CONTROL_ALONE, control=control.id),
+            acked=control.sequence,
+        )
+        fix_check.check(environment.id)
+
+        run.refresh_from_db()
+        assert run.commands[0]["interrupted_at"] is None
+        assert run.commands[0]["state"] == "dispatched"
+
+    def test_a_question_asked_again_after_a_restart_keeps_its_answer(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-alk-asked-again"
+        )
+        question = str(uuid.uuid4())
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.STARTED + alk.ASKED, command=message.id, question=question),
+            acked=message.sequence,
+        )
+        reply = _answer(environment, question)
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.RESUMED + alk.ASKED, command=message.id, question=question),
+            acked=message.sequence,
+        )
+        sequence = _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.COMPLETED, command=message.id),
+            acked=reply.sequence,
+        )
+
+        _publish(conversation, sequence)
+
+        run.refresh_from_db()
+        assert run.state == "fixing"
+        assert run.commands[0]["outcome"]["turn"] == "success"
+        assert question in run.commands[0]["questions"]
+
+    def test_an_answer_the_turn_end_overtook_does_not_hold_the_command(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-alk-overtaken"
+        )
+        question = str(uuid.uuid4())
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.STARTED + alk.ASKED, command=message.id, question=question),
+            acked=message.sequence,
+        )
+        reply = _answer(environment, question)
+        # The turn ended unanswered before the chat took the answer, which it ignores.
+        sequence = _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.COMPLETED, command=message.id),
+            acked=message.sequence,
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.IGNORED_ANSWER, answer=reply.id),
+            acked=reply.sequence,
+        )
+
+        _publish(conversation, sequence)
+
+        reply.refresh_from_db()
+        assert reply.state == "completed"
+        run.refresh_from_db()
+        assert run.commands[0]["state"] == "settled"
+        assert run.commands[0]["outcome"]["turn"] == "success"
+        assert run.state != "waiting_on_you"
+        with django_capture_on_commit_callbacks(execute=True):
+            fix_check.check(environment.id)
+        assert (_run(environment).state, _run(environment).error["code"]) == (
+            "failed",
+            "no_changes",
+        )
+
+
 class TestLowCleanup:
     def test_a_stopped_question_puts_the_run_back_to_fixing(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
@@ -1866,7 +2243,7 @@ class TestLowCleanup:
             ("turn_interrupted", {"command_message_id": str(message.id)}),
         )
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert (run.state, run.question_message_id) == ("fixing", None)
@@ -1889,7 +2266,7 @@ class TestLowCleanup:
             id=conversation.id
         ).update(state=HostedHarnessConversation.State.COLD)
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         run.refresh_from_db()
         assert run.state == "waiting_on_you"
@@ -1919,22 +2296,29 @@ class TestLowCleanup:
         environment, run, message, conversation = _dispatched(
             user, workspace, storage, "fd-taken-late"
         )
+        ended_at = datetime.now(UTC) - timedelta(minutes=30)
         _feed(
             conversation,
             django_capture_on_commit_callbacks,
             _started(message),
             _asked(),
-            _completed(message),
-            emitted=datetime.now(UTC) - timedelta(minutes=30),
+            emitted=ended_at,
         )
         reply = _answer(environment, _question_id(conversation))
         _age(reply, timedelta(minutes=16))
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _completed(message),
+            acked=message.sequence,
+            emitted=ended_at,
+        )
         # The chat took it, but no turn of its own ever started.
         HostedHarnessConversation.no_workspace_objects.filter(
             id=conversation.id
         ).update(command_acked_through=reply.sequence)
 
-        fix_driver.check(environment.id)
+        fix_check.check(environment.id)
 
         assert _run(environment).commands[0]["outcome"]["code"] == "not_started"
         reply.refresh_from_db()
@@ -1961,8 +2345,145 @@ class TestLowCleanup:
         run.save(update_fields=["commands"])
 
         with patch.object(hhc, "promote_turn_checkpoint") as retried:
-            fix_driver.check(environment.id)
-            fix_driver.check(environment.id)
+            fix_check.check(environment.id)
+            fix_check.check(environment.id)
 
         retried.assert_called_once_with(str(conversation.id), sequence)
         assert _run(environment).commands[0]["landing_retried"] == sequence
+
+
+SAID = "A tool cannot be added from chat once the environment is sealed."
+
+
+class TestAbandonedQuestion:
+    """The builder's turn ends while its question is unanswered (its stage timed out
+    waiting), saying why it made no change."""
+
+    def test_the_run_goes_on_and_the_line_says_what_the_builder_said(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-abandoned"
+        )
+        question, reply_id = str(uuid.uuid4()), str(uuid.uuid4())
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *alk.fill(alk.STARTED + alk.ASKED, command=message.id, question=question),
+            acked=message.sequence,
+        )
+        assert _run(environment).state == "waiting_on_you"
+        # Deltas carry the backend's own invocation id; the reply and end the turn's.
+        sequence = _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            ("assistant_delta", {"text": "A tool cannot"}, reply_id, "adk-1"),
+            ("assistant_message", {"text": SAID}, reply_id),
+            *alk.fill(alk.COMPLETED, command=message.id),
+            acked=message.sequence,
+        )
+        run.refresh_from_db()
+        assert (run.state, run.question_message_id) == ("fixing", None)
+        assert _lines(run) == [("state", "fixing")]
+        with pytest.raises(HostedHarnessError) as late:
+            _answer(environment, question)
+        assert late.value.code == "conversation_reply_target_invalid"
+
+        with django_capture_on_commit_callbacks(execute=True):
+            _publish(conversation, sequence)
+
+        run.refresh_from_db()
+        assert run.commands[0]["outcome"] == {
+            "turn": "success",
+            "code": None,
+            "wrote": False,
+        }
+        assert run.lines[0]["state"] == "could_not_fix"
+        assert run.lines[0]["reason"] == {"code": "no_changes", "message": SAID}
+        # No longer open: the row can be asked for again while the run goes on.
+        assert fix_runs._open_lines(run) == {}
+        with django_capture_on_commit_callbacks(execute=True):
+            fix_check.check(environment.id)
+        run.refresh_from_db()
+        assert (run.state, run.error["code"]) == ("failed", "no_changes")
+        assert run.lines[0]["reason"] == {"code": "no_changes", "message": SAID}
+
+    def test_without_invocation_ids_only_the_turns_own_reply_is_read(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-abandoned-no-ids"
+        )
+        command = str(message.id)
+        long = " ".join(["Looked through the contract first."] * 20)
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            ("assistant_message", {"text": "An earlier reply."}, uuid.uuid4(), None),
+            ("turn_started", {"command_message_id": command}, None, None),
+            ("question_requested", {"prompt": "Confirm?"}, uuid.uuid4(), None),
+            (
+                "assistant_message",
+                {
+                    "text": f"{long}\n\n{SAID}\n\nStill open from the last health "
+                    "check (1): tool_not_in_world"
+                },
+                uuid.uuid4(),
+                None,
+            ),
+            (
+                "turn_completed",
+                {"command_message_id": command, "outcome": "success"},
+                None,
+                None,
+            ),
+            acked=message.sequence,
+        )
+        ended = Event.no_workspace_objects.get(
+            conversation=conversation, kind="turn_completed"
+        )
+        assert ended.invocation_id is None
+
+        _publish(conversation, ended.sequence)
+
+        reason = _run(environment).lines[0]["reason"]
+        assert reason["code"] == "no_changes"
+        assert len(reason["message"]) <= fix_driver.REASON_MAX
+        assert reason["message"].startswith("…")
+        assert reason["message"].endswith(SAID)
+
+    @pytest.mark.parametrize(
+        "reply", [None, {"text": "I couldn't complete that turn", "error": "x"}]
+    )
+    def test_no_reply_of_its_own_keeps_the_rows_reason(
+        self,
+        reply,
+        user,
+        workspace,
+        storage,
+        tasks,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, f"fd-abandoned-quiet-{bool(reply)}"
+        )
+        events = [_started(message), _asked()]
+        if reply is not None:
+            events.append(("assistant_message", reply, uuid.uuid4()))
+        sequence = _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            *events,
+            _completed(message),
+            acked=message.sequence,
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            _publish(conversation, sequence)
+
+        assert _lines(run) == [("state", "fixing")]
+        with django_capture_on_commit_callbacks(execute=True):
+            fix_check.check(environment.id)
+        run.refresh_from_db()
+        assert (run.state, run.error["code"]) == ("failed", "no_changes")
+        assert run.lines[0]["reason"]["code"] != "no_changes"

@@ -193,6 +193,19 @@ def require_no_fix_waiting(environment: HostedHarnessJob) -> None:
     fix_runs.require_no_fix_waiting(environment)
 
 
+def require_no_fix_saving(environment: HostedHarnessJob) -> None:
+    """Refuse the person's own draft edit while a run readiness fix may still save
+    the drafts: autosave saves the whole draft, so the edit would be saved as the
+    fix's."""
+    from simulate.services.harness_readiness import fix_runs
+
+    fix_runs.require_no_active_fix(
+        environment,
+        states=fix_runs.UNSAVED,
+        message="A fix is running; edit when it finishes",
+    )
+
+
 def rebuild_running(piece: str | None) -> HostedHarnessError:
     return version_error(
         "rebuild_running",
@@ -583,6 +596,8 @@ def record_draft(
         )
         if not drafts_apply(locked):
             return None
+        if origin == "manual":
+            require_no_fix_saving(locked)
         if expected is not None:
             current = draft_refs(locked)
             for piece in DRAFT_PIECES:

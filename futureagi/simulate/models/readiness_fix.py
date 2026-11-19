@@ -6,6 +6,7 @@ from __future__ import annotations
 import uuid
 
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -86,7 +87,8 @@ class ReadinessFixRun(BaseModel):
         blank=True,
         related_name="+",
     )
-    # One entry per POST: {n, key, rows, message, message_id, state, *_at, outcome}.
+    # One entry per POST: {n, key, request, rows, message, message_id, state, *_at,
+    # outcome}.
     commands = models.JSONField(default=list, blank=True)
     # One entry per row: {row_id, area, label, state, reason, waiting_on, command}.
     lines = models.JSONField(default=list, blank=True)
@@ -114,4 +116,10 @@ class ReadinessFixRun(BaseModel):
         ]
         indexes = [
             models.Index(fields=["job", "-created_at"], name="idx_rfix_job_created"),
+            # Serves the idempotency key lookup (``commands @> [{"key": ...}]``).
+            GinIndex(
+                fields=["commands"],
+                name="idx_rfix_commands",
+                opclasses=["jsonb_path_ops"],
+            ),
         ]

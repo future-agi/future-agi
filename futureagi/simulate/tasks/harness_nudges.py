@@ -193,7 +193,7 @@ def schedule_nudge_check_task(environment_id: Any):
 @temporal_activity(time_limit=300, max_retries=0, queue="default")
 def check_harness_readiness_fix(environment_id: str) -> str:
     """Dispatch, follow or end one environment's run readiness fix."""
-    from simulate.services.harness_readiness.fix_driver import check
+    from simulate.services.harness_readiness.fix_check import check
 
     close_old_connections()
     try:

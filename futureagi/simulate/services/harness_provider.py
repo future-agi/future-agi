@@ -2159,7 +2159,11 @@ class HostedHarnessProvider:
             from simulate.services.hosted_harness import HostedHarnessError
 
             try:
-                flags = _scenario_readiness(job, request.query_params)
+                flags = _scenario_readiness(
+                    job,
+                    request.query_params,
+                    [one.scenario_key for one in page or []],
+                )
             except HostedHarnessError as exc:
                 # A build that failed or is still running has no versions to pair: its rows carry no flags.
                 if exc.code != "versioning_disabled":
@@ -3169,9 +3173,9 @@ class _SandboxMappingError(RuntimeError):
     pass
 
 
-def _scenario_readiness(job, params):
-    """Each scenario's readiness for the pairing the query names (an absent id is the
-    environment's default), by scenario key."""
+def _scenario_readiness(job, params, keys: list[str]):
+    """Each listed scenario's readiness for the pairing the query names (an absent id
+    is the environment's default), by scenario key."""
     from simulate.services.harness_readiness import resolve_pairing, scenario_readiness
     from simulate.services.hosted_harness import HostedHarnessError
 
@@ -3186,4 +3190,4 @@ def _scenario_readiness(job, params):
             raise HostedHarnessError(
                 "invalid_version_id", f"{name} is not a valid id", status_code=400
             ) from None
-    return scenario_readiness(resolve_pairing(job, **picks))
+    return scenario_readiness(resolve_pairing(job, **picks), keys=keys)
