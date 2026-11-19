@@ -12,6 +12,7 @@ from simulate.services.harness_versioning.review_items import (
     compute_changes,
     index_mismatch,
     item_index,
+    rule_key,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
@@ -629,35 +630,47 @@ def test_every_change_but_a_scenario_rename_is_graded():
 
 
 RULE = "Never refund more than the order total"
+# The harness's records of its contract changes (`contract.json` `amendment_records`): a rule's key is its id.
 AMENDMENT = {
     "kind": "rule",
-    "keys": [RULE],
+    "key": f"rule-{rule_key(RULE)}",
     "action": "added",
     "text": f"rule added: {RULE}: the policy caps refunds",
 }
 OLD_LINE = {
     "kind": "tool",
-    "keys": ["old_tool"],
+    "key": "old_tool",
     "action": "removed",
     "text": "old_tool removed",
 }
 
 
+def test_the_harness_amendment_records_are_never_a_change_of_their_own():
+    before = {"tools": TOOLS}
+
+    assert (
+        compute_changes(
+            _tree(before), _tree({**before, "amendment_records": [OLD_LINE]})
+        )
+        == []
+    )
+
+
 def _rule_and_tool():
     """A draft where one write added a rule with its amendment line, and another changed a tool."""
-    default = _tree({"tools": TOOLS, "amendments": [OLD_LINE]})
+    default = _tree({"tools": TOOLS, "amendment_records": [OLD_LINE]})
     draft = _tree(
         {
             "tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}],
             "hard_constraints": [RULE],
-            "amendments": [OLD_LINE, AMENDMENT],
+            "amendment_records": [OLD_LINE, AMENDMENT],
         }
     )
     return default, draft, compute_changes(default, draft)
 
 
 def test_an_accepted_rule_keeps_its_amendment_line_when_another_change_is_rejected():
-    """The entry declares the rule it records, so it follows the rule's decision."""
+    """The record declares the rule it is about, by its id, so it follows the rule's decision."""
     default, draft, changes = _rule_and_tool()
     rule = next(one["id"] for one in changes if one["kind"] == "rule")
     partly = json.loads(
@@ -666,14 +679,14 @@ def test_an_accepted_rule_keeps_its_amendment_line_when_another_change_is_reject
         )["contract.json"]
     )
     assert partly["hard_constraints"] == [RULE]
-    assert partly["amendments"] == [OLD_LINE, AMENDMENT]
+    assert partly["amendment_records"] == [OLD_LINE, AMENDMENT]
     assert partly["tools"] == TOOLS
     every = json.loads(
         compose_accepted(
             default, draft, changes, {rule: "accepted", "tool:issue_refund": "accepted"}
         )["contract.json"]
     )
-    assert every["amendments"] == [OLD_LINE, AMENDMENT]
+    assert every["amendment_records"] == [OLD_LINE, AMENDMENT]
 
 
 def test_rejected_rule_leaves_no_amendment():
@@ -685,7 +698,7 @@ def test_rejected_rule_leaves_no_amendment():
         )["contract.json"]
     )
     assert not composed.get("hard_constraints")
-    assert composed["amendments"] == [OLD_LINE]
+    assert composed["amendment_records"] == [OLD_LINE]
     # With nothing accepted, the contract is the saved one, byte for byte, so the version is the saved one.
     nothing = compose_accepted(
         default, draft, changes, {rule: "rejected", "tool:issue_refund": "rejected"}
@@ -782,7 +795,7 @@ def test_an_older_free_text_amendment_line_is_dropped_when_a_contract_change_was
     """An older line declares nothing, so nothing in it is read: it is kept only while every contract change is."""
     default, draft, changes = _rule_and_tool()
     contract = json.loads(draft["contract.json"])
-    contract["amendments"].append(
+    contract.setdefault("amendments", []).append(
         "rule added \u2014 issue_refund narrowed: after review"
     )
     draft["contract.json"] = json.dumps(contract).encode()
@@ -794,9 +807,8 @@ def test_an_older_free_text_amendment_line_is_dropped_when_a_contract_change_was
             default, draft, changes, {rule: "accepted", "tool:issue_refund": "rejected"}
         )["contract.json"]
     )
-    assert (
-        "rule added \u2014 issue_refund narrowed: after review"
-        not in rejected["amendments"]
+    assert "rule added \u2014 issue_refund narrowed: after review" not in rejected.get(
+        "amendments", []
     )
     accepted = json.loads(
         compose_accepted(
@@ -1243,8 +1255,8 @@ def test_stored_review_records_are_read_into_their_shapes_and_bad_entries_left_o
 def test_a_permission_entry_follows_the_tool_change_it_names():
     permission = {
         "kind": "tool",
-        "keys": ["issue_refund"],
-        "action": "permitted",
+        "key": "issue_refund",
+        "action": "changed",
         "text": "billing may use issue_refund, as asked",
     }
     default = _tree({"tools": TOOLS, "amendments": []})
@@ -1252,7 +1264,7 @@ def test_a_permission_entry_follows_the_tool_change_it_names():
         {
             "tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}],
             "hard_constraints": [RULE],
-            "amendments": [AMENDMENT, permission],
+            "amendment_records": [AMENDMENT, permission],
         }
     )
     changes = compute_changes(default, draft)
@@ -1264,14 +1276,14 @@ def test_a_permission_entry_follows_the_tool_change_it_names():
         )["contract.json"]
     )
 
-    assert composed["amendments"] == [AMENDMENT]
+    assert composed["amendment_records"] == [AMENDMENT]
     # And it stays with the tool: accepted with it even while the rule is rejected.
     kept = json.loads(
         compose_accepted(
             default, draft, changes, {rule: "rejected", "tool:issue_refund": "accepted"}
         )["contract.json"]
     )
-    assert kept["amendments"] == [permission]
+    assert kept["amendment_records"] == [permission]
 
 
 @pytest.mark.django_db

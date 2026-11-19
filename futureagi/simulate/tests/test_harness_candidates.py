@@ -39,9 +39,10 @@ pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/harness-environments"
 RULE = "Never approve a discount above 25%"
+# The record the harness keeps of an added rule (`contract.json` `amendment_records`), keyed by the rule's id.
 AMENDMENT = {
     "kind": "rule",
-    "keys": [RULE],
+    "key": f"rule-{rule_key(RULE)}",
     "action": "added",
     "text": f"rule added: {RULE}",
 }
@@ -192,7 +193,11 @@ def _chat_rule(environment, storage, user):
     from simulate.models import HostedHarnessConversationMessage
     from simulate.tests.test_harness_versioning_drafts import _publish
 
-    contract = {**CRM_CONTRACT, "hard_constraints": [RULE], "amendments": [AMENDMENT]}
+    contract = {
+        **CRM_CONTRACT,
+        "hard_constraints": [RULE],
+        "amendment_records": [AMENDMENT],
+    }
     _publish(
         environment, storage, names=NAMES[:1], sequence=1, user=user, contract=contract
     )
@@ -1026,7 +1031,7 @@ def test_reject_actor_keep_rule_saves_only_the_rule(
     )
 
     assert contract["hard_constraints"] == [RULE]
-    assert contract["amendments"] == [AMENDMENT]
+    assert contract["amendment_records"] == [AMENDMENT]
     assert _saved_actors(environment) == []
 
 
@@ -1043,7 +1048,7 @@ def test_reject_rule_keep_actor_saves_only_the_actor(
     )
 
     assert not contract.get("hard_constraints")
-    assert not contract.get("amendments")
+    assert not contract.get("amendment_records")
     assert [one["id"] for one in _saved_actors(environment)] == ["manager"]
 
 

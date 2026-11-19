@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
@@ -1122,9 +1121,6 @@ def _amendments(value: Any) -> list[dict[str, str]]:
     """
     amendments: list[dict[str, str]] = []
     for entry in value or []:
-        if isinstance(entry, Mapping):
-            # A declared amendment carries its own words.
-            entry = str(entry.get("text") or "")
         if not isinstance(entry, str) or not entry.strip():
             continue
         subject, separator, note = entry.partition(": ")

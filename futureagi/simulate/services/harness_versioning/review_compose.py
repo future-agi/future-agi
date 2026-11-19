@@ -228,25 +228,23 @@ def _compose_suite_index(
     _put(files, "scenarios.json", index)
 
 
-def _amendment_owners(entry: Any, changes: list[ReviewChange]) -> list[str]:
-    """The reviewed changes an amendment records, read from its declared ``kind`` and ``keys`` (a rule is named by its
-    text); empty for an entry that declares none, such as an older free-text line, which is only shown."""
-    if not isinstance(entry, Mapping):
+# The review item kind each kind of ALK's amendment records (`contract.json` `amendment_records`) is about. A worker's
+# record has no item of its own, so it follows the contract as a whole.
+_RECORD_KINDS = {"rule": "rule", "tool": "tool", "modality": "contract_field"}
+
+
+def _record_owners(record: Any, changes: list[ReviewChange]) -> list[str]:
+    """The reviewed changes an amendment record is about, by its declared kind and key; a rule's key is its id,
+    `rule-` and the rule's own key. Empty for anything else, such as an older free-text line, which is only shown."""
+    if not isinstance(record, Mapping):
         return []
-    kind, keys = entry.get("kind"), entry.get("keys")
-    if not isinstance(kind, str) or not isinstance(keys, list):
+    kind = _RECORD_KINDS.get(str(record.get("kind") or ""))
+    key = str(record.get("key") or "")
+    if kind is None or not key:
         return []
-    named = {str(one) for one in keys}
+    wanted = key.removeprefix("rule-") if kind == "rule" else key
     return [
-        change["id"]
-        for change in changes
-        if change["kind"] == kind
-        and (
-            change["patch"][0].get("value")
-            if kind == "rule" and change["patch"]
-            else change["key"]
-        )
-        in named
+        one["id"] for one in changes if one["kind"] == kind and one["key"] == wanted
     ]
 
 
@@ -257,38 +255,36 @@ def _carry_amendments(
     changes: list[ReviewChange],
     decisions: Mapping[str, str],
 ) -> None:
-    """The contract's amendment log keeps the entries the draft added for accepted changes and drops those of
-    rejected ones. An entry that declares no change under review is kept only while every contract change was
-    accepted."""
+    """The contract's amendment log keeps what the draft added for accepted changes and drops what it added for
+    rejected ones: a record follows the change it declares; a free-text line declares none, so it is kept only while
+    every contract change was accepted."""
     if "contract.json" not in files:
         return
     contract = read_json(files["contract.json"])
     edited = read_json(draft.get("contract.json", b"null"))
     if not isinstance(contract, dict) or not isinstance(edited, dict):
         return
-    kept = list(
-        (read_json(default.get("contract.json", b"null")) or {}).get("amendments") or []
-    )
+    saved = read_json(default.get("contract.json", b"null")) or {}
     all_accepted = all(
         decisions.get(one["id"]) == "accepted"
         for one in changes
         if one["document"] == "contract.json"
     )
-    for entry in edited.get("amendments") or []:
-        if entry in kept:
-            continue
-        owners = _amendment_owners(entry, changes)
-        if (not owners and all_accepted) or (
-            owners and all(decisions.get(one) == "accepted" for one in owners)
-        ):
-            kept.append(entry)
-    if kept == list(contract.get("amendments") or []):
+    composed = dict(contract)
+    for field in ("amendments", "amendment_records"):
+        kept = list(saved.get(field) or []) if isinstance(saved, dict) else []
+        for entry in edited.get(field) or []:
+            if entry in kept:
+                continue
+            owners = _record_owners(entry, changes)
+            if (not owners and all_accepted) or (
+                owners and all(decisions.get(one) == "accepted" for one in owners)
+            ):
+                kept.append(entry)
+        composed = {**composed, field: kept} if kept else _without(composed, field)
+    if composed == contract:
         return
-    _put(
-        files,
-        "contract.json",
-        {**contract, "amendments": kept} if kept else _without(contract, "amendments"),
-    )
+    _put(files, "contract.json", composed)
 
 
 def _without(body: dict[str, Any], field: str) -> dict[str, Any]:
