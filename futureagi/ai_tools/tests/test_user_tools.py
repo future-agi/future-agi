@@ -286,3 +286,56 @@ class TestInviteUsersGrantsAtMostTheInvitersLevel:
         assert invitee.get_membership_level(organization) == Level.ADMIN
         assert invitee.organization_role == "Admin"
         assert invitee.has_global_workspace_access(organization) is True
+
+    def test_removed_member_is_not_readmitted(self, tool_context):
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.user import User
+
+        organization = tool_context.organization
+        removed = User.objects.create_user(
+            email=f"removed-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Removed",
+            organization=organization,
+            organization_role="Member",
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=removed,
+            organization=organization,
+            role="Member",
+            level=3,
+            is_active=False,
+            deleted=True,
+        )
+        member = _inviter(tool_context, 3, "Member")
+
+        run_tool(
+            "invite_users",
+            {"emails": [removed.email], "role": "workspace_member"},
+            member,
+        )
+
+        rows = list(
+            OrganizationMembership._base_manager.filter(
+                user=removed, organization=organization
+            )
+        )
+        assert len(rows) == 1
+        assert rows[0].deleted and not rows[0].is_active
+        assert removed.get_membership(organization) is None
+
+    def test_never_member_is_created_at_the_capped_level(self, tool_context):
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.user import User
+        from tfc.constants.levels import Level
+
+        member = _inviter(tool_context, 3, "Member")
+        email, result = self._invite(member, "Viewer")
+
+        assert not result.is_error
+        invitee = User.objects.get(email=email)
+        row = OrganizationMembership.no_workspace_objects.get(
+            user=invitee, organization=tool_context.organization
+        )
+        assert row.is_active and row.level == Level.VIEWER
+        assert invitee.organization_role == "Viewer"
