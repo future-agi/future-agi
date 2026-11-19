@@ -278,6 +278,26 @@ def test_a_too_large_project_runs_only_expiry_until_the_limit_admits_it(
     release_all([reservation], later)
 
 
+def test_failed_expiry_on_a_headless_project_keeps_its_interval(
+    enabled, settings, state_factory
+):
+    from tracer.services.derived_metrics import size_cap
+
+    settings.METRICS_MAX_CHECKPOINT_ROWS = 1_000
+    paused = state_factory()
+    assert size_cap.pause_if_too_large(paused.project_id, 1_001, now=NOW)
+    due = NOW + timedelta(minutes=1)
+    failing = Mock(side_effect=RuntimeError("synthetic queue failure"))
+    assert admission.dispatch(failing, clock=lambda: due) == 0
+    failing.assert_called_once()
+    paused.refresh_from_db()
+    assert paused.consecutive_failures == 1 and not paused.pending_expiry
+    # A headless project has no expiry debt to clear the flag: the failure must
+    # not turn it into an expiry pass on every dispatch poll.
+    retry = due + timedelta(seconds=admission.BACKOFF_BASE_SECONDS)
+    assert admission.reserve_projects(clock=lambda: retry) == []
+
+
 def test_head_rows_count_every_receipt_the_head_reads(
     enabled, workspace, observe_project
 ):

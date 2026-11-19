@@ -466,18 +466,24 @@ def record_failure(reservation: Reservation, *, now: datetime, code: str) -> Non
     if code not in {"metric_dispatch_failed", "metric_refresh_failed"}:
         raise ValueError("unsupported metric failure code")
     grant = reservation.grant
+    fenced = MetricProjectRefresh.objects.filter(
+        project_id=grant.project_id,
+        fencing_epoch=grant.fencing_epoch,
+        lease_token=grant.lease_token,
+    )
     try_control_update(
-        MetricProjectRefresh.objects.filter(
-            project_id=grant.project_id,
-            fencing_epoch=grant.fencing_epoch,
-            lease_token=grant.lease_token,
-        ),
+        fenced,
         last_error_at=now,
         last_error_code=code,
         consecutive_failures=F("consecutive_failures") + 1,
-        **({"pending_expiry": True} if reservation.purpose == "expiry" else {}),
         **({"busy_yields": 0} if code == "metric_refresh_failed" else {}),
     )
+    if reservation.purpose == "expiry":
+        # Retry a failed expiry after backoff, not a whole interval later. Only a
+        # published head can clear this flag, so never set it on a headless project.
+        try_control_update(
+            fenced.filter(head_manifest__isnull=False), pending_expiry=True
+        )
 
 
 def release(reservation: Reservation, *, now: datetime) -> None:
