@@ -15,7 +15,7 @@ const FixMyAgentHeader = ({ onClose }) => {
     >
       <Box sx={{ display: "flex", flexDirection: "column" }}>
         <Typography variant="m3" fontWeight="fontWeightSemiBold">
-          Fix My Agent
+          Debug failures
         </Typography>
         <Typography variant="s1">
           Here are the top issues and their fixes to agent quality and reduce

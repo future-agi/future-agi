@@ -170,7 +170,7 @@ const FixableRecommendations = ({
                     setCreateEditOptimizationOpen(true);
                   }}
                 >
-                  Optimize My Agent
+                  Optimize prompt
                 </Button>
               </Box>
             </Box>

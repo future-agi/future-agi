@@ -134,3 +134,11 @@ def test_remaining_simulate_endpoints_have_response_contracts():
             else (expected_value, "200")
         )
         assert _response_ref(_operation(path, method), status_code) == definition_name
+
+
+def test_the_api_docs_call_the_improvement_feature_epoch():
+    # Epoch is the feature's name in everything a user reads, the API docs included.
+    assert "fix my agent" not in json.dumps(_swagger()).lower()
+    assert _operation("/simulate/api/agent-fix-runs/", "get")["description"].startswith(
+        "A user's epochs:"
+    )
