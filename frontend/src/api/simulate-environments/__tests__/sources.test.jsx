@@ -4,12 +4,19 @@ import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { buildSourceReview } from "src/sections/simulate/environments/workspace/sources/sourceReview";
 import { usageOf } from "src/sections/simulate/environments/workspace/sources/sources.constants";
+import axios from "src/utils/axios";
 import {
   sourceSummaryKey,
   useAcceptSource,
+  usePrepareKbSource,
   usePrepareUploadSource,
 } from "../sources";
 import { kbChangesOf, kbRefreshed, readSource } from "../_fixtures/sources";
+
+vi.mock("src/utils/axios", async (importOriginal) => ({
+  ...(await importOriginal()),
+  default: { post: vi.fn() },
+}));
 
 let client;
 const wrapper = ({ children }) => (
@@ -123,5 +130,47 @@ describe("environment sources stub", () => {
       "2 rows",
     ]);
     expect(kbRefreshed(table, changes).ui.parsed.rows).toBe(538);
+  });
+
+  it("Add all copies the ready files from every page of the Knowledge base", async () => {
+    const fileRow = (n, status = "Completed") => ({
+      id: `f-${n}`,
+      name: `doc-${n}.md`,
+      file_size: n,
+      status,
+    });
+    const pages = [
+      [
+        ...Array.from({ length: 99 }, (_, n) => fileRow(n)),
+        fileRow(99, "Failed"),
+      ],
+      [fileRow(100), fileRow(101, "Processing")],
+    ];
+    axios.post.mockImplementation(async (_, body) => ({
+      data: {
+        result: { table_data: pages[body.page_number], total_rows: 102 },
+      },
+    }));
+    const { result } = renderHook(() => usePrepareKbSource("env-1"), {
+      wrapper,
+    });
+    let response;
+    await act(async () => {
+      response = await result.current.mutateAsync({
+        selection: {
+          kind: "knowledge_base",
+          kb: { id: "00000000-0000-4000-8000-000000000001", name: "Docs" },
+          whole_collection: true,
+        },
+      });
+    });
+
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(response.ui.sources).toHaveLength(100);
+    expect(response.ui.sources.at(-1).origin).toMatchObject({
+      kb_id: "00000000-0000-4000-8000-000000000001",
+      file_id: "f-100",
+      collection: "Docs",
+    });
   });
 });

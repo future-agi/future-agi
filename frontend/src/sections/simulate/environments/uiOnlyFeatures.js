@@ -38,10 +38,6 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Tool faults",
     ask: "per-tool fault injection settings",
   },
-  mcpTools: {
-    label: "MCP tools",
-    ask: "adding, refreshing and removing tools from MCP servers",
-  },
   compareRuns: {
     label: "Compare runs",
     ask: "a run comparison endpoint that pairs scenarios, flips and eval scores across runs",
