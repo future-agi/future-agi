@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cwd } from "node:process";
+import { runInNewContext } from "node:vm";
 import { JSDOM } from "jsdom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // The page every self-hosted user loads first, before any React code runs.
 const indexHtmlSource = readFileSync(resolve(cwd(), "index.html"), "utf8");
@@ -36,6 +37,38 @@ function googleUrls(env, url) {
     ...urlsIn(withoutScripts.window.document),
   ]);
   return [...urls].filter((url) => GOOGLE_HOST.test(url));
+}
+
+const origin = "https://app.example.test";
+const taggedBuild = { VITE_GTM_ID: "GTM-TEST" };
+const googleUrlsIn = (document) =>
+  urlsIn(document).filter((url) => GOOGLE_HOST.test(url));
+
+// Run the shipped head scripts in source order, without fetching resources.
+// JSDOM implements same-document history but not document navigation: stub
+// only that boundary so push vs. replace and the unchanged old URL are testable.
+function runHead(path, beforeTag, env = taggedBuild) {
+  const dom = new JSDOM(build(env), { url: new URL(path, origin).href });
+  const { document, history } = dom.window;
+  const location = {
+    get href() {
+      return dom.window.location.href;
+    },
+    assign: vi.fn(),
+    replace: vi.fn(),
+    reload: vi.fn(),
+  };
+  const window = {
+    history,
+    location,
+    addEventListener: dom.window.addEventListener.bind(dom.window),
+  };
+  const context = { window, document, URL, URLSearchParams };
+  for (const script of document.head.querySelectorAll("script:not([src])")) {
+    if (script.id === "google-tag-manager") beforeTag?.(window, dom);
+    runInNewContext(script.textContent, context);
+  }
+  return { window, document, dom };
 }
 
 describe("index.html third-party requests", () => {
@@ -83,6 +116,115 @@ describe("index.html third-party requests", () => {
     expect(googleUrls({ VITE_GTM_ID: "GTM-TEST" }, url)).toEqual([
       "https://www.googletagmanager.com/gtm.js?id=GTM-TEST",
     ]);
+  });
+
+  it.each([
+    ["registration", "/auth/jwt/register?onboarding_token=example"],
+    [
+      "alternate registration",
+      "/auth/jwt/register?onboarding_gcp_token=example",
+    ],
+    ["forwarded sign-in", "/auth/jwt/login?onboarding_token="],
+    ["fragment parameter", "/auth/jwt/register#onboarding_gcp_token=example"],
+    [
+      "registration return",
+      "/auth/jwt/login?returnTo=%2Fauth%2Fjwt%2Fregister%3Fonboarding_token%3Dexample",
+    ],
+    ["authorization consent", "/mcp/authorize?request_id=example"],
+    ["legacy authorization consent", "/mcp/authorize?client_id=example"],
+  ])("leaves tags off for %s", (_name, path) => {
+    const { window, document } = runHead(path);
+    expect(window.__analyticsAllowedAtLoad).toBe(false);
+    expect(window.__analyticsUrlAllowed(window.location.href)).toBe(false);
+    expect(window.dataLayer).toBeUndefined();
+    expect(googleUrlsIn(document)).toEqual([]);
+  });
+
+  it("loads Tag Manager for ordinary registration and safe return destinations", () => {
+    expect(
+      googleUrls(
+        taggedBuild,
+        `${origin}/auth/jwt/register?returnTo=%2Fdashboard`,
+      ),
+    ).toEqual(["https://www.googletagmanager.com/gtm.js?id=GTM-TEST"]);
+  });
+
+  it("does not enable tags when callback cleanup makes the address eligible", () => {
+    const { window, document } = runHead("/auth/jwt/login?saml_code=example");
+    expect(window.location.href).toBe(`${origin}/auth/jwt/login`);
+    expect(window.__analyticsUrlAllowed(window.location.href)).toBe(true);
+    expect(window.__analyticsAllowedAtLoad).toBe(false);
+    expect(googleUrlsIn(document)).toEqual([]);
+  });
+
+  it("rechecks the current address before Tag Manager starts", () => {
+    const { window, document } = runHead("/dashboard", (_window, dom) => {
+      dom.reconfigure({
+        url: `${origin}/auth/jwt/register?onboarding_gcp_token=example`,
+      });
+    });
+    expect(window.__analyticsAllowedAtLoad).toBe(true);
+    expect(window.__analyticsUrlAllowed(window.location.href)).toBe(false);
+    expect(googleUrlsIn(document)).toEqual([]);
+  });
+
+  it.each(["__authHandoffScrubFailed", "__authLateMarkerScrubFailed"])(
+    "keeps tags off when address cleanup reports %s",
+    (flag) => {
+      const { window, document } = runHead("/dashboard", (page) => {
+        page[flag] = true;
+      });
+      expect(window.__analyticsUrlAllowed(window.location.href)).toBe(false);
+      expect(googleUrlsIn(document)).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["pushState", "assign"],
+    ["replaceState", "replace"],
+  ])(
+    "uses a new document for a guarded registration via %s",
+    (method, navigation) => {
+      const { window } = runHead("/auth/jwt/login");
+      const target = "/auth/jwt/register?onboarding_token=example";
+      window.history[method](null, "", target);
+      expect(window.location[navigation]).toHaveBeenCalledWith(origin + target);
+      expect(window.location.href).toBe(`${origin}/auth/jwt/login`);
+    },
+  );
+
+  it("starts a fresh document on traversal into guarded registration", () => {
+    const { window, dom } = runHead("/dashboard");
+    dom.reconfigure({
+      url: `${origin}/auth/jwt/register?onboarding_token=example`,
+    });
+    dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    expect(window.location.reload).toHaveBeenCalledOnce();
+  });
+
+  it("preserves in-app registration without marketplace parameters", () => {
+    const { window } = runHead("/auth/jwt/login");
+    window.history.pushState({ step: 1 }, "", "/auth/jwt/register");
+    expect(window.location.href).toBe(`${origin}/auth/jwt/register`);
+    expect(window.history.state).toEqual({ step: 1 });
+    expect(window.location.assign).not.toHaveBeenCalled();
+  });
+
+  it("keeps marketplace routing in-app in a document that never started tags", () => {
+    const { window } = runHead("/auth/jwt/login?onboarding_gcp_token=example");
+    const target = "/auth/jwt/register?onboarding_gcp_token=example";
+    window.history.replaceState(null, "", target);
+    expect(window.location.href).toBe(origin + target);
+    expect(window.location.replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps ordinary OSS history behavior when analytics is unconfigured", () => {
+    const { window } = runHead("/auth/jwt/login", undefined, {});
+    const target = "/auth/jwt/register?onboarding_token=example";
+    window.history.pushState({ step: 1 }, "", target);
+    expect(window.location.href).toBe(origin + target);
+    expect(window.history.state).toEqual({ step: 1 });
+    expect(window.location.assign).not.toHaveBeenCalled();
   });
 
   it("leaves reCAPTCHA to the app when the build sets a site key", () => {

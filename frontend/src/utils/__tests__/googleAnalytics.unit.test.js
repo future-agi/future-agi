@@ -19,11 +19,9 @@ const indexHtml = new JSDOM(
 );
 const indexHtmlPolicy = indexHtml.window.__analyticsUrlAllowed;
 
-function installPolicy({ allowedAtLoad = true, withCheck = true } = {}) {
-  if (withCheck) {
-    window.__analyticsUrlAllowed = (value) =>
-      indexHtmlPolicy(new URL(value, document.baseURI).href);
-  }
+function installPolicy({ allowedAtLoad = true } = {}) {
+  window.__analyticsUrlAllowed = (value) =>
+    indexHtmlPolicy(new URL(value, document.baseURI).href);
   window.__analyticsAllowedAtLoad = allowedAtLoad;
 }
 
@@ -33,9 +31,38 @@ function gtagScripts() {
     .filter((src) => src.includes("googletagmanager.com/gtag/js"));
 }
 
-async function loadAndInit() {
+// Small router supplied by the test, not a second inventory of app routes.
+const routes = [
+  {
+    path: "/",
+    children: [
+      { index: true },
+      {
+        path: "dashboard",
+        children: [
+          { index: true },
+          { path: "develop" },
+          { path: "users/:label" },
+          {
+            path: "folders/:folder",
+            children: [
+              { path: "reports/:report", children: [{ index: true }] },
+            ],
+          },
+          { path: "files/*" },
+          { path: "boards/:board?" },
+          { path: "/dashboard/summary" },
+        ],
+      },
+      { children: [{ path: "settings/billing" }] },
+      { path: "*" },
+    ],
+  },
+];
+
+async function loadAndInit(tree = routes) {
   const { initGoogleAnalytics } = await import("../googleAnalytics");
-  initGoogleAnalytics();
+  return initGoogleAnalytics(tree);
 }
 
 // Each test initializes the loader again; remove the window listeners it adds
@@ -97,50 +124,46 @@ describe("index.html address check unit", () => {
 
 describe("analyticsPageLocation unit", () => {
   it.each([
-    ["https://app.test/dashboard", "https://app.test/dashboard"],
+    ["/", "/"],
+    ["/dashboard", "/dashboard"],
+    ["/DaShBoArD/Develop?tab=blue#section", "/dashboard/develop"],
     [
-      "https://app.test/dashboard/develop?tab=x&q=secret#h",
-      "https://app.test/dashboard/develop",
+      "/dashboard?utm_source=x&utm_campaign=y",
+      "/dashboard?utm_source=x&utm_campaign=y",
     ],
+    ["/dashboard/users/summary", "/dashboard/users/:id"],
+    ["/dashboard/users/%73ummary", "/dashboard/users/:id"],
     [
-      "https://app.test/dashboard?utm_source=x&utm_campaign=y",
-      "https://app.test/dashboard?utm_source=x&utm_campaign=y",
+      "/dashboard/folders/summary/reports/billing",
+      "/dashboard/folders/:id/reports/:id",
     ],
-    [
-      "https://app.test/dashboard/develop/3F2C1E4B-9A7D-4C1E-8F00-1234567890AB/runs/42",
-      "https://app.test/dashboard/develop/:id/runs/:id",
-    ],
-    // End-user IDs and folder names are not route words, so they are redacted.
-    [
-      "https://app.test/dashboard/users/alice",
-      "https://app.test/dashboard/users/:id",
-    ],
-    [
-      "https://app.test/dashboard/workbench/My%20Folder",
-      "https://app.test/dashboard/workbench/:id",
-    ],
-    [
-      "https://app.test/dashboard/users/someone%40example.com",
-      "https://app.test/dashboard/users/:id",
-    ],
-    ["https://app.test/dashboard/%E0%A4%A", "https://app.test/dashboard/:id"],
-    [
-      "https://app.test//dashboard//develop",
-      "https://app.test/dashboard/develop",
-    ],
-    ["https://app.test/%64ashboard", "https://app.test/dashboard"],
-    ["https://app.test/settings/billing", "https://app.test/settings/billing"],
-  ])("maps %s to %s", async (input, expected) => {
+    ["/dashboard/files/summary/settings/billing", "/dashboard/files/:id"],
+    ["/dashboard/boards", "/dashboard/boards"],
+    ["/dashboard/boards/develop", "/dashboard/boards/:id"],
+    ["/dashboard/summary", "/dashboard/summary"],
+    ["/%64ashboard", "/dashboard"],
+    ["/settings/billing", "/settings/billing"],
+    ["/develop/summary/billing", "/:id"],
+  ])("maps %s to its matched template %s", async (input, expected) => {
     const { analyticsPageLocation } = await import("../googleAnalytics");
-    expect(analyticsPageLocation(input)).toBe(expected);
+    expect(analyticsPageLocation(`https://app.test${input}`, routes)).toBe(
+      `https://app.test${expected}`,
+    );
+  });
+
+  it("redacts the entire path when no route matches", async () => {
+    const { analyticsPageLocation } = await import("../googleAnalytics");
+    expect(analyticsPageLocation("https://app.test/summary/billing", [])).toBe(
+      "https://app.test/:id",
+    );
   });
 });
 
 describe("analyticsInitialReferrer unit", () => {
   it.each([
     ["", ""],
-    ["https://www.google.com/search?q=secret", "https://www.google.com/"],
-    ["https://futureagi.com/pricing?utm_source=x", "https://futureagi.com/"],
+    ["https://search.test/results?q=topic", "https://search.test/"],
+    ["https://info.test/plans?utm_source=x", "https://info.test/"],
     ["https://app.test/shared/abc?sso_token=x", ""],
     ["https://app.test/dashboard", ""],
     ["android-app://com.example", ""],
@@ -185,10 +208,38 @@ describe("initGoogleAnalytics unit", () => {
     expect(gtagScripts()).toEqual([]);
   });
 
-  it("fails closed when index.html's address check is missing", async () => {
-    installPolicy({ withCheck: false });
+  it.each([
+    ["missing policy", () => delete window.__analyticsUrlAllowed],
+    ["missing load veto", () => delete window.__analyticsAllowedAtLoad],
+    [
+      "non-function policy",
+      () => {
+        window.__analyticsUrlAllowed = true;
+      },
+    ],
+    // Navigation during boot, after a positive index.html snapshot.
+    [
+      "blocked current registration URL",
+      () =>
+        window.history.replaceState(
+          null,
+          "",
+          "/auth/jwt/register?onboarding_token=blue",
+        ),
+    ],
+  ])("does not install the tag, queue or hooks on %s", async (_, change) => {
+    installPolicy();
+    change();
     await loadAndInit();
     expect(gtagScripts()).toEqual([]);
+    expect(window.dataLayer).toBeUndefined();
+    expect(window.gtag).toBeUndefined();
+    expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBeUndefined();
+    expect(window.history.pushState).toBe(originalPushState);
+    expect(window.history.replaceState).toBe(originalReplaceState);
+    const types = windowListeners.map(([type]) => type);
+    expect(types).not.toContain("popstate");
+    expect(types).not.toContain("hashchange");
   });
 
   it("disables hits on in-app navigation to a one-time link and re-enables after", async () => {
@@ -209,18 +260,22 @@ describe("initGoogleAnalytics unit", () => {
     expect(window[flag]).toBe(false);
   });
 
-  it("configures a redacted page location and a fixed title", async () => {
+  it("configures a redacted page location without reading the page title", async () => {
+    const readTitle = vi
+      .spyOn(document, "title", "get")
+      .mockReturnValue("Blue board");
     window.history.replaceState(
       null,
       "",
-      "/dashboard/develop/3f2c1e4b-9a7d-4c1e-8f00-1234567890ab/runs/123456?search=secret&utm_source=newsletter&gclid=abc#frag",
+      "/dashboard/folders/summary/reports/billing?search=blue&utm_source=newsletter&gclid=abc#frag",
     );
     installPolicy();
     await loadAndInit();
     const configCall = window.dataLayer.find((args) => args[0] === "config");
+    expect(readTitle).not.toHaveBeenCalled();
     expect(configCall[2].page_title).toBe("Future AGI");
     expect(configCall[2].page_location).toBe(
-      `${window.location.origin}/dashboard/develop/:id/runs/:id?utm_source=newsletter&gclid=abc`,
+      `${window.location.origin}/dashboard/folders/:id/reports/:id?utm_source=newsletter&gclid=abc`,
     );
   });
 
@@ -228,6 +283,35 @@ describe("initGoogleAnalytics unit", () => {
     window.dataLayer
       .filter((args) => args[0] === "event" && args[1] === "page_view")
       .map((args) => args[2]);
+
+  it.each(["config", "event"])(
+    "rechecks the current URL if the existing queue navigates during the first %s",
+    async (commandName) => {
+      installPolicy();
+      const layer = [];
+      window.dataLayer = layer;
+      let navigated = false;
+      vi.spyOn(layer, "push").mockImplementation((command) => {
+        const length = Array.prototype.push.call(layer, command);
+        if (!navigated && command[0] === commandName) {
+          navigated = true;
+          window.history.pushState(null, "", "/shared/blue");
+        }
+        return length;
+      });
+      await loadAndInit();
+      expect(gtagScripts()).toHaveLength(0);
+      expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(true);
+      expect(pageViews()).toHaveLength(commandName === "event" ? 1 : 0);
+      window.history.replaceState(null, "", "/settings/billing");
+      expect(gtagScripts()).toHaveLength(1);
+      expect(pageViews().at(-1).page_referrer).toBe(
+        commandName === "event"
+          ? `${window.location.origin}/dashboard/develop`
+          : "",
+      );
+    },
+  );
 
   it("sends the first page view itself, not through gtag's automatic one", async () => {
     installPolicy();
@@ -249,9 +333,9 @@ describe("initGoogleAnalytics unit", () => {
     installPolicy();
     await loadAndInit();
     const origin = window.location.origin;
-    window.history.pushState(null, "", "/auth/jwt/register?email=a%40b.com");
+    window.history.pushState(null, "", "/dashboard/users/summary?section=blue");
     expect(pageViews().at(-1)).toEqual({
-      page_location: `${origin}/auth/jwt/register`,
+      page_location: `${origin}/dashboard/users/:id`,
       page_referrer: `${origin}/dashboard/develop`,
       page_title: "Future AGI",
     });
@@ -260,7 +344,7 @@ describe("initGoogleAnalytics unit", () => {
     );
     // Every configuration call repeats the privacy settings.
     expect(updates.at(-1)[2]).toEqual({
-      page_location: `${origin}/auth/jwt/register`,
+      page_location: `${origin}/dashboard/users/:id`,
       page_referrer: `${origin}/dashboard/develop`,
       page_title: "Future AGI",
       send_page_view: false,
@@ -301,12 +385,51 @@ describe("initGoogleAnalytics unit", () => {
     });
   });
 
-  it("does not count query-only changes as page views", async () => {
+  it("counts distinct paths with the same template, but never reports either label", async () => {
+    window.history.replaceState(null, "", "/dashboard/users/summary");
+    installPolicy();
+    await loadAndInit();
+    window.history.pushState(null, "", "/dashboard/users/billing");
+    // Simulate Back: the browser changes the address without calling pushState.
+    originalReplaceState.call(
+      window.history,
+      null,
+      "",
+      "/dashboard/users/summary",
+    );
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    const label = `${window.location.origin}/dashboard/users/:id`;
+    const locations = pageViews().map((view) => [
+      view.page_location,
+      view.page_referrer,
+    ]);
+    expect(locations).toEqual([
+      [label, ""],
+      [label, label],
+      [label, label],
+    ]);
+    for (const command of window.dataLayer) {
+      expect(JSON.stringify(command)).not.toMatch(/summary|billing/);
+    }
+  });
+
+  it("does not count query, campaign or fragment edits as page views", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/dashboard/develop?utm_source=first",
+    );
     installPolicy();
     await loadAndInit();
     window.history.replaceState(null, "", "/dashboard/develop?tab=runs");
-    window.history.replaceState(null, "", "/dashboard/develop?search=x");
+    window.history.pushState(null, "", "/dashboard/develop?utm_source=second");
+    window.history.replaceState(null, "", "/dashboard/develop#panel");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
     expect(pageViews()).toHaveLength(1);
+    window.history.pushState(null, "", "/settings/billing");
+    expect(pageViews().at(-1).page_referrer).toBe(
+      `${window.location.origin}/dashboard/develop?utm_source=first`,
+    );
   });
 
   it("sends nothing for a blocked address and never uses it as a referrer", async () => {
@@ -324,11 +447,41 @@ describe("initGoogleAnalytics unit", () => {
     });
   });
 
-  it("initializes once", async () => {
+  it("waits for a route tree, then reports the current address as the first view", async () => {
     installPolicy();
-    const { initGoogleAnalytics } = await import("../googleAnalytics");
-    initGoogleAnalytics();
-    initGoogleAnalytics();
+    await loadAndInit([]);
+    expect(gtagScripts()).toHaveLength(0);
+    expect(window.dataLayer).toBeUndefined();
+    window.history.pushState(null, "", "/dashboard/users/billing");
+    await loadAndInit();
+    expect(pageViews()).toEqual([
+      {
+        page_location: `${window.location.origin}/dashboard/users/:id`,
+        page_referrer: "",
+        page_title: "Future AGI",
+      },
+    ]);
+  });
+
+  it("rebinds the current tree without reinstalling hooks or duplicating the first view", async () => {
+    installPolicy();
+    const unbind = await loadAndInit();
+    const push = window.history.pushState;
+    unbind(); // Strict-mode layout effect cleanup, then setup on the same URL.
+    const unbindAgain = await loadAndInit();
     expect(gtagScripts()).toHaveLength(1);
+    expect(window.history.pushState).toBe(push);
+    expect(pageViews()).toHaveLength(1);
+
+    unbindAgain(); // A suspended/unmounted router no longer supplies templates.
+    expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(true);
+    window.history.pushState(null, "", "/dashboard/summary");
+    expect(pageViews()).toHaveLength(1);
+    await loadAndInit([{ path: "/dashboard/:item" }]);
+    expect(pageViews().at(-1)).toEqual({
+      page_location: `${window.location.origin}/dashboard/:id`,
+      page_referrer: `${window.location.origin}/dashboard/develop`,
+      page_title: "Future AGI",
+    });
   });
 });

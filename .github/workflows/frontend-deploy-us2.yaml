@@ -35,13 +35,25 @@ jobs:
       - name: Install dependencies
         run: yarn
 
+      # GitHub expressions compare strings case-insensitively. Check the two
+      # refs in the shell before making the production GA setting available.
+      - name: Select build environment
+        id: build_env
+        env:
+          BUILD_BRANCH: ${{ inputs.branch }}
+        run: |
+          flavor=dev
+          if [ "$GITHUB_REF" = 'refs/heads/main' ] && [ "$BUILD_BRANCH" = 'main' ]; then
+            flavor=production
+          fi
+          printf 'flavor=%s\n' "$flavor" >> "$GITHUB_OUTPUT"
+
       - name: Create .env file from secrets
         env:
-          # Non-main dispatches also deploy to the US2 bucket, but must not send development traffic to production GA.
-          APP_GA_ID: ${{ github.ref == 'refs/heads/main' && inputs.branch == 'main' && secrets.PROD_VITE_APP_GA_ID || '' }}
+          APP_GA_ID: ${{ steps.build_env.outputs.flavor == 'production' && secrets.PROD_VITE_APP_GA_ID || '' }}
         run: |
           cat <<EOF > .env
-          VITE_ENVIRONMENT=${{ inputs.branch == 'main' && 'production' || 'dev' }}
+          VITE_ENVIRONMENT=${{ steps.build_env.outputs.flavor }}
           VITE_OBSERVE_LIST_DEFAULT_PAGE_SIZE=25
           VITE_INTERACTIVE_REQUEST_TIMEOUT_MS=60000
           VITE_ANALYTICS_REQUEST_TIMEOUT_MS=60000
