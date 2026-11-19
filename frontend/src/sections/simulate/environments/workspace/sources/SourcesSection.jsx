@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import {
   Box,
@@ -13,13 +12,11 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useEnvironmentSources,
   usePendingSourceReview,
   usePrepareKbSource,
   usePrepareUploadSource,
-  useRemoveSource,
   useRestoreSource,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
@@ -28,6 +25,8 @@ import UiOnlyFlag from "../../components/UiOnlyFlag";
 import AddSourceMenu from "./AddSourceMenu";
 import KnowledgeBasePicker from "./KnowledgeBasePicker";
 import ProposalsDrawer from "./ProposalsDrawer";
+import RemoveSourceDialog from "./RemoveSourceDialog";
+import useSourceParams from "./useSourceParams";
 import { PROPOSALS_COPY, mergePrepared } from "./proposals";
 import {
   ROLES,
@@ -42,7 +41,6 @@ import {
 } from "./sources.constants";
 
 const GRID = "minmax(180px, 2fr) 56px 1fr 1.1fr 1fr 80px 0.9fr 28px";
-const DRAWER_PARAMS = ["source", "sourceTab", "at"];
 
 // Rejected rows show before the file is saved too, not only once it is.
 const stateOf = (source, formats) => {
@@ -55,25 +53,25 @@ const stateOf = (source, formats) => {
 /**
  * World & tools → Sources: every file this world is built from, what it's
  * used as, who reads it in a run, its state and version. A file's name opens
- * it (`?source=<id>`, plus `sourceTab` for one of its tabs). Removed files are
- * flagged in the summary cache as `ui.removed`, so readers of it skip them.
+ * it in the file drawer (see useSourceParams). Removed files are flagged in
+ * the summary cache as `ui.removed`, so readers of it skip them.
  *
- * `onPrepared` gets each prepare response (upload or Knowledge base) as it
- * lands. One with proposals opens Review proposed changes; closing that, or
- * leaving the tab, keeps the review until it's rejected or added.
+ * A prepare response (upload or Knowledge base) with proposals opens Review
+ * proposed changes; closing that, or leaving the tab, keeps the review until
+ * it's rejected or added.
  */
 export default function SourcesSection({
   envId,
   readOnly = false,
-  onPrepared,
   onReviewRefresh,
   onReviewChanges,
+  supplying = false,
+  onSupplied,
 }) {
   const { data: summary } = useEnvironmentSources(envId);
   const { data: capabilities } = useSourceCapabilities(envId);
   const prepare = usePrepareUploadSource(envId);
   const prepareKb = usePrepareKbSource(envId);
-  const remove = useRemoveSource(envId);
   const restore = useRestoreSource(envId);
   const [anchor, setAnchor] = useState(null);
   const [kbOpen, setKbOpen] = useState(false);
@@ -82,25 +80,17 @@ export default function SourcesSection({
   // empty response, which mustn't wipe the review.
   const [review, setReview] = usePendingSourceReview(envId);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [params, setParams] = useSearchParams();
+  const { openSource } = useSourceParams();
   const addRef = useRef(null);
-  // `?addSource=1`, from a file's Supply the records, opens the Add source menu.
-  const supplying = params.get("addSource") === "1";
+  // `supplying`, from a file's Supply the records, opens the Add source menu.
   useEffect(() => {
     if (!supplying) return;
     if (addRef.current) {
       addRef.current.scrollIntoView?.({ block: "center" });
       setAnchor(addRef.current);
     }
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.delete("addSource");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [supplying, setParams]);
+    onSupplied?.();
+  }, [supplying, onSupplied]);
 
   const all = summary?.sources || [];
   const sources = all.filter((source) => !source.ui?.removed);
@@ -109,25 +99,8 @@ export default function SourcesSection({
   const notSaved = sources.length - saved.length;
   const files = participantFilesOf(saved);
 
-  // The workspace keeps its own tab in `?tab=`, so the file's tab is `sourceTab`.
-  const openSource = (id, sourceTab, at) =>
-    setParams(
-      (params) => {
-        const next = new URLSearchParams(params);
-        DRAWER_PARAMS.forEach((key) => next.delete(key));
-        // The file drawer only opens on the World & tools tab.
-        next.set("tab", "world");
-        next.set("source", id);
-        if (sourceTab) next.set("sourceTab", sourceTab);
-        if (at) next.set("at", at);
-        return next;
-      },
-      { replace: true },
-    );
-
   const onPrepare = {
     onSuccess: (response) => {
-      onPrepared?.(response);
       if (!response.ui.items.length) return;
       // Supplying records (or uploading again) joins the open review.
       setReview((current) =>
@@ -343,30 +316,10 @@ export default function SourcesSection({
         />
       )}
 
-      <ConfirmDialog
-        open={Boolean(removing)}
+      <RemoveSourceDialog
+        envId={envId}
+        source={removing}
         onClose={() => setRemoving(null)}
-        title={
-          removing ? COPY.removeTitle(removing.name, isSaved(removing)) : ""
-        }
-        content={
-          removing
-            ? COPY.removeBody(isSaved(removing), usageOf(removing).rules.length)
-            : ""
-        }
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            onClick={() => {
-              remove(removing);
-              setRemoving(null);
-            }}
-          >
-            {COPY.removeConfirm}
-          </Button>
-        }
       />
     </SectionCard>
   );
@@ -375,12 +328,13 @@ export default function SourcesSection({
 SourcesSection.propTypes = {
   envId: PropTypes.string,
   readOnly: PropTypes.bool,
-  // Gets the upload's prepare response (empty when every file was there already).
-  onPrepared: PropTypes.func,
   // Gets the saved source whose Knowledge base file changed.
   onReviewRefresh: PropTypes.func,
   // Opens Review changes, from the snackbar once proposals are added.
   onReviewChanges: PropTypes.func,
+  // Opens the Add source menu once, then `onSupplied` is called.
+  supplying: PropTypes.bool,
+  onSupplied: PropTypes.func,
 };
 
 function SourceRow({

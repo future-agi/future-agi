@@ -28,10 +28,6 @@ export const toReviewOf = (source) =>
       (column.textRows?.length && column.type !== "number"),
   ).length;
 
-// The same ID gets the same stand-in in every file, so joins survive.
-export const standInId = (value) =>
-  `CUST-${String(1000 + (parseInt(String(value).replace(/\D/g, ""), 10) || 0)).padStart(4, "0")}`;
-
 // Other tables a column can point at, by their key.
 export const relationshipTargets = (source, sources) =>
   tablesOf(sources)

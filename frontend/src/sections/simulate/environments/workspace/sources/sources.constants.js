@@ -4,7 +4,7 @@
 import { relativeTime } from "src/utils/format-time";
 
 const MB = 1024 * 1024;
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // What the world's records are, by the sources summary's `ui.data_mode`.
 const DATA_MODES = {
@@ -197,12 +197,21 @@ export const SOURCES_COPY = {
     saved
       ? "Remove from this environment. New versions stop using it; past runs keep it."
       : "Remove. It isn't in the world yet.",
-  removeTitle: (name, saved) =>
-    saved ? `Remove ${name} from this environment?` : `Remove ${name}?`,
-  removeBody: (saved, rules) =>
-    saved
-      ? `New versions won't use it. ${rules ? `It's used by ${plural(rules, "rule")}; they keep citing it. ` : ""}Past runs still show it.`
-      : "It isn't in the world yet. Its reading and mapping are discarded; add it again from Sources.",
+  removeTitle: (source) =>
+    isSaved(source)
+      ? `Remove ${source.name} from this environment?`
+      : `Remove ${source.name}?`,
+  removeBody: (source) => {
+    if (!isSaved(source))
+      return "It isn't in the world yet. Its reading and mapping are discarded; add it again from Sources.";
+    const { rules, scenarios, seeds } = usageOf(source);
+    const users = [
+      rules.length && plural(rules.length, "rule"),
+      scenarios.length && plural(scenarios.length, "scenario"),
+      seeds.length && plural(seeds.length, "seed table"),
+    ].filter(Boolean);
+    return `New versions won't use it. ${users.length ? `It's used by ${users.join(", ")}. They keep citing it on the versions they were made on. ` : ""}Past runs still show it. You can restore it from Removed.`;
+  },
   removeConfirm: "Remove",
   personal: "Personal data · choose how to handle it",
   choose: "Choose",

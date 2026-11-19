@@ -86,6 +86,10 @@ export const choiceOf = (columns, fileChoice) =>
 
 const isIdValue = (value) => /^[A-Z]{1,4}-?\d+$/.test(value);
 
+// The same ID gets the same stand-in in every file, so joins survive.
+export const standInId = (value) =>
+  `CUST-${String(1000 + (parseInt(String(value).replace(/\D/g, ""), 10) || 0)).padStart(4, "0")}`;
+
 /** What a sample value looks like once handled by `mode`. */
 export const standInOf = (value, mode) => {
   if (mode === "omit") return "—";
@@ -93,9 +97,6 @@ export const standInOf = (value, mode) => {
   if (mode !== "replace") return value;
   if (value.includes("@")) return "customer1@sandbox.test";
   if (/^[A-Z][a-z]+ [A-Z]/.test(value)) return "Customer 1";
-  if (isIdValue(value)) {
-    const n = parseInt(value.replace(/\D/g, ""), 10) || 0;
-    return `CUST-${String(1000 + n).padStart(4, "0")}`;
-  }
+  if (isIdValue(value)) return standInId(value);
   return "X-100";
 };

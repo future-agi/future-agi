@@ -1,3 +1,5 @@
+import { plural } from "./sources.constants";
+
 // Files attached in the builder chat. The conversation API doesn't know them,
 // so their turns are kept in the page and spliced into the chat's own.
 
@@ -26,8 +28,6 @@ export const spliceTurns = (turns, inserts) => {
   });
   return out;
 };
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export const CHAT_FILES_COPY = {
   attached: (names, text) =>

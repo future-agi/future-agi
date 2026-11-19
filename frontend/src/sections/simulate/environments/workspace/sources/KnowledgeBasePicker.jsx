@@ -6,10 +6,9 @@ import {
   useEnvironmentSources,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
+import { plural } from "./sources.constants";
 
 const MB = 1024 * 1024;
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const extOf = (name) => name.split(".").pop().toUpperCase();
 
 /**

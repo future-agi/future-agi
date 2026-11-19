@@ -17,6 +17,7 @@ import {
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
+import { plural } from "./sources.constants";
 
 const KIND_LABEL = {
   "rule-added": "rule added",
@@ -31,8 +32,6 @@ const GROUPS = [
 ];
 // Stands in for validating the accepted changes before saving.
 const VALIDATE_MS = 500;
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // "Affects N scenarios", the names on hover.
 function ScenarioCount({ names }) {
