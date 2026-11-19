@@ -1612,21 +1612,38 @@ class HostedHarnessProvider:
                 require_default_suite(
                     environment, request.validated_data.get("suite_version_id")
                 )
-            child, created = create_selected_harness_run(
-                environment,
-                scenario_keys=list(request.validated_data["scenario_ids"]),
-                trials=request.validated_data["trials"],
-                idempotency_key=idempotency_key,
-                seed=request.validated_data.get("seed"),
-                picks=VersionPicks(
+            if request.validated_data.get("recorded_replay_of") is not None:
+                from simulate.services.recorded_replay import (
+                    create_recorded_replay_run,
+                )
+
+                child, created = create_recorded_replay_run(
+                    environment,
+                    call_execution_id=request.validated_data["recorded_replay_of"],
+                    idempotency_key=idempotency_key,
                     agent_version_id=request.validated_data.get("agent_version_id"),
-                    environment_version_id=request.validated_data.get(
-                        "environment_version_id"
+                    coding_agent_key_id=str(coder.id) if coder is not None else None,
+                )
+            else:
+                child, created = create_selected_harness_run(
+                    environment,
+                    scenario_keys=list(request.validated_data["scenario_ids"]),
+                    trials=request.validated_data["trials"],
+                    idempotency_key=idempotency_key,
+                    seed=request.validated_data.get("seed"),
+                    picks=VersionPicks(
+                        agent_version_id=request.validated_data.get(
+                            "agent_version_id"
+                        ),
+                        environment_version_id=request.validated_data.get(
+                            "environment_version_id"
+                        ),
+                        suite_version_id=request.validated_data.get(
+                            "suite_version_id"
+                        ),
                     ),
-                    suite_version_id=request.validated_data.get("suite_version_id"),
-                ),
-                coding_agent_key_id=str(coder.id) if coder is not None else None,
-            )
+                    coding_agent_key_id=str(coder.id) if coder is not None else None,
+                )
             retry_dispatch = False
             if (
                 not created

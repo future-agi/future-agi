@@ -73,6 +73,26 @@ export const runHarnessEnvironment = async (
     )
   ).data;
 
+// A recorded replay of one finished trial: its scenario runs once more with every
+// tool call answered from that trial's recording. `agentVersionId` runs another
+// version of the agent; omitted, the original trial's runs again.
+export const replayTrialWithRecordedTools = async (
+  id,
+  callExecutionId,
+  idempotencyKey,
+  agentVersionId,
+) =>
+  (
+    await axios.post(
+      environmentRunPath(id),
+      {
+        recorded_replay_of: callExecutionId,
+        ...(agentVersionId ? { agent_version_id: agentVersionId } : {}),
+      },
+      { headers: { "Idempotency-Key": idempotencyKey } },
+    )
+  ).data;
+
 // §8 rename: `name` is the only editable field. The response is the full §6
 // detail body with `overview.name` updated, so callers can seed the detail
 // cache from it rather than refetching.

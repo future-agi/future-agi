@@ -44,6 +44,7 @@ import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
+import { RecordedReplayChip } from "./RecordedReplay";
 import AllEvaluationsDrawer from "./AllEvaluationsDrawer";
 import RunEvalDialogs from "./RunEvalDialogs";
 import { useRunEvalActions } from "./useRunEvalActions";
@@ -310,6 +311,7 @@ export default function RunDetail({
                 environmentVersion={identity.environmentVersion}
               />
             )}
+            {identity?.recordedReplay && <RecordedReplayChip />}
             {status && <StatusChip status={status} />}
             {!fixRun && (
               <StopRunControl
@@ -606,6 +608,8 @@ export default function RunDetail({
       <CallDrawer
         task={openCall?.task ?? null}
         executionId={backed ? executionId : null}
+        envId={backed ? env?.id : null}
+        testId={backed ? testId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}
         hasPrev={callNav.hasPrev}

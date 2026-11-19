@@ -51,6 +51,7 @@ from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
 )
+from simulate.selectors.recorded_replay import replay_of
 from simulate.selectors.runs import user_executions
 from simulate.serializers.requests.call_execution import (
     CallExecutionFilterSerializer,
@@ -6000,6 +6001,7 @@ class RunTestExecutionsView(APIView):
                         ),
                         **trials[test_execution.id],
                         **_version_labels(version_labels, test_execution.id),
+                        "recorded_replay": replay_of(test_execution),
                     }
                 )
 

@@ -662,7 +662,16 @@ def _unscored_reason(
 
 
 # Failures whose message the harness writes for the reader of a run, shown as it is.
-_READER_FAILURES = frozenset({"duplicate_commit", "evidence_unmeasured"})
+_READER_FAILURES = frozenset(
+    {
+        "duplicate_commit",
+        "evidence_unmeasured",
+        # A recorded replay stopped: its agent made a call the original trial never made, or the environment could
+        # not answer its tools from a recording.
+        "replay_unrecorded_call",
+        "replay_unsupported",
+    }
+)
 
 
 def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:

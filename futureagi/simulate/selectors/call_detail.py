@@ -256,6 +256,8 @@ NOT_RECORDED_LABELS = {
     "known. Rebuild it to see them.",
     "calls_not_seen": "None of the agent's tool calls in this trial reached the test world, so what they changed is "
     "not known. An environment built before world actions were recorded reads this way; rebuild it to see them.",
+    "recorded_replay": "World state is not recorded in a recorded replay: every tool answer came from the original "
+    "trial's recording, so the world never changed.",
 }
 CALLS_NOT_SEEN = "calls_not_seen"
 
@@ -430,6 +432,20 @@ def _end_state_url(
     url = end.get("url") if isinstance(end, dict) else None
     if isinstance(url, str) and url:
         return url
+    kept = end_state_object_key(call, metadata, state)
+    return get_object_url(UPLOAD_BUCKET_NAME, kept) if kept else None
+
+
+def end_state_object_key(
+    call: CallExecution, metadata: Mapping[str, Any], state: Mapping[str, Any]
+) -> str | None:
+    """The storage key of this trial's sealed end state (its world's records and action log), stored by the job that
+    sent its receipt, in the run's organisation and workspace; None when it kept none."""
+    artifacts = metadata.get("hosted_harness_artifacts")
+    end = artifacts.get("world_state") if isinstance(artifacts, dict) else None
+    key = end.get("object_key") if isinstance(end, dict) else None
+    if isinstance(key, str) and key:
+        return key
     sealed = state.get("end_state_artifact")
     if not (isinstance(sealed, str) and sealed.startswith("sha256:")):
         return None
@@ -447,7 +463,7 @@ def _end_state_url(
         job__organization_id=run_test.organization_id,
     )
     # In the run's own workspace; a run kept without one matches only artifacts kept without one.
-    kept = (
+    return (
         (
             artifacts_of_run.filter(job__workspace_id=run_test.workspace_id)
             if run_test.workspace_id is not None
@@ -456,7 +472,6 @@ def _end_state_url(
         .values_list("object_key", flat=True)
         .first()
     )
-    return get_object_url(UPLOAD_BUCKET_NAME, kept) if kept else None
 
 
 def _usage(

@@ -17,6 +17,8 @@ import useCallTraceOpen from "./useCallTraceOpen";
 export default function CallDrawer({
   task,
   executionId = null,
+  envId = null,
+  testId = null,
   agentType,
   onClose,
   onPrev,
@@ -71,6 +73,8 @@ export default function CallDrawer({
           <ChatCallDrawer
             task={task}
             executionId={executionId}
+            envId={envId}
+            testId={testId}
             onClose={onClose}
             onPrev={onPrev}
             onNext={onNext}
@@ -89,6 +93,9 @@ CallDrawer.propTypes = {
     simulationCallType: PropTypes.string,
   }),
   executionId: PropTypes.string,
+  // The environment and its run test: set where the trial can be replayed.
+  envId: PropTypes.string,
+  testId: PropTypes.string,
   agentType: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,

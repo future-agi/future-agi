@@ -34,6 +34,11 @@ from simulate.selectors.call_detail import (
     transcript_turns,
     trial_state,
 )
+from simulate.selectors.recorded_replay import (
+    RecordedReplayView,
+    recorded_replay,
+    replay_of,
+)
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.call_detail_v3 import (
@@ -43,6 +48,7 @@ from simulate.serializers.call_detail_v3 import (
     TrialStateSerializer,
 )
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
+from simulate.serializers.harness_job import RecordedReplayOfSerializer
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
@@ -282,6 +288,29 @@ class RunResumeSerializer(serializers.Serializer):
     history = RunResumeEntrySerializer(many=True)
 
 
+class RecordedReplayOriginalSerializer(RecordedReplayOfSerializer):
+    """The trial a recorded replay replays, and how it ended."""
+
+    outcome = serializers.ChoiceField(
+        choices=list(OUTCOME_LABELS),
+        required=False,
+        help_text="How the original trial ended; on a trial's detail only.",
+    )
+
+
+class RecordedReplaySerializer(serializers.Serializer):
+    available = serializers.BooleanField(
+        help_text="The trial can be replayed with the tool answers it recorded."
+    )
+    unavailable_reason = serializers.CharField(
+        allow_null=True, help_text="Why it can't, in the words the trial shows."
+    )
+    original = RecordedReplayOriginalSerializer(
+        allow_null=True,
+        help_text="Set when this trial is itself a recorded replay: the trial it replays.",
+    )
+
+
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -313,6 +342,8 @@ class RunExecutionSerializer(serializers.Serializer):
     summary = RunSummarySerializer()
     # Set on a fix's check run, which is not one of the user's runs; null otherwise.
     fix_run = RunFixRunSerializer(allow_null=True, required=False)
+    # Set on a recorded replay: the trial it replays.
+    recorded_replay = RecordedReplayOfSerializer(allow_null=True, required=False)
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -665,6 +696,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
         "repeatability, pass^k and run comparisons."
     )
     not_comparable_reason = serializers.CharField(allow_null=True)
+    recorded_replay = RecordedReplaySerializer()
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -690,6 +722,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "trial_state",
             "comparable",
             "not_comparable_reason",
+            "recorded_replay",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -758,6 +791,7 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        "recorded_replay": replay_of(execution),
         # Said when the run replayed a build without its environment's actors.
         "build_notice": (
             ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
@@ -925,6 +959,27 @@ class RunCallsV3View(APIView):
         return Response(response)
 
 
+def _recorded_replay_with_original(call: CallExecution) -> RecordedReplayView:
+    """The trial's replay block, with how the original trial ended when this one replays it: the trial view shows the
+    two side by side. The original is read only from the same run test, the one place a replay's original can be."""
+    view = recorded_replay(call)
+    original = view["original"]
+    if original is None:
+        return view
+    found = (
+        CallExecution.objects.filter(
+            id=original["call_execution_id"],
+            test_execution__run_test_id=call.test_execution.run_test_id,
+        )
+        .select_related("test_execution")
+        .first()
+    )
+    if found is not None:
+        rows, _ = build_call_rows(found.test_execution, [found])
+        original["outcome"] = rows[0]["outcome"]
+    return view
+
+
 def build_call_execution_detail(
     call: CallExecution, request=None, workspace=None
 ) -> dict[str, Any]:
@@ -983,6 +1038,7 @@ def build_call_execution_detail(
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
             "trial_state": trial_state(call, calls=calls),
             **comparability(call),
+            "recorded_replay": _recorded_replay_with_original(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

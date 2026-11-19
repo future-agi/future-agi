@@ -229,6 +229,8 @@ export function useRunDetail(
       buildNotice: execution.build_notice ?? null,
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
+      // A recorded replay: the trial it replays, else null. Never shown as a fresh run.
+      recordedReplay: execution.recorded_replay ?? null,
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume
@@ -637,6 +639,9 @@ export function mapCallDetail(raw) {
     persona: raw.persona ?? null,
     // Absent without actors or faults.
     trial_state: raw.trial_state ?? null,
+    // Whether the trial can be replayed with its recorded tool answers, why not,
+    // and the trial it replays when it is a replay; null from an older server.
+    recordedReplay: raw.recorded_replay ?? null,
     // Who took part in the call, as the server says, and whether a customer did.
     participants: raw.participants,
     hasCustomer: raw.has_customer,

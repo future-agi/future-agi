@@ -323,6 +323,7 @@ def create_selected_harness_run(
     parallelism: int | None = None,
     verify: bool = False,
     coding_agent_key_id: str | None = None,
+    recorded_replay: dict[str, Any] | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
@@ -331,7 +332,9 @@ def create_selected_harness_run(
     ``verify`` as a verify of the environment's held-back cases. A Run a coding agent
     asks for (``coding_agent_key_id``) is stamped with its key, and a held-back case
     in it is refused as an unknown one. ``seed`` and ``parallelism`` replace the
-    environment's; each defaults to what it has.
+    environment's; each defaults to what it has. A ``recorded_replay`` (the trial it
+    replays and that trial's recording) makes the Run a recorded replay: the harness
+    answers every tool call from the recording.
     """
 
     if environment.environment_id is not None:
@@ -421,6 +424,7 @@ def create_selected_harness_run(
                 scenario_keys,
                 trials,
                 seed=seed,
+                recorded_replay=recorded_replay,
             )
             if replayed is not None:
                 return replayed, False
@@ -570,6 +574,10 @@ def create_selected_harness_run(
                 child_metadata["assembly"] = pins.assembly.as_metadata()
             if pins.rerun_of is not None:
                 child_metadata["rerun_of"] = pins.rerun_of
+        from simulate.selectors.recorded_replay import RECORDED_REPLAY_KEY
+
+        if recorded_replay is not None:
+            child_metadata[RECORDED_REPLAY_KEY] = recorded_replay
         child_payload.pop("job_id", None)
         child_payload.pop("run_id", None)
 
@@ -611,6 +619,18 @@ def create_selected_harness_run(
                 "selected_scenario_keys": scenario_keys,
                 "trials": trials,
                 "harness_executions": manifest,
+                # Which trial this run replays, without the recording: the run views read it for the label.
+                **(
+                    {
+                        RECORDED_REPLAY_KEY: {
+                            key: value
+                            for key, value in recorded_replay.items()
+                            if key != "calls"
+                        }
+                    }
+                    if recorded_replay is not None
+                    else {}
+                ),
             },
         )
         call_ids = precreate_alk_sim_call_executions(test_execution)
@@ -1157,9 +1177,15 @@ def _replayed_run(
     scenario_keys: list[str],
     trials: int,
     seed: int | None = None,
+    recorded_replay: dict[str, Any] | None = None,
 ) -> HostedHarnessJob | None:
     """The run an earlier request with this key created, when this one repeats it; a key reused for other versions,
-    scenarios, trials or another seed is refused."""
+    scenarios, trials, another seed or a replay of another trial is refused."""
+    from simulate.selectors.recorded_replay import (
+        RECORDED_REPLAY_KEY,
+        recorded_replay_source,
+    )
+
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
     ).first()
@@ -1187,6 +1213,8 @@ def _replayed_run(
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
         or (seed is not None and existing.seed != seed)
+        or recorded_replay_source(metadata)
+        != recorded_replay_source({RECORDED_REPLAY_KEY: recorded_replay})
     ):
         raise HostedHarnessError(
             "idempotency_conflict",

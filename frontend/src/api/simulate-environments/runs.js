@@ -98,6 +98,8 @@ export function executionToRun(raw) {
     environmentVersion: raw?.environment_version ?? null,
     suiteVersion: raw?.suite_version ?? null,
     agentDiffers: Boolean(raw?.agent_differs),
+    // A recorded replay: the trial it replays, else null. Labelled in the list.
+    recordedReplay: raw?.recorded_replay ?? null,
     durationS: raw?.duration ?? null,
   };
 }

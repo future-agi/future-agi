@@ -17,6 +17,7 @@ import { STATUS_META, runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
+import { RecordedReplayChip } from "../detail/RecordedReplay";
 import { neutralCheckboxSx } from "../detail/trace/traceTable.constants";
 import { COMPARE_COPY } from "../../workspace.constants";
 import { format } from "../detail/analytics/DashboardCharts";
@@ -214,6 +215,7 @@ function SummaryRow({
                   environmentVersion={row.environmentVersion}
                 />
               )}
+              {row.recordedReplay && <RecordedReplayChip />}
             </Stack>
             <Typography
               noWrap

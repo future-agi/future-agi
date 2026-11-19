@@ -28,6 +28,7 @@ import { CALL_TRACES_COPY } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
+import { RecordedReplayOrigin, ReplayWithRecordedTools } from "./RecordedReplay";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
@@ -86,6 +87,8 @@ const ownsArrowKeys = {
 export default function ChatCallDrawer({
   task,
   executionId = null,
+  envId = null,
+  testId = null,
   onClose,
   onPrev,
   onNext,
@@ -209,6 +212,14 @@ export default function ChatCallDrawer({
           />
         </Stack>
         <Box flex={1} />
+        {envId && callDetail?.recordedReplay && (
+          <ReplayWithRecordedTools
+            envId={envId}
+            testId={testId}
+            callId={task.id}
+            recordedReplay={callDetail.recordedReplay}
+          />
+        )}
         <Tooltip arrow title="Share call">
           <IconButton
             size="small"
@@ -319,6 +330,15 @@ export default function ChatCallDrawer({
         {/* right: the measurement */}
         <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Box sx={{ px: 2, pt: 1.75, pb: 1.25 }}>
+            {callDetail?.recordedReplay?.original && (
+              <Box sx={{ mb: 1 }}>
+                <RecordedReplayOrigin
+                  envId={envId}
+                  testId={testId}
+                  original={callDetail.recordedReplay.original}
+                />
+              </Box>
+            )}
             <Stack direction="row" flexWrap="wrap" gap={0.75}>
               <Meta label="Type" value="Chat" />
               <Meta label="Status" value={runOutcome(task.status).label} />
@@ -492,6 +512,8 @@ ChatCallDrawer.propTypes = {
     evalResults: PropTypes.array,
   }).isRequired,
   executionId: PropTypes.string,
+  envId: PropTypes.string,
+  testId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,

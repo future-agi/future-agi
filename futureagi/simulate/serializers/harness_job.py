@@ -812,10 +812,20 @@ class RunSeedField(serializers.Field[int, Any, str, Any]):
 
 
 class HarnessRunCreateSerializer(serializers.Serializer):
+    # Required unless the run is a recorded replay, which runs its trial's scenario.
     scenario_ids = serializers.ListField(
         child=serializers.CharField(max_length=255),
         allow_empty=False,
         max_length=1000,
+        required=False,
+    )
+    # A finished trial (its call execution) to replay: its scenario runs once more with every tool call answered from
+    # that trial's recording, its run's versions and seed kept. Only `agent_version_id` may change what runs.
+    recorded_replay_of = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="A finished trial to replay with the tool answers it recorded; replaces scenario_ids, trials and"
+        " seed.",
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
     # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
@@ -832,6 +842,42 @@ class HarnessRunCreateSerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(required=False, allow_null=True)
     environment_version_id = serializers.UUIDField(required=False, allow_null=True)
     suite_version_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if attrs.get("recorded_replay_of") is None:
+            if not attrs.get("scenario_ids"):
+                raise serializers.ValidationError(
+                    {"scenario_ids": "Select at least one scenario."}
+                )
+            return attrs
+        # A replay runs what its trial ran; only the agent may be another version.
+        kept = [
+            name
+            for name in (
+                "scenario_ids",
+                "seed",
+                "environment_version_id",
+                "suite_version_id",
+            )
+            if attrs.get(name) is not None
+        ]
+        if "trials" in self.initial_data:
+            kept.append("trials")
+        if kept:
+            raise serializers.ValidationError(
+                {
+                    name: "A recorded replay runs its trial's own; leave this out."
+                    for name in kept
+                }
+            )
+        return attrs
+
+
+class RecordedReplayOfSerializer(serializers.Serializer):
+    """The trial a recorded replay replays. A replay is never shown as a fresh run."""
+
+    call_execution_id = serializers.UUIDField()
+    test_execution_id = serializers.UUIDField(allow_null=True)
 
 
 class HarnessRunPinnedVersionsSerializer(serializers.Serializer):
