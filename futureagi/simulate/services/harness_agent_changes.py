@@ -691,15 +691,17 @@ def _observe_one(
         or environment.agent_version
     )
     first_new = next_version_number(parent.agent_definition_id)
-    # The GitHub App installation the repository was connected through: without it a
-    # fix on the new version cannot open a pull request.
-    installation_id = (
+    # The GitHub App installation the repository was connected through: a private
+    # source is read through it, and without it a fix on the new version cannot open
+    # a pull request.
+    access = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version_id=parent.id
         )
-        .values_list("agent_payload__source_access__installation_id", flat=True)
+        .values_list("agent_payload__source_access", flat=True)
         .first()
-    )
+    ) or {}
+    installation_id = access.get("installation_id")
     # No transaction or lock around it: its activation takes the environment's lock
     # after releasing the definition's.
     version = create_agent_version(
@@ -711,7 +713,9 @@ def _observe_one(
             "repository": watched.repository,
             "ref": watched.ref,
             "commit_sha": head,
-            "visibility": "public",
+            "visibility": "private"
+            if access.get("visibility") == "private"
+            else "public",
             "repository_id": watched.repository_id,
             **({"installation_id": installation_id} if installation_id else {}),
         },

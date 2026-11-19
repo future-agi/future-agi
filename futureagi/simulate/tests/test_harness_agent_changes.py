@@ -418,6 +418,39 @@ class TestPush:
         [row] = _push_rows(environment)
         assert row.agent_payload["source_access"]["installation_id"] == "42"
 
+    def test_a_version_from_a_push_on_a_private_source_stays_private(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "push-private", storage)
+        a1 = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=_a1(environment).id
+        )
+        a1.agent_payload = {
+            **a1.agent_payload,
+            "source_access": {
+                **a1.agent_payload["source_access"],
+                "visibility": "private",
+                "installation_id": "42",
+            },
+        }
+        a1.save(update_fields=["agent_payload"])
+
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
+            patch(
+                "integrations.services.github_app.branch_head", return_value=HEAD_Y
+            ) as head,
+        ):
+            assert _observe(environment) == {str(environment.id): "created"}
+
+        assert head.call_args.args == ("42",)
+        [row] = _push_rows(environment)
+        assert row.agent_payload["source_access"]["visibility"] == "private"
+        assert row.agent_payload["source_access"]["installation_id"] == "42"
+
     def test_one_version_for_environments_with_the_same_facts(
         self, user, workspace, storage, gh, scheduled
     ):
