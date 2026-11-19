@@ -17,17 +17,6 @@ const tablesOf = (sources) =>
     (source) => !source.ui?.removed && source.ui?.parsed?.kind === "table",
   );
 
-export const mappingVersionOf = (source) => source.ui?.mapping?.v || 1;
-
-// Columns still waiting on a decision: a proposed ID, an unplaced field, numbers stored as text.
-export const toReviewOf = (source) =>
-  source.ui.parsed.columns.filter(
-    (column) =>
-      (column.proposal && !column.proposal.approved) ||
-      (column.unmatched && !column.mappedTo && !column.leftOut) ||
-      (column.textRows?.length && column.type !== "number"),
-  ).length;
-
 // Other tables a column can point at, by their key.
 export const relationshipTargets = (source, sources) =>
   tablesOf(sources)
@@ -84,12 +73,11 @@ export const joinsOf = (source, sources) => {
     });
 };
 
-// One column's fields changed; the mapping version moves on.
+// One column's fields changed.
 export const editColumn = (source, name, fields) => ({
   ...source,
   ui: {
     ...source.ui,
-    mapping: { v: mappingVersionOf(source) + 1 },
     parsed: {
       ...source.ui.parsed,
       columns: source.ui.parsed.columns.map((column) =>

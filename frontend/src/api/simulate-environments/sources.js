@@ -7,9 +7,15 @@ import {
 } from "@tanstack/react-query";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
 import { ModelHubKnowledgeBaseFilesCreateBody } from "src/generated/api-contracts/api.zod";
+import {
+  ROLES,
+  VISIBILITY,
+  isSaved,
+} from "src/sections/simulate/environments/workspace/sources/sources.constants";
 import axios, { endpoints } from "src/utils/axios";
 import { addSampleEdits, draftReviewKey, sampleFileEdits } from "./draftReview";
-import { ALL_SCENARIOS } from "./_fixtures/draftReview";
+import { ALL_SCENARIOS, sampleDraftReview } from "./_fixtures/draftReview";
+import { harnessEnvironmentKey } from "./environment";
 import {
   draftOfSources,
   kbRefreshed,
@@ -399,6 +405,9 @@ const fileChange = ({
 
 const added = (value, path = "") => ({ op: "add", path, value });
 
+const ruleNumber = (change) =>
+  Number(/\bR(\d+)\b/.exec(change.summary)?.[1]) || 0;
+
 /**
  * Accepted proposals become accepted changes in Review changes, one per item
  * (scenarios share one); blocked ones land in Couldn't apply. The same ids
@@ -422,13 +431,24 @@ export const appendAcceptedEdits = (
   };
   const review = queryClient.getQueryData(draftReviewKey(envId));
   const prior = sampleFileEdits(review).changes;
-  // Rules are numbered in the order they're added; one added again keeps its number.
-  const ruleIds = prior
-    .filter((change) => change.kind === "rule")
-    .map((change) => change.id);
+  // New rules number on from the highest in the environment and the draft
+  // (the sample joins a review not loaded yet); one added again keeps its number.
+  const numbers = new Map(
+    (review || sampleDraftReview()).changes
+      .filter((change) => change.kind === "rule")
+      .map((change) => [change.id, ruleNumber(change)]),
+  );
+  let highest = Math.max(
+    queryClient.getQueryData(harnessEnvironmentKey(envId))?.contract
+      ?.hard_constraints?.length || 0,
+    ...numbers.values(),
+  );
   const numberOf = (id) => {
-    if (!ruleIds.includes(id)) ruleIds.push(id);
-    return ruleIds.indexOf(id) + 1;
+    if (!numbers.has(id)) {
+      highest += 1;
+      numbers.set(id, highest);
+    }
+    return numbers.get(id);
   };
   // The first table added moves the world off generated data, once per
   // environment: the change that carries it keeps it when added again.
@@ -580,6 +600,123 @@ export const appendAcceptedEdits = (
   });
 };
 
+const personalWords = (choice) =>
+  PERSONAL_CHOICES[choice] || choice || "not chosen";
+
+const lowerFirst = (text) => text.charAt(0).toLowerCase() + text.slice(1);
+
+// What a mapping edit changed against the saved copy, one phrase each.
+const mappingLines = (saved, now) => {
+  const was = new Map(
+    (saved.ui.parsed.columns || []).map((column) => [column.name, column]),
+  );
+  const placed = (column) => {
+    if (column.leftOut) return "left out";
+    return column.mappedTo ? `mapped to ${column.mappedTo}` : "not placed";
+  };
+  const lines = (now.ui.parsed.columns || []).flatMap((column) => {
+    const before = was.get(column.name) || {};
+    const { name } = column;
+    return [
+      column.type !== before.type && `${name} is ${column.type}`,
+      Boolean(column.stableId) !== Boolean(before.stableId) &&
+        `${name} ${column.stableId ? "is" : "isn't"} a stable ID`,
+      (column.ref || null) !== (before.ref || null) &&
+        `${name} points at ${column.ref || "nothing"}`,
+      before.proposal &&
+        !column.proposal &&
+        `${name} isn't ${before.proposal.to}`,
+      placed(column) !== placed(before) && `${name} ${placed(column)}`,
+    ].filter(Boolean);
+  });
+  const joins = { ...saved.ui.joins, ...now.ui.joins };
+  Object.keys(joins).forEach((field) => {
+    const omitted = now.ui.joins?.[field] === "omit";
+    if (omitted !== (saved.ui.joins?.[field] === "omit"))
+      lines.push(`${field}: rows ${omitted ? "left out" : "put back"}`);
+  });
+  return lines;
+};
+
+const labelOf = (list, id) => list.find((one) => one.id === id)?.label || id;
+
+/**
+ * The parts of a file in the environment each file drawer edit changes. Each
+ * kind is one Review changes row: `part` is what the accepted copy keeps (and
+ * a revert writes back), `lines` says what moved since and `summary` starts
+ * the row's title after the file name.
+ */
+const FILE_EDITS = {
+  mapping: {
+    path: "/mapping",
+    part: (source) => ({
+      status: source.status,
+      status_note: source.status_note,
+      ui: {
+        joins: source.ui?.joins,
+        id_mapping: source.ui?.id_mapping,
+        parsed: {
+          columns: source.ui?.parsed?.columns,
+          rejected: source.ui?.parsed?.rejected,
+          accepted: source.ui?.parsed?.accepted,
+        },
+      },
+    }),
+    lines: mappingLines,
+  },
+  usage: {
+    path: "/used_as",
+    part: ({ role, purpose, visibility }) => ({ role, purpose, visibility }),
+    lines: (saved, now) =>
+      [
+        now.role !== saved.role && `used as ${labelOf(ROLES, now.role)}`,
+        now.visibility !== saved.visibility &&
+          `who reads it: ${lowerFirst(labelOf(VISIBILITY, now.visibility) || "nobody")}`,
+      ].filter(Boolean),
+  },
+  personal: {
+    path: "/personal_data",
+    summary: "personal data, ",
+    part: (source) => ({
+      ui: {
+        personal_choice: source.ui?.personal_choice,
+        privacy: source.ui?.privacy,
+      },
+    }),
+    lines: (saved, now) =>
+      JSON.stringify(saved) === JSON.stringify(now)
+        ? []
+        : [personalWords(now.ui.personal_choice)],
+  },
+};
+
+const savedCopyOf = (source) =>
+  Object.fromEntries(
+    Object.entries(FILE_EDITS).map(([kind, edit]) => [kind, edit.part(source)]),
+  );
+
+const withPart = (source, { ui = {}, ...top }) => ({
+  ...source,
+  ...top,
+  ui: {
+    ...source.ui,
+    ...ui,
+    ...(ui.parsed && { parsed: { ...source.ui.parsed, ...ui.parsed } }),
+  },
+});
+
+// Already accepted; `ui` names the file and kind a revert writes back.
+const fileEditRow = (kind, source, lines) => ({
+  ...fileChange({
+    kind: "world_state",
+    key: `${kind}-${source.source_id}`,
+    summary: `${source.name}: ${FILE_EDITS[kind].summary || ""}${lines.join(", ")}`,
+    patch: lines.map((line) => added(line, FILE_EDITS[kind].path)),
+    from: readFrom(source.source_id, source.name),
+  }),
+  ui: { source_id: source.source_id, edit: kind },
+});
+
 /**
  * A file's personal-data choice as one accepted change in Review changes,
  * however often it changes: a later choice replaces the row. Does nothing
@@ -588,17 +725,8 @@ export const appendAcceptedEdits = (
 export const upsertPersonalDataEdit = (queryClient, envId, source) => {
   const choice = source?.ui?.personal_choice;
   if (!choice || ["reading", "not_saved"].includes(source.status)) return;
-  const words = PERSONAL_CHOICES[choice] || choice;
   addSampleEdits(queryClient, envId, {
-    changes: [
-      fileChange({
-        kind: "world_state",
-        key: `personal-${source.source_id}`,
-        summary: `${source.name}: personal data, ${words}`,
-        patch: [added(`${source.name}: ${words}`, "/personal_data")],
-        from: readFrom(source.source_id, source.name),
-      }),
-    ],
+    changes: [fileEditRow("personal", source, [personalWords(choice)])],
   });
 };
 
@@ -641,7 +769,12 @@ export const useAcceptSource = (envId) => {
         const saved = savedStatusOf(source);
         return {
           ...saved,
-          ui: { ...saved.ui, scenarios: scenariosOf(source.source_id) },
+          ui: {
+            ...saved.ui,
+            scenarios: scenariosOf(source.source_id),
+            // What later drawer edits compare with and revert to.
+            saved: savedCopyOf(saved),
+          },
         };
       });
       return checked(SourceAcceptResponseSchema, {
@@ -697,9 +830,50 @@ const editSource = (queryClient, envId, sourceId, change) => {
       return after;
     }),
   );
-  // A saved file's one personal-data row in Review changes follows its choice.
-  if (after && after.ui?.personal_choice !== before.ui?.personal_choice)
-    upsertPersonalDataEdit(queryClient, envId, after);
+  // A file not saved yet goes in with the builder's proposal instead.
+  const saved = after?.ui?.saved;
+  if (!saved || !isSaved(after)) return;
+  // On a saved file each kind of edit is one draft row, gone once it matches
+  // the saved copy again.
+  const changes = [];
+  const cleared = [];
+  Object.entries(FILE_EDITS).forEach(([kind, edit]) => {
+    const now = edit.part(after);
+    if (JSON.stringify(edit.part(before)) === JSON.stringify(now)) return;
+    const lines = edit.lines(saved[kind], now);
+    if (lines.length) changes.push(fileEditRow(kind, after, lines));
+    else cleared.push(`world_state:${kind}-${sourceId}`);
+  });
+  if (changes.length || cleared.length)
+    addSampleEdits(queryClient, envId, { changes, cleared });
+};
+
+// (changes): the file drawer edits among them go back to the saved copy and
+// leave Review changes (Reject, Undo, Discard all). Says whether any did.
+export const useRevertFileEdits = (envId) => {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (changes) => {
+      const edits = changes.filter((one) => FILE_EDITS[one.ui?.edit]);
+      if (!edits.length) return false;
+      updateSources(queryClient, envId, (sources) =>
+        sources.map((source) =>
+          edits
+            .filter((one) => one.ui.source_id === source.source_id)
+            .reduce(
+              (one, edit) =>
+                one.ui?.saved ? withPart(one, one.ui.saved[edit.ui.edit]) : one,
+              source,
+            ),
+        ),
+      );
+      addSampleEdits(queryClient, envId, {
+        cleared: edits.map((one) => one.id),
+      });
+      return true;
+    },
+    [queryClient, envId],
+  );
 };
 
 // The open Review proposed changes, kept per environment outside the tab so
