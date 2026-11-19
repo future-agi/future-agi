@@ -2104,6 +2104,15 @@ class HostedHarnessProvider:
         }
     )
 
+    @classmethod
+    def _behavioural_fields(cls) -> frozenset[str]:
+        """The behavioural fields an amend takes: `faults` only while actors are on."""
+        from simulate.services.harness_versioning.versions import actors_enabled
+
+        if actors_enabled():
+            return cls._BEHAVIOURAL_FIELDS
+        return cls._BEHAVIOURAL_FIELDS - {"faults"}
+
     def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
         from simulate.models.agent_definition import AgentDefinition
@@ -2111,7 +2120,7 @@ class HostedHarnessProvider:
         from simulate.services.harness_scenarios import NOISE_LABELS
 
         # A call has no turn budget; a chat has no accent or room behind the caller.
-        behavioural = self._BEHAVIOURAL_FIELDS - (
+        behavioural = self._behavioural_fields() - (
             {"max_turns"} if spoken else {"background_noise"}
         )
         persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
@@ -2459,7 +2468,7 @@ class HostedHarnessProvider:
                     field = str(change.get("field") or "")
                     if field in self._DESCRIPTIVE_FIELDS:
                         pass
-                    elif field in self._BEHAVIOURAL_FIELDS:
+                    elif field in self._behavioural_fields():
                         if not rework:
                             receipts.append(
                                 {
