@@ -48,6 +48,10 @@ RUNNABLE_STATES: frozenset[LifecycleState] = frozenset({"active", "kept_as_writt
 # Shown for a reason or a warning code this release has no words for: never the code itself.
 UNKNOWN_REASON_TEXT = "Not validated on these versions: validate it again to see why."
 UNKNOWN_WARNING_TEXT = "Kept as written: part of this case could not be checked here."
+CONTROL_CALL_UNREAD_TEXT = (
+    "The checks pass a wrong way of handling it: {control} ({control_why}). It calls {calls}, which no check reads: "
+    "add a check that fails when that happens."
+)
 DRAFT_CHANGES = frozenset({"added", "changed"})
 
 REASON_TEXTS = {
@@ -250,6 +254,12 @@ def reason_text(
             control_why=passed.get("why", ""),
             checks=", ".join(passed.get("held") or []) or "the checks",
         )
+        # The tools the wrong way called that the reference never calls: no check reads what they did.
+        unread = [str(one) for one in passed.get("unmatched") or [] if str(one).strip()]
+        if unread:
+            return CONTROL_CALL_UNREAD_TEXT.format_map(
+                _Safe(values, calls=", ".join(unread))
+            )
     elif code == "control_misses_case_goal":
         # The case's own goals, as the harness lists them; none named, the sentence ends at "goal".
         values["goals"] = f": {', '.join(items)}" if items else ""
