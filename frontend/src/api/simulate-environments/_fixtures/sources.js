@@ -151,68 +151,6 @@ export const kbRefreshed = (source, accepted) => {
   };
 };
 
-// Knowledge bases the picker lists, one per collection.
-export const KNOWLEDGE_BASES = [
-  {
-    kb_id: "0b6f8d1e-6c1a-4f7e-9d2b-1a3c5e7f9b01",
-    name: "Policies",
-    owner: "Legal",
-    files: [
-      {
-        file_id: "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c01",
-        name: "Refund policy 2026.pdf",
-        size: 182 * 1024,
-        access: true,
-      },
-      {
-        file_id: "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c05",
-        name: "Returns FAQ.pdf",
-        size: 64 * 1024,
-        access: true,
-      },
-    ],
-  },
-  {
-    kb_id: "0b6f8d1e-6c1a-4f7e-9d2b-1a3c5e7f9b02",
-    name: "Order exports",
-    owner: "Data team",
-    files: [
-      {
-        file_id: "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c02",
-        name: "orders-q3-sample.csv",
-        size: 640 * 1024,
-        access: true,
-      },
-    ],
-  },
-  {
-    kb_id: "0b6f8d1e-6c1a-4f7e-9d2b-1a3c5e7f9b03",
-    name: "Support",
-    owner: "Support team",
-    files: [
-      {
-        file_id: "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c03",
-        name: "Support macros.docx",
-        size: 96 * 1024,
-        access: true,
-      },
-    ],
-  },
-  {
-    kb_id: "0b6f8d1e-6c1a-4f7e-9d2b-1a3c5e7f9b04",
-    name: "People",
-    owner: "People team",
-    files: [
-      {
-        file_id: "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c04",
-        name: "HR payroll 2026.xlsx",
-        size: 310 * 1024,
-        access: false,
-      },
-    ],
-  },
-];
-
 // What the reader understands. Wider than either route's accept list, so a
 // file from chat or the build forms still reads.
 const READABLE = [
@@ -247,8 +185,9 @@ export const sourceIdOf = (key) =>
     .toString(16)
     .padStart(8, "0")}`;
 
+// A PDF reads by page; every other document by section.
 const placeOf = (source, n) =>
-  ["pdf", "docx"].includes(source.ext) ? `p.${n}` : `section ${n}`;
+  source.ext === "pdf" ? `p.${n}` : `section ${n}`;
 
 // A sentence the agent is graded on; setup notes for people changing code aren't.
 const RULE_SENTENCE =
@@ -963,3 +902,227 @@ export const proposalItemsOf = (sources) => {
     );
   return items;
 };
+
+// Samples the file drawer's dev-only dropdown shows in What was read, to check
+// large files and every layout. Each `parsed()` builds its data when picked,
+// so none of it sits in the bundle; real reads never use these.
+const SAMPLE_LINES = [
+  "Greet the caller by name and confirm the order number before anything else.",
+  "A refund goes back to the original payment method.",
+  "Store credit can be split across later orders.",
+  "Shipping fees come back only when the item arrived damaged.",
+  "An exchange keeps the original order date for the return window.",
+  "Note the reason for every refund in the order history.",
+  "Orders paid in instalments are refunded to the instalment provider.",
+];
+const SAMPLE_RULE = "Refunds over $500 must wait for a supervisor's approval.";
+
+// `places` pages or sections of `perPlace` lines, a rule now and then.
+const longText = (places, perPlace, headings) => ({
+  kind: "text",
+  pages: places,
+  ...(headings && { headings }),
+  passages: Array.from({ length: places * perPlace }, (_, i) => {
+    const rule = i % 400 === 5;
+    return {
+      id: `s${i + 1}`,
+      page: Math.floor(i / perPlace) + 1,
+      text: rule ? SAMPLE_RULE : SAMPLE_LINES[i % SAMPLE_LINES.length],
+      ...(rule && { rule: SAMPLE_RULE }),
+    };
+  }),
+});
+
+// `preview` holds the first rows only; `rows` is the whole file's count.
+const PREVIEW_ROWS = 100;
+const sampleTable = ({
+  table,
+  format,
+  columns,
+  rows,
+  rowAt,
+  rejected = [],
+}) => ({
+  kind: "table",
+  table,
+  format,
+  columns,
+  rows,
+  accepted: rows - rejected.length,
+  rejected,
+  sample: rowAt(0),
+  preview: Array.from({ length: Math.min(rows, PREVIEW_ROWS) }, (_, i) =>
+    rowAt(i),
+  ),
+});
+
+const dayOf = (i) =>
+  `2026-${String((i % 12) + 1).padStart(2, "0")}-${String((i % 28) + 1).padStart(2, "0")}`;
+
+const ordersTable = (format, rows) =>
+  sampleTable({
+    table: "orders",
+    format,
+    rows,
+    columns: [
+      { name: "order_id", type: "string", key: true },
+      { name: "customer_id", type: "string", ref: "customers.customer_id" },
+      { name: "delivered_at", type: "date" },
+      { name: "amount_cents", type: "integer" },
+      { name: "email", type: "string", sensitive: true },
+    ],
+    rowAt: (i) => ({
+      order_id: `O-${10001 + i}`,
+      customer_id: `C${(i * 7) % 500}`,
+      delivered_at: dayOf(i),
+      amount_cents: 1000 + ((i * 137) % 90000),
+      email: `customer${i}@example.com`,
+    }),
+    rejected: Array.from({ length: 12 }, (_, k) => ({
+      row: 800 * k + 17,
+      reason: `customer_id C-9${k}0 isn't in customers`,
+    })),
+  });
+
+const customersTable = (format) =>
+  sampleTable({
+    table: "customers",
+    format,
+    rows: 480,
+    columns: [
+      { name: "customer_id", type: "string", key: true },
+      { name: "name", type: "string", sensitive: true },
+      { name: "tier", type: "string" },
+    ],
+    rowAt: (i) => ({
+      customer_id: `C${i}`,
+      name: `Customer ${i}`,
+      tier: ["gold", "silver", "bronze"][i % 3],
+    }),
+  });
+
+const refundsTable = (format) =>
+  sampleTable({
+    table: "refunds",
+    format,
+    rows: 85,
+    columns: [
+      { name: "refund_id", type: "string", key: true },
+      { name: "order_id", type: "string", ref: "orders.order_id" },
+      { name: "status", type: "string" },
+    ],
+    rowAt: (i) => ({
+      refund_id: `RF-${i + 1}`,
+      order_id: `O-${10001 + i * 3}`,
+      status: i % 5 ? "committed" : "pending",
+    }),
+  });
+
+export const READ_SAMPLES = [
+  {
+    id: "note",
+    label: "1-page note",
+    ext: "txt",
+    parsed: () => ({
+      kind: "text",
+      passages: REFERENCE_PASSAGES.map((one) => ({ ...one, page: 1 })),
+    }),
+  },
+  {
+    id: "policy-pdf",
+    label: "40-page policy PDF",
+    ext: "pdf",
+    parsed: () => longText(40, 12),
+  },
+  {
+    id: "long-txt",
+    label: "5,000-line TXT",
+    ext: "txt",
+    parsed: () => longText(50, 100),
+  },
+  {
+    id: "big-csv",
+    label: "10,000-row CSV",
+    ext: "csv",
+    parsed: () => ordersTable(FORMATS.csv, 10000),
+  },
+  {
+    id: "nested-json",
+    label: "Nested JSON",
+    ext: "json",
+    parsed: () => ({
+      kind: "tree",
+      format: "JSON · object",
+      value: {
+        store: {
+          name: "Northwind Outlet",
+          region: "us-east",
+          policies: {
+            refunds: {
+              window_days: 30,
+              approval: { above_cents: 50000, by: "Supervisor" },
+              final_sale: ["clearance", "gift_cards"],
+            },
+            shipping: { free_above_cents: 5000, carriers: ["UPS", "USPS"] },
+          },
+        },
+        agents: Array.from({ length: 60 }, (_, i) => ({
+          id: `A-${i + 1}`,
+          languages: i % 2 ? ["en", "es"] : ["en"],
+        })),
+        updated_at: "2026-11-01T09:00:00Z",
+      },
+    }),
+  },
+  {
+    id: "jsonl",
+    label: "JSONL",
+    ext: "jsonl",
+    parsed: () =>
+      sampleTable({
+        table: "events",
+        format: "JSONL · one record per line",
+        rows: 1200,
+        columns: [
+          { name: "event_id", type: "string", key: true },
+          { name: "type", type: "string" },
+          { name: "at", type: "date" },
+          { name: "payload", type: "object" },
+        ],
+        rowAt: (i) => ({
+          event_id: `E-${i + 1}`,
+          type: ["refund_requested", "refund_issued", "call_ended"][i % 3],
+          at: dayOf(i),
+          payload: { order_id: `O-${10001 + i}`, channel: "phone" },
+        }),
+      }),
+  },
+  {
+    id: "xlsx-sheets",
+    label: "XLSX with 3 sheets",
+    ext: "xlsx",
+    parsed: () => {
+      const format = "XLSX · header row";
+      const sheets = [
+        { name: "Orders", ...ordersTable(format, 2400) },
+        { name: "Customers", ...customersTable(format) },
+        { name: "Refunds", ...refundsTable(format) },
+      ];
+      return { ...sheets[0], sheets };
+    },
+  },
+  {
+    id: "docx-headings",
+    label: "DOCX with headings",
+    ext: "docx",
+    parsed: () =>
+      longText(6, 8, {
+        1: "Overview",
+        2: "Who can ask for a refund",
+        3: "Return window",
+        4: "Damaged items",
+        5: "Store credit",
+        6: "Escalation",
+      }),
+  },
+];
