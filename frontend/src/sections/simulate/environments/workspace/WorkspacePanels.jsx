@@ -207,6 +207,7 @@ export default function WorkspacePanels({
             backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}
+            onReviewChanges={onReviewChanges}
           />
         );
     }

@@ -82,7 +82,7 @@ export default function NextStepsChecklist({
         ? CHECKLIST_COPY.agent.body
         : CHECKLIST_COPY.agent.saveFirst,
       onClick: connect.onClick,
-      disabled: !connect.saved,
+      disabled: false,
     });
   const doneCount = steps.filter((s) => s.done).length;
   const currentIdx = steps.findIndex((s) => !s.done);
