@@ -414,7 +414,11 @@ def test_kept_as_written_runs_labelled_as_not_proved(user, workspace, storage):
             "Kept as written: no wrong-way example to prove the check can fail.",
         ),
         (
-            {**KEPT, "blocked_reason": "control_misses_case_goal", "case_goals": ["refund_once"]},
+            {
+                **KEPT,
+                "blocked_reason": "control_misses_case_goal",
+                "case_goals": ["refund_once"],
+            },
             "kept_as_written",
             "Kept as written: its wrong-way examples only fail checks every scenario shares, so none proves this "
             "case's own check can fail.",
