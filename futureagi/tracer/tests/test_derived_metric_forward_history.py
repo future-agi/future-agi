@@ -940,7 +940,9 @@ def test_forward_metric_before_its_first_publication_reads_as_not_calculated_yet
             assert result.status_code == 503, (action, result.data)
             assert result.data["code"] == "window_not_calculated_yet", action
             assert result.data["reason"] == "too_large", action
-            assert "calculated_through" not in result.data and "value" not in result.data
+            assert (
+                "calculated_through" not in result.data and "value" not in result.data
+            )
         store.assert_not_called()
 
 

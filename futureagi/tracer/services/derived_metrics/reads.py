@@ -212,7 +212,10 @@ def metric_read(metric, *, store=None):
     active = metric.active_version
     if active is not None:
         require_materialized(active)
-    if active is None or active.history_mode == DerivedMetricVersion.HistoryMode.FORWARD:
+    if (
+        active is None
+        or active.history_mode == DerivedMetricVersion.HistoryMode.FORWARD
+    ):
         state = (
             MetricProjectRefresh.objects.filter(project_id=metric.project_id)
             .values_list("head_manifest_id", "paused_reason")
@@ -226,7 +229,8 @@ def metric_read(metric, *, store=None):
             )
         if active is None:
             raise MetricUnavailableError(
-                "metric_recalculating", "No completed active definition is available yet."
+                "metric_recalculating",
+                "No completed active definition is available yet.",
             )
         if not state or state[0] is None:
             require_forward_definition_published(None, active)

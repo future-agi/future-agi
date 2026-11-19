@@ -431,18 +431,24 @@ def _redact_subjects(store, request):
                 continue
             if child.status != "done":
                 # Finish the original child before counting any additional rows.
-                if set(child.store_payload.get("subjects", [])) != set(request.subject_ids):
+                if set(child.store_payload.get("subjects", [])) != set(
+                    request.subject_ids
+                ):
                     reopened.append(stale.id)
                 continue
             scrub = child.store_payload.get("subject_scrub") or {}
             subjects = scrub.get("subjects") or {}
-            if scrub.get("salt") and subjects.get("sha256") == MetricErasureRequest._subject_digest(
+            if scrub.get("salt") and subjects.get(
+                "sha256"
+            ) == MetricErasureRequest._subject_digest(
                 request.subject_ids, scrub["salt"]
             ):
                 continue
             # The original child only certifies its old membership. Recount
             # the remaining physical inputs, under a retry-stable child key.
-            digest = MetricErasureRequest._subject_digest(request.subject_ids, str(request.id))
+            digest = MetricErasureRequest._subject_digest(
+                request.subject_ids, str(request.id)
+            )
             key = f"redact:{request.id}:{uuid5(stale.id, digest)}"
             if MetricErasureRequest.objects.filter(deletion_key=key).exists():
                 continue

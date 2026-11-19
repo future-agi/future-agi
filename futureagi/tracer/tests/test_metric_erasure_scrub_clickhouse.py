@@ -272,7 +272,9 @@ def test_model_finish_scrubs_only_on_completion(workspace, observe_project):
     request.refresh_from_db()
     assert request.subject_ids == ids
     with pytest.raises(MetricStateConflict):
-        MetricErasureRequest.finish(request.id, token=token, now=request.claim_expires_at)
+        MetricErasureRequest.finish(
+            request.id, token=token, now=request.claim_expires_at
+        )
     request.refresh_from_db()
     assert request.status == "running" and request.subject_ids == ids
     MetricErasureRequest.finish(request.id, token=token)
@@ -507,7 +509,9 @@ def test_retry_redacts_newly_resolved_alias_from_completed_snapshot(
         subject_ids=[ERASED],
     )
     # The snapshot child completes, then the live phase fails on the first claim.
-    with patch.object(retention, "purge_by_scope", side_effect=MetricStateConflict("retry")):
+    with patch.object(
+        retention, "purge_by_scope", side_effect=MetricStateConflict("retry")
+    ):
         assert not erasure.process_erasure(request.id, store=store, writer=live_writer)
     assert store.execute(
         "SELECT DISTINCT user_id FROM derived_metric_inputs WHERE snapshot_id = %(id)s",
@@ -573,7 +577,9 @@ def test_subject_erasure_retries_physical_scrub_without_republishing(
 
     with monkeypatch.context() as patch:
         patch.setattr(retention, "_delete", skip_one)
-        assert not erasure.process_erasure(request.pk, store=writer.store, writer=writer)
+        assert not erasure.process_erasure(
+            request.pk, store=writer.store, writer=writer
+        )
     request.refresh_from_db()
     assert not request.receipts and not request.completed_at
     if expand_aliases:
@@ -582,7 +588,9 @@ def test_subject_erasure_retries_physical_scrub_without_republishing(
             {"old": original_user, "new": other_user},
         )
     assert erasure.process_erasure(request.pk, store=writer.store, writer=writer)
-    assert (MetricProjectRefresh.for_project(project).head_manifest_id != head.pk) == expand_aliases
+    assert (
+        MetricProjectRefresh.for_project(project).head_manifest_id != head.pk
+    ) == expand_aliases
     assert not writer.store.execute(
         "SELECT canonical_user_id FROM list_current_user_activity"
     )
@@ -620,7 +628,9 @@ def test_definition_erasure_fences_compaction_only_until_scrub(
         if not checked:
             with project_lease(writer.lease.project_id, holder="during-scrub") as lease:
                 with pytest.raises(MetricStateConflict, match="erasure"):
-                    RefreshWriter(lease, store, org_id=writer.org_id).compact(server_side=False)
+                    RefreshWriter(lease, store, org_id=writer.org_id).compact(
+                        server_side=False
+                    )
             checked.append(True)
         delete(store, table, predicate, params)
 
@@ -631,7 +641,9 @@ def test_definition_erasure_fences_compaction_only_until_scrub(
     old_copy.refresh_from_db()
     assert old_copy.state == "aborted" and not old_copy.ledger_chunks.exists()
     with project_lease(writer.lease.project_id, holder="after-scrub") as lease:
-        RefreshWriter(lease, writer.store, org_id=writer.org_id).compact(server_side=False)
+        RefreshWriter(lease, writer.store, org_id=writer.org_id).compact(
+            server_side=False
+        )
     assert writer.store.execute(
         "SELECT unit_id FROM metric_field_values_checkpoint"
     ) == [("keep",)]

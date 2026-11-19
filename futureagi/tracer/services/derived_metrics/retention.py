@@ -2789,10 +2789,13 @@ def _purge_by_scope(store, request, *, writer=None):
                 )
             # Remaps can expand the subject set between claims. Never reuse a
             # checkpoint merely because an earlier claim carried this request ID.
-            scope_digest = MetricErasureRequest._subject_digest(request.subject_ids, str(request.id))
+            scope_digest = MetricErasureRequest._subject_digest(
+                request.subject_ids, str(request.id)
+            )
             if head is not None and (
                 head.published_by.source_ceilings.get("erasure") != str(request.id)
-                or head.published_by.source_ceilings.get("erasure_scope_digest") != scope_digest
+                or head.published_by.source_ceilings.get("erasure_scope_digest")
+                != scope_digest
             ):
                 recovery_pending = head.published_by.source_ceilings.get(
                     "recovery_pending", False
