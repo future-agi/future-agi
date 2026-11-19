@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// The draft review API as its backend service code returns it.
+// The draft review API as its backend service code returns it, at 19889a1b7.
 // Written by hand because the schema generated from its serializers is looser
 // and in places wrong: `decision` and the digests can be null, `affects` is a
 // list or "all", and patches and sources hold nested values. Replace with the
