@@ -457,6 +457,40 @@ def gate_agent_move(
     return validation if validation is not None and not validation.ready else None
 
 
+def _proved_with(
+    agent_version_id: Any,
+    environment_version: HarnessEnvironmentVersion,
+    suite_version: HarnessSuiteVersion,
+) -> bool:
+    """Whether the pair holds any proof made with this agent version, its own or kept beside a newer one's. A pair
+    with no recorded proofs, or an entry that names no agent version, says nothing against it."""
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.versions import OTHER_AGENTS
+
+    row = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("proofs", "job__agent_version_id")
+        .first()
+    )
+    if row is None or not isinstance(row[0], dict):
+        return True
+    proofs, row_agent = row
+    agent = str(agent_version_id)
+    for entry in proofs.values():
+        if not isinstance(entry, dict):
+            continue
+        made = entry.get("agent_version_id") or row_agent
+        if (
+            made is None
+            or str(made) == agent
+            or agent in (entry.get(OTHER_AGENTS) or {})
+        ):
+            return True
+    return False
+
+
 def start_validation(
     environment: HostedHarnessJob,
     agent_version: AgentVersion,
@@ -519,10 +553,20 @@ def start_validation(
             # Made by an earlier harness than runs use now: certify it again.
             assembly.reset_outdated(bundle)
             certified = False
-        if certified and purpose == "prove":
-            # A person pressing Validate after a fix needs a new proof, never the certified shortcut.
+        if certified and (
+            purpose == "prove"
+            or (
+                purpose == "agent_move"
+                and not _proved_with(
+                    agent_version.id, environment_version, suite_version
+                )
+            )
+        ):
+            # A person pressing Validate after a fix needs a new proof, never the certified shortcut; so does a move
+            # to an agent version that never proved this pair's cases, which waits for the proof as it would for a
+            # certify.
             live = live_check(bundle.id)
-            if live is not None:
+            if live is not None and (move is None or _carry_move(live, move)):
                 return Validation("validating", bundle, purpose, live)
             job = _create_job(
                 locked,

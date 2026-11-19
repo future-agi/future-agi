@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -247,6 +248,52 @@ class TestStart:
 
         assert (started.state, started.job) == ("ready", None)
         assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+    def test_a_move_to_a_certified_version_waits_for_its_proof_only_without_one(
+        self, user, workspace, storage
+    ):
+        """Back to a version that proved the pair: ready at once. To one whose proofs another version replaced: a
+        prove-only check carrying the move, as before the pairing was certified."""
+        from simulate.models import HarnessSuiteValidation
+        from simulate.services.harness_versioning.versions import OTHER_AGENTS
+
+        environment = _environment(user, workspace, "pv-move-proofs", storage)
+        own, other = str(environment.agent_version_id), str(uuid.uuid4())
+        move = validation.agent_move(
+            "hand", environment, environment.agent_version, user=user
+        )
+
+        def proofs(entry):
+            HarnessSuiteValidation.no_workspace_objects.update_or_create(
+                suite_version=environment.suite_version,
+                environment_version=environment.environment_version,
+                defaults={
+                    "status": "passed",
+                    "proved_at": timezone.now(),
+                    "proofs": {"a": entry},
+                },
+            )
+
+        proofs(
+            {
+                "proved": True,
+                "agent_version_id": other,
+                OTHER_AGENTS: {own: {"proved": True}},
+            }
+        )
+        back = _start(environment, purpose="agent_move", move=move)
+        proofs({"proved": True, "agent_version_id": other})
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+        away = _start(environment, purpose="agent_move", move=move)
+
+        assert (back.state, back.job) == ("ready", None)
+        assert away.state == "validating"
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs + 1
+        metadata = _job_metadata(away.job)
+        assert (metadata["scenario_proving"], metadata["validation_move"]) == (
+            "only",
+            move,
+        )
 
     def test_recheck_resets_failed_to_pending(self, user, workspace, storage):
         environment = _pending(user, workspace, storage, "pv-recheck")
