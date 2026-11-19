@@ -215,6 +215,7 @@ function KnowledgeBaseFiles({ query, search, added, picked, onToggle }) {
               checked={isAdded || picked.some((one) => one.id === file.id)}
               disabled={locked}
               onChange={() => onToggle(file)}
+              sx={{ opacity: ready ? 1 : 0.4 }}
             />
             <Box sx={{ flex: 1, minWidth: 0, opacity: ready ? 1 : 0.6 }}>
               <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
