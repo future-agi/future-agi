@@ -108,6 +108,28 @@ export const useDesignDraftStore = create(
             "startDesignBuild",
           ),
 
+        // Cancel: the stub build stops where it is (designBuildOf).
+        cancelDesignBuild: (draftId) =>
+          set(
+            (s) =>
+              s.drafts[draftId]?.build
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        build: {
+                          ...s.drafts[draftId].build,
+                          cancelledAt: Date.now(),
+                        },
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "cancelDesignBuild",
+          ),
+
         // Save in Review changes: the checked build becomes v1. Only a build
         // that passed its checks can be saved, and only once.
         saveDesignRelease: (draftId, name = "") =>

@@ -59,6 +59,7 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useChatFiles from "./sources/useChatFiles";
 import DesignBuildStrip from "../design/DesignBuildStrip";
+import { useCancelDesignBuild } from "src/api/simulate-environments/designBuild";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -101,6 +102,7 @@ function refusalReason(refusal) {
 export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
+  const cancelBuild = useCancelDesignBuild(envId);
   const { env, source, bootstrapState, notFound, error, refetch, chatSaving } =
     useEnvironment(envId);
   // A real (backed) env's applied evals live on the environment detail
@@ -633,7 +635,15 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} />
       {designBuild && (
-        <DesignBuildStrip build={designBuild} tab={tab} onFollow={setTab} />
+        <DesignBuildStrip
+          build={designBuild}
+          tab={tab}
+          onFollow={setTab}
+          onCancel={() => cancelBuild.mutate()}
+          onBack={() =>
+            navigate(paths.dashboard.simulate.environments.design(envId))
+          }
+        />
       )}
       {!detailLoading && !detailFailed && (
         <VersionBar

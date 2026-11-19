@@ -21,6 +21,7 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { paths } from "src/routes/paths";
 import { RouterLink } from "src/routes/components";
 import {
+  STOPPED_BUILD,
   useApproveDesign,
   useDesignBuild,
 } from "src/api/simulate-environments/designBuild";
@@ -40,6 +41,8 @@ const BUILD_PILL = {
   building: ["building", "Building"],
   validating: ["building", "Validating"],
   needs_repair: ["needs_changes", "Needs repair"],
+  failed: ["needs_changes", "Build failed"],
+  cancelled: ["needs_review", "Build cancelled"],
 };
 
 /* The bar above the chat and the design: back, the draft's name, where it
@@ -199,9 +202,9 @@ export default function DesignPage() {
   const build = useDesignBuild(draftId);
   const approve = useApproveDesign(draftId);
   const navigate = useNavigate();
-  // An approved build is followed on its environment's page; only a failed
-  // check keeps it here, to repair.
-  const toEnvironment = !!build && build.status !== "needs_repair";
+  // An approved build is followed on its environment's page; one that stopped
+  // short stays here, to repair and approve again.
+  const toEnvironment = !!build && !STOPPED_BUILD.includes(build.status);
   useEffect(() => {
     if (toEnvironment)
       navigate(paths.dashboard.simulate.environments.detail(draftId), {
