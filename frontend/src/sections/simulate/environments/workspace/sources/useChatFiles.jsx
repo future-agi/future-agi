@@ -122,7 +122,7 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
               ) : (
                 <ProposalsOutcome
                   outcome={entry.outcome}
-                  onOpenSources={() => openSource()}
+                  onOpenSources={sourceParams.showSources}
                   onReviewChanges={onReviewChanges}
                 />
               ),

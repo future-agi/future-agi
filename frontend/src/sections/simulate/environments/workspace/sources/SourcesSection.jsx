@@ -53,6 +53,8 @@ const stateOf = (source, formats) => {
   return { label: COPY.state[source.status] };
 };
 
+const SOURCES_CARD_ID = "environment-sources";
+
 /**
  * World & tools → Sources: every file this world is built from, what it's
  * used as, who reads it in a run, its state and version. A file's name opens
@@ -97,8 +99,17 @@ export default function SourcesSection({
     });
   const reduce = usePrefersReducedMotion();
   const timeout = reduce ? 0 : "auto";
-  const { openSource } = useSourceParams();
+  const { openSource, showing, closeSource } = useSourceParams();
   const addRef = useRef(null);
+  // Open Sources from the chat: bring this card into view, then drop the ask.
+  useEffect(() => {
+    if (showing !== "sources") return;
+    document.getElementById(SOURCES_CARD_ID)?.scrollIntoView?.({
+      block: "start",
+      behavior: reduce ? "auto" : "smooth",
+    });
+    closeSource();
+  }, [showing]); // eslint-disable-line react-hooks/exhaustive-deps
   // `supplying`, from a file's Supply the records, opens the Add source menu.
   useEffect(() => {
     if (!supplying) return;
@@ -170,6 +181,7 @@ export default function SourcesSection({
 
   return (
     <SectionCard
+      id={SOURCES_CARD_ID}
       title={COPY.title(sources.length)}
       subtitle={subtitle}
       action={
