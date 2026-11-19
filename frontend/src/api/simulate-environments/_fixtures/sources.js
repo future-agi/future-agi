@@ -32,91 +32,10 @@ export const sampleSourceSummary = () => ({
   ui: { data_mode: "real_records", saved_at: null },
 });
 
-// How long after a copy is saved its Knowledge base file changes, for files
-// in KB_CHANGES. The World & tools tab flags the copy then (see
-// useKnowledgeBaseChanges). Add a file id to KB_CHANGES to make it change.
+// How long after a Knowledge base copy is saved its file changes in the
+// Knowledge base. The World & tools tab flags the copy then (see
+// useKnowledgeBaseChanges); kbChangesOf says what changed.
 export const KB_CHANGE_AFTER_MS = 20000;
-
-// What a Knowledge base file says once it changes, per file id. `passage` is
-// the copy's passage a rule change replaces; the "from" side is read from the
-// saved copy. `rows` is how many rows a row change adds or removes.
-const KB_CHANGES = {
-  "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c01": [
-    {
-      id: "c1",
-      kind: "rule-changed",
-      label: "Return window",
-      ref: "p.1",
-      passage: "p1",
-      to: "Items can be returned within 21 days of delivery for a full refund.",
-      rule: "Refunds are allowed within 21 days of delivery.",
-      scenarios: [
-        "Refund asked on day 15",
-        "Refund asked on day 21",
-        "Late delivery, refund on day 20",
-      ],
-    },
-    {
-      id: "c2",
-      kind: "rule-changed",
-      label: "Supervisor approval amount",
-      ref: "p.3",
-      passage: "p5",
-      to: "Refunds over $250 need a supervisor's approval before they are issued.",
-      rule: "Refunds over $250 wait for a supervisor's approval.",
-      scenarios: ["Refund of $280 on one order"],
-    },
-    {
-      id: "c3",
-      kind: "rule-added",
-      label: "Damaged items",
-      ref: "p.2",
-      passage: "p7",
-      page: 2,
-      to: "Damaged items are refunded without a return once the caller sends a photo.",
-      rule: "Damaged items are refunded without a return, with a photo.",
-      scenarios: [],
-    },
-  ],
-  "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c02": [
-    {
-      id: "c1",
-      kind: "row-added",
-      label: "40 orders",
-      detail: "O-501 to O-540",
-      rows: 40,
-      scenarios: ["Refund for a late order"],
-    },
-    {
-      id: "c2",
-      kind: "row-changed",
-      label: "3 orders",
-      detail: "O-104, O-118, O-230: delivery date and price fixed",
-      rows: 0,
-      scenarios: ["Duplicate refund retry", "Refund asked on day 15"],
-    },
-    {
-      id: "c3",
-      kind: "row-removed",
-      label: "2 orders",
-      detail: "O-377, O-412: cancelled before dispatch",
-      rows: -2,
-      scenarios: [],
-    },
-  ],
-};
-
-const passagesOf = (source) => source.ui?.parsed?.passages || [];
-
-// The changes waiting for a copy, each rule change's "from" read from it.
-export const kbChangesOf = (source) =>
-  (source.origin?.kind === "knowledge_base"
-    ? KB_CHANGES[source.origin.file_id] || []
-    : []
-  ).map((change) => ({
-    ...change,
-    from: passagesOf(source).find((one) => one.id === change.passage)?.text,
-  }));
 
 // The copy after a refresh: accepted rule changes replace or add passages,
 // row changes move the row count; the version goes up and the flag clears.
@@ -188,6 +107,119 @@ export const sourceIdOf = (key) =>
 // A PDF reads by page; every other document by section.
 const placeOf = (source, n) =>
   source.ext === "pdf" ? `p.${n}` : `section ${n}`;
+
+// The rule every changed Knowledge base document gains.
+const ADDED_RULE = {
+  text: "Damaged items are refunded without a return once the caller sends a photo.",
+  rule: "Damaged items are refunded without a return, with a photo.",
+};
+// The first number in a sentence, moved: 30 becomes 21, $500 becomes $350.
+const moveNumber = (text) =>
+  text.replace(/\d+/, (n) =>
+    String(Number(n) > 1 ? Math.round(Number(n) * 0.7) : Number(n) + 1),
+  );
+const labelOf = (text) => {
+  const words = text.split(/\s+/);
+  return words.length > 6 ? `${words.slice(0, 6).join(" ")}…` : text;
+};
+const rowsLabel = (n) => `${n} row${n === 1 ? "" : "s"}`;
+const rowList = (rows) =>
+  `${rows.length === 1 ? "Row" : "Rows"} ${rows.join(", ")}`;
+
+const textChanges = (source, passages, scenarios) => {
+  const target = passages.find((one) => one.rule) || passages[0];
+  const page = passages.at(-1)?.page || 1;
+  const changes = [];
+  if (target) {
+    const numbered = /\d/.test(target.text);
+    const to = numbered
+      ? moveNumber(target.text)
+      : `${target.text} This now applies to chat as well as phone calls.`;
+    changes.push({
+      id: "c1",
+      kind: "rule-changed",
+      label: labelOf(target.rule || target.text),
+      ref: placeOf(source, target.page),
+      passage: target.id,
+      from: target.text,
+      to,
+      rule:
+        target.rule && /\d/.test(target.rule) ? moveNumber(target.rule) : to,
+      scenarios,
+    });
+  }
+  changes.push({
+    id: "c2",
+    kind: "rule-added",
+    label: labelOf(ADDED_RULE.rule),
+    ref: placeOf(source, page),
+    passage: "kb-added-1",
+    page,
+    to: ADDED_RULE.text,
+    rule: ADDED_RULE.rule,
+    scenarios: [],
+  });
+  return changes;
+};
+
+const tableChanges = (rows, scenarios) => {
+  const added = Math.max(1, Math.round(rows * 0.08));
+  const changed = [
+    ...new Set(
+      Array.from(
+        { length: Math.min(3, rows) },
+        (_, i) => Math.floor(((i + 1) * rows) / 4) || 1,
+      ),
+    ),
+  ];
+  const removed = Array.from(
+    { length: Math.min(2, Math.max(0, rows - 1)) },
+    (_, i) => rows - i,
+  ).reverse();
+  return [
+    {
+      id: "c1",
+      kind: "row-added",
+      label: rowsLabel(added),
+      detail:
+        added === 1 ? `Row ${rows + 1}` : `Rows ${rows + 1} to ${rows + added}`,
+      rows: added,
+      scenarios,
+    },
+    changed.length && {
+      id: "c2",
+      kind: "row-changed",
+      label: rowsLabel(changed.length),
+      detail: `${rowList(changed)}: values updated`,
+      rows: 0,
+      scenarios: [],
+    },
+    removed.length && {
+      id: "c3",
+      kind: "row-removed",
+      label: rowsLabel(removed.length),
+      detail: `${rowList(removed)}: no longer in the file`,
+      rows: -removed.length,
+      scenarios: [],
+    },
+  ].filter(Boolean);
+};
+
+/**
+ * What changed in a Knowledge base file since its copy, derived from the
+ * saved copy so the "from" side always matches What was read. A document
+ * has one rule's number (or wording) changed and one rule added; a table
+ * has rows added, changed and removed, sized from its row count.
+ */
+export const kbChangesOf = (source) => {
+  const parsed = source.ui?.parsed;
+  if (source.origin?.kind !== "knowledge_base" || !parsed) return [];
+  const scenarios = source.ui?.scenarios || [];
+  if (parsed.kind === "table") return tableChanges(parsed.rows, scenarios);
+  if (parsed.kind === "text")
+    return textChanges(source, parsed.passages || [], scenarios);
+  return [];
+};
 
 // A sentence the agent is graded on; setup notes for people changing code aren't.
 const RULE_SENTENCE =
@@ -482,7 +514,7 @@ export const readSource = ({ name, size, text, origin }) => {
     parsed: null,
     privacy: {},
     personal_choice: null,
-    // Set once the Knowledge base file changes after the copy; see KB_CHANGES.
+    // Set once the Knowledge base file changes after the copy; see kbChangesOf.
     changed_upstream: false,
     ...fields,
   });

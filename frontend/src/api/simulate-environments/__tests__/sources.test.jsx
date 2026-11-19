@@ -9,6 +9,7 @@ import {
   useAcceptSource,
   usePrepareUploadSource,
 } from "../sources";
+import { kbChangesOf, kbRefreshed, readSource } from "../_fixtures/sources";
 
 let client;
 const wrapper = ({ children }) => (
@@ -102,5 +103,25 @@ describe("environment sources stub", () => {
     // 3 rules and the two day-boundary scenarios citing it, as the prototype counts.
     const [saved] = client.getQueryData(sourceSummaryKey("env-1")).sources;
     expect(usageOf(saved).count).toBe(5);
+  });
+
+  it("a Knowledge base copy changes from what it read, and a refresh takes the changes", () => {
+    const origin = { kind: "knowledge_base", kb_id: "kb", file_id: "any-id" };
+    const policy = readSource({ name: "Refund policy.pdf", size: 1, origin });
+    const [changed, added] = kbChangesOf(policy);
+    expect(changed.from).toBe(policy.ui.parsed.passages[0].text);
+    expect(changed.to).toBe(
+      "Items can be returned within 10 days of delivery for a full refund.",
+    );
+    expect(added.kind).toBe("rule-added");
+
+    const table = readSource({ name: "orders.csv", size: 1, origin });
+    const changes = kbChangesOf(table);
+    expect(changes.map((change) => change.label)).toEqual([
+      "40 rows",
+      "3 rows",
+      "2 rows",
+    ]);
+    expect(kbRefreshed(table, changes).ui.parsed.rows).toBe(538);
   });
 });
