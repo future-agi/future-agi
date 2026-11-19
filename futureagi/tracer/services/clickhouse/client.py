@@ -4,11 +4,13 @@ ClickHouse Client for Analytics Backend
 Provides connection management and query execution for ClickHouse.
 """
 
+import logging
 import queue
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from typing import Any
 
 import structlog
@@ -60,6 +62,31 @@ except ImportError:
     CHDriver = None
     CHError = Exception
     CLICKHOUSE_AVAILABLE = False
+
+
+_quiet_retained_read = ContextVar("quiet_retained_read", default=False)
+
+
+def _allow_native_log(_record: logging.LogRecord) -> bool:
+    return not _quiet_retained_read.get()
+
+
+@contextmanager
+def _quiet_retained_driver_logs():
+    # send_query logs SQL after parameter substitution; server log packets
+    # can also contain query details. Filter at the emitters (ancestor logger
+    # filters don't see propagated records), without muting other requests.
+    for name in (
+        "clickhouse_driver.connection",
+        "clickhouse_driver.client",
+        "clickhouse_driver.log",
+    ):
+        logging.getLogger(name).addFilter(_allow_native_log)  # idempotent
+    token = _quiet_retained_read.set(True)
+    try:
+        yield
+    finally:
+        _quiet_retained_read.reset(token)
 
 
 def _bounded_read_timeout_ms(
@@ -569,14 +596,15 @@ class ClickHouseClient:
     ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
         """Execute a guarded read and include native rows/bytes progress."""
 
-        result = self._execute_read(
-            query,
-            params,
-            timeout_ms=timeout_ms,
-            settings=settings,
-            include_progress=True,
-            retained_lookup=retained_lookup,
-        )
+        with _quiet_retained_driver_logs() if retained_lookup else nullcontext():
+            result = self._execute_read(
+                query,
+                params,
+                timeout_ms=timeout_ms,
+                settings=settings,
+                include_progress=True,
+                retained_lookup=retained_lookup,
+            )
         assert len(result) == 5
         return result
 
