@@ -2702,6 +2702,10 @@ class MetricErasureRequest(models.Model):
         now = _now(now)
         if scope_kind not in cls.Scope.values:
             raise ValidationError({"scope_kind": "Unknown erasure scope."})
+        if scope_kind == cls.Scope.ORGANIZATION and project_id is not None:
+            raise ValidationError(
+                {"project": "An organization erasure takes no project."}
+            )
         ids = list(dict.fromkeys(subject_ids or ()))
         if scope_kind in cls.ID_SCOPES:
             if any(not isinstance(value, str) or not value for value in ids):

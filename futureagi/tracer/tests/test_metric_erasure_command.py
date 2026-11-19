@@ -66,6 +66,26 @@ def test_real_erase_command_queues_durable_request(workspace):
     ).exists()
 
 
+@pytest.mark.django_db
+def test_organization_erasure_rejects_a_project_before_queueing(observe_project):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    from tracer.models.derived_metric import MetricErasureRequest
+
+    organization_id = observe_project.organization_id
+    requests = MetricErasureRequest.objects.filter(organization_key=organization_id)
+    before = requests.count()
+    with pytest.raises(CommandError, match="Erasure was not queued"):
+        call_command(
+            "erase_metric_data",
+            organization=str(organization_id),
+            project=str(observe_project.id),
+            scope="organization",
+        )
+    assert requests.count() == before
+
+
 def test_real_erase_command_rejects_ordinary_process():
     backend = Path(__file__).resolve().parents[2]
     result = subprocess.run(
