@@ -111,4 +111,41 @@ describe("prepareSourceForBuild", () => {
       LIVEKIT_API_SECRET: "lk-secret",
     });
   });
+
+  it("sends a livekit phone routing check's values to preflight only, never to the build", async () => {
+    const { draft, credentialValues, buildCredentialValues } = await prepareSourceForBuild({
+      kind: "platform",
+      provider: "livekit",
+      agentMode: "prompt",
+      prompt: "You handle returns.",
+      preflightOnlyCredentials: true,
+      apiKey: "lk-key",
+      apiSecret: "lk-secret",
+      verifyLivekitUrl: "wss://demo.livekit.cloud",
+      verifyAgentName: "returns-agent",
+    });
+    expect(credentialValues).toEqual({
+      LIVEKIT_API_KEY: "lk-key",
+      LIVEKIT_API_SECRET: "lk-secret",
+      LIVEKIT_URL: "wss://demo.livekit.cloud",
+      LIVEKIT_AGENT_NAME: "returns-agent",
+    });
+    expect(buildCredentialValues).toEqual({});
+    expect(draft).toStrictEqual({
+      kind: "platform",
+      provider: "livekit",
+      agentMode: "prompt",
+      prompt: "You handle returns.",
+    });
+  });
+
+  it("sends the same credential values to the build when they are not preflight-only", async () => {
+    const { credentialValues, buildCredentialValues } = await prepareSourceForBuild({
+      kind: "platform",
+      provider: "vapi",
+      agentId: "asst_x",
+      apiKey: "sk-live-123",
+    });
+    expect(buildCredentialValues).toEqual(credentialValues);
+  });
 });
