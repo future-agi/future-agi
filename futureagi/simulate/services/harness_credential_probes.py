@@ -8,10 +8,12 @@ only succeeds with a valid key. Adding a provider means adding a row, nothing el
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -20,6 +22,7 @@ import structlog
 from google.protobuf import json_format
 
 from tfc.utils.lazy_extras import load_extra
+from tfc.utils.ssrf_guard import SsrfBlocked, assert_url_host_public
 
 logger = structlog.get_logger(__name__)
 
@@ -27,6 +30,9 @@ PROBE_TIMEOUT_SECONDS = 8
 LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS = 8
 LIVEKIT_AGENT_POLL_SECONDS = 1
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+LIVEKIT_PROBE_BUDGET_SECONDS = 20
+LIVEKIT_MAX_RESPONSE_BYTES = 1024 * 1024
+LIVEKIT_TOKEN_TTL = timedelta(seconds=60)
 
 
 @dataclass(frozen=True)
@@ -92,10 +98,70 @@ def _header(url: str, alias: str, header: str, **extra_headers: str):
     return build
 
 
-def _livekit_http_url(url: str) -> str:
-    parsed = urlparse(url.strip())
-    scheme = {"wss": "https", "ws": "http"}.get(parsed.scheme, parsed.scheme or "https")
-    return f"{scheme}://{parsed.netloc or parsed.path}".rstrip("/")
+class LiveKitUnreadable(ValueError):
+    pass
+
+
+def _livekit_base_url(url: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    if (
+        parsed.scheme not in ("https", "wss")
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise SsrfBlocked(
+            "LIVEKIT_URL must be an https:// or wss:// address with a host"
+        )
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    base = f"https://{host}" + (f":{parsed.port}" if parsed.port else "")
+    assert_url_host_public(base)
+    return base
+
+
+def _livekit_call(
+    base: str,
+    headers: Mapping[str, str],
+    service: str,
+    method: str,
+    body: Mapping[str, Any],
+    deadline: float,
+) -> dict[str, Any]:
+    remaining = deadline - time.perf_counter()
+    if remaining <= 0:
+        raise requests.Timeout("the LiveKit check ran out of time")
+    response = requests.post(
+        f"{base}/twirp/livekit.{service}/{method}",
+        headers=dict(headers),
+        json=dict(body),
+        timeout=min(PROBE_TIMEOUT_SECONDS, remaining),
+        allow_redirects=False,
+        stream=True,
+    )
+    try:
+        if 300 <= response.status_code < 400:
+            raise requests.HTTPError(
+                f"LiveKit redirected (HTTP {response.status_code})", response=response
+            )
+        response.raise_for_status()
+        content = (
+            response.raw.read(LIVEKIT_MAX_RESPONSE_BYTES + 1, decode_content=True)
+            or b""
+        )
+        if len(content) > LIVEKIT_MAX_RESPONSE_BYTES:
+            raise LiveKitUnreadable("the response is larger than 1 MiB")
+        listing = json.loads(content) if content else {}
+        if not isinstance(listing, dict):
+            raise LiveKitUnreadable("the response is not a JSON object")
+        return listing
+    finally:
+        response.close()
+
+
+def _livekit_token(livekit_api: Any, values: Mapping[str, str]) -> Any:
+    return livekit_api.AccessToken(
+        values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
+    ).with_ttl(LIVEKIT_TOKEN_TTL)
 
 
 def _livekit(values: Mapping[str, str]) -> ProbeRequest:
@@ -103,15 +169,13 @@ def _livekit(values: Mapping[str, str]) -> ProbeRequest:
     from livekit import api as livekit_api
 
     token = (
-        livekit_api.AccessToken(
-            values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
-        )
+        _livekit_token(livekit_api, values)
         .with_grants(livekit_api.VideoGrants(room_list=True))
         .to_jwt()
     )
     return ProbeRequest(
         "POST",
-        f"{_livekit_http_url(values['LIVEKIT_URL'])}/twirp/livekit.RoomService/ListRooms",
+        f"{_livekit_base_url(values['LIVEKIT_URL'])}/twirp/livekit.RoomService/ListRooms",
         {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
 
@@ -198,6 +262,15 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             headers=dict(request.headers),
             json={} if request.method == "POST" else None,
             timeout=PROBE_TIMEOUT_SECONDS,
+            allow_redirects=False,
+        )
+    except SsrfBlocked as exc:
+        return ProbeResult(
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label} URL refused: {exc}",
         )
     except requests.RequestException as exc:
         # The run's own connect stage would hit the same wall, so this is a failure too.
@@ -215,6 +288,15 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             spec.aliases,
             False,
             f"{spec.label} check could not run ({type(exc).__name__}); check {named}",
+        )
+    if 300 <= response.status_code < 400:
+        return ProbeResult(
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label} redirected the check (HTTP {response.status_code});"
+            f" check {named}",
         )
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
@@ -284,11 +366,12 @@ def probe_livekit_agent(
         return result(False, str(exc))
 
     room = f"_preflight_agent_{uuid.uuid4().hex[:8]}"
-    base_url = f"{_livekit_http_url(values['LIVEKIT_URL'])}/twirp"
+    try:
+        base = _livekit_base_url(values["LIVEKIT_URL"])
+    except (SsrfBlocked, ValueError) as exc:
+        return result(False, f"LiveKit URL refused: {exc}")
     token = (
-        livekit_api.AccessToken(
-            values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
-        )
+        _livekit_token(livekit_api, values)
         .with_grants(
             livekit_api.VideoGrants(
                 room_create=True, room_admin=True, room_list=True, room=room
@@ -297,16 +380,12 @@ def probe_livekit_agent(
         .to_jwt()
     )
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    budget = time.perf_counter() + LIVEKIT_PROBE_BUDGET_SECONDS
 
-    def call(service: str, method: str, body: dict[str, Any]) -> dict[str, Any]:
-        response = requests.post(
-            f"{base_url}/livekit.{service}/{method}",
-            headers=headers,
-            json=body,
-            timeout=PROBE_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        return response.json() if response.content else {}
+    def call(
+        service: str, method: str, body: dict[str, Any], deadline: float = 0.0
+    ) -> dict[str, Any]:
+        return _livekit_call(base, headers, service, method, body, deadline or budget)
 
     try:
         call(
@@ -343,8 +422,13 @@ def probe_livekit_agent(
                 time.sleep(LIVEKIT_AGENT_POLL_SECONDS)
         finally:
             try:
-                call("RoomService", "DeleteRoom", {"room": room})
-            except requests.RequestException:
+                call(
+                    "RoomService",
+                    "DeleteRoom",
+                    {"room": room},
+                    time.perf_counter() + PROBE_TIMEOUT_SECONDS,
+                )
+            except (requests.RequestException, ValueError):
                 logger.warning(
                     "livekit_agent_probe_room_cleanup_failed", room=room, exc_info=True
                 )
@@ -359,6 +443,13 @@ def probe_livekit_agent(
         return result(
             False,
             f"LiveKit returned HTTP {status} while checking agent '{agent_name}'",
+        )
+    except (ValueError, json_format.ParseError) as exc:
+        logger.warning("livekit_agent_probe_bad_response", exc_info=True)
+        return result(
+            False,
+            f"LiveKit returned an unreadable response ({type(exc).__name__}); "
+            "retry Preflight",
         )
     except requests.RequestException as exc:
         logger.warning("livekit_agent_probe_unreachable", exc_info=True)
@@ -533,25 +624,20 @@ def probe_livekit_phone_routing(
         logger.warning("livekit_routing_probe_unavailable", exc_info=True)
         return result(False, str(exc))
 
-    base_url = f"{_livekit_http_url(values['LIVEKIT_URL'])}/twirp"
+    try:
+        base = _livekit_base_url(values["LIVEKIT_URL"])
+    except (SsrfBlocked, ValueError) as exc:
+        return result(False, f"LiveKit URL refused: {exc}")
     token = (
-        livekit_api.AccessToken(
-            values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
-        )
+        _livekit_token(livekit_api, values)
         .with_sip_grants(livekit_api.SIPGrants(admin=True))
         .to_jwt()
     )
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    budget = time.perf_counter() + LIVEKIT_PROBE_BUDGET_SECONDS
 
     def listing(service: str, method: str) -> dict[str, Any]:
-        response = requests.post(
-            f"{base_url}/livekit.{service}/{method}",
-            headers=headers,
-            json={},
-            timeout=PROBE_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        return response.json() if response.content else {}
+        return _livekit_call(base, headers, service, method, {}, budget)
 
     try:
         trunks = json_format.ParseDict(
@@ -588,7 +674,7 @@ def probe_livekit_phone_routing(
         return result(
             False, f"LiveKit returned HTTP {status} while checking {phone_number}"
         )
-    except (requests.JSONDecodeError, json_format.ParseError) as exc:
+    except (ValueError, json_format.ParseError) as exc:
         logger.warning("livekit_routing_probe_bad_response", exc_info=True)
         return result(
             False,

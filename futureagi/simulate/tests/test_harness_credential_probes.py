@@ -1,13 +1,17 @@
+import json as jsonlib
 from unittest.mock import Mock, patch
 
+import jwt
 import pytest
 import requests
 from google.protobuf import json_format
 
 from simulate.services.harness_credential_probes import (
     LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS,
+    LIVEKIT_MAX_RESPONSE_BYTES,
     _cloud_phone_numbers,
     _phone_routing_verdict,
+    probe,
     probe_livekit_phone_routing,
     probe_provider_target,
 )
@@ -15,6 +19,22 @@ from simulate.services.harness_provider import (
     _preflight_checks,
     _preflight_credential_probe,
 )
+
+
+@pytest.fixture(autouse=True)
+def public_hosts():
+    with patch(
+        "simulate.services.harness_credential_probes.assert_url_host_public"
+    ) as guard:
+        yield guard
+
+
+def _answer(response, payload):
+    response.raw.read.return_value = (
+        jsonlib.dumps(payload).encode() if payload is not None else b""
+    )
+    return response
+
 
 LIVEKIT_VALUES = {
     "LIVEKIT_URL": "wss://demo.livekit.cloud",
@@ -101,7 +121,7 @@ def _livekit_server(
     job_polls = iter(jobs)
     participant_polls = iter(participants)
 
-    def post(url, headers, json, timeout):
+    def post(url, headers, json, timeout, **kwargs):
         method = url.rsplit("/", 1)[-1]
         calls.append((method, json))
         if error is not None:
@@ -118,8 +138,7 @@ def _livekit_server(
             "ListDispatch": lambda: _dispatch_listing(next(job_polls, []), camel),
             "ListParticipants": lambda: {"participants": next(participant_polls, [])},
         }
-        response.json.return_value = responses.get(method, dict)()
-        return response
+        return _answer(response, responses.get(method, dict)())
 
     return post, calls
 
@@ -270,11 +289,11 @@ def test_livekit_target_probe_still_reports_the_join_when_cleanup_fails(sleep):
         jobs=[[TARGET_IDENTITY]], participants=[[{"identity": TARGET_IDENTITY}]]
     )
 
-    def post_with_failing_delete(url, headers, json, timeout):
+    def post_with_failing_delete(url, headers, json, timeout, **kwargs):
         if url.endswith("/DeleteRoom"):
             calls.append(("DeleteRoom", json))
             raise requests.ConnectionError("gone")
-        return post(url, headers, json, timeout)
+        return post(url, headers, json, timeout, **kwargs)
 
     with patch(
         "simulate.services.harness_credential_probes.requests.post",
@@ -595,7 +614,7 @@ def _livekit_sip_server(
 ):
     calls = []
 
-    def post(url, headers, json, timeout):
+    def post(url, headers, json, timeout, **kwargs):
         method = url.rsplit("/", 1)[-1]
         calls.append(method)
         if error is not None:
@@ -613,8 +632,7 @@ def _livekit_sip_server(
             "ListSIPDispatchRule": rules,
             "ListPhoneNumbers": cloud,
         }
-        response.json.return_value = {"items": list(listings[method])}
-        return response
+        return _answer(response, {"items": list(listings[method])})
 
     return post, calls
 
@@ -670,9 +688,9 @@ def test_routing_probe_reports_other_http_errors():
 def test_routing_probe_reports_an_unreadable_response():
     post, _calls = _livekit_sip_server()
 
-    def post_with_bad_json(url, headers, json, timeout):
-        response = post(url, headers, json, timeout)
-        response.json.side_effect = requests.JSONDecodeError("bad", "", 0)
+    def post_with_bad_json(url, headers, json, timeout, **kwargs):
+        response = post(url, headers, json, timeout, **kwargs)
+        response.raw.read.return_value = b"not json"
         return response
 
     with patch(
@@ -684,6 +702,114 @@ def test_routing_probe_reports_an_unreadable_response():
     assert result.message == (
         "LiveKit returned an unreadable response (JSONDecodeError); retry Preflight"
     )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        [{"e164_format": NUMBER}],
+        b"{" + b" " * LIVEKIT_MAX_RESPONSE_BYTES + b"}",
+    ],
+    ids=["a-json-list", "over-the-size-cap"],
+)
+def test_routing_probe_treats_a_list_or_oversized_reply_as_unreadable(body):
+    post, _calls = _livekit_sip_server()
+
+    def post_with_body(url, headers, json, timeout, **kwargs):
+        response = post(url, headers, json, timeout, **kwargs)
+        if url.endswith("/ListPhoneNumbers"):
+            response.raw.read.return_value = (
+                body if isinstance(body, bytes) else jsonlib.dumps(body).encode()
+            )
+        return response
+
+    with patch(
+        "simulate.services.harness_credential_probes.requests.post", post_with_body
+    ):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == (
+        "LiveKit returned an unreadable response (LiveKitUnreadable); retry Preflight"
+    )
+
+
+def test_livekit_requests_never_follow_redirects_and_read_a_capped_body():
+    post, _calls = _livekit_sip_server(cloud=[CLOUD_NUMBER], rules=[_rule()])
+    seen = []
+
+    def recording(url, headers, json, timeout, **kwargs):
+        seen.append((kwargs, headers))
+        return post(url, headers, json, timeout, **kwargs)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", recording):
+        probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert seen and all(
+        kwargs == {"allow_redirects": False, "stream": True} for kwargs, _h in seen
+    )
+    token = seen[0][1]["Authorization"].removeprefix("Bearer ")
+    claims = jwt.decode(token, options={"verify_signature": False})
+    assert claims["exp"] - claims["nbf"] <= 60
+
+
+@pytest.mark.parametrize("status", [301, 302, 307])
+def test_a_livekit_redirect_is_a_failure_not_followed(status):
+    post, calls = _livekit_sip_server(status=status)
+
+    with patch("simulate.services.harness_credential_probes.requests.post", post):
+        result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
+
+    assert result is not None and result.ok is False
+    assert result.message == f"LiveKit returned HTTP {status} while checking {NUMBER}"
+    assert calls == ["ListSIPInboundTrunk"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://demo.livekit.cloud",
+        "ws://demo.livekit.cloud",
+        "https://user:pw@demo.livekit.cloud",
+        "wss://[::1",
+        "demo.livekit.cloud",
+    ],
+)
+@patch("simulate.services.harness_credential_probes.requests.post")
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_every_livekit_probe_refuses_a_url_that_is_not_https_or_wss(request, post, url):
+    values = {**ROUTING_VALUES, "LIVEKIT_URL": url}
+
+    results = [
+        probe("livekit", values),
+        probe_provider_target("livekit", "returns-agent", values),
+        probe_livekit_phone_routing(NUMBER, values, CALLER),
+    ]
+
+    assert [one.ok for one in results] == [False, False, False]
+    assert all("URL refused" in one.message for one in results)
+    request.assert_not_called()
+    post.assert_not_called()
+
+
+@patch("simulate.services.harness_credential_probes.requests.post")
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_every_livekit_probe_refuses_an_internal_host(request, post, public_hosts):
+    from tfc.utils.ssrf_guard import assert_url_host_public
+
+    public_hosts.side_effect = assert_url_host_public
+    values = {**ROUTING_VALUES, "LIVEKIT_URL": "wss://127.0.0.1:7880"}
+
+    results = [
+        probe("livekit", values),
+        probe_provider_target("livekit", "returns-agent", values),
+        probe_livekit_phone_routing(NUMBER, values, CALLER),
+    ]
+
+    assert [one.ok for one in results] == [False, False, False]
+    assert all("private/internal address" in one.message for one in results)
+    request.assert_not_called()
+    post.assert_not_called()
 
 
 def test_routing_results_get_their_own_preflight_check():
