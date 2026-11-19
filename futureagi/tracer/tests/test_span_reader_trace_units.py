@@ -12,6 +12,7 @@ import uuid
 
 import pytest
 
+from tracer.services.clickhouse.v2.id_remap_sql import NIL_UUID
 from tracer.tests.test_session_trace_ids_prefilter import START, _client, _ids
 from tracer.tests.test_span_reader_remap_roots import _remap, _root
 
@@ -21,7 +22,7 @@ def world():
     client = _client()
     project, other = _ids(2)
     session, old_session, new_session = _ids(3)
-    names = ["call", "chained", "alone", "old", "new", "moved", "gone", "other"]
+    names = ["call", "chained", "alone", "nil", "old", "new", "moved", "gone", "other"]
     t = dict(zip(names, _ids(len(names)), strict=True))
     try:
         _root(
@@ -37,6 +38,8 @@ def world():
             observation_type="conversation",
             parent_span_id="root-span",
         )
+        # A trace with no session that carries the nil id is no session either.
+        _root(client, project, t["nil"], session=NIL_UUID, observation_type="agent")
         # A session the remap consolidated: a root under either id reads as the
         # group's survivor, so the two are one session.
         _root(client, project, t["old"], session=old_session)
@@ -89,6 +92,7 @@ def test_each_trace_reads_its_root_as_it_is_now(world):
         t["call"]: ("conversation", world["session"]),
         t["chained"]: ("chain", world["session"]),
         t["alone"]: ("agent", None),
+        t["nil"]: ("agent", None),
         t["old"]: ("agent", survivor),
         t["new"]: ("agent", survivor),
         t["moved"]: ("agent", world["session"]),

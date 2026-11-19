@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.utils import timezone
 
+from accounts.models import Organization, Workspace
 from model_hub.models.ai_model import AIModel
 from simulate.models import (
     AgentFixIssueJob,
@@ -85,7 +86,7 @@ def boundaries():
     service = "simulate.services.agent_fix_issue"
     with (
         patch(f"{service}.start_drafting") as drafting,
-        patch(f"{service}._dispatch") as dispatch,
+        patch(f"{service}.dispatch_run") as dispatch,
         patch(f"{service}.start_agent_fix_issue_workflow") as workflow,
         patch(f"{service}.cancel_hosted_harness_gateway_workflow") as cancel,
     ):
@@ -906,6 +907,50 @@ class TestApi:
         by_key = {one["scenario_key"]: one for one in response.json()}
         assert by_key[KEYS[0]]["issue_cluster_id"] == issue.cluster_id
         assert by_key[KEYS[1]]["issue_cluster_id"] is None
+
+    @pytest.mark.parametrize("elsewhere", ["workspace", "organization"])
+    def test_another_workspace_or_organization_reaches_nothing(
+        self, auth_client, environment, issue, user, organization, elsewhere
+    ):
+        job, case = _in_review(environment, issue, user)
+        owner = (
+            organization
+            if elsewhere == "workspace"
+            else Organization.objects.create(name="Other org")
+        )
+        other = Workspace.no_workspace_objects.create(
+            name="Other workspace",
+            organization=owner,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        moved = {"organization_id": owner.id, "workspace_id": other.id}
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(**moved)
+        Project.no_workspace_objects.filter(id=issue.project_id).update(**moved)
+        EvidenceImport.no_workspace_objects.filter(id=job.evidence_import_id).update(
+            **moved
+        )
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(**moved)
+        named = {"cluster_id": issue.cluster_id, "project_id": str(issue.project_id)}
+
+        planned = auth_client.get(f"{ISSUES}/plan/", named)
+        read = auth_client.get(f"{ISSUES}/{job.id}/")
+        ran = auth_client.post(
+            f"{ISSUES}/{job.id}/run/",
+            {"case_ids": [str(case.id)], "surfaces": ["prompt"], "budget_credits": 500},
+            format="json",
+        )
+        stopped = auth_client.post(f"{ISSUES}/{job.id}/stop/", {}, format="json")
+        listed = auth_client.get(f"{ISSUES}/", {"cluster_ids": issue.cluster_id})
+
+        assert [one.status_code for one in (planned, read, ran, stopped)] == [
+            404
+        ] * 4, [one.content for one in (planned, read, ran, stopped)]
+        assert listed.status_code == 200, listed.content
+        assert listed.json()["results"] == []
+        job.refresh_from_db()
+        assert (job.ending, job.baseline_run_id) == (None, None)
 
 
 def test_the_pull_request_links_the_issue(environment, issue, source_run, settings):

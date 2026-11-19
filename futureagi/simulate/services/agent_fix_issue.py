@@ -57,7 +57,7 @@ from simulate.selectors.agent_fix_issue import (
 )
 from simulate.selectors.evidence_import import MAX_SOURCES
 from simulate.services.agent_fix_agents import agent_kind
-from simulate.services.agent_fix_engine import _dispatch
+from simulate.services.agent_fix_engine import dispatch_run
 from simulate.services.agent_fix_runs import launch_fix_run
 from simulate.services.evidence_drafts import forget, start_drafting
 from simulate.services.evidence_import import (
@@ -459,7 +459,7 @@ def _run(
         locked.baseline_run = run
         locked.save(update_fields=["launch", "baseline_run", "updated_at"])
         job_id = str(locked.id)
-        transaction.on_commit(lambda: _dispatch(run))
+        transaction.on_commit(lambda: dispatch_run(run))
         transaction.on_commit(lambda: _start_workflow(job_id))
     logger.info(
         "agent_fix_issue_job_measuring",

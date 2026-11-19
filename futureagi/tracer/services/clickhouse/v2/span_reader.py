@@ -39,6 +39,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.v2.id_remap_sql import (
+    NIL_UUID,
     remap_left_join,
     resolved_id_expr,
 )
@@ -1639,6 +1640,11 @@ class CHSpanReader:
             parameters={"pid": str(project_id), "tids": tids},
             settings=_TRACE_UNIT_SETTINGS,
         ).result_rows
+        # The nil id is no session, as this file's other reads treat it.
+        rows = [
+            (trace_id, kind, None if session in (None, "", NIL_UUID) else session, at)
+            for trace_id, kind, session, at in rows
+        ]
         survivors = self.remap_groups(
             "trace_session_id_remap", (row[2] for row in rows if row[2])
         )
