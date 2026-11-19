@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.59.1](https://github.com/future-agi/future-agi/compare/v1.59.0...v1.59.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **dashboards:** keep the metrics catalog when a workspace has over 64 projects ([#4236](https://github.com/future-agi/future-agi/issues/4236)) ([f34bd0d](https://github.com/future-agi/future-agi/commit/f34bd0df59263f6989ca61497d2a89f3fdc136ee))
+* **sql-workbench:** explain query errors in the workbench ([#4256](https://github.com/future-agi/future-agi/issues/4256)) ([4230a21](https://github.com/future-agi/future-agi/commit/4230a21c792d3d02e56303d66c46432302f45f68))
+* **tasks:** save composite child input mappings so task scores are correct ([#4254](https://github.com/future-agi/future-agi/issues/4254)) ([9e7655f](https://github.com/future-agi/future-agi/commit/9e7655fba2c3bbe6e0de171d9d5e8c81f405d82c))
+
 ## [1.59.0](https://github.com/future-agi/future-agi/compare/v1.58.0...v1.59.0) (2026-11-18)
 
 
