@@ -209,18 +209,27 @@ def require_forward_definition_published(manifest, definition):
 @contextmanager
 def metric_read(metric, *, store=None):
     _check_metric(metric)
-    if metric.active_version is None:
-        raise MetricUnavailableError(
-            "metric_recalculating", "No completed active definition is available yet."
+    active = metric.active_version
+    if active is not None:
+        require_materialized(active)
+    if active is None or active.history_mode == DerivedMetricVersion.HistoryMode.FORWARD:
+        state = (
+            MetricProjectRefresh.objects.filter(project_id=metric.project_id)
+            .values_list("head_manifest_id", "paused_reason")
+            .first()
         )
-    require_materialized(metric.active_version)
-    if (
-        metric.active_version.history_mode == DerivedMetricVersion.HistoryMode.FORWARD
-        and not MetricProjectRefresh.objects.filter(
-            project_id=metric.project_id, head_manifest__isnull=False
-        ).exists()
-    ):
-        require_forward_definition_published(None, metric.active_version)
+        if state == (None, "too_large"):
+            raise MetricUnavailableError(
+                "window_not_calculated_yet",
+                "Metrics are paused because this project exceeds the size limit. No values have been calculated.",
+                reason="too_large",
+            )
+        if active is None:
+            raise MetricUnavailableError(
+                "metric_recalculating", "No completed active definition is available yet."
+            )
+        if not state or state[0] is None:
+            require_forward_definition_published(None, active)
     with nullcontext(store) if store is not None else read_store() as connection:
         with pinned_read(connection, metric.project_id, metric_id=metric.id) as (
             manifest,

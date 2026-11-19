@@ -929,6 +929,20 @@ def test_forward_metric_before_its_first_publication_reads_as_not_calculated_yet
             assert result.data["retryable"] is True and "value" not in result.data
         store.assert_not_called()
 
+    from tracer.services.derived_metrics import size_cap
+
+    assert size_cap.pause_if_too_large(
+        observe_project.id, size_cap.max_checkpoint_rows() + 1, now=NOW
+    )
+    with patch("tracer.services.derived_metrics.reads.read_store") as store:
+        for action in ("kpi", "trend", "drivers"):
+            result = auth_client.get(f"{ROOT}{metric_id}/{action}/", query)
+            assert result.status_code == 503, (action, result.data)
+            assert result.data["code"] == "window_not_calculated_yet", action
+            assert result.data["reason"] == "too_large", action
+            assert "calculated_through" not in result.data and "value" not in result.data
+        store.assert_not_called()
+
 
 @pytest.mark.django_db
 def test_forward_version_on_an_old_head_is_not_readable_or_snapshotable(
