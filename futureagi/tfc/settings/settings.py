@@ -1222,6 +1222,14 @@ HARNESS_SOURCE_SUBFOLDER_ENABLED = os.getenv(
 HARNESS_AGENT_READING_ENABLED = os.getenv(
     "HARNESS_AGENT_READING_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Charging a customer for each reading of an agent and each scan for agents. Off, nothing
+# is charged for any reading, background ones included, and one log line per reading says
+# what it would have cost. Not to be turned on until the rule for which outcomes are
+# charged is built: today a reading is charged before its outcome is known, so a failed
+# or "not supported" reading would be charged too.
+HARNESS_AGENT_READING_CHARGE_ENABLED = os.getenv(
+    "HARNESS_AGENT_READING_CHARGE_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # Starting a build from a version's stored reading instead of reading the agent
 # again; only once the sandbox's agent-learning-kit takes --seed-contract.
 HARNESS_SEED_CONTRACT_ENABLED = os.getenv(

@@ -1094,6 +1094,12 @@ a Mixpanel token.
     text = "Most entries kept on `usage:events` (about 160 bytes each) while its consumer is behind or stopped. A positive integer in plain digits; blank means the default. The app and fi-collector refuse to start on zero, a negative number or text."
 
     [[part.section.row]]
+    keys = ["HARNESS_AGENT_READING_CHARGE_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Only has an effect on Future AGI Cloud. A self-hosted install records no charge either way: `USAGE_EVENTS_ENABLED` is off there, and an install with no enterprise licence records none. On Future AGI Cloud, `true` charges the organization for the model use of each reading of an agent and each scan for agents in a source; `false` charges none and logs one line per reading, `agent_reading_not_charged`, with what it would have cost."
+
+    [[part.section.row]]
     keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
     default = "empty: no organization restricted"
     setups = ["S", "D", "H"]
