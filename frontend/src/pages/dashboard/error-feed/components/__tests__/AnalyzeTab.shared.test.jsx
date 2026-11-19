@@ -52,7 +52,7 @@ describe("AnalyzeTab on a shared issue", () => {
     renderShared();
 
     expect(
-      screen.getByText("No analysis saved for this issue."),
+      screen.getByText("No in-depth analysis saved for this issue."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });

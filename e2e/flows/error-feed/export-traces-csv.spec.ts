@@ -42,6 +42,7 @@ test(
       steps: [
         "open the issue page",
         "click Export",
+        "choose Traces",
         "save the downloaded CSV",
         "upload the downloaded CSV using the Add Dataset form",
       ],
@@ -197,10 +198,11 @@ test(
       exact: true,
     });
     await expect(exportButton).toBeEnabled({ timeout: UI_READY });
+    await exportButton.click();
 
     const [download] = await Promise.all([
       page.waitForEvent("download", { timeout: UI_READY }),
-      exportButton.click(),
+      page.getByRole("menuitem", { name: /^Traces/ }).click(),
     ]);
     expect(exportQueries).toEqual(["?rep_limit=200"]);
 

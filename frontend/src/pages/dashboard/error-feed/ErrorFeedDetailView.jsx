@@ -4,6 +4,10 @@ import {
   Button,
   Chip,
   IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -35,7 +39,8 @@ import AnalyzeTab from "./components/AnalyzeTab";
 import { useSharedIssue } from "./sharedIssueContext";
 import { useErrorFeedStore } from "./store";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
-import { downloadCsv, tracesToCsv } from "./exportTracesCsv";
+import { downloadFile, tracesToCsv } from "./exportTracesCsv";
+import { analysisToMarkdown, SAMPLE_TRACE_LIMIT } from "./issueAnalysis";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -79,7 +84,7 @@ const TABS = [
   { key: "overview", label: "Overview", icon: "solar:widget-4-linear" },
   { key: "traces", label: "Traces", icon: "solar:list-linear" },
   { key: "trends", label: "Trends", icon: "solar:graph-up-linear" },
-  { key: "analyze", label: "Fix", icon: "ph:screwdriver" },
+  { key: "analyze", label: "Root cause", icon: "solar:magnifer-linear" },
 ];
 
 // ── Main view ─────────────────────────────────────────────────────────────────
@@ -94,6 +99,7 @@ export default function ErrorFeedDetailView() {
   const [linearPickerOpen, setLinearPickerOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [clusterIdCopied, setClusterIdCopied] = useState(false);
+  const [exportAnchor, setExportAnchor] = useState(null);
   const setAnalyzePendingStart = useErrorFeedStore(
     (s) => s.setAnalyzePendingStart,
   );
@@ -118,36 +124,65 @@ export default function ErrorFeedDetailView() {
   const { enqueueSnackbar } = useSnackbar();
 
   const handleExportTraces = (clusterId) =>
-    exportTraces.mutate(clusterId, {
-      onSuccess: (overview) => {
-        const traces = overview?.representative_traces ?? [];
-        if (!traces.length) {
-          enqueueSnackbar("No traces to export", { variant: "info" });
-          return;
-        }
-        downloadCsv(tracesToCsv(traces), `error-feed-${clusterId}-traces.csv`);
-        const total = overview?.representative_total ?? traces.length;
-        if (total > traces.length) {
-          enqueueSnackbar(
-            `Exported the latest ${traces.length} of ${total} traces`,
-            { variant: "warning" },
+    exportTraces.mutate(
+      { clusterId },
+      {
+        onSuccess: (overview) => {
+          const traces = overview?.representative_traces ?? [];
+          if (!traces.length) {
+            enqueueSnackbar("No traces to export", { variant: "info" });
+            return;
+          }
+          downloadFile(
+            tracesToCsv(traces),
+            `error-feed-${clusterId}-traces.csv`,
+            "text/csv;charset=utf-8",
           );
-        } else {
-          enqueueSnackbar(
-            `Exported ${traces.length} trace${traces.length === 1 ? "" : "s"}`,
-            { variant: "success" },
-          );
-        }
+          const total = overview?.representative_total ?? traces.length;
+          if (total > traces.length) {
+            enqueueSnackbar(
+              `Exported the latest ${traces.length} of ${total} traces`,
+              { variant: "warning" },
+            );
+          } else {
+            enqueueSnackbar(
+              `Exported ${traces.length} trace${traces.length === 1 ? "" : "s"}`,
+              { variant: "success" },
+            );
+          }
+        },
+        onError: () =>
+          enqueueSnackbar("Failed to export traces", { variant: "error" }),
       },
-      onError: () =>
-        enqueueSnackbar("Failed to export traces", { variant: "error" }),
-    });
+    );
+
+  // Built from the stored analysis and an Overview sample; no model call.
+  const handleExportAnalysis = (issue) =>
+    exportTraces.mutate(
+      { clusterId: issue.cluster_id, repLimit: SAMPLE_TRACE_LIMIT },
+      {
+        onSuccess: (overview) => {
+          downloadFile(
+            analysisToMarkdown(issue, overview),
+            `error-feed-${issue.cluster_id}-analysis.md`,
+            "text/markdown;charset=utf-8",
+          );
+          enqueueSnackbar("Exported the analysis", { variant: "success" });
+        },
+        onError: () =>
+          enqueueSnackbar("Failed to export the analysis", {
+            variant: "error",
+          }),
+      },
+    );
 
   const currentError = useMemo(() => {
     if (!detail?.row) return null;
     return {
       ...detail.row,
       description: detail.description,
+      fix_hypothesis: detail.fix_hypothesis,
+      falsifier: detail.falsifier,
       success_trace: detail.success_trace,
       representative_trace: detail.representative_trace,
       rca: detail.rca,
@@ -237,7 +272,9 @@ export default function ErrorFeedDetailView() {
               <Button
                 size="small"
                 variant="text"
-                startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:arrow-left-linear" width={14} />
+                }
                 onClick={() => navigate("/dashboard/error-feed")}
                 sx={{
                   color: "text.secondary",
@@ -363,16 +400,58 @@ export default function ErrorFeedDetailView() {
                     size="small"
                     variant="outlined"
                     startIcon={
-                      <Iconify icon="solar:download-minimalistic-linear" width={14} />
+                      <Iconify
+                        icon="solar:download-minimalistic-linear"
+                        width={14}
+                      />
                     }
-                    disabled={
-                      exportTraces.isPending || !currentError.trace_count
+                    endIcon={
+                      <Iconify icon="solar:alt-arrow-down-linear" width={14} />
                     }
-                    onClick={() => handleExportTraces(currentError.cluster_id)}
+                    disabled={exportTraces.isPending}
+                    onClick={(e) => setExportAnchor(e.currentTarget)}
+                    aria-haspopup="menu"
                     sx={{ borderColor: "divider", color: "text.secondary" }}
                   >
                     Export
                   </Button>
+                  <Menu
+                    anchorEl={exportAnchor}
+                    open={Boolean(exportAnchor)}
+                    onClose={() => setExportAnchor(null)}
+                    anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                    transformOrigin={{ vertical: "top", horizontal: "right" }}
+                  >
+                    <MenuItem
+                      disabled={!currentError.trace_count}
+                      onClick={() => {
+                        setExportAnchor(null);
+                        handleExportTraces(currentError.cluster_id);
+                      }}
+                    >
+                      <ListItemIcon>
+                        <Iconify icon="solar:document-text-linear" width={16} />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary="Traces"
+                        secondary="CSV · ready to upload as a dataset"
+                      />
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => {
+                        setExportAnchor(null);
+                        handleExportAnalysis(currentError);
+                      }}
+                    >
+                      <ListItemIcon>
+                        <Iconify icon="solar:notes-linear" width={16} />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary="Analysis"
+                        secondary="Markdown · cause, suggested change, pattern, traces"
+                      />
+                    </MenuItem>
+                  </Menu>
                   <Button
                     size="small"
                     variant="outlined"
@@ -438,7 +517,8 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          <Tabs sx={{ boxShadow: "none" }}
+          <Tabs
+            sx={{ boxShadow: "none" }}
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
           >
