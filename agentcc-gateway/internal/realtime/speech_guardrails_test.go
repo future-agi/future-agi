@@ -47,7 +47,7 @@ func speechInspector(t *testing.T, vendor, stage string) (*SpeechGuardrails, *[]
 	plugin := guardrails.NewPlugin(engine, registry, nil, nil, nil)
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
-	p, err := plugin.BindRealtime(rc)
+	p, err := plugin.BindRealtime(rc, guardrails.RealtimeTextBoth)
 	if err != nil {
 		t.Fatal(err)
 	}

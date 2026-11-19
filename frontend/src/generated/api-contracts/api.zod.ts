@@ -6285,6 +6285,7 @@ export const AgentccGuardrailPoliciesListResponse = zod.object({
         .optional(),
       applied_keys: zod.object({}).passthrough().optional(),
       applied_projects: zod.object({}).passthrough().optional(),
+      runs_on_gateway: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -6370,6 +6371,7 @@ export const AgentccGuardrailPoliciesReadResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6426,6 +6428,7 @@ export const AgentccGuardrailPoliciesUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6489,6 +6492,7 @@ export const AgentccGuardrailPoliciesPartialUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6504,7 +6508,7 @@ export const AgentccGuardrailPoliciesDeleteParams = zod.object({
 });
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const AgentccGuardrailPoliciesApplyParams = zod.object({
   id: zod
@@ -76162,6 +76166,8 @@ export const TracerFeedIssuesReadResponse = zod.object({
       external_issue_id: zod.string().min(1),
     }),
     description: zod.string().min(1),
+    fix_hypothesis: zod.string().min(1),
+    falsifier: zod.string().min(1),
     success_trace: zod.object({
       trace_id: zod.string().min(1),
       input: zod.string().min(1),
@@ -76262,6 +76268,8 @@ export const TracerFeedIssuesPartialUpdateResponse = zod.object({
       external_issue_id: zod.string().min(1),
     }),
     description: zod.string().min(1),
+    fix_hypothesis: zod.string().min(1),
+    falsifier: zod.string().min(1),
     success_trace: zod.object({
       trace_id: zod.string().min(1),
       input: zod.string().min(1),
@@ -86678,6 +86686,8 @@ export const TracerSharedReadResponse = zod.object({
           external_issue_id: zod.string().min(1),
         }),
         description: zod.string().min(1),
+        fix_hypothesis: zod.string().min(1),
+        falsifier: zod.string().min(1),
         success_trace: zod.object({
           trace_id: zod.string().min(1),
           input: zod.string().min(1),

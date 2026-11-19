@@ -1129,6 +1129,8 @@ def _apply_receipt_to_call(
                 ]
             )
     _apply_target_metrics(call, (call_data or {}).get("target_metrics"))
+    if call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+        _apply_receipt_turn_count(call, call_data)
     update_fields.extend(
         [
             "customer_call_id",
@@ -1488,6 +1490,26 @@ def _apply_target_metrics(call: CallExecution, target: dict[str, Any] | None) ->
     for source, field in _TARGET_TOKEN_FIELDS.items():
         if usage.get(source) is not None:
             metrics[field] = usage[source]
+    call.conversation_metrics_data = metrics
+
+
+def _apply_receipt_turn_count(
+    call: CallExecution, call_data: dict[str, Any] | None
+) -> None:
+    """Store a text call's turn count from its receipt.
+
+    Voice calls derive their counts from the stored transcript; a text call
+    never does, so without this its ``turn_count`` reads as missing and the
+    run's average turn count as 0. The receipt's ``turns`` counts exchanges,
+    the same meaning as a native chat call's ``turn_count``. A rerun reuses
+    the row, so a receipt without a call clears the last attempt's count.
+    """
+    metrics = dict(call.conversation_metrics_data or {})
+    turns = (call_data or {}).get("turns")
+    if isinstance(turns, int) and not isinstance(turns, bool) and turns >= 0:
+        metrics["turn_count"] = turns
+    else:
+        metrics.pop("turn_count", None)
     call.conversation_metrics_data = metrics
 
 
