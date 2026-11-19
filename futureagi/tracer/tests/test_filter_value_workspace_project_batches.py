@@ -1397,3 +1397,146 @@ def test_workspace_span_system_retained_lookup_failure_falls_back_to_epoch(
     )
     assert "secret-value-42" not in repr(logs)
     assert "system.parts" not in repr(logs)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fallback", [False, True], ids=["retained", "epoch"])
+def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
+    from tracer.services.clickhouse import client as native_client
+    from tracer.services.clickhouse import read_budget
+    from tracer.services.clickhouse.v2 import query_service
+
+    now = [0.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr(read_budget, "time", clock)
+    monkeypatch.setattr(native_client, "time", clock)
+    monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", 1450)
+    owners = {_uuid(201): _uuid(301), _uuid(202): _uuid(302)}
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([], []))
+    monkeypatch.setattr(
+        dashboard_view,
+        "project_queryset_for_request",
+        lambda request: _ProjectQuery([owners[str(request.workspace.pk)]], []),
+    )
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    calls = []
+
+    class Driver:
+        connection = SimpleNamespace(connected=True, send_receive_timeout=30.0)
+
+        def execute(self, query, params, *, settings, with_column_types):
+            if "system.parts" not in query:
+                return [], []
+            seconds = self.connection.send_receive_timeout
+            calls.append((seconds, settings["max_execution_time"]))
+            now[0] += seconds * 0.9
+            if fallback:
+                raise DriverNetworkError(_LEAKY_DETAIL)
+            return [(datetime(2020, 1, 1, tzinfo=UTC),)], [
+                ("retained_start", "DateTime")
+            ]
+
+    client = native_client.ClickHouseClient(server_enforced_readonly=False)
+    monkeypatch.setattr(client, "_create_client", lambda: Driver())
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    reads = []
+
+    class Analytics:
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            assert "PREWHERE project_id IN %(project_ids)s" in query
+            ids = params["project_ids"]
+            reads.append((ids, timeout_ms))
+            return SimpleNamespace(data=[{"val": item} for item in ids])
+
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", Analytics)
+    params = {
+        "metric_name": "name",
+        "metric_type": "system_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 1,
+    }
+
+    def invoke(workspace_id, **extra):
+        request = _request({**params, **extra})
+        request.workspace = SimpleNamespace(id=workspace_id, pk=workspace_id)
+        return dashboard_view.DashboardViewSet.filter_values.__wrapped__(
+            dashboard_view.DashboardViewSet(),
+            request,
+        )
+
+    cursors = []
+    with capture_logs() as logs:
+        for workspace_id, project_id in owners.items():
+            page = _result(invoke(workspace_id))
+            assert page["values"] == [{"value": project_id, "label": project_id}]
+            assert datetime.fromisoformat(page["query_window_start"]) == datetime(
+                1970 if fallback else 2020, 1, 1, tzinfo=UTC
+            )
+            assert reads[-1][0] == (project_id,)
+            assert reads[-1][1] >= 1000
+            cursors.append(page["next_cursor"])
+        assert all(cursors)
+        before = len(reads)
+        assert invoke(_uuid(202), cursor=cursors[0]).status_code == 400
+        assert len(reads) == before
+    assert len(calls) == 2
+    for transport, server in calls:
+        assert 0 < server <= 0.45
+        assert transport == pytest.approx(server)
+    assert all("query" not in entry and "error" not in entry for entry in logs)
+    assert "system.parts" not in repr(logs) and "secret-value-42" not in repr(logs)
+    with capture_logs() as ordinary:
+        client.execute_read("SELECT 1")
+    assert any(entry.get("query") == "SELECT 1" for entry in ordinary)
+
+
+@pytest.mark.unit
+def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(monkeypatch):
+    from threading import Event
+
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+    from tracer.services.clickhouse.v2 import query_service
+
+    entered, release = Event(), Event()
+    calls = []
+
+    class Driver:
+        def execute(self, *_args, **_kwargs):
+            calls.append(1)
+            entered.set()
+            release.wait(timeout=5)
+            return [], []
+
+    client = ClickHouseClient(server_enforced_readonly=False)
+    monkeypatch.setattr(client, "_create_client", lambda: Driver())
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    end = datetime.now(UTC)
+
+    def lookup(ms):
+        return dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)], window_end=end, deadline=ReadDeadline.start(ms)
+        )
+
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    assert lookup(1_024) == epoch
+    assert not calls
+    try:
+        deadline = ReadDeadline.start(1_500)
+        assert dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)], window_end=end, deadline=deadline
+        ) == epoch
+        assert entered.is_set()
+        assert deadline.remaining_ms() >= 900  # Allow scheduler jitter.
+        assert lookup(1_500) == epoch
+        assert calls == [1]
+    finally:
+        release.set()
+        # Drain the single worker before pytest restores patched dependencies.
+        dashboard_view._RETAINED_LOOKUP_POOL.submit(lambda: None).result(timeout=5)

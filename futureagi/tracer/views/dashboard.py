@@ -7,6 +7,7 @@ from decimal import Decimal
 from hashlib import blake2b
 from math import isfinite
 from numbers import Real
+from threading import BoundedSemaphore
 from time import monotonic
 from types import SimpleNamespace
 from uuid import UUID
@@ -61,6 +62,7 @@ from tracer.services.clickhouse.attribute_cursor_state import (
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS,
     ATTRIBUTE_READ_MAX_PROJECTS,
+    ATTRIBUTE_READ_METADATA_TIMEOUT_MS,
     AttributeReadSelector,
     InvalidAttributeKey,
 )
@@ -662,36 +664,55 @@ class _BatchedFilterValueCursor:
     new_project_batch: bool
 
 
+# Socket timeouts bound individual I/O, not the lifetime of a native call.
+# Never queue optional work or wait for a late driver during request cleanup.
+_RETAINED_LOOKUP_POOL = ThreadPoolExecutor(max_workers=1)
+_RETAINED_LOOKUP_SLOT = BoundedSemaphore(1)
+_RETAINED_PAGE_RESERVE_MS = 1_000
+
+
 def _batched_span_system_retained_window_start(
     project_ids,
     *,
     window_end: datetime,
     deadline,
 ) -> datetime:
-    """Return the first-page floor for a batched workspace span_system walk.
+    """Spend only time above the page reserve on the first-page accelerator."""
+    # Anchor before sampling the parent so setup cannot renew either wall.
+    lookup_deadline = ReadDeadline.start(ATTRIBUTE_READ_METADATA_TIMEOUT_MS)
+    try:
+        budget = deadline.remaining_ms() - _RETAINED_PAGE_RESERVE_MS
+    except ReadDeadlineExceeded:
+        return _FILTER_VALUE_RETAINED_START
+    if budget < 25 or not _RETAINED_LOOKUP_SLOT.acquire(blocking=False):
+        return _FILTER_VALUE_RETAINED_START
+    lookup_deadline = replace(
+        lookup_deadline, total_ms=min(budget, lookup_deadline.total_ms)
+    )
 
-    The retained-part lookup only shortens the walk; it is never needed for a
-    correct page. Any failure of that lookup (connection, timeout, server
-    error, invalid metadata, exhausted budget) falls back to the Unix epoch,
-    the pre-retained-floor walk, so it can never fail the picker request.
-    """
+    def lookup():
+        try:
+            selector = AttributeReadSelector(
+                typed_only=True,
+                json_attribute_mode="arrays",
+                wall_timeout_ms=lookup_deadline.remaining_ms(),
+                retained_lookup_deadline=lookup_deadline,
+            )
+            return selector.retained_window_start(project_ids, window_end=window_end)
+        finally:
+            _RETAINED_LOOKUP_SLOT.release()
 
     try:
-        retained_start = AttributeReadSelector(
-            typed_only=True,
-            json_attribute_mode="arrays",
-            wall_timeout_ms=deadline.remaining_ms(
-                ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-            ),
-        ).retained_window_start(project_ids, window_end=window_end)
-    except Exception as exc:  # noqa: BLE001 - best-effort lookup at the ClickHouse boundary; the full walk is correct
-        # Class name only: ClickHouse errors can echo query text and values.
-        logger.warning(
-            "dashboard_filter_value_retained_window_lookup_failed",
-            error_type=type(exc).__name__,
-        )
+        future = _RETAINED_LOOKUP_POOL.submit(lookup)
+    except RuntimeError:  # Executor shutdown: no worker owns the slot.
+        _RETAINED_LOOKUP_SLOT.release()
         return _FILTER_VALUE_RETAINED_START
-    return retained_attribute_window_start(retained_start, window_end=window_end)
+    try:
+        retained_start = future.result(timeout=lookup_deadline.remaining_ms() / 1000)
+        return retained_attribute_window_start(retained_start, window_end=window_end)
+    except Exception:  # noqa: BLE001 - optional metadata; epoch is lossless
+        logger.warning("dashboard_filter_value_retained_window_lookup_failed")
+        return _FILTER_VALUE_RETAINED_START
 
 
 def _batched_filter_value_cursor(

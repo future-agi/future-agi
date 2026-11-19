@@ -561,6 +561,8 @@ class ClickHouseClient:
         params: dict[str, Any] | None = None,
         timeout_ms: int | None = None,
         settings: dict[str, Any] | None = None,
+        *,
+        quiet_metadata: bool = False,
     ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
         """Execute a guarded read and include native rows/bytes progress."""
 
@@ -570,6 +572,7 @@ class ClickHouseClient:
             timeout_ms=timeout_ms,
             settings=settings,
             include_progress=True,
+            quiet_metadata=quiet_metadata,
         )
         assert len(result) == 5
         return result
@@ -582,6 +585,7 @@ class ClickHouseClient:
         settings: dict[str, Any] | None = None,
         *,
         include_progress: bool,
+        quiet_metadata: bool = False,
     ) -> (
         tuple[list[tuple], list[tuple], float]
         | tuple[list[tuple], list[tuple], float, int | None, int | None]
@@ -687,11 +691,12 @@ class ClickHouseClient:
             if not admission_acquired:
                 raise TimeoutError("ClickHouse read admission deadline exhausted")
             client = self._get_client()
-            logger.debug(
-                "Executing ClickHouse read query",
-                query=query[:200],
-                timeout_ms=timeout_ms,
-            )
+            if not quiet_metadata:
+                logger.debug(
+                    "Executing ClickHouse read query",
+                    query=query[:200],
+                    timeout_ms=timeout_ms,
+                )
             retry_attempt = 0
             while True:
                 try:
@@ -705,6 +710,8 @@ class ClickHouseClient:
                     )
                     break
                 except CHError as exc:
+                    if quiet_metadata:
+                        raise
                     if getattr(
                         exc, "code", None
                     ) != _TOO_MANY_SIMULTANEOUS_QUERIES_CODE or retry_attempt >= len(
@@ -757,15 +764,16 @@ class ClickHouseClient:
             read_rows = progress_metric("rows")
             read_bytes = progress_metric("bytes")
 
-            logger.info(
-                "ClickHouse read query completed",
-                query=query[:200],
-                query_time_ms=round(query_time_ms, 2),
-                rows_returned=rows_returned,
-                read_rows=read_rows,
-                read_bytes=read_bytes,
-                backend="clickhouse",
-            )
+            if not quiet_metadata:
+                logger.info(
+                    "ClickHouse read query completed",
+                    query=query[:200],
+                    query_time_ms=round(query_time_ms, 2),
+                    rows_returned=rows_returned,
+                    read_rows=read_rows,
+                    read_bytes=read_bytes,
+                    backend="clickhouse",
+                )
 
             rounded_query_time_ms = round(query_time_ms, 2)
             if include_progress:
@@ -780,13 +788,14 @@ class ClickHouseClient:
 
         except CHError as e:
             query_time_ms = (time.monotonic() - t_start) * 1000
-            logger.error(
-                "ClickHouse read query failed",
-                error=str(e),
-                query=query[:200],
-                query_time_ms=round(query_time_ms, 2),
-                backend="clickhouse",
-            )
+            if not quiet_metadata:
+                logger.error(
+                    "ClickHouse read query failed",
+                    error=str(e),
+                    query=query[:200],
+                    query_time_ms=round(query_time_ms, 2),
+                    backend="clickhouse",
+                )
             raise
         finally:
             if client is not None:
