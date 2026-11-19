@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from io import BytesIO
+from itertools import pairwise
 from typing import Any
 
 import structlog
@@ -37,6 +38,8 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.call_provider import HOSTED_TARGET_PROVIDER
+from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.scoring_status import (
     CSAT_STAMP_KEY,
@@ -49,7 +52,11 @@ from simulate.services.test_executor import (
     _run_simulate_evaluations_task,
 )
 from simulate.utils.ended_reason import to_canonical_ended_reason
-from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
+from simulate.utils.test_execution_utils import (
+    generate_simulator_agent_prompt,
+    is_fix_check_run,
+)
 from simulate.utils.websocket_notifications import notify_simulation_update
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -68,6 +75,7 @@ _ALK_BATCH_CLAIMED_KEY = "alk_batch_claimed"
 _RESERVED_CALL_METADATA_KEYS = frozenset(
     {
         _ALK_BATCH_CLAIMED_KEY,
+        HOSTED_TARGET_PROVIDER,
         "cost_deducted",
         "csat_dispatched",
         # Eval/CSAT idempotency guards + failure diagnostics the backend owns;
@@ -113,6 +121,13 @@ _TRANSCRIPT_ROLE_TO_METRIC_ROLE = {
 # assertion. Platform-backed checks use their real SimulateEvalConfig ID; only
 # execution-native checks use this namespace.
 _HARNESS_EVAL_NAMESPACE = uuid.UUID("754ea237-3306-4c91-a718-c3e1c304689c")
+# Not applicable and inconclusive are neither a pass nor a fail: no pass rate counts them.
+_HARNESS_OUTPUTS = {
+    "pass": "Passed",
+    "fail": "Failed",
+    "not_applicable": NOT_APPLICABLE_OUTPUT,
+    "inconclusive": INCONCLUSIVE_OUTPUT,
+}
 
 
 @dataclass(frozen=True)
@@ -951,7 +966,9 @@ def ingest_alk_sim_result(
         # a switched-on run test must still take the dispatch arm below even
         # with no catalogue eval selected.
         run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
-        if (
+        # A fix's check run starts no grading here: its fix grades the base version's and
+        # the winner's runs once it has a winner, and a fix with none pays for no evals.
+        if is_fix_check_run(call_execution.test_execution_id) or (
             "harness_evaluations" in call_metadata
             and not selected_eval_config_ids
             and not _tool_evaluation_on(run_test_id)
@@ -1501,18 +1518,25 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
                 call_execution=call_execution
             ).exists()
         ):
-            CallTranscript.objects.bulk_create(
+            store_transcript(
                 [
-                    CallTranscript(
-                        call_execution=call_execution,
-                        speaker_role=seg["speaker_role"],
-                        content=seg["content"],
-                        start_time_ms=seg.get("start_time_ms") or 0,
-                        end_time_ms=seg.get("end_time_ms") or 0,
-                        confidence_score=(
-                            seg["confidence_score"]
-                            if seg.get("confidence_score") is not None
-                            else 1.0
+                    SpokenTurn(
+                        row=CallTranscript(
+                            call_execution=call_execution,
+                            speaker_role=seg["speaker_role"],
+                            content=seg["content"],
+                            start_time_ms=seg.get("start_time_ms") or 0,
+                            end_time_ms=seg.get("end_time_ms") or 0,
+                            confidence_score=(
+                                seg["confidence_score"]
+                                if seg.get("confidence_score") is not None
+                                else 1.0
+                            ),
+                        ),
+                        speaker_name=(
+                            seg.get("speaker_name") or ""
+                            if seg["speaker_role"] == CallTranscript.SpeakerRole.ACTOR
+                            else ""
                         ),
                     )
                     for seg in segments
@@ -1541,15 +1565,20 @@ def _store_alk_chat_messages(
     ``tool_calls``, ``tool_call_result``) folds into that exchange's single
     ASSISTANT row. Folding keeps the agent's real tool activity visible while
     ``turn_count`` (COUNT of ASSISTANT rows) still equals the exchange count, the
-    native chat semantic. The USER and ASSISTANT rows of one exchange **share a
-    created_at**: that is what the chat UI groups a turn by — staggering per row
-    made every message render as interrupted.
+    native chat semantic.
+
+    Each row gets its own ``created_at``, in conversation order, anchored at the
+    call's ``started_at`` (the receipt's start time): the row's first segment's
+    ``start_time_ms`` offset when the transcript's offsets rise row by row, else
+    one second per row. Readers order a chat by ``created_at`` alone, so rows
+    must not share one.
 
     Mirrors ``simulate/tasks/chat_sim.py`` store_chat_messages (agent → ASSISTANT,
     simulator → USER). ``latency_ms`` is carried from the last agent segment that
     supplied one; transcripts without timing leave it null, as native does.
     """
     from simulate.utils.chat_simulation import estimate_tokens_text
+    from simulate.utils.stored_transcript_roles import call_actor_label
 
     run_test = call_execution.test_execution.run_test
     base = call_execution.started_at or timezone.now()
@@ -1565,7 +1594,8 @@ def _store_alk_chat_messages(
         role = (seg.get("speaker_role") or "").lower()
         if not (seg.get("content") or "").strip():
             continue
-        if role in {"user", "customer"}:
+        if role in {"user", "customer", "actor", "task"}:
+            # Someone else in the conversation (an actor) writes on the person's side, as their own turn.
             current = {"user": seg, "agent": []}
             exchanges.append(current)
         elif role in _CHAT_AGENT_SPEAKER_ROLES:
@@ -1574,14 +1604,27 @@ def _store_alk_chat_messages(
                 exchanges.append(current)
             current["agent"].append(seg)
 
+    def _text(seg: dict) -> str:
+        if (seg.get("speaker_role") or "").lower() == "actor":
+            return f"{call_actor_label(seg.get('name'))}: {seg.get('content') or ''}"
+        return seg.get("content") or ""
+
     def _row(role, role_str, segs, created_at, latency_ms=None) -> ChatMessageModel:
-        texts = [seg.get("content") or "" for seg in segs]
+        texts = [_text(seg) for seg in segs]
         content_items: list[dict] = []
         for seg in segs:
-            item = {"role": role_str, "content": seg.get("content") or ""}
+            speaker = (seg.get("speaker_role") or "").lower()
+            # The task's turn keeps its own role, so it is never read as the person's.
+            item = {
+                "role": "task" if speaker == "task" else role_str,
+                "content": _text(seg),
+            }
+            if seg.get("actor"):
+                item["actor"] = seg["actor"]
+                if seg.get("name"):
+                    item["name"] = seg["name"]
             if seg.get("tool_calls"):
                 item["tool_calls"] = seg["tool_calls"]
-            speaker = (seg.get("speaker_role") or "").lower()
             if speaker in {"tool_calls", "tool_call_result"}:
                 item["kind"] = speaker
             if isinstance(seg.get("start_time_ms"), int):
@@ -1603,10 +1646,11 @@ def _store_alk_chat_messages(
         )
 
     rows: list[ChatMessageModel] = []
-    for index, exchange in enumerate(exchanges):
-        created_at = base + timedelta(seconds=index)
+    row_offsets_ms: list[int | None] = []
+    for exchange in exchanges:
         if exchange["user"] is not None:
-            rows.append(_row(ChatRole.USER, "user", [exchange["user"]], created_at))
+            rows.append(_row(ChatRole.USER, "user", [exchange["user"]], base))
+            row_offsets_ms.append(exchange["user"].get("start_time_ms"))
         agent_segs = exchange["agent"]
         if agent_segs:
             latency = next(
@@ -1618,11 +1662,29 @@ def _store_alk_chat_messages(
                 None,
             )
             rows.append(
-                _row(ChatRole.ASSISTANT, "assistant", agent_segs, created_at, latency)
+                _row(ChatRole.ASSISTANT, "assistant", agent_segs, base, latency)
             )
+            row_offsets_ms.append(agent_segs[0].get("start_time_ms"))
+
+    offsets_ms = [ms for ms in row_offsets_ms if isinstance(ms, int)]
+    timed = len(offsets_ms) == len(row_offsets_ms) and all(
+        later > earlier for earlier, later in pairwise(offsets_ms)
+    )
+    if timed:
+        transcript_times = [base + timedelta(milliseconds=ms) for ms in offsets_ms]
+    else:
+        transcript_times = [
+            base + timedelta(seconds=index) for index in range(len(row_offsets_ms))
+        ]
 
     if rows:
+        # ``created_at`` is ``auto_now_add``, so bulk_create stamps every row
+        # with the import time. Write the transcript's own times back after the
+        # insert so the conversation keeps the date it actually happened.
         ChatMessageModel.objects.bulk_create(rows)
+        for row, created_at in zip(rows, transcript_times, strict=True):
+            row.created_at = created_at
+        ChatMessageModel.all_objects.bulk_update(rows, ["created_at"])
     return len(rows)
 
 
@@ -1872,6 +1934,9 @@ def _apply_harness_evaluation_outputs(
 
     outputs = dict(call_execution.eval_outputs or {})
     run_test = call_execution.test_execution.run_test
+    # Nobody reads the localizer on a fix's check run, so it is not paid for there.
+    # Asked once, and only when a localizer would run.
+    check_run: bool | None = None
     for evaluation in evaluations:
         if not isinstance(evaluation, dict):
             continue
@@ -1899,13 +1964,21 @@ def _apply_harness_evaluation_outputs(
                 output = evaluation["score"]
             output_type = "score"
         else:
-            output = "Passed" if bool(evaluation.get("passed")) else "Failed"
+            result = evaluation.get("result") or (
+                "pass" if evaluation.get("passed") else "fail"
+            )
+            verdict = _HARNESS_OUTPUTS.get(str(result))
+            if verdict is None:
+                # A verdict this platform does not know is not a failure: it is left out, as an unmeasured one is.
+                continue
+            output = verdict
             output_type = "Pass/Fail"
 
         outputs[output_id] = {
             "name": name,
             "output": output,
             "output_type": output_type,
+            **({"result": evaluation["result"]} if evaluation.get("result") else {}),
             "reason": str(evaluation.get("reason") or "")[:10000],
             "status": "completed",
             "source": "harness",
@@ -1918,7 +1991,13 @@ def _apply_harness_evaluation_outputs(
         # SimulateEvalConfig.error_localizer does not dispatch one. The task's
         # deterministic (call, config) source ID keeps result retries idempotent.
         if config is not None and config.error_localizer:
-            transcript = _render_harness_transcript(transcript_segments or [])
+            if check_run is None:
+                check_run = is_fix_check_run(call_execution.test_execution_id)
+            transcript = (
+                ""
+                if check_run
+                else _render_harness_transcript(transcript_segments or [])
+            )
             if transcript:
                 from model_hub.tasks.user_evaluation import (
                     trigger_error_localization_for_simulate,

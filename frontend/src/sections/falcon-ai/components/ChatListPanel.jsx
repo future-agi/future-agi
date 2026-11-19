@@ -256,8 +256,9 @@ export default function ChatListPanel() {
         setMessages(msgs);
         try {
           const s = await checkStreamStatus(id);
-          if (["running", "done"].includes(s.result?.stream_status))
-            setStreaming(true, null);
+          // Only a reply that is still being generated locks the composer;
+          // "done", "error", "cancelled" and "none" mean the chat is idle.
+          setStreaming(s.result?.stream_status === "running", null);
         } catch {
           /* non-critical */
         }

@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -20,6 +21,8 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/video/capability"
 	"github.com/futureagi/agentcc-gateway/internal/video/tariff"
 	"gopkg.in/yaml.v3"
+
+	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 )
 
 // Config is the top-level gateway configuration.
@@ -218,6 +221,12 @@ type AzureSecretsConfig struct {
 type ModelDatabaseConfig struct {
 	ValidationEnabled *bool                          `yaml:"validation_enabled" json:"validation_enabled"` // nil = default true
 	Overrides         map[string]ModelOverrideConfig `yaml:"overrides" json:"overrides"`
+
+	// CatalogueURL is fetched at startup and every CatalogueSyncInterval for a
+	// newer pricing catalogue (LiteLLM format). Empty turns the sync off, for
+	// air-gapped deployments. Read at startup only; a reload does not change it.
+	CatalogueURL          string        `yaml:"catalogue_url" json:"catalogue_url"`
+	CatalogueSyncInterval time.Duration `yaml:"catalogue_sync_interval" json:"catalogue_sync_interval"` // default 24h, minimum 1h
 }
 
 // IsValidationEnabled returns whether model validation is enabled (default true).
@@ -345,6 +354,60 @@ type ServerConfig struct {
 	// write deadline at this ceiling, so WriteTimeout no longer decides when
 	// a request the gateway resolved a deadline for can still answer.
 	MaxRequestTimeout time.Duration `yaml:"max_request_timeout" json:"max_request_timeout"`
+
+	// HTTPEnabled serves plain HTTP on Port. Nil means true, so a config
+	// file that predates TLS keeps its listener. Turn it off once every
+	// caller has moved to the TLS listener.
+	HTTPEnabled *bool `yaml:"http_enabled" json:"http_enabled,omitempty"`
+
+	// TLS serves HTTPS on its own port, from a certificate and key file
+	// that are reloaded when they change.
+	TLS ServerTLSConfig `yaml:"tls" json:"tls"`
+
+	// envErrors are listener switches in the environment that are not true
+	// or false; Validate refuses them.
+	envErrors []string
+}
+
+// ServerTLSConfig is the gateway's own HTTPS listener.
+type ServerTLSConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Port is the HTTPS port; 8443 by default.
+	Port int `yaml:"port" json:"port"`
+	// CertFile is PEM: the leaf first, then any intermediates, all served.
+	CertFile string `yaml:"cert_file" json:"cert_file"`
+	KeyFile  string `yaml:"key_file" json:"key_file"`
+	// MinVersion is "1.2" (the default) or "1.3".
+	MinVersion string `yaml:"min_version" json:"min_version"`
+	// ReloadInterval is how often the files are re-read; a changed pair is
+	// served from the next handshake on. Between 0 and 1m, 30s by default.
+	ReloadInterval time.Duration `yaml:"reload_interval" json:"reload_interval"`
+}
+
+// Server TLS defaults and limits.
+const (
+	DefaultTLSPort           = 8443
+	DefaultTLSMinVersion     = "1.2"
+	DefaultTLSReloadInterval = 30 * time.Second
+	// MaxTLSReloadInterval keeps a rotated certificate served within a minute.
+	MaxTLSReloadInterval = time.Minute
+)
+
+// HTTPOn reports whether the plain HTTP listener is on.
+func (s ServerConfig) HTTPOn() bool { return s.HTTPEnabled == nil || *s.HTTPEnabled }
+
+// ServingAddr is the address the gateway answers on: the HTTP listener, or
+// the HTTPS one when HTTP is off.
+func (c *Config) ServingAddr() string {
+	if c.Server.HTTPOn() {
+		return c.Addr()
+	}
+	return c.TLSAddr()
+}
+
+// TLSAddr returns the HTTPS listen address.
+func (c *Config) TLSAddr() string {
+	return net.JoinHostPort(c.Server.Host, strconv.Itoa(c.Server.TLS.Port))
 }
 
 type ProviderConfig struct {
@@ -1026,6 +1089,10 @@ type IPACLConfig struct {
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
+		ModelDatabase: ModelDatabaseConfig{
+			CatalogueURL:          modeldb.DefaultCatalogueURL,
+			CatalogueSyncInterval: modeldb.DefaultSyncInterval,
+		},
 		Video: defaultVideoConfig(),
 		Server: ServerConfig{
 			Port:                  8080,
@@ -1040,6 +1107,11 @@ func DefaultConfig() *Config {
 			DefaultRequestTimeout: 60 * time.Second,
 			// Unset: Load reads it as WriteTimeout, whatever that is set to.
 			MaxRequestTimeout: 0,
+			TLS: ServerTLSConfig{
+				Port:           DefaultTLSPort,
+				MinVersion:     DefaultTLSMinVersion,
+				ReloadInterval: DefaultTLSReloadInterval,
+			},
 		},
 		Providers: make(map[string]ProviderConfig),
 		ModelMap:  make(map[string]string),
@@ -1237,6 +1309,23 @@ func envDuration(name string, dst *time.Duration) {
 	*dst = d
 }
 
+// envListenerSwitch applies a listener switch (true or false) from the
+// environment. Unlike envDuration, a value that is not true or false is kept
+// for Validate to refuse, never ignored: ignoring it could leave a listener on
+// that the operator meant to turn off.
+func (s *ServerConfig) envListenerSwitch(name string, dst *bool) {
+	v := os.Getenv(name)
+	if v == "" {
+		return
+	}
+	b, err := strconv.ParseBool(strings.TrimSpace(v))
+	if err != nil {
+		s.envErrors = append(s.envErrors, fmt.Sprintf("%s must be true or false, got %q", name, v))
+		return
+	}
+	*dst = b
+}
+
 // envInt is envDuration for a plain integer.
 func envInt(name string, dst *int) {
 	v := os.Getenv(name)
@@ -1273,6 +1362,27 @@ func loadFromEnv(cfg *Config) {
 	envDuration("AGENTCC_DEFAULT_REQUEST_TIMEOUT", &cfg.Server.DefaultRequestTimeout)
 	envDuration("AGENTCC_MAX_REQUEST_TIMEOUT", &cfg.Server.MaxRequestTimeout)
 	envDuration("AGENTCC_SHUTDOWN_TIMEOUT", &cfg.Server.ShutdownTimeout)
+
+	// Listeners: plain HTTP on AGENTCC_PORT, HTTPS on AGENTCC_TLS_PORT.
+	// A typo in either switch fails startup rather than being ignored: an
+	// ignored AGENTCC_TLS_ENABLED=yes would serve plain HTTP only.
+	if os.Getenv("AGENTCC_HTTP_ENABLED") != "" {
+		httpOn := cfg.Server.HTTPOn()
+		cfg.Server.envListenerSwitch("AGENTCC_HTTP_ENABLED", &httpOn)
+		cfg.Server.HTTPEnabled = &httpOn
+	}
+	cfg.Server.envListenerSwitch("AGENTCC_TLS_ENABLED", &cfg.Server.TLS.Enabled)
+	envInt("AGENTCC_TLS_PORT", &cfg.Server.TLS.Port)
+	if v := os.Getenv("AGENTCC_TLS_CERT_FILE"); v != "" {
+		cfg.Server.TLS.CertFile = v
+	}
+	if v := os.Getenv("AGENTCC_TLS_KEY_FILE"); v != "" {
+		cfg.Server.TLS.KeyFile = v
+	}
+	if v := os.Getenv("AGENTCC_TLS_MIN_VERSION"); v != "" {
+		cfg.Server.TLS.MinVersion = v
+	}
+	envDuration("AGENTCC_TLS_RELOAD_INTERVAL", &cfg.Server.TLS.ReloadInterval)
 
 	// Control plane env overrides.
 	if v := os.Getenv("AGENTCC_CONTROL_PLANE_URL"); v != "" {
@@ -1345,6 +1455,9 @@ func loadFromEnv(cfg *Config) {
 func (c *Config) Validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535, got %d", c.Server.Port)
+	}
+	if err := c.Server.validateListeners(); err != nil {
+		return err
 	}
 	if c.Server.ReadTimeout <= 0 {
 		return fmt.Errorf("server.read_timeout must be positive")
@@ -1500,6 +1613,48 @@ func validateLicenseRSAPublicKey(raw string) error {
 		return fmt.Errorf("public key is not RSA")
 	}
 	return nil
+}
+
+// validateListeners refuses a server with no listener, or a TLS listener it
+// could not start. The certificate itself is checked when it is loaded.
+func (s ServerConfig) validateListeners() error {
+	if len(s.envErrors) > 0 {
+		return fmt.Errorf("%s", strings.Join(s.envErrors, "; "))
+	}
+	t := s.TLS
+	if !s.HTTPOn() && !t.Enabled {
+		return fmt.Errorf("server.http_enabled is false and server.tls.enabled is false: turn on at least one listener")
+	}
+	if !t.Enabled {
+		return nil
+	}
+	if t.CertFile == "" || t.KeyFile == "" {
+		return fmt.Errorf("server.tls.enabled needs server.tls.cert_file and server.tls.key_file (AGENTCC_TLS_CERT_FILE, AGENTCC_TLS_KEY_FILE)")
+	}
+	if t.Port < 1 || t.Port > 65535 {
+		return fmt.Errorf("server.tls.port must be between 1 and 65535, got %d", t.Port)
+	}
+	if s.HTTPOn() && t.Port == s.Port {
+		return fmt.Errorf("server.tls.port %d is also server.port: the HTTP and HTTPS listeners need their own ports", t.Port)
+	}
+	if _, err := ParseTLSMinVersion(t.MinVersion); err != nil {
+		return err
+	}
+	if t.ReloadInterval <= 0 || t.ReloadInterval > MaxTLSReloadInterval {
+		return fmt.Errorf("server.tls.reload_interval must be above 0 and at most %s, got %s", MaxTLSReloadInterval, t.ReloadInterval)
+	}
+	return nil
+}
+
+// ParseTLSMinVersion returns the crypto/tls version for server.tls.min_version.
+func ParseTLSMinVersion(v string) (uint16, error) {
+	switch strings.TrimSpace(v) {
+	case "", "1.2":
+		return tls.VersionTLS12, nil
+	case "1.3":
+		return tls.VersionTLS13, nil
+	}
+	return 0, fmt.Errorf("server.tls.min_version must be \"1.2\" or \"1.3\", got %q", v)
 }
 
 // Addr returns the listen address.

@@ -99,7 +99,7 @@ Apache 2.0 core. Every evaluator, every prompt, every trace is inspectable — *
 <td width="33%" valign="top">
 
 ###  Built for production
-Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**, **P99 ≤ 21 ms with guardrails on**. OpenTelemetry-native traces. 50+ framework instrumentors. Every claim reproducible via the committed benchmark harness.
+Go-based gateway with weighted routing and inline guardrails. OpenTelemetry-native traces. 50+ framework instrumentors. [Run the gateway microbenchmarks](./agentcc-gateway/README.md#-benchmarks) on your own hardware.
 
 </td>
 </tr>
@@ -155,17 +155,17 @@ downloads the images (about 800 MB) and waits until everything answers. The
 first boot sets up the database and takes a few minutes; <http://localhost:3000>
 shows its progress meanwhile.
 
-**2. Sign in and copy your keys**
+**2. Sign in and create your keys**
 
 Open <http://localhost:3000>, create your account (or sign in with the one the
-installer made), then copy the API key and secret key from **Keys** in the
-sidebar.
+installer made), then open **Keys** in the sidebar. Select **Add API Key** and
+copy the new API key and secret key from the creation dialog before closing it.
 
 **3. Send your first trace**
 
 ```bash
-pip install fi-instrumentation-otel
-export FI_API_KEY="<your API key>" FI_SECRET_KEY="<your secret key>" FI_BASE_URL="http://localhost:4318"
+pip install -U "fi-instrumentation-otel>=1.5.0"
+export FI_API_KEY="<your API key>" FI_SECRET_KEY="<your secret key>" FI_BASE_URL="http://localhost:8000" FI_TRACES_URL="http://localhost:4318"
 ```
 
 ```python
@@ -179,8 +179,11 @@ tracer_provider.force_flush()
 ```
 
 Open **Tracing** in the sidebar: `my-first-project` holds your first span.
-`http://localhost:4318` is this install's trace collector; it listens on this
-machine only.
+`FI_BASE_URL` is this install's API and `FI_TRACES_URL` its trace collector
+(`http://localhost:4318`, which listens on this machine only). `FI_TRACES_URL`
+needs fi-instrumentation-otel 1.5.0+ (Python) or @traceai/fi-core 1.4.0+
+(TypeScript, `npm install "@traceai/fi-core@^1.4.0"`); with an older SDK, set
+`FI_BASE_URL` to the collector URL instead.
 
 | | **Standalone** (default) | **Distributed** (at scale) |
 | --- | --- | --- |
@@ -311,7 +314,7 @@ OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewA
 <td width="33%" valign="top">
 
 ### 🎛️ Agent Command Center
-OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A. **~29k req/s, P99 ≤ 21ms with guardrails on.**
+OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A.
 
 <sub>[Docs →](https://docs.futureagi.com/docs/command-center?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_command_center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
 

@@ -34,6 +34,7 @@ from simulate.models import (
 from simulate.models.test_execution import CallExecution
 from simulate.selectors.agent_fix import ran_at
 from simulate.services import harness_usage
+from simulate.services.agent_setup import store_agent
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
@@ -70,6 +71,7 @@ from simulate.services.hosted_harness_gateway import (
     _platform_simulator_material,
     _provider_egress_domains,
     _provider_import_authoring_material,
+    _read_harness_spend,
     _resolved_egress_domains,
     _scenarios_cli_command,
     _validate_resolved_egress_domains,
@@ -87,9 +89,11 @@ from simulate.services.hosted_harness_gateway import (
 from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.hosted_sandbox import (
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from simulate.tests.test_agent_setup_service import source_agent
 from tfc.ee_loader import has_ee
 
 
@@ -910,6 +914,38 @@ def test_authoring_stage_outputs_exposes_generic_certification_evidence():
     assert certification["data"]["certificate"]["fingerprint"] == "sha256:test"
 
 
+def test_call_actor_stage_output_keeps_actors_without_a_channel():
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs_from_archive,
+    )
+
+    actors = {
+        "actors": [
+            {"id": "spouse", "name": "Sam", "channel": "audio_mix"},
+            {
+                "id": "claims_supervisor",
+                "name": "Dana Brooks",
+                "permitted_actions": ["approvals.put"],
+            },
+        ]
+    }
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        payload = json.dumps(actors).encode()
+        member = tarfile.TarInfo("actors.json")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue())
+
+    listing = next(item for item in outputs if item["kind"] == "call_actors")
+    assert [one["id"] for one in listing["data"]["call_actors"]] == [
+        "spouse",
+        "claims_supervisor",
+    ]
+    assert listing["summary"] == "2 actors"
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 
@@ -1170,6 +1206,9 @@ def _chat_state_payload():
                 "conv-1": {"digest": "d", "draft_basis": {"token": "abc123"}}
             },
             "draft_saves": {"key-1": {"pieces": {}, "at": "2026-10-18"}},
+            "evidence_adds": {
+                "key-2": {"import": "i", "cases": ["c"], "saved": True, "at": "t"}
+            },
         },
     }
 
@@ -1183,6 +1222,7 @@ def test_guest_job_document_drops_server_only_chat_state():
     assert list(_alk_secret_paths(document)) == []
     assert "conversation_checkpoints" in payload["metadata"]
     assert "draft_saves" in payload["metadata"]
+    assert "evidence_adds" in payload["metadata"]
 
 
 def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
@@ -1842,8 +1882,9 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
-    organization, settings, monkeypatch
+    organization, settings, monkeypatch, unrestricted
 ):
     payload = _payload()
     payload["source"] = {
@@ -1860,6 +1901,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_EGRESS_UNRESTRICTED = unrestricted
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
@@ -1914,6 +1956,10 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
     assert job.conversation.messages.get().content.startswith(
         "Build the test environment"
     )
@@ -1927,7 +1973,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring"
         in prepare_command
     )
-    assert client.params.unrestricted_egress is False
+    assert client.params.unrestricted_egress is unrestricted
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
         "*.vapi.ai",
@@ -1935,6 +1981,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ingest.example.com",
         "platform.example.com",
     }
+    # Controlled egress: the harness points the agent at a proxy that refuses every host outside this list.
+    allowed = dispatched["metadata"].get("egress_allowed_hosts")
+    assert allowed == (None if unrestricted else sorted(client.params.allowed_domains))
 
 
 @pytest.mark.django_db
@@ -3827,7 +3876,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: {},
+        lambda: {"ALK_HARNESS_MODEL": "gemini-3.7-flash"},
     )
     barrier = Barrier(2)
 
@@ -3851,6 +3900,16 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
+    # A build runs as a chat turn: its spend is in the chat's ledger, which the attempt's
+    # cleanup reads.
+    assert (
+        client.sandbox.process.session_request.env["ALK_SPEND_JOURNAL"]
+        == "/work/builder-cost.json"
+    )
     assert client.deleted is False
 
 
@@ -4136,7 +4195,8 @@ class _ExportWorld:
     job. The three producers owned by other tickets (the agent summary, the hidden
     simulation project and the key resolver) are stand-ins that record how they were
     called; the hidden project's row is made in the database when the stand-in is called.
-    With ``hidden="real"`` the hidden project is made by the real function instead.
+    With ``hidden="real"`` the hidden project is made by the real function instead. With
+    ``summary="real"`` the agent's setup is read from the versions the test stores.
     """
 
     def __init__(
@@ -4155,8 +4215,10 @@ class _ExportWorld:
         provider="enabled",
         project="live",
         snapshot_setting=_EXPORT_SNAPSHOT,
+        measure_setting=_EXPORT_SNAPSHOT,
         collector=_COLLECTOR,
         credentials="ok",
+        summary="stub",
         summary_raises=False,
         hidden="ok",
         cap_at_baseline=False,
@@ -4180,6 +4242,7 @@ class _ExportWorld:
         self.hidden = None
         self.hidden_calls = []
         self.summary_calls = []
+        self.summary_versions = []
         self.credential_calls = []
         self.logs = _Logs()
         self.collector = collector
@@ -4304,14 +4367,12 @@ class _ExportWorld:
             monkeypatch.delenv(name, raising=False)
         if collector is not None:
             monkeypatch.setenv("ALK_HOSTED_FI_BASE_URL", collector)
-        if snapshot_setting:
-            monkeypatch.setenv(
-                "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", snapshot_setting
-            )
-        else:
-            monkeypatch.delenv(
-                "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", raising=False
-            )
+        settings.ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = (
+            [snapshot_setting] if snapshot_setting else []
+        )
+        settings.ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = (
+            [measure_setting] if measure_setting else []
+        )
         monkeypatch.setattr(f"{_GATEWAY}.structlog_logger", self.logs)
         monkeypatch.setattr(
             f"{_GATEWAY}.PlatformSecretResolver.resolve",
@@ -4320,16 +4381,18 @@ class _ExportWorld:
 
         summary_module = ModuleType("simulate.services.agent_setup")
 
-        def agent_summary(agent_definition_id, *, agent_version_id=None):
+        def launched_agent_summary(agent_definition_id, *, agent_version_id):
             self.summary_calls.append(agent_definition_id)
+            self.summary_versions.append(agent_version_id)
             if summary_raises:
                 raise RuntimeError(_LEAK_SENTINEL)
             return SimpleNamespace(kind=kind, instrumentation=instrumentation)
 
-        summary_module.agent_summary = agent_summary
-        monkeypatch.setitem(
-            sys.modules, "simulate.services.agent_setup", summary_module
-        )
+        summary_module.launched_agent_summary = launched_agent_summary
+        if summary == "stub":
+            monkeypatch.setitem(
+                sys.modules, "simulate.services.agent_setup", summary_module
+            )
 
         ingest_module = ModuleType("tracer.services.collector_ingest")
         ingest_module.ExportCredentials = _ExportCredentials
@@ -4710,6 +4773,253 @@ def test_export_environment_and_keys_for_a_bound_source_agent_with_observability
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, declared, model_hosts",
+    [
+        ("untraced", None, "gateway.example.test"),
+        # The agent's own exporter keeps its own endpoint: ours is under a name it never reads.
+        (
+            "untraced-own",
+            {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"},
+            "gateway.example.test",
+        ),
+        # A model base URL the agent declares is a model host too; a tool's URL is not.
+        (
+            "untraced-llm",
+            {
+                "LLM_BASE_URL": "https://LLM.example/v1",
+                "CRM_BASE_URL": "https://crm.example",
+            },
+            "gateway.example.test,llm.example",
+        ),
+    ],
+)
+def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_read(
+    tag, declared, model_hosts, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        declared=declared,
+    ).launch()
+    mark = world.mark
+
+    assert world.export_log() == []
+    assert set(mark) == {
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "FI_SIMULATION_EXPORT",
+        "FI_SIMULATION_INSTRUMENT",
+        "FI_SIMULATION_TRACES_ENDPOINT",
+        "FI_SIMULATION_MODEL_HOSTS",
+    }
+    assert mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
+    assert mark["FI_SIMULATION_TRACES_ENDPOINT"] == f"{_COLLECTOR}/v1/traces"
+    # Every hosted model call goes to the platform's gateway: a request there outside a
+    # measured SDK call reads partial in the sandbox, never as a lower cost.
+    assert mark["FI_SIMULATION_MODEL_HOSTS"] == model_hosts
+    # Into the hidden project, under the agent's ingest key, as a traced agent's spans are.
+    assert f"project_name={quote(world.hidden.name, safe='')}" in _mark_text(mark)
+    assert {alias: world.secrets.get(alias) for alias in _INGEST_PAIR} == _INGEST_PAIR
+    # The agent's own endpoint, when it set one, reaches it as it gave it.
+    assert world.secrets == {**_INGEST_PAIR, **(declared or {})}
+    assert world.domains >= {"collector.example.com"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, options",
+    [
+        ("off-disabled", {"provider": "disabled"}),
+        ("off-missing", {"provider": "missing"}),
+        ("off-deleted", {"provider": "deleted"}),
+        ("off-project", {"project": "deleted"}),
+        ("off-org", {"project": "other_org"}),
+    ],
+)
+def test_an_untraced_agent_is_measured_whatever_its_observability_switch_says(
+    tag, options, organization, workspace, user, settings, monkeypatch
+):
+    # Measuring records the models, tokens and timing only, never prompts or replies, so the
+    # switch does not stop it. A traced agent's switch still does (see _REFUSALS).
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        **options,
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert world.mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
+    assert world.secrets == _INGEST_PAIR
+    # The spans go to the hidden project, never to the agent's own.
+    assert quote(world.project.name, safe="") not in _mark_text(world.mark)
+
+
+def _store_versions(agent, *instrumentations):
+    """One version per word, oldest first, each with a stored source setup that traces so."""
+    versions = []
+    for number, instrumentation in enumerate(instrumentations, start=1):
+        version = agent.create_version(
+            description="", commit_message=f"v{number}", status="active"
+        )
+        if instrumentation is not None:
+            store_agent(
+                agent_version_id=version.id,
+                agent=source_agent(instrumentation=instrumentation),
+                sdk_version="0.2.3",
+            )
+        versions.append(version)
+    return versions
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "pinned, newest, measured",
+    [
+        # A newer version that traces nothing does not measure an older traced one past
+        # its switch: the older one's own setup records prompts and replies.
+        ("traceai", "none", False),
+        # A newer traced version does not stop an older untraced one being measured.
+        ("none", "traceai", True),
+    ],
+)
+def test_the_version_a_run_launches_decides_its_export(
+    pinned, newest, measured, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"pin-{pinned}",
+        summary="real",
+        provider="disabled",
+    )
+    launched, _newer = _store_versions(world.agent, pinned, newest)
+    world.job.agent_version = launched
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    if measured:
+        assert world.export_log() == []
+        assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": "observability_off"})
+        ]
+        assert "FI_SIMULATION_EXPORT" not in world.mark
+
+
+@pytest.mark.django_db
+def test_a_run_pinned_to_a_version_with_no_stored_setup_reads_the_agent_s_own(
+    organization, workspace, user, settings, monkeypatch
+):
+    # A version made by a push stores no setup; the agent's newest stored one decides.
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="pin-pushed",
+        summary="real",
+        provider="disabled",
+    )
+    _stored, pushed = _store_versions(world.agent, "none", None)
+    world.job.agent_version = pushed
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("listed_in", ["settings", "environment"])
+@pytest.mark.parametrize(
+    "allowlist, instrumentation, refusal",
+    [
+        ("EXPORT", "traceai", "snapshot_unsupported"),
+        ("MEASURE", "none", "not_instrumented"),
+    ],
+)
+def test_the_snapshot_allowlists_are_read_from_django_settings(
+    allowlist,
+    instrumentation,
+    refusal,
+    listed_in,
+    organization,
+    workspace,
+    user,
+    settings,
+    monkeypatch,
+):
+    in_settings = _EXPORT_SNAPSHOT if listed_in == "settings" else ""
+    option = "snapshot_setting" if allowlist == "EXPORT" else "measure_setting"
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"{allowlist}-{listed_in}",
+        instrumentation=instrumentation,
+        **{option: in_settings},
+    )
+    # The process environment says the opposite of the setting; the setting decides.
+    monkeypatch.setenv(
+        f"ALK_HOSTED_OBSERVABILITY_{allowlist}_SNAPSHOTS",
+        "" if in_settings else _EXPORT_SNAPSHOT,
+    )
+
+    world.launch()
+
+    if in_settings:
+        assert world.export_log() == []
+        assert "FI_SIMULATION_EXPORT" in world.mark
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": refusal})
+        ]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instrumentation", ["traceai", "opentelemetry"])
+def test_a_snapshot_that_cannot_measure_still_exports_a_traced_agent(
+    instrumentation, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"nomeasure-{instrumentation[:4]}",
+        instrumentation=instrumentation,
+        measure_setting="",
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert "FI_SIMULATION_INSTRUMENT" not in world.mark
+    assert world.secrets == _INGEST_PAIR
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("flag", [None, "off", "on"])
 def test_the_harness_flag_never_changes_the_agents_own_export(
     flag, organization, workspace, user, settings, monkeypatch
@@ -4956,13 +5266,54 @@ _REFUSALS = {
         "snapshot_unsupported",
         "info",
     ),
+    # An untraced agent is measured only on a snapshot whose hook knows how: an older one
+    # would put our key on the exporter the agent aims at its own endpoint.
+    "untraced_on_a_snapshot_that_cannot_measure": (
+        {"instrumentation": "none", "measure_setting": "some-other-snapshot"},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_with_the_measure_setting_empty": (
+        {"instrumentation": "none", "measure_setting": ""},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_own_endpoint_on_a_snapshot_that_cannot_measure": (
+        {
+            "instrumentation": "none",
+            "measure_setting": "",
+            "declared": {
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"
+            },
+        },
+        "not_instrumented",
+        "info",
+    ),
     "unbound": ({"bind": "none"}, "not_bound", "info"),
     "metadata_id_not_a_uuid": ({"bind": "bad_id"}, "not_bound", "info"),
     "agent_of_another_organisation": ({"bind": "other_org"}, "not_bound", "info"),
     "agent_deleted": ({"bind": "deleted"}, "not_bound", "info"),
+    # A traced agent exports what its own setup records, prompts and replies included: its
+    # observability switch decides, whatever the instrumentation.
     "row_disabled": ({"provider": "disabled"}, "observability_off", "info"),
     "no_observability_row": ({"provider": "missing"}, "observability_off", "info"),
     "project_deleted": ({"project": "deleted"}, "observability_off", "info"),
+    "provider_row_deleted": ({"provider": "deleted"}, "observability_off", "info"),
+    "project_of_another_organisation": (
+        {"project": "other_org"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_row_disabled": (
+        {"instrumentation": "traceai", "provider": "disabled"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_no_observability_row": (
+        {"instrumentation": "traceai", "provider": "missing"},
+        "observability_off",
+        "info",
+    ),
     "hidden_project_without_workspace": (
         {"hidden": "no_workspace"},
         "no_workspace",
@@ -4989,12 +5340,6 @@ _REFUSALS = {
         {"declared": {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"}},
         "customer_configuration",
         "warning",
-    ),
-    "provider_row_deleted": ({"provider": "deleted"}, "observability_off", "info"),
-    "project_of_another_organisation": (
-        {"project": "other_org"},
-        "observability_off",
-        "info",
     ),
     "otel_declares_traces_endpoint_in_lower_case": (
         {"declared": {"otel_exporter_otlp_traces_endpoint": "https://theirs.example"}},
@@ -5063,7 +5408,6 @@ _REFUSALS = {
         "customer_configuration",
         "warning",
     ),
-    "not_instrumented": ({"instrumentation": "none"}, "not_instrumented", "info"),
     "export_key_disabled": ({"credentials": "disabled"}, "key_disabled", "warning"),
     "key_resolver_raises": ({"credentials": "raises"}, "no_key", "warning"),
     "key_resolver_answers_nothing": ({"credentials": "none"}, "no_key", "warning"),
@@ -5115,6 +5459,9 @@ def test_a_refused_export_leaves_the_mark_and_launches(
     if reason in _BEFORE_THE_HIDDEN_PROJECT or case in {
         "summary_raises",
         "summary_module_missing",
+        "untraced_on_a_snapshot_that_cannot_measure",
+        "untraced_with_the_measure_setting_empty",
+        "untraced_own_endpoint_on_a_snapshot_that_cannot_measure",
     }:
         # A run refused before that step must not have made the project.
         assert world.hidden_calls == []
@@ -5619,7 +5966,7 @@ def test_a_stale_progress_save_keeps_the_observability_refusal(
         observability_refusal=newer,
         harness_spend={"total_usd": 0.5, "unpriced_turns": 0, "attempts": {"2": other}},
     )
-    _record_harness_spend(stale, {"total_usd": 0.1, "stages": []}, 1)
+    _record_harness_spend(stale, 1, cli={"total_usd": 0.1, "stages": []})
 
     metadata = _stored_metadata(job.id)
     assert metadata["observability_refusal"] == newer
@@ -5658,6 +6005,95 @@ def test_a_stale_adjustment_save_keeps_the_observability_refusal(organization):
     ] == [
         ("adj-1", "applied"),
         ("adj-2", "pending"),
+    ]
+
+
+def _ledger(stage: str, usd: float) -> bytes:
+    """A spend ledger as ALK writes it, with one stage."""
+    return json.dumps(
+        {
+            "schema": "futureagi.harness-spend.v1",
+            "total_usd": usd,
+            "unpriced_turns": 0,
+            "stages": [
+                {
+                    "stage": stage,
+                    "usd": usd,
+                    "turns": 1,
+                    "models": ["gemini-3.7-flash"],
+                    "tokens_in": 1000,
+                    "tokens_out": 100,
+                    "tokens_cached": 0,
+                }
+            ],
+        }
+    ).encode()
+
+
+def _sandbox_holding(files: dict[str, bytes]) -> SimpleNamespace:
+    def download_file(path, timeout=None):
+        if path not in files:
+            raise SandboxFileNotFoundError(path)
+        return files[path]
+
+    return SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+
+
+@pytest.mark.django_db
+def test_two_builds_of_one_environment_each_record_only_their_own_spend(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-two-builds"
+    )
+    # Each build runs as a chat turn in its own attempt's sandbox, whose chat process
+    # starts a ledger of its own: never the session's running total.
+    for number, usd in ((1, 1.0), (2, 2.0)):
+        attempt = register_attempt(
+            job.id,
+            endpoint_base_url="https://platform.example",
+            provider_ref=f"sandbox-{number}",
+        ).attempt
+        _read_harness_spend(
+            attempt,
+            _sandbox_holding({"/work/builder-cost.json": _ledger("builder", usd)}),
+        )
+
+    spend = _stored_metadata(job.id)["harness_spend"]
+    assert {key: one["total_usd"] for key, one in spend["attempts"].items()} == {
+        "1": 1.0,
+        "2": 2.0,
+    }
+    assert spend["total_usd"] == 3.0
+
+
+@pytest.mark.django_db
+def test_a_build_beside_a_chat_records_both_ledgers_under_distinct_stage_names(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-both-ledgers"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+
+    _read_harness_spend(
+        attempt,
+        _sandbox_holding(
+            {
+                "/work/authoring/cost.json": _ledger("build-environment", 0.5),
+                "/work/builder-cost.json": _ledger("build-environment", 0.25),
+            }
+        ),
+    )
+
+    recorded = _stored_metadata(job.id)["harness_spend"]["attempts"]["1"]
+    assert recorded["total_usd"] == 0.75
+    # Billing prices each stage once by name, so the chat's keeps a prefix.
+    assert [stage["stage"] for stage in recorded["stages"]] == [
+        "build-environment",
+        "chat:build-environment",
     ]
 
 

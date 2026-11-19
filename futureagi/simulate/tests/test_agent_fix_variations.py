@@ -632,7 +632,7 @@ class TestSettle:
         assert fix_run.failure["code"] == "fix_targets_too_few"
         assert fix_run.failure["message"] == (
             "The run had 1 failing case. The builder wrote 3 variations of them, and 1"
-            " failed on the current version: 2 failing cases, and a fix needs 4."
+            " failed on the current version: 2 failing cases, and an epoch needs 4."
         )
         assert fix_run.request["variation_parents"] == {kept: PARENT}
         assert fix_run.suite_version.fix_run_id == fix_run.id
@@ -1056,6 +1056,26 @@ class TestARunTheEnvironmentMovedOnFrom:
         )
         assert fix_run.failure["code"] == "fix_variations_source_moved"
 
+    def test_ends_a_fix_whose_run_was_deleted_while_the_builder_wrote(
+        self, environment, fix_run, storage
+    ):
+        body = _builder_save(environment)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(source_run=None)
+
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            _land(fix_run, storage, body)
+
+        fix_run.refresh_from_db()
+        assert (fix_run.state, fix_run.suite_version_id) == (
+            AgentFixRun.State.FAILED,
+            None,
+        )
+        assert fix_run.failure["code"] == "fix_variations_failed"
+        assert (
+            "the run this epoch started from was deleted"
+            in (fix_run.failure["message"])
+        )
+
 
 def _open_draft(environment, piece):
     """Unsaved changes to one piece of the environment, on its current version."""
@@ -1187,7 +1207,7 @@ class TestACaseWithoutVariations:
         _land(fix_run, storage, _builder_save(environment))
         names = [_named(fix_run, n) for n in (1, 2, 3)]
         assert _private(fix_run).summary == (
-            "3 variations of 1 of 2 failing cases, for a fix"
+            "3 variations of 1 of 2 failing cases, for an epoch"
         )
         _finish(_base_run(fix_run), failed=names)
 
@@ -1209,5 +1229,5 @@ class TestACaseWithoutVariations:
         assert fix_run.failure["message"] == (
             "The run had 2 failing cases (1 of them got no usable variation). The"
             " builder wrote 3 variations of them, and 1 failed on the current version:"
-            " 3 failing cases, and a fix needs 4."
+            " 3 failing cases, and an epoch needs 4."
         )

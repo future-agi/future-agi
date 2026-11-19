@@ -11,11 +11,15 @@ from tfc.telemetry.middleware import (
     OTelContextMiddleware,
 )
 
+# Each prefix as a routed path: a "*" segment stands for an id.
+ROUTED_PREFIXES = [
+    prefix.replace("*", "6f1c2a9e") for prefix in SENSITIVE_BODY_PATH_PREFIXES
+]
 # Original routes plus one path under every configured excluded prefix, so a
 # prefix added later is covered for responses as well as requests.
 EXCLUDED_PATHS = sorted(
     {"/saml2_auth/complete/", "/telemetry/register/"}
-    | {prefix + "example/" for prefix in SENSITIVE_BODY_PATH_PREFIXES}
+    | {prefix + "example/" for prefix in ROUTED_PREFIXES}
 )
 
 
@@ -81,7 +85,7 @@ def test_ordinary_response_obeys_capture_flags(
 
 @pytest.mark.parametrize(
     "path",
-    ["/saml2_auth/stream/"] + [p + "stream/" for p in SENSITIVE_BODY_PATH_PREFIXES],
+    ["/saml2_auth/stream/"] + [p + "stream/" for p in ROUTED_PREFIXES],
 )
 def test_excluded_route_streaming_response_not_consumed(settings, path):
     settings.OTEL_CAPTURE_RESPONSE_BODY = True

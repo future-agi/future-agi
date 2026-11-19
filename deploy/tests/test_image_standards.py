@@ -15,6 +15,7 @@ import json
 import os
 import re
 import runpy
+import shlex
 import shutil
 import socket
 import subprocess
@@ -577,18 +578,76 @@ def project_pins() -> dict[str, set[str]]:
     return pins
 
 
+FUTURE_AGI_BASE_IMAGE = "futureagi/future-agi-base:v1.0.6"
+
+# What FUTURE_AGI_BASE_IMAGE ships of the packages the pinned upgrades need
+# newer releases of (`pip list` in the image). pip moves such a package to its
+# newest release on the day the layer is built unless the layer pins it, so
+# each one that futureagi/uv.lock has at another version is pinned too. Find
+# them with a dry run of the layer on the base:
+#   pip install --dry-run --report report.json "<each requirement>"
+# and refresh this map when the base image or the pins change.
+FUTURE_AGI_BASE_VERSIONS = {
+    "aiohttp": "3.14.3",
+    "boto3": "1.42.28",
+    "botocore": "1.42.28",
+    "pydantic-settings": "2.12.0",
+    "python-dotenv": "1.2.1",
+    "s3transfer": "0.16.0",
+    "urllib3": "2.7.0",
+    "yarl": "1.22.0",
+}
+
+
+def locked_versions() -> dict[str, str]:
+    lock = tomllib.loads((ROOT / "futureagi" / "uv.lock").read_text("utf-8"))
+    return {_normalized(p["name"]): p["version"] for p in lock["package"]}
+
+
+def pip_requirements(command: str) -> list[str]:
+    """The requirements of a `pip install` command, however each is quoted."""
+    words = shlex.split(command)
+    if words[:2] != ["pip", "install"]:
+        raise ValueError(f"not a pip install: {command!r}")
+    options = [w for w in words[2:] if w.startswith("-")]
+    if set(options) - {"--no-cache-dir"}:
+        # An option may take a value (-r FILE, --index-url URL) that would
+        # otherwise be read as a requirement.
+        raise ValueError(f"unexpected pip options: {options}")
+    return [w for w in words[2:] if not w.startswith("-")]
+
+
 class FutureAgiBaseDockerfiles(unittest.TestCase):
-    """The packages these Dockerfiles install over future-agi-base v1.0.4
+    """The packages these Dockerfiles install over future-agi-base
     until a base rebuilt from requirements.txt replaces it."""
 
     def pip_install(self, name: str) -> tuple[int, str]:
         steps = instructions(ROOT / name)
-        ((index, rest),) = [
+        # Every step that installs Python packages, in any form, must be the
+        # one RUN these tests read, or a floor in another one goes unchecked.
+        installs = [
             (index, rest)
             for index, (keyword, rest) in enumerate(steps)
-            if keyword == "RUN" and rest.startswith("pip install")
+            if keyword == "RUN"
+            and re.search(r"\b(?:pip3?|uv\s+pip|uv)\s+(?:install|add|sync)\b", rest)
         ]
+        self.assertEqual(len(installs), 1, installs)
+        ((index, rest),) = installs
+        self.assertTrue(rest.startswith("pip install"), rest)
         return index, rest
+
+    def test_the_comments_name_the_pinned_litellm_and_base(self):
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            with self.subTest(dockerfile=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                (litellm,) = re.findall(r'"litellm==(\d+\.\d+)\.\d+"', text)
+                noted = re.findall(r"^#.*\blitellm (\d+\.\d+)\.x\b", text, re.MULTILINE)
+                self.assertTrue(noted)
+                self.assertEqual(set(noted), {litellm})
+                (base,) = re.findall(r"^FROM futureagi/future-agi-base:(\S+)", text, re.MULTILINE)
+                replaced = re.findall(r"^#.*\breplaces (v\d+\.\d+\.\d+)", text, re.MULTILINE)
+                self.assertTrue(replaced)
+                self.assertEqual(set(replaced), {base})
 
     def test_the_pins_are_installed_before_the_source_copy(self):
         for name in FUTURE_AGI_BASE_DOCKERFILES:
@@ -603,12 +662,205 @@ class FutureAgiBaseDockerfiles(unittest.TestCase):
     def test_the_pins_match_the_project(self):
         pins = project_pins()
         for name in FUTURE_AGI_BASE_DOCKERFILES:
-            _, rest = self.pip_install(name)
-            mirrored = re.findall(r'"([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==([^"]+)"', rest)
+            mirrored = [
+                match.groups()
+                for requirement in self.requirements(name)
+                if (
+                    match := re.fullmatch(
+                        r"([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==(.+)", requirement
+                    )
+                )
+            ]
             self.assertTrue(mirrored)
             for package, version in mirrored:
                 with self.subTest(dockerfile=name, package=package):
                     self.assertEqual(pins.get(_normalized(package)), {version})
+
+    def requirements(self, name: str) -> list[str]:
+        _, rest = self.pip_install(name)
+        return pip_requirements(rest)
+
+    def test_every_argument_of_the_install_is_read_whatever_its_quoting(self):
+        self.assertEqual(
+            pip_requirements("""pip install --no-cache-dir "a==1" 'b>=2' c[x]==3"""),
+            ["a==1", "b>=2", "c[x]==3"],
+        )
+        for unknown in ("-r requirements.txt", "--index-url https://example.org"):
+            with self.subTest(option=unknown), self.assertRaises(ValueError):
+                pip_requirements(f'pip install {unknown} "a==1"')
+
+    def test_every_requirement_is_pinned_exactly(self):
+        # A floor lets pip pick whatever is newest at build time, so two
+        # builds of one commit can differ; pins keep the layer reproducible.
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            requirements = self.requirements(name)
+            self.assertTrue(requirements)
+            for requirement in requirements:
+                with self.subTest(dockerfile=name, requirement=requirement):
+                    self.assertRegex(
+                        requirement, r"^[A-Za-z0-9_.-]+(\[[^\]]*\])?==[^=<>!~,]+$"
+                    )
+
+    def test_the_base_image_is_the_one_its_versions_describe(self):
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            with self.subTest(dockerfile=name):
+                ((base,),) = [
+                    rest.split()[:1]
+                    for keyword, rest in instructions(ROOT / name)
+                    if keyword == "FROM"
+                ]
+                self.assertEqual(base, FUTURE_AGI_BASE_IMAGE)
+
+    def test_dependencies_the_base_has_older_releases_of_are_pinned(self):
+        locked = locked_versions()
+        for name in FUTURE_AGI_BASE_DOCKERFILES:
+            pinned = {
+                _normalized(package): version
+                for package, version in re.findall(
+                    r"^([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?==(.+)$",
+                    "\n".join(self.requirements(name)),
+                    re.MULTILINE,
+                )
+            }
+            for package, base_version in FUTURE_AGI_BASE_VERSIONS.items():
+                if locked[package] == base_version:
+                    continue
+                with self.subTest(dockerfile=name, package=package):
+                    self.assertEqual(pinned.get(package), locked[package])
+
+
+# ---------------------------------------------------------------------------
+# Notes that name the version a pin was checked with follow the pin
+# ---------------------------------------------------------------------------
+
+
+def arg_default(path: Path, name: str) -> str:
+    ((value,),) = [
+        [rest.partition("=")[2]]
+        for keyword, rest in instructions(path)
+        if keyword == "ARG" and rest.partition("=")[0] == name
+    ]
+    return value
+
+
+def setup_uv_versions(workflow: Path) -> list[str | None]:
+    """The `version` input of every astral-sh/setup-uv step (None: not set)."""
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    versions = []
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*(?:- )?uses: astral-sh/setup-uv@", line):
+            continue
+        step_indent = len(line) - len(line.lstrip(" -"))
+        version = None
+        for following in lines[i + 1 :]:
+            stripped = following.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            indent = len(following) - len(following.lstrip(" "))
+            if indent < step_indent or stripped.startswith("- "):
+                break
+            if match := re.match(r"""version:\s*["']?([^"'\s]+)""", stripped):
+                version = match.group(1)
+        versions.append(version)
+    return versions
+
+
+class PinnedVersionNotes(unittest.TestCase):
+    def test_setup_uv_versions_are_read_whatever_the_key_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow = Path(tmp) / "w.yml"
+            workflow.write_text(
+                "steps:\n"
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "    with:\n"
+                "      enable-cache: true\n"
+                '      version: "1.2.3"\n'
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "  - name: other\n"
+                "    with:\n"
+                "      version: 9\n"
+                "  - uses: astral-sh/setup-uv@v5\n"
+                "    with:\n"
+                '      version: "4.5.6"\n'
+                "      enable-cache: true\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(setup_uv_versions(workflow), ["1.2.3", None, "4.5.6"])
+
+    def test_the_images_and_backend_ci_share_one_uv(self):
+        oss = ROOT / "futureagi" / "Dockerfile.oss"
+        serving = ROOT / "futureagi" / "model_serving" / "Dockerfile.oss"
+        pinned = {
+            re.fullmatch(
+                r"ghcr\.io/astral-sh/uv:([^@]+)@sha256:[0-9a-f]{64}",
+                arg_default(path, "UV_IMAGE"),
+            ).group(1)
+            for path in (oss, serving)
+        }
+        self.assertEqual(len(pinned), 1)
+        ci = setup_uv_versions(WORKFLOWS / "backend-ci.yml")
+        # Steps that name no version run whatever uv is current (see the PR
+        # notes); every version that is named must be the images' uv.
+        named = {version for version in ci if version is not None}
+        self.assertTrue(named)
+        self.assertEqual(named, pinned)
+        notes = re.findall(
+            r'^# Same uv as backend-ci\.yml \(astral-sh/setup-uv version "([^"]+)"\)',
+            oss.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ) + re.findall(
+            r"^# checked with uv (\S+) ",
+            serving.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(set(notes), pinned)
+
+    def test_the_code_executor_notes_name_the_pinned_base(self):
+        text = (ROOT / "futureagi" / "code-executor" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        (pinned,) = re.findall(
+            r"^ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:(v[^@\s]+)",
+            text,
+            re.MULTILINE,
+        )
+        noted = re.findall(
+            r"^#.*futureagi/code-executor-base:(v[^@\s]+)", text, re.MULTILINE
+        )
+        self.assertTrue(noted)
+        self.assertEqual(set(noted), {pinned})
+
+    def test_the_nginx_note_names_the_pinned_image(self):
+        path = ROOT / "frontend" / "Dockerfile"
+        pinned = arg_default(path, "NGINX_IMAGE").partition("@")[0]
+        noted = re.findall(
+            r"^#\s+(nginx:\S+-alpine-slim) ->",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertEqual(noted, [pinned])
+
+    def test_the_base_setuptools_goes_before_the_builder_packages_arrive(self):
+        # COPY merges directories, so the python image's own setuptools has to
+        # be deleted first or its dist-info stays next to the builder's.
+        steps = final_stage(ROOT / "futureagi" / "Dockerfile.oss")
+        site = "/usr/local/lib/python3.11/site-packages"
+        (copy,) = [
+            i
+            for i, (keyword, rest) in enumerate(steps)
+            if keyword == "COPY" and rest.startswith(f"--from=builder {site} ")
+        ]
+        removals = [
+            i
+            for i, (keyword, rest) in enumerate(steps)
+            if keyword == "RUN"
+            and rest.split()[:2] == ["rm", "-rf"]
+            and {f"{site}/setuptools", f"{site}/setuptools-*.dist-info"}
+            <= set(rest.split())
+        ]
+        self.assertEqual(len(removals), 1)
+        self.assertLess(removals[0], copy)
 
 
 # ---------------------------------------------------------------------------
@@ -1188,6 +1440,22 @@ class _Server:
         self.httpd.server_close()
 
 
+class _TLSServer(_Server):
+    """_Server behind TLS, with a throwaway self-signed certificate."""
+
+    def __init__(self, certfile: str, keyfile: str):
+        self.certfile, self.keyfile = certfile, keyfile
+
+    def __enter__(self):
+        import ssl
+
+        super().__enter__()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self.certfile, self.keyfile)
+        self.httpd.socket = context.wrap_socket(self.httpd.socket, server_side=True)
+        return self
+
+
 def _closed_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -1365,6 +1633,29 @@ class GoProbe(unittest.TestCase):
         )
         self.assertEqual(self.run_probe(), 1)  # no URL: usage error
 
+    @unittest.skipUnless(shutil.which("openssl"), "needs openssl")
+    def test_https_2xx_is_healthy_without_verifying_the_certificate(self):
+        # A self-signed certificate for another name: the probe checks the
+        # container's own listener is up, not who it is.
+        cert, key = Path(self.tmp.name) / "tls.crt", Path(self.tmp.name) / "tls.key"
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt",
+             "ec_paramgen_curve:P-256", "-nodes", "-days", "1", "-subj",
+             "/CN=gateway.example", "-keyout", str(key), "-out", str(cert)],
+            check=True, capture_output=True,
+        )  # fmt: skip
+        with _TLSServer(str(cert), str(key)) as server:
+            base = f"https://127.0.0.1:{server.port}"
+            self.assertEqual(self.run_probe(f"{base}/healthz"), 0)
+            self.assertEqual(self.run_probe(f"{base}/bad"), 1)
+            self.assertEqual(self.run_probe(HEALTHCHECK_URL=f"{base}/healthz"), 0)
+        with _Server() as server:
+            # TLS against a plain HTTP listener fails the handshake.
+            self.assertEqual(
+                self.run_probe(f"https://127.0.0.1:{server.port}/healthz"), 1
+            )
+        self.assertEqual(self.run_probe(f"ftp://127.0.0.1:{_closed_port()}/"), 1)
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "needs /proc")
     def test_pid1_mismatch_skips_the_probe(self):
         # PID 1 here is the init of the test machine, never fi-collector.
@@ -1409,6 +1700,318 @@ def nginx_blocks(text: str, keyword: str) -> list[str]:
                 bodies.append(text[start:index])
                 break
     return bodies
+
+
+def _der(tag: int, content: bytes) -> bytes:
+    size = len(content)
+    if size < 128:
+        return bytes([tag, size]) + content
+    length = size.to_bytes((size.bit_length() + 7) // 8, "big")
+    return bytes([tag, 0x80 | len(length)]) + length + content
+
+
+def synthetic_certificate(not_after: str, *, name_padding: int = 0) -> str:
+    """A PEM certificate with that notAfter and a dummy signature.
+
+    The entrypoint reads only Validity.notAfter; nginx verifies the rest.
+    notAfter is a UTCTime (YYMMDDHHMMSSZ) or GeneralizedTime (YYYYMMDDHHMMSSZ).
+    name_padding makes the subject long enough for long-form DER lengths.
+    """
+    import base64
+    import textwrap
+
+    oid_ecdsa_sha256 = _der(0x06, bytes.fromhex("2a8648ce3d040302"))
+    name = _der(
+        0x30,
+        _der(
+            0x31,
+            _der(
+                0x30,
+                _der(0x06, b"\x55\x04\x03") + _der(0x0C, b"x" * (1 + name_padding)),
+            ),
+        ),
+    )
+    time_tag = 0x17 if len(not_after) == 13 else 0x18
+    tbs = _der(
+        0x30,
+        _der(0xA0, _der(0x02, b"\x02"))
+        + _der(0x02, b"\x01")
+        + _der(0x30, oid_ecdsa_sha256)
+        + name
+        + _der(0x30, _der(0x17, b"000101000000Z") + _der(time_tag, not_after.encode()))
+        + name
+        + _der(0x30, b""),
+    )
+    der = _der(0x30, tbs + _der(0x30, oid_ecdsa_sha256) + _der(0x03, b"\x00" * 65))
+    body = "\n".join(textwrap.wrap(base64.b64encode(der).decode(), 64))
+    return f"-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----\n"
+
+
+VALID_CERT = synthetic_certificate("21000101000000Z")
+EXPIRED_CERT = synthetic_certificate("991231235959Z")
+
+
+class FrontendEntrypoint(unittest.TestCase):
+    """Validate listener selection without requiring Docker or real certificates."""
+
+    def run_entrypoint(self, **settings):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("FRONTEND_")
+            }
+            env["CONFIG_PATH"] = str(Path(directory) / "config.js")
+            env.update(settings)
+            # The entrypoint writes a fixed path; never read a previous run's file.
+            listen = Path("/tmp/futureagi-nginx/listen.conf")
+            listen.unlink(missing_ok=True)
+            result = subprocess.run(
+                ["sh", str(ROOT / "frontend/docker-entrypoint.sh"), "true"],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            content = listen.read_text() if result.returncode == 0 else ""
+            return result, content
+
+    def tls_files(self, directory, cert=VALID_CERT):
+        cert_file = Path(directory) / "cert.pem"
+        key_file = Path(directory) / "key.pem"
+        cert_file.write_text(cert)
+        key_file.write_text("synthetic placeholder key")
+        return {
+            "FRONTEND_TLS_ENABLED": "true",
+            "FRONTEND_TLS_CERT_FILE": str(cert_file),
+            "FRONTEND_TLS_KEY_FILE": str(key_file),
+        }
+
+    def test_default_listener_is_http_only(self):
+        result, listen = self.run_entrypoint()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(listen, "listen 80;\nlisten [::]:80;\n")
+
+    def test_requires_at_least_one_listener_and_tls_files(self):
+        result, _ = self.run_entrypoint(
+            FRONTEND_HTTP_ENABLED="false", FRONTEND_TLS_ENABLED="false"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "[entrypoint] HTTP and TLS cannot both be disabled", result.stderr
+        )
+        result, _ = self.run_entrypoint(
+            FRONTEND_TLS_ENABLED="true", FRONTEND_TLS_CERT_FILE="/missing/cert"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[entrypoint] TLS file missing", result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            tls = self.tls_files(directory)
+            Path(tls["FRONTEND_TLS_CERT_FILE"]).write_text("")
+            result, _ = self.run_entrypoint(**tls)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(
+                "[entrypoint] TLS file missing, empty or unreadable", result.stderr
+            )
+
+    def test_refuses_out_of_range_numbers_busybox_cannot_compare(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tls = self.tls_files(directory)
+            for setting, value in (
+                ("FRONTEND_TLS_RELOAD_INTERVAL", "9" * 30),
+                ("FRONTEND_TLS_RELOAD_INTERVAL", "61"),
+                ("FRONTEND_TLS_RELOAD_INTERVAL", "0"),
+                ("FRONTEND_TLS_PORT", "9" * 30),
+                ("FRONTEND_HTTP_PORT", "65536"),
+            ):
+                with self.subTest(setting=setting, value=value):
+                    result, _ = self.run_entrypoint(**tls, **{setting: value})
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(setting, result.stderr)
+
+    def test_tls_only_generates_expected_nginx_directives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, listen = self.run_entrypoint(
+                **self.tls_files(directory),
+                FRONTEND_HTTP_ENABLED="false",
+                FRONTEND_TLS_PORT="8443",
+                FRONTEND_TLS_RELOAD_INTERVAL="1",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("listen 80;", listen)
+            self.assertIn("listen 8443 ssl;", listen)
+            self.assertIn("listen [::]:8443 ssl;", listen)
+            self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", listen)
+            self.assertIn("ssl_session_tickets off;", listen)
+
+    def test_refuses_an_expired_or_unreadable_certificate_at_startup(self):
+        """The gateway refuses an expired leaf; so does the dashboard."""
+        refused = {
+            "UTCTime in the past": (EXPIRED_CERT, "expired at 1999-12-31T23:59:59Z"),
+            "UTCTime before 2050": (
+                synthetic_certificate("200101000000Z"),
+                "expired at 2020-01-01T00:00:00Z",
+            ),
+            "GeneralizedTime in the past": (
+                synthetic_certificate("20200101000000Z"),
+                "expired at 2020-01-01T00:00:00Z",
+            ),
+            "expired leaf before a valid CA": (
+                EXPIRED_CERT + VALID_CERT,
+                "expired at 1999-12-31T23:59:59Z",
+            ),
+            "not a certificate": ("synthetic placeholder cert", "cannot read"),
+            "a key, not a certificate": (
+                "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+                "cannot read",
+            ),
+            "truncated": (
+                VALID_CERT[:120] + "\n-----END CERTIFICATE-----\n",
+                "cannot read",
+            ),
+            "fractional seconds": (
+                synthetic_certificate("21000101000000.5Z"),
+                "cannot read",
+            ),
+        }
+        accepted = {
+            "UTCTime before 2050": synthetic_certificate("491231235959Z"),
+            "GeneralizedTime": VALID_CERT,
+            "long-form DER lengths": synthetic_certificate(
+                "21000101000000Z", name_padding=400
+            ),
+            "chain, CRLF, text before the PEM": "Certificate:\r\n    synthetic\r\n"
+            + (VALID_CERT + EXPIRED_CERT).replace("\n", "\r\n"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            for case, (cert, message) in refused.items():
+                with self.subTest(refused=case):
+                    tls = self.tls_files(directory, cert)
+                    result, _ = self.run_entrypoint(**tls)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn("[entrypoint] ", result.stderr)
+                    self.assertIn(message, result.stderr)
+                    self.assertIn(tls["FRONTEND_TLS_CERT_FILE"], result.stderr)
+            for case, cert in accepted.items():
+                with self.subTest(accepted=case):
+                    result, listen = self.run_entrypoint(
+                        **self.tls_files(directory, cert)
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("ssl_certificate ", listen)
+
+    @unittest.skipUnless(shutil.which("openssl"), "needs openssl")
+    def test_accepts_certificates_openssl_issues(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for kind, days, extra in (
+                ("rsa:2048", "30", "/O=" + "o" * 60 + "/OU=" + "u" * 60),
+                ("ec", "36500", ""),  # notAfter after 2049: GeneralizedTime
+            ):
+                with self.subTest(kind=kind):
+                    cert = Path(directory) / "openssl.crt"
+                    subprocess.run(
+                        ["openssl", "req", "-x509", "-newkey", kind, "-nodes"]
+                        + (
+                            ["-pkeyopt", "ec_paramgen_curve:P-256"]
+                            if kind == "ec"
+                            else []
+                        )
+                        + ["-keyout", str(Path(directory) / "openssl.key")]
+                        + ["-out", str(cert), "-days", days]
+                        + ["-subj", "/CN=localhost" + extra],
+                        check=True,
+                        capture_output=True,
+                    )
+                    result, _ = self.run_entrypoint(
+                        **self.tls_files(directory, cert.read_text())
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_watcher_signals_nginx_only_for_a_servable_certificate(self):
+        """The hot-reload loop: HUP on a new certificate, none on an expired or
+        missing one, against a stand-in nginx that records the signals."""
+        import time
+
+        with tempfile.TemporaryDirectory() as directory:
+            bin_dir = Path(directory) / "bin"
+            bin_dir.mkdir()
+            hups = Path(directory) / "hups"
+            stderr_path = Path(directory) / "stderr"
+            nginx = bin_dir / "nginx"
+            nginx.write_text(
+                "#!/bin/sh\n"
+                "trap 'echo hup >> \"$HUP_LOG\"' HUP\n"
+                "trap 'exit 0' TERM\n"
+                "while :; do sleep 1 & wait $! || :; done\n"
+            )
+            nginx.chmod(0o755)
+            tls = self.tls_files(directory)
+            cert = Path(tls["FRONTEND_TLS_CERT_FILE"])
+            key = Path(tls["FRONTEND_TLS_KEY_FILE"])
+            env = {
+                key_: value
+                for key_, value in os.environ.items()
+                if not key_.startswith("FRONTEND_")
+            }
+            env.update(
+                tls,
+                FRONTEND_TLS_RELOAD_INTERVAL="1",
+                CONFIG_PATH=str(Path(directory) / "config.js"),
+                HUP_LOG=str(hups),
+                PATH=f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+            )
+
+            def count():
+                return hups.read_text().count("hup") if hups.exists() else 0
+
+            def wait_for(predicate, seconds=8):
+                deadline = time.monotonic() + seconds
+                while time.monotonic() < deadline:
+                    if predicate():
+                        return True
+                    time.sleep(0.1)
+                return False
+
+            with stderr_path.open("w") as stderr:
+                process = subprocess.Popen(
+                    ["sh", str(ROOT / "frontend/docker-entrypoint.sh"), "nginx"],
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=stderr,
+                    start_new_session=True,
+                )
+            try:
+                time.sleep(1.5)
+                self.assertEqual(count(), 0, "no change, no reload")
+                cert.write_text(synthetic_certificate("20990101000000Z"))
+                self.assertTrue(wait_for(lambda: count() == 1), stderr_path.read_text())
+                cert.write_text(EXPIRED_CERT)
+                self.assertTrue(
+                    wait_for(lambda: "expired" in stderr_path.read_text()),
+                    stderr_path.read_text(),
+                )
+                time.sleep(2.5)
+                self.assertEqual(count(), 1, "an expired certificate is not loaded")
+                log = stderr_path.read_text()
+                self.assertEqual(
+                    log.count("expired at 1999-12-31T23:59:59Z"), 1, "logged once"
+                )
+                self.assertIn("keeping current configuration", log)
+                key.unlink()
+                self.assertTrue(
+                    wait_for(
+                        lambda: (
+                            "missing, empty or unreadable" in stderr_path.read_text()
+                        )
+                    )
+                )
+                key.write_text("synthetic placeholder key")
+                cert.write_text(VALID_CERT)
+                self.assertTrue(wait_for(lambda: count() == 2), stderr_path.read_text())
+                self.assertIsNone(process.poll(), "the stand-in nginx keeps running")
+            finally:
+                os.killpg(process.pid, 15)
+                process.wait(timeout=10)
 
 
 class NginxSecurityHeaders(unittest.TestCase):
@@ -1590,6 +2193,8 @@ class Workflows(unittest.TestCase):
         for path in (
             "frontend/Dockerfile",
             "frontend/security-headers.conf",
+            "frontend/docker-entrypoint.sh",
+            "frontend/frontend-healthcheck.sh",
             "deploy/standalone/bin/verify-binaries",
             "scripts/code-executor-base-pin.sh",
             "futureagi/requirements.txt",
