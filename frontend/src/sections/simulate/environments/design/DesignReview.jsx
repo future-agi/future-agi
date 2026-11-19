@@ -248,12 +248,17 @@ export default function DesignReview({
         actions={
           <>
             <UiOnlyFlag feature={build ? "designBuild" : "designReview"} />
-            {build?.status !== "saved" && (
+            <Fade
+              in={build?.status !== "saved"}
+              timeout={timeout}
+              unmountOnExit
+            >
               <Button
                 size="small"
                 variant="contained"
                 color="primary"
-                disabled={reading || approveBlocked || building}
+                // Approving drops files still in the add panel, so it waits.
+                disabled={reading || approveBlocked || building || adding}
                 onClick={onApprove}
                 startIcon={
                   <Iconify icon="solar:check-circle-linear" width={14} />
@@ -261,7 +266,7 @@ export default function DesignReview({
               >
                 {building ? "Building…" : "Approve and build"}
               </Button>
-            )}
+            </Fade>
           </>
         }
         sx={{ mb: 0 }}
