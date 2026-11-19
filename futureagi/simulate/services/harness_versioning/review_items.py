@@ -440,9 +440,10 @@ def item_index(
             items += _listed_items(document, read_json(files[document]))
     items += _scenario_items(files, whole)
     for path, data in sorted(files.items()):
-        # Sealed bundles, suite indexes and session files are not part of what a version means.
+        # Sealed bundles, the suite's index, coverage and proofs, and session files are not what a version means.
         if path not in whole and (
             path in _ITEM_DOCUMENTS
+            or path in archives.SUITE_FILES
             or path.split("/")[0] in hashing.SCENARIO_ROOTS
             or hashing.is_environment_unhashed(path)
         ):
