@@ -235,7 +235,9 @@ def launch_fix_run(
         cost_limit_usd=cost_limit_usd,
         observes_models=bool(seen),
         meters_agent_cost=bool(usage),
-        measured_automatically=measured_automatically(source_run),
+        # Only when the sandbox's measuring did export spans: an agent that names no
+        # tracing may still have had none of its calls measured.
+        measured_automatically=bool(usage) and measured_automatically(source_run),
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))

@@ -525,9 +525,9 @@ def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
 
 
 def measured_automatically(run: HostedHarnessJob) -> bool:
-    """Whether only the sandbox's own measuring saw the run's model calls: its agent names
-    no tracing, so their spans carry the model, tokens and timing, never a prompt or a
-    reply. The run's page says so from the same source."""
+    """Whether only the sandbox's own measuring could see the run's model calls: its agent
+    names no tracing, so any span carries the model, tokens and timing, never a prompt or
+    a reply."""
     execution = run.test_execution
     source = run_traces_source(execution) if execution is not None else None
     return source is not None and source.measured_automatically
