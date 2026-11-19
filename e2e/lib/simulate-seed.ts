@@ -225,8 +225,15 @@ export interface HarnessEnvironmentSeed {
 }
 
 /**
- * Seeds a finished-build Environment and versions it with the real backfill; `certified` adds the pairing's bundle.
- * See e2e/lib/harness_environment_seed.py.
+ * Seeds an Environment as a finished build leaves it, then versions it with the
+ * real backfill: agent, environment and suite versions, suite members and, when
+ * `certified`, the pairing's certified bundle (every check passed, both tools
+ * certified). Uncertified, the pairing has no bundle and its first check is a
+ * validation. `productionOnly` names a tool the contract says reaches production.
+ * `failedCheck` names an action an uncertified pairing's last validation failed on,
+ * leaving its bundle failed by that check.
+ * Refund scenarios use `lookup_order` and `issue_refund`; lookups use only
+ * `lookup_order`. See e2e/lib/harness_environment_seed.py.
  */
 export function seedHarnessEnvironment(opts: {
   organizationId: string;
@@ -242,6 +249,11 @@ export function seedHarnessEnvironment(opts: {
   trial?: boolean | 'fault' | 'actor' | 'duplicate' | 'refused';
   /** The contract's tools with their fields: inputs, units and what each returns. */
   toolDetail?: boolean;
+  // Two separately wired workers and what ALK sealed for them: a tool proxy holding their limits, no door in front of
+  // the tool service, or, as an old seal, nothing.
+  workers?: 'sealed' | 'not_fronted' | 'old_seal';
+  // Each refund case gives the refund worker a budget, so the case relies on that worker.
+  refundWorkerBudget?: boolean;
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -261,6 +273,8 @@ export function seedHarnessEnvironment(opts: {
         actors: opts.actors ?? false,
         trial: opts.trial ?? false,
         tool_detail: opts.toolDetail ?? false,
+        workers: opts.workers ?? null,
+        refund_worker_budget: opts.refundWorkerBudget ?? false,
       }),
     },
   ) as HarnessEnvironmentSeed;

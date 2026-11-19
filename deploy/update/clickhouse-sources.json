@@ -455,7 +455,7 @@
     {
       "pattern": "e2e/lib/harness_environment_seed.py",
       "reason": "Inspected E2E seed: the literal is the SQLite schema file packed into a fixture world archive, never run against a platform database.",
-      "sha256": "6d8201f4f4d5f2491eccb27a2802fef6fcf72c9dc61f1e3436f2ff3675749963"
+      "sha256": "d1677497376709622e5059d16854c6b3b696ba38bd45b5e2b8245b9587b8da35"
     }
   ]
 }

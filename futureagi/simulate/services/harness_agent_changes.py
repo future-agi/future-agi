@@ -74,9 +74,12 @@ _ASK_AGAIN = (
     "environment_busy",
     "environment_not_ready",
     "rollback_unavailable",
+    "validation_retry",
     "failed",
 )
-# A move refused this many times in a row may never be possible: no more asks.
+# A move held back by one of these this many times in a row may never be possible: no
+# more asks.
+_CAPPED_ASKS = ("rollback_unavailable", "validation_retry")
 _ROLLBACK_ASKS = 3
 # A pair read for a push is not read again for another this soon: the poller is.
 _PUSH_COOLDOWN = 60
@@ -481,8 +484,7 @@ def _settled(entry: Mapping[str, Any]) -> bool:
     """Whether an activation outcome is final: asking again would not move it."""
     outcome = entry.get("outcome")
     return outcome not in _ASK_AGAIN or (
-        outcome == "rollback_unavailable"
-        and int(entry.get("attempts") or 1) >= _ROLLBACK_ASKS
+        outcome in _CAPPED_ASKS and int(entry.get("attempts") or 1) >= _ROLLBACK_ASKS
     )
 
 

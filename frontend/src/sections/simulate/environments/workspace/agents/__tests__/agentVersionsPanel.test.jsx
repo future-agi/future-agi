@@ -248,9 +248,36 @@ describe("AgentVersionsPanel", () => {
           preflight_status: "passed",
           activation_outcome: "default_moved_by_hand",
         }),
+        agentItem({
+          id: "a10",
+          label: "v10",
+          preflight_status: "passed",
+          activation_outcome: "validating",
+        }),
+        agentItem({
+          id: "a11",
+          label: "v11",
+          preflight_status: "passed",
+          activation_outcome: "pair_failed",
+        }),
+        agentItem({
+          id: "a12",
+          label: "v12",
+          preflight_status: "passed",
+          activation_outcome: "validation_retry",
+        }),
       ],
     };
     render(<AgentVersionsPanel env={ENV} />);
+    expect(rowOf("a10")).toHaveTextContent(
+      "Becomes the default once it passes a check with this environment",
+    );
+    expect(rowOf("a11")).toHaveTextContent(
+      "Not made default: it failed its check with this environment",
+    );
+    expect(rowOf("a12")).toHaveTextContent(
+      "Not made default: its check with this environment couldn't finish",
+    );
     expect(rowOf("a9")).toHaveTextContent(
       "Not made default: the default was changed by hand while it was checked",
     );

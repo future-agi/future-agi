@@ -1463,11 +1463,11 @@ def require_agent_pick(
     environment: HostedHarnessJob, version_id: Any, *, refusal: str, lock: bool = False
 ) -> None:
     """Refuse a version a run may not pick or a move may not make the default."""
-    from simulate.services.hosted_harness import _not_pickable, agent_version_pickable
+    from simulate.services.hosted_harness import agent_version_pickable, not_pickable
 
     runtime = _side_row(version_id, lock=lock)
     if not agent_version_pickable(environment, version_id):
-        raise _not_pickable("agent")
+        raise not_pickable("agent")
     if not agent_pick_allowed(environment, version_id, runtime):
         # TODO: run a legacy agent version from the payload it was recorded with;
         # until then it would run the current payload under its older label.
@@ -1732,8 +1732,13 @@ def _activate_on(
     """Move one environment that asked for ``version`` to it, unless a newer version
     of the agent is already its default or the default was moved since; an
     ``explicit`` request moves it from any default, or only from
-    ``expected_default_id`` when it names one."""
+    ``expected_default_id`` when it names one. Where the pairing can be validated
+    and is not yet, the move waits for it: ``validating``."""
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
+    from simulate.services.harness_versioning.validation import (
+        drop_waiting_moves,
+        gate_agent_move,
+    )
     from simulate.services.harness_versioning.versions import move_agent
     from simulate.services.hosted_harness import agent_version_pickable
 
@@ -1749,6 +1754,7 @@ def _activate_on(
             if explicit:
                 # Asked for again by hand: an earlier request never replaces it.
                 record_hand_move(locked, user, version.id)
+                drop_waiting_moves(locked, version.id)
             return "already_default"
         if (
             expected_default_id is not None
@@ -1768,6 +1774,12 @@ def _activate_on(
         if _busy(locked):
             # Moved by rebuild.retry_deferred_activations once it finishes.
             return "environment_busy"
+        pending = gate_agent_move(
+            "activation", locked, version, user=user, explicit=explicit
+        )
+        if pending is not None:
+            # Moved by the validation once the pairing passes.
+            return "validating"
         outgoing = locked.agent_version_id
         try:
             with transaction.atomic():
@@ -1936,7 +1948,9 @@ def _recent(at: Any) -> bool:
 
 def _still_waiting(runtime: HarnessAgentVersionRuntime, by_environment: Any) -> bool:
     """Whether another environment asked for this version and can still be moved to
-    it: its check or activation is still running, or it was busy and still is."""
+    it: its check, activation or pairing's validation is still running, or it was
+    busy and still is."""
+    from simulate.services.harness_versioning.validation import validating
     from simulate.services.harness_versioning.versions import UNREADY_STATES
 
     if runtime.preflight_status not in (Status.PENDING, Status.PASSED):
@@ -1955,6 +1969,7 @@ def _still_waiting(runtime: HarnessAgentVersionRuntime, by_environment: Any) -> 
             None,
             "environment_busy",
             "failed",
+            "validating",
         ):
             continue
         environment = HostedHarnessJob.no_workspace_objects.filter(
@@ -1966,7 +1981,9 @@ def _still_waiting(runtime: HarnessAgentVersionRuntime, by_environment: Any) -> 
             or _turned_down(environment, version, runtime) is not None
         ):
             continue
-        if outcome == "environment_busy":
+        if outcome == "validating":
+            waiting = validating(environment.id, version.id)
+        elif outcome == "environment_busy":
             # Moved by rebuild.retry_deferred_activations once it finishes.
             # A failed or canceled build is not finishing: nothing will move it.
             waiting = environment.state not in UNREADY_STATES and _busy(environment)

@@ -89,6 +89,7 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
 from simulate.tests.test_harness_environment_regrade import _mapped_eval
@@ -2239,9 +2240,11 @@ class TestMakeDefault:
         candidate.refresh_from_db()
 
         outcome = make_candidate_default(candidate, user=user)
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
         environment.refresh_from_db()
-        assert outcome == "activated"
+        assert outcome == "validating"
         assert environment.agent_version_id == candidate.agent_version_id
         assert make_candidate_default(candidate, user=user) == "already_default"
 
@@ -2287,7 +2290,9 @@ class TestMakeDefault:
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             payload=payload
         )
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         retry_deferred_activations(second.agent_version_id)
         environment.refresh_from_db()
         assert environment.agent_version_id == first.agent_version_id
@@ -2302,7 +2307,9 @@ class TestMakeDefault:
         first = self._winner(source_run)
         second = self._winner(source_run)
 
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         with pytest.raises(HostedHarnessError) as refused:
             make_candidate_default(second, user=user)
 

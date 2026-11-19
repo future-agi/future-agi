@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.db import transaction
@@ -30,6 +30,9 @@ from simulate.models.harness_versioning import ArchiveLayout, HashKind, VersionS
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.harness_versioning import archives, diffs, hashing
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.validation import Validation
 
 logger = logging.getLogger(__name__)
 
@@ -1332,10 +1335,18 @@ def move_agent(
 
 def _move_agent_default(
     locked: HostedHarnessJob, version_id: Any, expected_default_id: Any, user: Any
-) -> HostedHarnessJob:
+) -> tuple[HostedHarnessJob, Validation | None]:
     from simulate.models import AgentVersion
-    from simulate.services.harness_agent_versions import hand_move, require_agent_pick
+    from simulate.services.harness_agent_versions import (
+        _record_activation,
+        hand_move,
+        require_agent_pick,
+    )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
+    from simulate.services.harness_versioning.validation import (
+        drop_waiting_moves,
+        gate_agent_move,
+    )
 
     # Locked, so a concurrent discard sees this move before its in-use check.
     require_agent_pick(
@@ -1346,10 +1357,17 @@ def _move_agent_default(
     )
     current = locked.agent_version
     if current is not None and current.id == version_id:
-        return locked
+        # Kept by hand: a move still waiting on a validation never lands.
+        drop_waiting_moves(locked, version_id)
+        return locked, None
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
     version = AgentVersion.no_workspace_objects.get(id=version_id)
+    validation = gate_agent_move("hand", locked, version, user=user)
+    if validation is not None:
+        # Moved by the validation once the pairing passes; shown on the version.
+        _record_activation(version.id, {str(locked.id): "validating"})
+        return locked, validation
     move_agent(locked, version, moved=hand_move(user, version.id))
     schedule_environment_nudge(
         locked.id,
@@ -1363,7 +1381,7 @@ def _move_agent_default(
         version.id,
         getattr(user, "id", None),
     )
-    return locked
+    return locked, validation
 
 
 def require_not_busy(locked: HostedHarnessJob, piece: str) -> None:
@@ -1522,6 +1540,25 @@ def _offer_reapply(locked: HostedHarnessJob, piece: str, version: Any) -> None:
     )
 
 
+def move_agent_default(
+    environment: HostedHarnessJob,
+    version_id: Any,
+    *,
+    expected_default_id: Any,
+    user: Any = None,
+) -> tuple[HostedHarnessJob, Validation | None]:
+    """Make an agent version the environment's default by hand.
+
+    Where the pairing with the default environment and suite can be validated and is
+    not yet, nothing moves now: the validation is returned and moves the default once
+    it passes. Refusals are ``move_default``'s.
+    """
+    with transaction.atomic():
+        locked = _lock_environment(environment)
+        require_not_busy(locked, "agent")
+        return _move_agent_default(locked, version_id, expected_default_id, user)
+
+
 def move_default(
     environment: HostedHarnessJob,
     piece: str,
@@ -1537,14 +1574,16 @@ def move_default(
     one transaction.
     """
     from simulate.services.harness_versioning.drafts import require_no_rebuild
-    from simulate.services.hosted_harness import _not_pickable
+    from simulate.services.hosted_harness import not_pickable
 
+    if piece == "agent":
+        return move_agent_default(
+            environment, version_id, expected_default_id=expected_default_id, user=user
+        )[0]
     model = HarnessEnvironmentVersion if piece == "environment" else HarnessSuiteVersion
     with transaction.atomic():
         locked = _lock_environment(environment)
         require_not_busy(locked, piece)
-        if piece == "agent":
-            return _move_agent_default(locked, version_id, expected_default_id, user)
         require_no_rebuild(locked, piece=piece)
         versions = model.no_workspace_objects.filter(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
@@ -1555,7 +1594,7 @@ def move_default(
             versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
         version = versions.first()
         if version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         current = getattr(locked, f"{piece}_version")
         # A repeated click after the move succeeded is the same no-op.
         if current is not None and current.id == version.id:
@@ -1574,7 +1613,7 @@ def move_default(
                 details={"piece": piece},
             )
         if environment_version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
         pair = _default_pair(

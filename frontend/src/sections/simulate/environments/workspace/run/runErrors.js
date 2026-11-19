@@ -7,6 +7,10 @@ const INLINE_ERRORS = new Set([
   "production_only",
   "scenario_selection_unknown",
   "idempotency_key_reused",
+  "pair_validating",
+  "pair_failed",
+  // Every selected case held back: the server names each reason, read in place.
+  "all_cases_blocked",
 ]);
 
 const isClientError = (error) => {

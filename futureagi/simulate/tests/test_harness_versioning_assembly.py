@@ -969,7 +969,7 @@ class TestLaunchMiss:
         first = _run(environment, key="r1")
         assert assembly.prepare_launch(first).outcome == "miss"
 
-        assembly.mark_failed(first, "the certify did not pass")
+        assembly.mark_failed(first, {"message": "the certify did not pass"})
         assert _row(environment).certificate is None
 
         assert assembly.prepare_launch(_run(environment, key="r2")).outcome == "miss"

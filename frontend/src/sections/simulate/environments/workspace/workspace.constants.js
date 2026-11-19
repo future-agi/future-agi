@@ -311,6 +311,11 @@ export const AGENT_VERSIONS_COPY = {
     not_bound: "Not made default: this environment can't use this version",
     rerun_only: "Made for a single rerun; not used as the default",
     failed: "Not made default: something went wrong; make it default by hand",
+    validating:
+      "Becomes the default once it passes a check with this environment",
+    pair_failed: "Not made default: it failed its check with this environment",
+    validation_retry:
+      "Not made default: its check with this environment couldn't finish; make it default to try again",
   },
   activationOther: (code) => `Not made default (${code})`,
   // Read aloud when a version's check starts or lands.
@@ -448,6 +453,13 @@ export const RUN_DIALOG_COPY = {
     "Couldn't check these versions and what the run would block. The run can still start; a blocked one is refused.",
   retryPlan: "Try again",
   refused: "These versions can't run.",
+  // Refusals whose words are ours, by code; any other shows the server's.
+  errors: {
+    pair_validating:
+      "These versions are being checked together. Run them once the check ends.",
+    pair_failed:
+      "These versions failed their check together. Fix them and check again.",
+  },
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
   rerunAgentFallback:

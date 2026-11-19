@@ -718,6 +718,9 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     """Nothing to change: the default agent moves to the trigger (unless moved by hand
     meanwhile) and the default environment version is recorded as fitting it."""
     from simulate.services.harness_agent_versions import hand_move
+    from simulate.services.harness_versioning.validation import (
+        gate_agent_move,
+    )
     from simulate.services.harness_versioning.versions import move_agent
 
     trigger = _trigger(nudge)
@@ -726,6 +729,13 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     reason = None
     if locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
+        if reason is None:
+            pending = gate_agent_move(
+                "no_change", locked, trigger, user=nudge.answered_by, nudge=nudge
+            )
+            if pending is not None:
+                # Moved, and E stamped, by the validation once the pairing passes.
+                reason = "validating"
         if reason is None:
             try:
                 with transaction.atomic():
@@ -1726,14 +1736,23 @@ def _land(
 ) -> dict[str, Any] | None:
     """Make the turn's draft the default; ``None`` when the pair can't be run."""
     from simulate.services.harness_versioning import drafts
+    from simulate.services.harness_versioning.validation import (
+        can_validate,
+        gate_agent_move,
+    )
+    from simulate.services.harness_versioning.versions import move_agent
 
     trigger = _trigger(nudge) if nudge.target == Target.ENVIRONMENT else None
     reason = None
     if trigger is not None and locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
     agent = trigger if trigger is not None and reason is None else None
+    environment_before = locked.environment_version_id
+    # The new pairing is validated before the agent moves; the draft lands for the
+    # current agent.
+    validate = agent is not None and can_validate(locked, agent.id)
     activated = None
-    for moving in (agent, None) if agent is not None else (None,):
+    for moving in (agent, None) if agent is not None and not validate else (None,):
         try:
             with transaction.atomic():
                 activated = drafts.activate_drafts(
@@ -1755,6 +1774,25 @@ def _land(
         break
     if activated is None:
         return None
+    if validate and agent is not None:
+        validation = gate_agent_move(
+            "land",
+            locked,
+            agent,
+            user=nudge.answered_by,
+            nudge=nudge,
+            from_environment_version_id=environment_before,
+        )
+        if validation is None:
+            try:
+                with transaction.atomic():
+                    move_agent(locked, agent)
+            except HostedHarnessError:
+                locked.refresh_from_db()
+                reason = "not_prepared"
+        else:
+            # Moved by the validation once the pairing passes.
+            reason = "validating"
     version, created = activated[nudge.target]
     snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
     summary: dict[str, Any] = {
@@ -1843,9 +1881,14 @@ def _no_runtime(conversation: HostedHarnessConversation | None, now: Any) -> boo
 
 
 def check_nudges(environment_id: Any) -> None:
-    """Move the environment's rebuild along, or end it when it can't go on."""
+    """Make any agent move a settled validation left unmade, then move the
+    environment's rebuild along, or end it when it can't go on."""
+    from simulate.services.harness_versioning.validation import (
+        finish_unfinished_moves,
+    )
     from simulate.services.hosted_harness_conversation import promote_turn_checkpoint
 
+    finish_unfinished_moves(environment_id)
     nudge = _open_nudge(environment_id)
     if nudge is None:
         return
@@ -1914,10 +1957,11 @@ def _fair(rows: Any, limit: int) -> list[Any]:
 
 
 def tick_nudges(*, limit: int = 200) -> dict[str, int]:
-    """Fan out: a check per environment with an open rebuild, and a retry per version
-    whose activation waited for a busy environment. Least recently ticked first, so
-    every organization's rows come round."""
+    """Fan out: a check per environment with an open rebuild or an agent move a settled
+    validation left unmade, and a retry per version whose activation waited for a busy
+    environment. Least recently ticked first, so every organization's rows come round."""
     from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.harness_versioning.validation import unfinished_moves
     from simulate.tasks import harness_nudges as tasks
 
     now = timezone.now()
@@ -1931,7 +1975,8 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     HarnessNudge.no_workspace_objects.filter(
         job_id__in=environments, state__in=OPEN
     ).update(updated_at=now)
-    for environment_id in environments:
+    unmade = [one for one in unfinished_moves(limit=limit) if one not in environments]
+    for environment_id in (*environments, *unmade):
         tasks.schedule_nudge_check_task(environment_id)
     # A retry that finds the environment still busy re-records it: it waits a while.
     versions = _fair(
@@ -1946,7 +1991,7 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     )
     for version_id in versions:
         tasks.schedule_deferred_activations(version_id)
-    return {"environments": len(environments), "versions": len(versions)}
+    return {"environments": len(environments) + len(unmade), "versions": len(versions)}
 
 
 def _busy_entries(version_id: Any) -> list[str]:
