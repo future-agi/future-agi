@@ -16,9 +16,11 @@ from tfc.utils.storage_client import get_storage_client
 # Where a replay keeps the trial it replays: the run job's payload metadata, which the harness reads with the
 # recording, and the run's execution metadata, which the run views read without it.
 RECORDED_REPLAY_KEY = "recorded_replay"
-# What each of the agent's recorded calls keeps: what it asked, how it ended and what its code received, as the
-# world's door logged them. Never the world's records, which the same artifact holds for re-grading.
+# What each recorded call keeps, the agent's and each actor's: who made it, what it asked, how it ended and what its
+# caller received, as the world's door logged them. Never the world's records, which the same artifact holds for
+# re-grading.
 RECORDED_FIELDS = (
+    "actor_id",
     "action",
     "name",
     "method",
@@ -87,8 +89,6 @@ def replay_unavailable_reason(call: CallExecution) -> str | None:
     if call.simulation_call_type != CallExecution.SimulationCallType.TEXT:
         return "Recorded replay works for chat trials only."
     metadata, state = _trial(call)
-    if metadata.get("harness_call_actors"):
-        return "Recorded replay can't replay a trial with other people in it yet."
     if not state or (state.get("recorded") is False and state.get("why") in _NO_DOOR):
         return (
             "This environment was built before its agent's tools could be answered from a recording. Rebuild it to "
@@ -118,21 +118,15 @@ def _sealed_log(call: CallExecution) -> list[dict[str, Any]]:
 
 
 def recorded_calls(call: CallExecution) -> list[dict[str, Any]]:
-    """The recording a replay of this trial serves: each of the agent's own calls, in order, with what it asked, how
-    it ended and what its code received, from the door log the trial sealed. Raises ValueError with the reason a
-    person reads when there is none to serve or it is too large to carry."""
+    """The recording a replay of this trial serves: each call the agent and its actors made, in order, with what it
+    asked, how it ended and what its caller received, from the door log the trial sealed. A trial recorded before
+    answers were kept replays until its first call the recording cannot prove; the harness stops there and says so.
+    Raises ValueError with the reason a person reads when there is none to serve or it is too large to carry."""
     calls = [
         {field: row[field] for field in RECORDED_FIELDS if field in row}
         for row in _sealed_log(call)
-        if str(row.get("actor_id") or "agent") == "agent"
-        and row.get("refusal_code") not in _NOT_CALLS
-        and row.get("name")
+        if row.get("refusal_code") not in _NOT_CALLS and row.get("name")
     ]
-    if calls and not any("received" in one for one in calls):
-        raise ValueError(
-            "This trial was recorded before recorded replay kept tool answers. Run it again, then replay the new "
-            "trial."
-        )
     if len(json.dumps(calls, default=str)) > MAX_RECORDING_BYTES:
         raise ValueError("This trial's tool recording is too large to replay.")
     return calls

@@ -58,15 +58,16 @@ AGENT_ROWS = [
         "actor_id": "agent",
     },
 ]
-# An actor's action and the mark of a request stopped at the world's edge: never part of what the agent received.
-NOT_THE_AGENTS = [
-    {"name": "approve", "actor_id": "manager", "outcome": "committed", "received": {"status": 200}},
-    {"name": "fetch", "actor_id": "agent", "refusal_code": "egress_blocked", "outcome": "refused"},
-]
+# An actor's action, answered from the recording like the agent's.
+ACTOR_ROW = {"name": "approve", "action": "approve", "actor_id": "manager", "outcome": "committed",
+             "received": {"status": 200, "value": "{}", "exact": True}, "at": 4.5, "action_id": "a3"}
+# A request stopped at the world's edge: no call of anyone's.
+NOT_CALLS = [{"name": "fetch", "actor_id": "agent", "refusal_code": "egress_blocked", "outcome": "refused"}]
 # The world's records at the trial's end: kept for re-grading, and evaluator data a replay never carries.
 TABLES = {"bookings": [{"id": "B-7", "status": "booked", "internal_note": "VIP"}]}
 
-KEPT = ("action", "name", "method", "arguments", "effect", "outcome", "refusal_code", "error", "fault", "received")
+KEPT = ("actor_id", "action", "name", "method", "arguments", "effect", "outcome", "refusal_code", "error", "fault",
+        "received", "path")
 
 
 class _Stored:
@@ -108,7 +109,7 @@ def _original(user, workspace, key, sealed, *, trials=1, log=None, **call_fields
         object_key = f"harness/world_state/{call.id}.json"
         sealed[object_key] = json.dumps(
             {"schema": "end", "tables": TABLES, "skipped": [],
-             "action_log": log if log is not None else [*AGENT_ROWS, *NOT_THE_AGENTS]},
+             "action_log": log if log is not None else [*AGENT_ROWS, ACTOR_ROW, *NOT_CALLS]},
             sort_keys=True,
         ).encode()
         call.status = CallExecution.CallStatus.FAILED
@@ -142,9 +143,9 @@ def test_a_replay_runs_the_trials_scenario_once_with_what_its_agent_received(use
     held = replay.payload["metadata"][RECORDED_REPLAY_KEY]
     assert held["source_call_execution_id"] == str(call.id)
     assert held["scenario_key"] == "scenario-a"
-    # The agent's own calls, in order, with what each asked, how it ended and what its code received: no actor's
-    # action, no stopped request, no timing, and never the world's records.
-    assert held["calls"] == [{key: row[key] for key in KEPT} for row in AGENT_ROWS]
+    # The agent's and the actor's calls, in order, with what each asked, how it ended and what its caller received: no
+    # stopped request, no timing, and never the world's records.
+    assert held["calls"] == [{key: row[key] for key in KEPT if key in row} for row in [*AGENT_ROWS, ACTOR_ROW]]
     assert "internal_note" not in json.dumps(replay.payload)
     assert replay.payload["metadata"]["selected_scenario_keys"] == ["scenario-a"]
     assert replay.payload["metadata"]["trials"] == 1
@@ -166,7 +167,6 @@ def test_a_replay_runs_the_trials_scenario_once_with_what_its_agent_received(use
     [
         ({"status": CallExecution.CallStatus.ONGOING}, "once this trial has finished"),
         ({"simulation_call_type": CallExecution.SimulationCallType.VOICE}, "chat trials only"),
-        ({"call_metadata": {TRIAL_STATE_KEY: {"door": True}, "harness_call_actors": [{"id": "m"}]}}, "other people"),
         ({"call_metadata": {TRIAL_STATE_KEY: {"recorded": False, "why": "in_process_tools"}}}, "Rebuild it"),
         ({"call_metadata": {}}, "Rebuild it"),
         ({"call_metadata": {TRIAL_STATE_KEY: {"door": True}}}, "kept no recording"),
@@ -185,15 +185,21 @@ def test_a_trial_that_cannot_be_replayed_says_why(user, workspace, settings, sea
     assert reason in recorded_replay(call)["unavailable_reason"]
 
 
-def test_a_trial_recorded_before_answers_were_kept_says_so(user, workspace, settings, sealed):
+def test_a_trial_recorded_before_answers_were_kept_is_replayed_until_its_first_unproven_call(
+    user, workspace, settings, sealed
+):
+    # The harness answers what the recording proves exact and stops, with the reason, at the first call it cannot.
     settings.HARNESS_VERSIONING_ENABLED = False
     old = [{key: value for key, value in row.items() if key != "received"} for row in AGENT_ROWS]
     environment, _, [call] = _original(user, workspace, "replay-old", sealed, log=old)
 
-    with pytest.raises(HostedHarnessError) as refused:
-        _replay(environment, call)
+    replay, _ = _replay(environment, call)
 
-    assert "recorded before recorded replay kept tool answers" in refused.value.message
+    assert [one["name"] for one in replay.payload["metadata"][RECORDED_REPLAY_KEY]["calls"]] == [
+        "find_booking",
+        "cancel_booking",
+    ]
+    assert all("received" not in one for one in replay.payload["metadata"][RECORDED_REPLAY_KEY]["calls"])
 
 
 def test_a_trial_that_made_no_tool_call_is_replayed_with_an_empty_recording(user, workspace, settings, sealed):
