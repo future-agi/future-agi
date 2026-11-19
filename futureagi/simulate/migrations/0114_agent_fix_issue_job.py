@@ -135,9 +135,9 @@ class Migration(migrations.Migration):
                     models.UniqueConstraint(
                         condition=models.Q(
                             ("baseline_run__isnull", False),
-                            ("fix_run__isnull", True),
-                            ("ending__isnull", True),
                             ("deleted", False),
+                            ("ending__isnull", True),
+                            ("fix_run__isnull", True),
                         ),
                         fields=("environment",),
                         name="uniq_measuring_issue_job_per_environment",

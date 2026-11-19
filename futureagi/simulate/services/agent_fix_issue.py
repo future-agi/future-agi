@@ -191,10 +191,13 @@ def create_issue_job(
             source_issue=issue,
         )
         cases = list(evidence_import.cases.select_related("duplicate_of"))
+        # A pick that repeats another pick is drafted once, as that pick; one that
+        # repeats another import's case waits on that import's review.
         if waiting := [
             member_of_source[case.source_id]
             for case in cases
             if case.status == EvidenceImportCase.Status.DUPLICATE
+            and case.duplicate_of.evidence_import_id != evidence_import.id
             and case.duplicate_of.status != EvidenceImportCase.Status.ADDED
         ]:
             raise _refused(

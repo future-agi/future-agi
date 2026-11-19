@@ -133,10 +133,10 @@ def _members(issue, count=None, *, traces=None, sessions=False):
     return ids
 
 
-def _roots(by_trace):
+def _roots(by_trace, *, said=None):
     """A stand-in ClickHouse reader whose roots are ``{trace: (type, session)}``: the
     sample reads their units, and an import reads each one as a trace with an
-    exchange."""
+    exchange of its own, or the same ``said`` for every trace."""
     reader = MagicMock()
     reader.__enter__ = MagicMock(return_value=reader)
     reader.__exit__ = MagicMock(return_value=False)
@@ -150,7 +150,12 @@ def _roots(by_trace):
         if one in by_trace
     }
     reader.roots_by_trace_ids.side_effect = lambda ids, **_: [
-        _root(one, kind=by_trace[one][0], input="Refund 42", output="Refunded twice.")
+        _root(
+            one,
+            kind=by_trace[one][0],
+            input=said or f"Refund order {one}",
+            output="Refunded twice.",
+        )
         for one in ids
         if one in by_trace
     ]
@@ -421,6 +426,26 @@ class TestCreate:
         assert drafted == made
         assert set(pending) == {str(one.id) for one in made.cases.all()}
         assert set(kwargs["shows"].values()) == {"failure"}
+
+    def test_two_picks_of_one_conversation_are_drafted_once(
+        self, environment, issue, user, boundaries
+    ):
+        traces = _members(issue, 2)
+
+        with _roots(_sdk(traces), said="Refund order 42"):
+            job = jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=traces,
+                user=user,
+                endpoint_base_url="https://platform.test",
+            )
+
+        first, repeat = job.evidence_import.cases.order_by("position")
+        assert (first.status, repeat.status) == ("pending", "duplicate")
+        assert repeat.duplicate_of_id == first.id
+        (_made, pending), _kwargs = boundaries.drafting.call_args
+        assert pending == [str(first.id)]
 
     def test_an_issue_with_an_open_job_opens_it_instead(self, environment, issue, user):
         traces = _members(issue, 2)
