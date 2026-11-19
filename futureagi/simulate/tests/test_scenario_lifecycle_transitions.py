@@ -407,6 +407,18 @@ def test_kept_as_written_runs_labelled_as_not_proved(user, workspace, storage):
             "draft",
             "Not validated on these versions: validate it again to see why.",
         ),
+        # A case written before negative controls were required runs, and says plainly what it lacks.
+        (
+            {**KEPT, "blocked_reason": "no_negative_control"},
+            "kept_as_written",
+            "Kept as written: no wrong-way example to prove the check can fail.",
+        ),
+        (
+            {**KEPT, "blocked_reason": "control_misses_case_goal", "case_goals": ["refund_once"]},
+            "kept_as_written",
+            "Kept as written: its wrong-way examples only fail checks every scenario shares, so none proves this "
+            "case's own check can fail.",
+        ),
         # One assumed tool reads in the singular.
         (
             {**KEPT, "assumed": ["issue_refund"], "solution_steps": 1},

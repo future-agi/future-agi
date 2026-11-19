@@ -98,6 +98,11 @@ WARNING_TEXTS = {
     "judged_only": (
         "Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer."
     ),
+    "no_negative_control": "Kept as written: no wrong-way example to prove the check can fail.",
+    "control_misses_case_goal": (
+        "Kept as written: its wrong-way examples only fail checks every scenario shares, so none proves this case's "
+        "own check can fail."
+    ),
     "evidence_not_captured": (
         "{check} reads {evidence}, which this agent does not share with the test; it will read Not measured."
     ),
