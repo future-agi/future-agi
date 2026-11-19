@@ -39,7 +39,12 @@ pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/harness-environments"
 RULE = "Never approve a discount above 25%"
-AMENDMENT = f"rule added \u2014 {RULE}: the policy caps discounts"
+AMENDMENT = {
+    "kind": "rule",
+    "keys": [RULE],
+    "action": "added",
+    "text": f"rule added: {RULE}",
+}
 RULE_ID = f"rule:{rule_key(RULE)}"
 
 
