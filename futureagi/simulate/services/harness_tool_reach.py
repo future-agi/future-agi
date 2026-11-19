@@ -93,7 +93,12 @@ def _reaches_someone_elses_api(
 
 def production_only(contract: Any) -> list[str]:
     """The contract tools that reach an API someone else runs, other than the agent's own tools service. A test never
-    calls those; they read Unsupported for this controlled test."""
+    calls those; they read Unsupported for this controlled test. None while actors are off: no run, plan or Contract
+    tab says a tool reaches production."""
+    from simulate.services.harness_versioning.versions import actors_enabled
+
+    if not actors_enabled():
+        return []
     contract = contract if isinstance(contract, dict) else {}
     served = {
         str(entry.get("service"))
@@ -182,12 +187,7 @@ def _version_scenarios(
 def blocked_tools(
     environment: HostedHarnessJob, pins: PinnedEnvironment | None = None
 ) -> list[BlockedTool]:
-    """Each production-only tool of the run's environment version, with the scenarios that need it; none while actors
-    are off, so neither the run nor its plan is held back."""
-    from simulate.services.harness_versioning.versions import actors_enabled
-
-    if not actors_enabled():
-        return []
+    """Each production-only tool of the run's environment version, with the scenarios that need it."""
     documents = _version_documents(environment, pins)
     contract = documents.get("contract") or contract_data(environment)
     blocked = production_only(contract)

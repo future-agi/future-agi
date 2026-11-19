@@ -7,9 +7,10 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 
 from simulate.models.test_execution import CallExecution
-from simulate.services.harness_environment import _actors_tab
+from simulate.services.harness_environment import _actors_tab, environment_detail
 from simulate.services.harness_provider import HostedHarnessProvider
 from simulate.services.harness_versioning.assembly import certify_job_payload
+from simulate.tests import test_harness_environment_detail_fields as detail_fields
 from simulate.tests import test_harness_versioning_picks as picks
 from simulate.tests import test_model_tools_journey as journey
 from simulate.tests.test_harness_actors import BASE, MANAGER, _add, _built
@@ -264,3 +265,22 @@ def test_the_run_plan_holds_back_a_production_only_run_only_while_actors_are_on(
 
     assert (starts, blocked_code) == (runnable, code)
     assert (tools, held) == (([], 0) if enabled is False else (tools, 1))
+
+
+@pytest.mark.parametrize(
+    ("enabled", "listed", "notify"),
+    [(False, [], "simulated"), (True, ["notify"], "unsupported")],
+)
+def test_the_contract_names_production_only_tools_only_while_actors_are_on(
+    organization, workspace, settings, enabled, listed, notify
+):
+    settings.HARNESS_ACTORS_ENABLED = enabled
+
+    contract = environment_detail(
+        detail_fields._environment(organization, workspace, f"flag-contract-{enabled}")
+    )["contract"]
+
+    assert contract["production_only"] == listed
+    assert {one["tool"]: one["status"] for one in contract["tool_status"]}[
+        "notify"
+    ] == notify
