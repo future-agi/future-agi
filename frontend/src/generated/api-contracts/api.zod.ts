@@ -61446,6 +61446,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
       ),
   }),
+  actors_enabled: zod
+    .boolean()
+    .describe(
+      "Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view.",
+    ),
   comparable: zod
     .boolean()
     .describe(

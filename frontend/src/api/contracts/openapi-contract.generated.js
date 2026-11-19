@@ -57132,6 +57132,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "participants",
         "has_customer",
         "trial_state",
+        "actors_enabled",
         "comparable",
         "not_comparable_reason",
         "scoring_status",
@@ -57629,6 +57630,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         trial_state: {
           $ref: "#/definitions/TrialState",
+        },
+        actors_enabled: {
+          title: "Actors enabled",
+          description:
+            "Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view.",
+          type: "boolean",
         },
         comparable: {
           title: "Comparable",
