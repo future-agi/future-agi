@@ -69,11 +69,8 @@ def test_changes_with_cited_by(user, workspace, storage, auth_client):
     )
     by_ref = {(one["kind"], one["ref"]): one for one in body["changes"]}
     rule = by_ref[("rule", "rule:0")]
-    # The reworded rule compares with its new wording, not with nothing.
-    assert (rule["before"], rule["after"]) == (
-        "Never refund after 14 days.",
-        "Never refund after 30 days.",
-    )
+    # The cited rule is gone; no new rule is guessed in its place from how it reads.
+    assert (rule["before"], rule["after"]) == ("Never refund after 14 days.", None)
     assert sorted(rule["cited_by"]) == sorted(REFUND_KEYS[:2])
     assert by_ref[("file", "file:p.md")]["before"] == "old text"
     assert body["truncated"] is False

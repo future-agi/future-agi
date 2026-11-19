@@ -59,6 +59,8 @@ describe("AddScenariosDrawer routes", () => {
     const [, body] = sendHarnessConversationMessage.mock.calls[0];
     expect(body.content).toBe(`${DESCRIBE_PREFIX}\nRequested case 1: a 20-day refund`);
     expect(body.kind).toBe("user_message");
+    // The platform reads the requested cases from the payload, never from the text.
+    expect(body.payload).toEqual({ requested_cases: ["a 20-day refund"] });
   });
 
   it("uploads a policy file as knowledge and sends its text", async () => {

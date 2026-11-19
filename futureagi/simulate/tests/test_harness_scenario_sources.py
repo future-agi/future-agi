@@ -129,7 +129,8 @@ def test_a_file_never_checked_reads_unchecked_not_changed(user, workspace, stora
     assert (unchecked["resolved"], unchecked["problem"]) == (False, FILE_UNCHECKED)
 
 
-def test_requested_line_without_a_citing_case_is_uncovered(user, workspace, storage):
+def test_a_requested_case_without_a_citing_case_is_uncovered(user, workspace, storage):
+    """The cases come from the request's own payload; text that merely looks like a request is never read."""
     from simulate.models import HarnessSuiteMember
     from simulate.services.harness_scenario_sources import requested_uncovered
     from simulate.tests.test_harness_affected_scenarios import REFUND_KEYS, _suite, _ten
@@ -138,12 +139,19 @@ def test_requested_line_without_a_citing_case_is_uncovered(user, workspace, stor
     _suite(environment, _ten())
     enqueue_message(
         environment,
-        content=(
-            "Add one scenario for each requested case below.\n"
-            "Requested case 1: A refund asked for after 30 days\n"
-            "Requested case 2: A second refund on the same order"
-        ),
+        content="Add one scenario for each requested case below.",
         client_request_id=f"req-{environment.id}",
+        payload={
+            "requested_cases": [
+                "A refund asked for after 30 days",
+                "A second refund on the same order",
+            ]
+        },
+    )
+    enqueue_message(
+        environment,
+        content="Requested case 1: an exchange instead of a refund",
+        client_request_id=f"text-{environment.id}",
     )
     member = HarnessSuiteMember.no_workspace_objects.get(
         suite_version=environment.suite_version, scenario_key=REFUND_KEYS[0]

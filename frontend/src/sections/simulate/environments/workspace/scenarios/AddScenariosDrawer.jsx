@@ -37,14 +37,16 @@ import {
   clampCount,
   fileMessage,
   recordsMessage,
+  requestedLines,
 } from "./addScenarios.constants";
 import { ENV_SHAPE } from "./scenarios.shapes";
 
-const message = (content) => ({
+// `payload` carries what the platform reads back, such as the requested cases, never parsed from the text.
+const message = (content, payload = {}) => ({
   content,
   client_request_id: harnessIdempotencyKey(),
   kind: "user_message",
-  payload: {},
+  payload,
 });
 
 // Add scenarios: five routes, each ending with the builder writing and proving drafts.
@@ -116,7 +118,9 @@ export default function AddScenariosDrawer({
       } else if (route === "describe") {
         await sendHarnessConversationMessage(
           jobId,
-          message(`${describeMessage(description)}${suffix()}`),
+          message(`${describeMessage(description)}${suffix()}`, {
+            requested_cases: requestedLines(description),
+          }),
         );
       } else if (route === "file" || route === "records") {
         const { path, text } = await upload();

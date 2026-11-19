@@ -598,24 +598,6 @@ def _file_texts(version: Any, paths: set[str]) -> dict[str, str | None]:
     return texts
 
 
-def _reworded(
-    before: str | None, old_rules: list[str], new_rules: list[str]
-) -> str | None:
-    """The rule the version added that reads most like the cited one it dropped, so a reworded
-    rule compares with its new wording rather than with nothing."""
-    from difflib import SequenceMatcher
-
-    if not before:
-        return None
-    added = [rule for rule in new_rules if rule not in old_rules]
-    scored = [
-        (SequenceMatcher(None, before.lower(), rule.lower()).ratio(), rule)
-        for rule in added
-    ]
-    best = max(scored, default=(0.0, None))
-    return best[1] if best[0] >= 0.6 else None
-
-
 def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChanges:
     """What changed between an environment version and its parent in the rules and files the
     default suite cites, each with the cases that cite it."""
@@ -670,9 +652,9 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
             if kind == "rule":
                 quote = str(source.get("quote") or "")
                 entry["before"] = matched_rule(quote, old_rules)
-                entry["after"] = matched_rule(quote, new_rules) or _reworded(
-                    entry["before"], old_rules, new_rules
-                )
+                # A cited rule this version no longer holds has no "after": nothing guesses which new rule took its
+                # place by how it reads.
+                entry["after"] = matched_rule(quote, new_rules)
             else:
                 files.add(file_path(ref))
     before_texts = _file_texts(parent, files) if parent else {}
