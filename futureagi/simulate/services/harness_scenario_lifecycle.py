@@ -63,6 +63,9 @@ REASON_TEXTS = {
     "unchecked": "No check notices a wrong value for: {why}",
     "validation_incomplete": "Validation ran out of time before this case; validate again.",
     "no_negative_control": "No wrong-way example: add a wrong way of handling this case that its checks must fail.",
+    "control_misses_case_goal": (
+        "Its wrong-way examples only fail checks every scenario shares; add one that fails this case's own goal{goals}."
+    ),
     "not_active": "Validated on these versions, which are not saved yet: save them to run it.",
     "proved_on_other_agent": "Validated with another agent version; validate it with this one to run it.",
     "broken_join": "Its starting records do not match up: {joins}. Fix the field or add the missing rows.",
@@ -237,6 +240,9 @@ def reason_text(
             control_why=passed.get("why", ""),
             checks=", ".join(passed.get("held") or []) or "the checks",
         )
+    elif code == "control_misses_case_goal":
+        # The case's own goals, as the harness lists them; none named, the sentence ends at "goal".
+        values["goals"] = f": {', '.join(items)}" if items else ""
     elif code == "answer_leaked":
         leak = next(
             (one for one in entry.get("leaks") or [] if isinstance(one, Mapping)), {}

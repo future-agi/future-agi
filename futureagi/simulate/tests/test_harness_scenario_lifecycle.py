@@ -977,6 +977,9 @@ def test_every_reason_a_proof_gives_renders_with_nothing_left_blank(
         "no_negative_control": _refused("no_negative_control"),
         "vacuous": _refused("vacuous"),
         "tool_not_on_agent": _refused("tool_not_on_agent", "issue_refund"),
+        "control_misses_case_goal": _refused(
+            "control_misses_case_goal", "refunded", "refund_amount_matches"
+        ),
         "negative_control_passed": _refused(
             "negative_control_passed",
             controls=[
@@ -1018,6 +1021,17 @@ def test_every_reason_a_proof_gives_renders_with_nothing_left_blank(
     assert views["tool_not_on_agent"]["reason_text"] == (
         f"Needs issue_refund, which agent version {_label(environment)} doesn't have."
     )
+    assert views["control_misses_case_goal"]["reason_text"] == (
+        "Its wrong-way examples only fail checks every scenario shares; add one that fails this case's own goal: "
+        "refunded, refund_amount_matches."
+    )
+    assert "control_misses_case_goal" in plan.held
+    assert plan.view["held_back"]["by"]["proof_failed"] >= 1
+    # A proof that names no goal still reads as a whole sentence.
+    from simulate.services.harness_scenario_lifecycle import reason_text
+
+    bare = reason_text("control_misses_case_goal", {"why": "the controls miss it"})
+    assert bare.endswith("own goal.") and not GAP.search(bare)
 
 
 def _label(environment):
