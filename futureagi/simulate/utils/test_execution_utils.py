@@ -2,15 +2,17 @@
 Utility functions for generating dynamic prompts for SimulatorAgent based on agent definitions.
 """
 
+import math
 import re
 import uuid
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import structlog
 from django.db import connection, models
 from django.db.models import F
 from django.db.models.functions import Cast
+from django.utils.dateparse import parse_date
 
 from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
@@ -58,6 +60,25 @@ def accrue_check_run_eval_cost(test_execution_id, credits) -> None:
             test_execution_id=str(test_execution_id),
             usd=str(usd),
         )
+
+
+def _numeric_group_key(key: object, *, integer: bool) -> int | float | None:
+    """Return a comparable bucket value, or None if this key cannot name one."""
+    if isinstance(key, bool) or not isinstance(key, (int, float, str)):
+        return None
+    try:
+        number = float(key)
+        if not math.isfinite(number):
+            return None
+        if not integer:
+            return number
+        # response_time_ms is an IntegerField. Compare the original key, not
+        # its rounded float: e.g. "200.00000000000000001" is not bucket 200.
+        # The ORM's IntegerField exact lookup handles integers outside its DB range.
+        milliseconds = int(number)
+        return milliseconds if Decimal(str(key)) == milliseconds else None
+    except (ValueError, OverflowError, InvalidOperation):
+        return None
 
 
 def _unique_matching_calls(call_executions):
@@ -892,46 +913,38 @@ class TestExecutionUtils:
             if group_keys:
                 group_filter_conditions = models.Q()
 
-                for i, group_key in enumerate(group_keys):
-                    if i < len(row_groups):
-                        group_field = row_groups[i]
+                for group_id, key in zip(row_groups, group_keys, strict=False):
+                    field = basic_fields.get(group_id)
+                    if field is None:
+                        continue
+                    if key is None:
+                        group_filter_conditions &= models.Q(
+                            **{f"{field}__isnull": True}
+                        )
+                        continue
 
-                        if group_key is None:
-                            # A null key names the bucket of calls without a value.
-                            if group_field in basic_fields:
-                                group_filter_conditions &= models.Q(
-                                    **{f"{basic_fields[group_field]}__isnull": True}
-                                )
-                        elif group_field == "timestamp":
-                            group_filter_conditions &= models.Q(
-                                created_at__date=group_key
-                            )
-                        elif group_field == "status":
-                            group_filter_conditions &= models.Q(status=group_key)
-                        elif group_field in ("call_type", "callType"):
-                            group_filter_conditions &= models.Q(
-                                call_type__icontains=group_key.lower()
-                            )
-                        elif group_field == "scenario":
-                            group_filter_conditions &= models.Q(
-                                scenario__name=group_key
-                            )
-                        elif group_field in ("overall_score", "overallScore"):
-                            try:
-                                numeric_key = float(group_key)
-                                group_filter_conditions &= models.Q(
-                                    overall_score=numeric_key
-                                )
-                            except (ValueError, TypeError):
-                                pass
-                        elif group_field in ("response_time", "responseTime"):
-                            try:
-                                numeric_key = float(group_key)
-                                group_filter_conditions &= models.Q(
-                                    response_time_ms=numeric_key
-                                )
-                            except (ValueError, TypeError):
-                                pass
+                    # Keys are conjunctive: one unmatchable dimension means no groups.
+                    if field in ("overall_score", "response_time_ms"):
+                        key = _numeric_group_key(
+                            key, integer=field == "response_time_ms"
+                        )
+                        if key is None:
+                            return []
+                    elif field == "created_at__date":
+                        if not isinstance(key, str):
+                            return []
+                        try:
+                            key = parse_date(key)
+                        except ValueError:  # Date-shaped string outside the calendar.
+                            return []
+                        if key is None:
+                            return []
+                    elif field == "call_type":
+                        if not isinstance(key, str):
+                            return []
+                        field = "call_type__icontains"
+                        key = key.lower()
+                    group_filter_conditions &= models.Q(**{field: key})
 
                 if group_filter_conditions:
                     call_executions = call_executions.filter(group_filter_conditions)
