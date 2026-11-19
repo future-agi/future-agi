@@ -6,6 +6,45 @@
          Only the address changes; nothing is captured or stored here.
          Callbacks without a saml_code parameter keep their existing flow. -->
     <meta name="referrer" content="no-referrer" />
+    <!-- GTM here and GA4 in the app use both the arrival decision and the live
+         address check. Decide before callback cleanup; don't retain the URL. -->
+    <script id="analytics-url-policy">
+      (function () {
+        var params = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth", "token", "code"];
+        var marketplaceParams = ["onboarding_token", "onboarding_gcp_token"];
+        var paths = /^\/(?:auth\/jwt\/(?:verify|invitation\/accept|invitation\/set-password)\/|shared\/|sos(?:\/|$)|mcp\/(?:oauth\/)?authorize(?:\/|$))/i;
+        function restriction(value, depth) {
+          try {
+            var url = new URL(value, document.baseURI);
+            var fragment = new URLSearchParams(url.hash.slice(1));
+            function present(key) { return url.searchParams.has(key) || fragment.has(key); }
+            if (marketplaceParams.some(present)) return "marketplace";
+            // A login/register link can forward the destination in returnTo.
+            // URLSearchParams decodes once; registration also accepts an encoded path.
+            var next = url.searchParams.get("returnTo");
+            if (next) {
+              if (depth >= 4) return "auth";
+              if (/^%2f/i.test(next)) next = decodeURIComponent(next);
+              var nested = restriction(next, depth + 1);
+              if (nested) return nested;
+            }
+            var path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, "/");
+            return paths.test(path) || params.some(present) ? "auth" : null;
+          } catch (error) {
+            return "auth";
+          }
+        }
+        function allowed(value) {
+          return !window.__authHandoffScrubFailed && !window.__authLateMarkerScrubFailed && !restriction(value, 0);
+        }
+        var initiallyAllowed = allowed(window.location.href);
+        Object.defineProperty(window, "__analyticsAllowedAtLoad", { value: initiallyAllowed });
+        Object.defineProperty(window, "__analyticsUrlAllowed", { value: allowed });
+        Object.defineProperty(window, "__analyticsNeedsMarketplaceDocument", {
+          value: function (url) { return window.__analyticsTagStarted === true && restriction(url, 0) === "marketplace"; }
+        });
+      })();
+    </script>
     <script id="saml-initial-marker-guard">
       (function () {
         var reserved = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth"];
@@ -31,7 +70,7 @@
         }
       })();
     </script>
-    <!-- Normalize callback parameters added after start-up. Installed before other listeners. -->
+    <!-- Install auth navigation guards before other history wrappers and listeners. -->
     <script id="saml-late-marker-guard">
       (function () {
         var history = window.history;
@@ -64,6 +103,7 @@
           return true;
         }
 
+        var needsMarketplaceDocument = window.__analyticsNeedsMarketplaceDocument;
         function guard(nativeMethod, receiver, args) {
           // Let native conversion/argument/structured-clone errors occur once,
           // before changing any state. Ordinary calls keep their exact values.
@@ -74,8 +114,18 @@
             if (target && target.origin === current.origin && target.username === current.username && target.password === current.password) {
               var clean = scrubbed(target.href);
               if (clean) {
+                target = clean;
                 args = Array.prototype.slice.call(args);
                 args[2] = clean.href;
+              }
+              // The router uses string URLs. Enter marketplace registration in a
+              // fresh, ineligible document, not the document that started tags.
+              // This does not revoke scripts already running in the old document.
+              if (target.href !== current.href &&
+                  needsMarketplaceDocument && needsMarketplaceDocument(target.href)) {
+                if (nativeMethod === nativeReplace) window.location.replace(target.href);
+                else window.location.assign(target.href);
+                return;
               }
             }
           }
@@ -97,11 +147,13 @@
             // already been scrubbed. Their captured old/new URLs still count.
             rejected = Boolean(scrubbed(event.oldURL) || scrubbed(event.newURL)) || rejected;
           }
-          if (!rejected) return;
-          // Stop the event first, so later listeners do not receive its URLs
-          // even if the address update below fails.
+          // On a browser traversal the address has already changed. Start the
+          // guarded destination afresh before the router renders it here.
+          var newDocument = needsMarketplaceDocument && needsMarketplaceDocument(clean ? clean.href : window.location.href);
+          if (!rejected && !newDocument) return;
           event.stopImmediatePropagation();
           if (clean) safelyReplace(clean);
+          if (newDocument && !window.__authLateMarkerScrubFailed) window.location.reload();
         }
         window.addEventListener("hashchange", onNavigation, true);
         window.addEventListener("popstate", onNavigation, true);
@@ -110,39 +162,15 @@
     <!-- Load global styles outside the guarded application import. A blocked
          optional font must not reject main's CSS preload and loop on reload. -->
     <link rel="stylesheet" href="/src/global.css" />
-    <!-- Analytics tags (Google Tag Manager, Google Analytics) stay off for a
-         page load whose address is a one-time link or carries sign-in
-         parameters. src/utils/googleAnalytics.js reuses the same check for
-         later in-app navigation. -->
-    <script id="analytics-url-policy">
-      (function () {
-        var params = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth", "token", "code"];
-        var paths = /^\/(?:auth\/jwt\/(?:verify|invitation\/accept|invitation\/set-password)\/|shared\/|sos(?:\/|$))/i;
-        function allowed(value) {
-          try {
-            var url = new URL(value, document.baseURI);
-            // Match what the router sees: decoded, with repeated slashes collapsed.
-            var path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, "/");
-            if (paths.test(path)) return false;
-            var fragment = new URLSearchParams(url.hash.slice(1));
-            for (var i = 0; i < params.length; i++) {
-              if (url.searchParams.has(params[i]) || fragment.has(params[i])) return false;
-            }
-            return true;
-          } catch (error) {
-            return false;
-          }
-        }
-        Object.defineProperty(window, "__analyticsUrlAllowed", { value: allowed });
-        Object.defineProperty(window, "__analyticsAllowedAtLoad", { value: allowed(window.location.href) });
-      })();
-    </script>
     <!-- Google Tag Manager (gated on VITE_GTM_ID at build time so OSS
          builds don't load third-party tracking) -->
-    <script>(function(){
+    <script id="google-tag-manager">(function(){
       var GTM_ID = "%VITE_GTM_ID%";
       if (!GTM_ID || GTM_ID === "%" + "VITE_GTM_ID%") return;
-      if (window.__analyticsAllowedAtLoad !== true) return;
+      if (window.__analyticsAllowedAtLoad !== true ||
+          typeof window.__analyticsUrlAllowed !== "function" ||
+          window.__analyticsUrlAllowed(window.location.href) !== true) return;
+      window.__analyticsTagStarted = true;
       (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
         new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
         j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
