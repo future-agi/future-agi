@@ -18,8 +18,9 @@ export default function IssueEpochAction({
   onOpenDrawer,
 }) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
-  const status = useIssueEpoch({ clusterId, projectId });
-  if (!allowed) return null;
+  const { status, known } = useIssueEpoch({ clusterId, projectId });
+  // Never offer Run Epoch over a job the page couldn't read, or with no project.
+  if (!allowed || !known || !projectId) return null;
   const action = primaryAction(status);
   const fix = status?.epoch;
   if (action.kind === "ship") return <ShipButton fix={fix} />;

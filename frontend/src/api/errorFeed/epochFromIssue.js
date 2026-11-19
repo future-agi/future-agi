@@ -16,8 +16,10 @@ import { listHarnessEnvironments } from "src/api/simulate-environments/harnessEn
 // The job's phase, derived by the server: before the epoch, launched, or ended.
 const LIVE_PHASES = new Set(["drafting", "measuring"]);
 
-export const issueEpochPlanKey = (clusterId, environmentId) => [
-  "agent-fix-issue-plan",
+const ISSUE_EPOCH_PLAN = "agent-fix-issue-plan";
+export const issueEpochPlanKey = (projectId, clusterId, environmentId) => [
+  ISSUE_EPOCH_PLAN,
+  projectId,
   clusterId,
   environmentId ?? null,
 ];
@@ -31,7 +33,8 @@ export const issueEpochsKey = (clusterIds) => [
 export const issueKey = (projectId, clusterId) => `${projectId}:${clusterId}`;
 
 // The job's epoch, as the job read summarises it, in the epoch read's own shape so
-// the issue's view reads both alike.
+// the issue's view reads both alike. `summary` marks what the summary leaves out:
+// the candidates, the failure's message and the agent.
 const epochOfJob = (epoch) =>
   epoch
     ? {
@@ -43,6 +46,7 @@ const epochOfJob = (epoch) =>
         failure: epoch.failure_code ? { code: epoch.failure_code } : null,
         retryable: epoch.retryable,
         limited_validation: epoch.limited_validation,
+        summary: true,
       }
     : null;
 
@@ -110,18 +114,18 @@ export async function stopIssueEpoch(jobId) {
   return res.data;
 }
 
-// The plan makes no model call, but it reads the issue's traces to sample them: it
-// is read when the person opens Run Epoch, never on page load, and once.
+// The plan makes no model call, but it reads the issue's traces to sample them: it is
+// read when the person opens a new plan, never on page load. A blocked plan is read
+// again when they come back to the tab, after fixing what blocked it.
 export function useIssueEpochPlan(
   { clusterId, projectId, environmentId },
   { enabled },
 ) {
   return useQuery({
-    queryKey: issueEpochPlanKey(clusterId, environmentId),
+    queryKey: issueEpochPlanKey(projectId, clusterId, environmentId),
     queryFn: () => getIssueEpochPlan({ clusterId, projectId, environmentId }),
     enabled: enabled && !!clusterId && !!projectId,
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: (query) => !!query.state.data?.blocked,
     retry: false,
     meta: { errorHandled: true },
   });
@@ -148,11 +152,12 @@ export function useCodeAgentEnvironments({ enabled }) {
 }
 
 // The latest job of each issue on the page, by issueKey, in one read whatever the
-// projects. Asks nothing when the org lacks Epoch, since the API answers 402.
+// projects. Asks nothing when the org lacks Epoch, since the API answers 402. A
+// failed read is reported, so a page never offers Run Epoch over a job it can't see.
 export function useIssueEpochs(clusterIds) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
   const ids = [...new Set(clusterIds.filter(Boolean))];
-  const { data } = useQuery({
+  const { data, isError, isLoading } = useQuery({
     queryKey: issueEpochsKey(ids),
     queryFn: () => listIssueEpochs(ids),
     enabled: allowed && ids.length > 0,
@@ -166,7 +171,7 @@ export function useIssueEpochs(clusterIds) {
   for (const one of data?.results ?? []) {
     jobs[issueKey(one.project_id, one.cluster_id)] = one.job;
   }
-  return jobs;
+  return { jobs, isError, isLoading };
 }
 
 export function useIssueEpochJob(jobId) {
@@ -180,28 +185,45 @@ export function useIssueEpochJob(jobId) {
   });
 }
 
-// One issue's epoch, as the issue page shows it: its latest job, and the epoch's
-// own read once the job launched one (Ship and Retry need the whole epoch).
+// One issue's epoch, as the issue page shows it: its latest job, and the epoch's own
+// read once the job launched one (Ship and Retry need the whole epoch). `known` is
+// false until the issue's jobs were read, or when that read failed.
 export function useIssueEpoch({ clusterId, projectId }) {
-  const jobs = useIssueEpochs([clusterId]);
+  const { jobs, isError, isLoading } = useIssueEpochs([clusterId]);
   const latest = jobs[issueKey(projectId, clusterId)] ?? null;
   const { data: job } = useIssueEpochJob(latest?.id);
-  const current = job ?? latest;
+  // The batch names the latest job; a detail read of an older one never wins.
+  const current = job && job.id === latest?.id ? job : latest;
   const { fix } = useFixRun(current?.epoch?.id ?? null);
-  return issueEpochStatus(current, fix ?? null);
+  return {
+    status: issueEpochStatus(current, fix ?? null),
+    known: !isError && !isLoading,
+  };
 }
 
-const refreshIssue = (queryClient, job) => {
+// After any write, read the issue's jobs and plan again; a refusal can end the job
+// too (a stale draft, a scenario gone), so this runs on success and on failure.
+const refreshIssue = (queryClient, jobId) => {
   queryClient.invalidateQueries({ queryKey: [ISSUE_EPOCHS] });
-  if (job?.id) queryClient.setQueryData(issueEpochJobKey(job.id), job);
+  queryClient.invalidateQueries({ queryKey: [ISSUE_EPOCH_PLAN] });
+  if (jobId) {
+    queryClient.invalidateQueries({ queryKey: issueEpochJobKey(jobId) });
+  }
 };
+
+const settleWith = (queryClient, jobIdOf) => ({
+  onSuccess: (job) => {
+    if (job?.id) queryClient.setQueryData(issueEpochJobKey(job.id), job);
+  },
+  onSettled: (job) => refreshIssue(queryClient, job?.id ?? jobIdOf()),
+});
 
 export function useCreateIssueEpoch() {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: createIssueEpoch,
-    onSuccess: (job) => refreshIssue(queryClient, job),
+    ...settleWith(queryClient, () => null),
   });
 }
 
@@ -210,7 +232,7 @@ export function useRunIssueEpoch(jobId) {
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: (body) => runIssueEpoch(jobId, body),
-    onSuccess: (job) => refreshIssue(queryClient, job),
+    ...settleWith(queryClient, () => jobId),
   });
 }
 
@@ -219,6 +241,6 @@ export function useStopIssueEpoch(jobId) {
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: () => stopIssueEpoch(jobId),
-    onSuccess: (job) => refreshIssue(queryClient, job),
+    ...settleWith(queryClient, () => jobId),
   });
 }

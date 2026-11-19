@@ -69,7 +69,7 @@ const envRow = (id, name, sourceKind) => ({
   status: "completed",
 });
 const parts = { transcript: { status: "present", reason: "", turns: [] } };
-const evidenceCase = (id, status) => ({
+const evidenceCase = (id, status, duplicateOf = null) => ({
   id,
   position: 0,
   source_id: `trace-${id}`,
@@ -79,8 +79,16 @@ const evidenceCase = (id, status) => ({
   changed_since_import: false,
   scenario_key: null,
   new_checks: [],
+  duplicate_of: duplicateOf,
   ...parts,
 });
+// A repeat of a scenario the suite holds, and one whose original is gone.
+const CASE_GONE = "88888888-8888-4888-8888-888888888888";
+const original = {
+  import_id: "99999999-9999-4999-8999-999999999999",
+  case_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  scenario_name: "Late rebooking",
+};
 const reviewJob = {
   id: JOB,
   phase: "review",
@@ -99,19 +107,29 @@ const reviewJob = {
     simulated: false,
     production: true,
     drafting: false,
-    cases: [evidenceCase(CASE_A, "drafted"), evidenceCase(CASE_B, "duplicate")],
+    cases: [
+      evidenceCase(CASE_A, "drafted"),
+      evidenceCase(CASE_B, "duplicate", original),
+      evidenceCase(CASE_GONE, "duplicate"),
+    ],
   },
 };
+// The batch status lists the job without its import and defaults.
+const summaryOf = ({ evidence_import: _i, defaults: _d, ...job }) => job;
+const listed = (job) => [
+  { cluster_id: CLUSTER, project_id: PROJECT, job: summaryOf(job) },
+];
 
 let jobs;
 let plans;
+let detail;
 const answer = (url, config) => {
   if (url === ISSUES) return Promise.resolve({ data: { results: jobs } });
   if (url === `${ISSUES}plan/`) {
     const env = config?.params?.environment_id;
     return Promise.resolve({ data: plans[env ?? "none"] });
   }
-  if (url === `${ISSUES}${JOB}/`) return Promise.resolve({ data: reviewJob });
+  if (url === `${ISSUES}${JOB}/`) return detail();
   if (url === "/simulate/api/harness-environments/") {
     return Promise.resolve({
       data: {
@@ -125,18 +143,12 @@ const answer = (url, config) => {
   return Promise.reject(new Error(`unexpected GET ${url}`));
 };
 
-const renderDrawer = () =>
+const renderDrawer = () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({
-          defaultOptions: {
-            queries: { retry: false },
-            mutations: { retry: false },
-          },
-        })
-      }
-    >
+    <QueryClientProvider client={client}>
       <RunEpochDrawer
         open
         onClose={() => {}}
@@ -146,11 +158,16 @@ const renderDrawer = () =>
       />
     </QueryClientProvider>,
   );
+  return client;
+};
+const planReads = () =>
+  api.get.mock.calls.filter(([url]) => url === `${ISSUES}plan/`);
 
 beforeEach(() => {
   api.get.mockReset().mockImplementation(answer);
   api.post.mockReset();
   jobs = [];
+  detail = () => Promise.resolve({ data: reviewJob });
   plans = {
     none: plan(null),
     [ENV]: plan({ id: ENV, name: "Support line" }),
@@ -230,7 +247,89 @@ describe("RunEpochDrawer: the plan", () => {
 
 describe("RunEpochDrawer: the review", () => {
   beforeEach(() => {
-    jobs = [{ cluster_id: CLUSTER, project_id: PROJECT, job: reviewJob }];
+    jobs = listed(reviewJob);
+  });
+
+  it("waits for the job's own read instead of a review with no drafts or defaults", async () => {
+    let land;
+    detail = () =>
+      new Promise((resolve) => {
+        land = () => resolve({ data: reviewJob });
+      });
+    renderDrawer();
+    expect(await screen.findByTestId("run-epoch-drawer")).toHaveTextContent(
+      "Review the drafted scenarios",
+    );
+    expect(screen.queryByTestId("epoch-step-review")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    await waitFor(() => expect(land).toBeDefined());
+    land();
+    expect(await screen.findByTestId("epoch-step-review")).toBeInTheDocument();
+  });
+
+  it("offers a repeat only while the scenario it repeats is still there", async () => {
+    renderDrawer();
+    const boxes = await screen.findAllByRole("checkbox", {
+      name: "Keep this scenario",
+    });
+    expect(boxes).toHaveLength(2);
+    expect(screen.getByTestId("epoch-step-review")).toHaveTextContent(
+      "2 scenarios to review.",
+    );
+  });
+
+  it("shows how the job ended when Run Epoch's refusal ended it, and reads no plan", async () => {
+    api.post.mockRejectedValue({
+      statusCode: 409,
+      error: "evidence_draft_stale",
+      message: "raw",
+      retryable: false,
+    });
+    const ended = {
+      ...reviewJob,
+      phase: "ended",
+      ending: { code: "evidence_draft_stale", message: "raw" },
+    };
+    const user = userEvent.setup();
+    renderDrawer();
+    const run = await screen.findByTestId("epoch-run");
+    // The server ended the job as it refused; review isn't polled, so only the
+    // refusal's own refresh can read that.
+    jobs = listed(ended);
+    detail = () => Promise.resolve({ data: ended });
+    await user.click(run);
+    expect(
+      await screen.findByText(
+        /changed after the drafts were reviewed.*Nothing changed/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Run Epoch again" }),
+    ).toBeInTheDocument();
+    expect(planReads()).toEqual([]);
+  });
+
+  it("shows the ending when measuring ends with the drawer open, and plans only on a click", async () => {
+    const measuring = { ...reviewJob, phase: "measuring" };
+    jobs = listed(measuring);
+    detail = () => Promise.resolve({ data: measuring });
+    const user = userEvent.setup();
+    const client = renderDrawer();
+    expect(
+      await screen.findByTestId("epoch-step-measuring"),
+    ).toBeInTheDocument();
+    const ended = {
+      ...reviewJob,
+      phase: "ended",
+      ending: { code: "fix_targets_passed", message: "raw" },
+    };
+    jobs = listed(ended);
+    detail = () => Promise.resolve({ data: ended });
+    await client.refetchQueries();
+    expect(await screen.findByText("Could not reproduce")).toBeInTheDocument();
+    expect(planReads()).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Run Epoch again" }));
+    await waitFor(() => expect(planReads()).toHaveLength(1));
   });
 
   it("runs the kept scenarios with the launch rows, as the contract takes them", async () => {

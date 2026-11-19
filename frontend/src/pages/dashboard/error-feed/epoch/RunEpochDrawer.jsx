@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Box,
@@ -29,9 +29,9 @@ import {
 } from "src/api/errorFeed/epochFromIssue";
 import { fixErrorOf } from "src/api/simulate-environments/fixRuns";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
-import { sessionTracesLink } from "src/sections/projects/Insights/insightsLinks";
 import SideDrawer from "src/sections/simulate/environments/components/SideDrawer";
 import EvidenceCaseCard from "src/sections/simulate/environments/evidence/EvidenceCaseCard";
+import { observeHref } from "src/sections/simulate/environments/evidence/evidence.constants";
 import LaunchLimits, {
   Row,
   SurfacesRow,
@@ -39,7 +39,14 @@ import LaunchLimits, {
 import { fixName } from "src/sections/simulate/environments/workspace/improvements/fixRunView";
 import { costLimitOf } from "src/sections/simulate/environments/workspace/improvements/launchFormView";
 
-import { PRE_LAUNCH, epochHref, epochKey, isEpochLive } from "./issueEpochView";
+import {
+  PRE_LAUNCH,
+  epochHref,
+  epochKey,
+  epochLabel,
+  epochSentence,
+  isEpochLive,
+} from "./issueEpochView";
 
 const AGENT_SOURCE = { github: "GitHub", archive: "Uploaded" };
 const AGENT_TYPE = { voice: "Voice", chat: "Chat" };
@@ -50,26 +57,24 @@ const PICK_REASON = {
   recent: "Recent",
 };
 const UNIT_NOUN = { call: "call", session: "session", trace: "trace" };
-// The review keeps drafted scenarios, and ones the environment already holds.
-const KEEPABLE = new Set(["drafted", "duplicate"]);
 // Without traces from a run yet, the epoch locks to the models its baseline calls.
 const MODELS_NOTE =
   "Locked to the models the current version calls, read from its run before the epoch starts.";
+// No job on the issue yet: a new plan is for "none".
+const NO_JOB = "none";
 
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const scenariosHref = (envId) =>
+  paths.dashboard.simulate.environments.workspaceTab(envId, "scenarios");
 // A refusal's body: its code, message and any fields it names, at the top level
 // (the app's axios spreads it onto the error; fixErrorOf reads the same).
 const refusalOf = (error) => error?.response?.data ?? error ?? {};
-const scenariosHref = (envId) =>
-  paths.dashboard.simulate.environments.workspaceTab(envId, "scenarios");
 
-function pickHref(projectId, pick) {
-  if (!projectId || !pick.source_id) return undefined;
-  if (pick.unit === "session") {
-    return sessionTracesLink(projectId, pick.source_id, pick.started_at);
-  }
-  return `/dashboard/observe/${projectId}/trace/${encodeURIComponent(pick.source_id)}`;
-}
+// What the review can keep: drafted cases, and repeats of a scenario the suite
+// still holds. A repeat whose original is gone names none, and can't run.
+const isKeepable = (one) =>
+  one.status === "drafted" ||
+  (one.status === "duplicate" && !!one.duplicate_of);
 
 function Footer({ note, children }) {
   return (
@@ -99,12 +104,8 @@ function Footer({ note, children }) {
 Footer.propTypes = { note: PropTypes.node, children: PropTypes.node };
 
 // No code-agent environment exists yet: say why, and offer to build one. The build
-// opens in a new tab; this one asks again when the person comes back to it.
-function NoEnvironment({ onBack }) {
-  useEffect(() => {
-    window.addEventListener("focus", onBack);
-    return () => window.removeEventListener("focus", onBack);
-  }, [onBack]);
+// opens in a new tab; the list is read again when the person comes back to this one.
+function NoEnvironment() {
   return (
     <EmptyState
       variant="no-results"
@@ -127,7 +128,6 @@ function NoEnvironment({ onBack }) {
     />
   );
 }
-NoEnvironment.propTypes = { onBack: PropTypes.func.isRequired };
 
 // The first time per project: which environment runs this issue's epochs. The
 // plan remembers the choice for the project's next ones.
@@ -205,7 +205,7 @@ function PickRow({ pick, projectId, taken, onSwap }) {
       data-testid="epoch-pick"
     >
       <Link
-        href={pickHref(projectId, pick)}
+        href={observeHref(projectId, pick.unit, pick) ?? undefined}
         target="_blank"
         rel="noopener"
         underline="hover"
@@ -314,7 +314,7 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
         </Row>
         <Row k="Budget">
           <Typography sx={{ typography: "s2" }}>
-            {`You set the epoch's budget and limits after the review, before anything runs. It stops at your budget, ${(plan.defaults?.budget_credits ?? 0).toLocaleString("en-US")} credits by default.`}
+            {`You set the epoch's budget and limits after the review, before anything runs. It stops at your budget, ${plan.defaults.budget_credits.toLocaleString("en-US")} credits by default.`}
           </Typography>
         </Row>
         {blocked ? (
@@ -348,7 +348,8 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
           size="small"
           variant="contained"
           color="primary"
-          disabled={!!blocked || !picks.length}
+          // Once created, the issue's new job takes the drawer over.
+          disabled={!!blocked || !picks.length || create.isSuccess}
           loading={create.isPending}
           onClick={() =>
             create.mutate({
@@ -369,20 +370,36 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
 PlanForm.propTypes = {
   plan: PropTypes.object.isRequired,
   clusterId: PropTypes.string.isRequired,
-  projectId: PropTypes.string,
+  projectId: PropTypes.string.isRequired,
   onChangeEnvironment: PropTypes.func.isRequired,
 };
 
-function NewPlan({ clusterId, projectId, open }) {
+function NewPlan({ clusterId, projectId }) {
   const [environmentId, setEnvironmentId] = useState(null);
   const [choosing, setChoosing] = useState(false);
   const plan = useIssueEpochPlan(
     { clusterId, projectId, environmentId },
-    { enabled: open },
+    { enabled: true },
   );
-  const picking = !!plan.data && (!plan.data.environment || choosing);
-  const environments = useCodeAgentEnvironments({ enabled: open && picking });
-  if (plan.isLoading || (picking && environments.isLoading)) {
+  const picking = choosing || (!!plan.data && !plan.data.environment);
+  const environments = useCodeAgentEnvironments({ enabled: picking });
+  if (picking) {
+    if (environments.isLoading) {
+      return <ContentSkeleton variant="rows" rows={3} sx={{ mx: 3 }} />;
+    }
+    if (!environments.data?.length) return <NoEnvironment />;
+    return (
+      <EnvironmentPicker
+        environments={environments.data}
+        value={environmentId ?? plan.data?.environment?.id ?? null}
+        onPick={(id) => {
+          setEnvironmentId(id);
+          setChoosing(false);
+        }}
+      />
+    );
+  }
+  if (plan.isLoading) {
     return (
       <ContentSkeleton
         variant="rows"
@@ -393,30 +410,25 @@ function NewPlan({ clusterId, projectId, open }) {
     );
   }
   if (plan.error || !plan.data) {
+    // The picked environment may not take evidence from this issue's project: offer
+    // another one beside the retry, which can't succeed then.
     return (
-      <ErrorState
-        title={
-          fixErrorOf(plan.error).message ||
-          "Could not plan an epoch for this issue."
-        }
-        onRetry={() => plan.refetch()}
-        sx={{ mx: 3 }}
-      />
-    );
-  }
-  if (picking) {
-    if (!environments.data?.length) {
-      return <NoEnvironment onBack={environments.refetch} />;
-    }
-    return (
-      <EnvironmentPicker
-        environments={environments.data}
-        value={plan.data.environment?.id ?? null}
-        onPick={(id) => {
-          setEnvironmentId(id);
-          setChoosing(false);
-        }}
-      />
+      <Stack alignItems="center" spacing={1} sx={{ mx: 3 }}>
+        <ErrorState
+          title={
+            fixErrorOf(plan.error).message ||
+            "Could not plan an epoch for this issue."
+          }
+          onRetry={() => plan.refetch()}
+        />
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => setChoosing(true)}
+        >
+          Pick another environment
+        </Button>
+      </Stack>
     );
   }
   return (
@@ -431,22 +443,21 @@ function NewPlan({ clusterId, projectId, open }) {
 }
 NewPlan.propTypes = {
   clusterId: PropTypes.string.isRequired,
-  projectId: PropTypes.string,
-  open: PropTypes.bool,
+  projectId: PropTypes.string.isRequired,
 };
 
 // What the epoch is held to, set at the one review stop: what it may change, its
 // reply-time and cost limits, and its budget. Sent with Run Epoch.
 function useLaunchForm(defaults) {
   const [surfaces, setSurfaces] = useState(() =>
-    (defaults?.surfaces ?? []).filter((s) => s.allowed).map((s) => s.id),
+    defaults.surfaces.filter((s) => s.allowed).map((s) => s.id),
   );
   const [latencyMargin, setLatencyMargin] = useState(
-    defaults?.reply_latency_margin_pct ?? 0,
+    defaults.reply_latency_margin_pct,
   );
-  const [costMargin, setCostMargin] = useState(defaults?.cost_margin_pct ?? 0);
+  const [costMargin, setCostMargin] = useState(defaults.cost_margin_pct);
   const [costLimit, setCostLimit] = useState("");
-  const [budget, setBudget] = useState(defaults?.budget_credits ?? 0);
+  const [budget, setBudget] = useState(defaults.budget_credits);
   const [minutes, setMinutes] = useState(null);
   const limit = costLimitOf(costLimit);
   const error = !surfaces.length
@@ -454,9 +465,9 @@ function useLaunchForm(defaults) {
     : Number.isNaN(limit)
       ? "The cost limit must be a number of dollars above 0."
       : null;
-  // Left out, the time limit is sized from the suite and the cost has no limit.
   return {
     error,
+    // Left out, the time limit is sized from the suite and the cost has no limit.
     body: {
       surfaces,
       locked_paths: [],
@@ -466,40 +477,59 @@ function useLaunchForm(defaults) {
       cost_margin_pct: costMargin,
       ...(limit == null ? {} : { cost_limit_usd: limit }),
     },
-    rows: (
-      <>
-        <SurfacesRow
-          surfaces={defaults?.surfaces ?? []}
-          value={surfaces}
-          onChange={setSurfaces}
-        />
-        <LaunchLimits
-          limits={defaults ?? {}}
-          modelsNote={MODELS_NOTE}
-          models={[]}
-          onModels={() => {}}
-          latencyMargin={latencyMargin}
-          onLatencyMargin={setLatencyMargin}
-          costMargin={costMargin}
-          onCostMargin={setCostMargin}
-          costLimit={costLimit}
-          onCostLimit={setCostLimit}
-          budget={budget}
-          onBudget={setBudget}
-          minutes={minutes}
-          onMinutes={setMinutes}
-          minutesFromSuite
-        />
-      </>
-    ),
+    fields: {
+      surfaces,
+      setSurfaces,
+      latencyMargin,
+      setLatencyMargin,
+      costMargin,
+      setCostMargin,
+      costLimit,
+      setCostLimit,
+      budget,
+      setBudget,
+      minutes,
+      setMinutes,
+    },
   };
 }
 
-const FOOTER_NOTE = {
-  drafting: "Drafting goes on if you close this.",
-  review: "Nothing runs until you start it.",
-  blocked: "Each scenario says why it can't run.",
-  measuring: "The epoch starts on its own when this run ends.",
+function CaseList({ evidence, cases, dropped, onToggle }) {
+  return (
+    <Stack spacing={1.25}>
+      {cases.map((one) => (
+        <Stack key={one.id} direction="row" spacing={1} alignItems="flex-start">
+          {onToggle ? (
+            <Checkbox
+              size="small"
+              checked={!dropped.includes(one.id)}
+              onChange={() => onToggle(one.id)}
+              inputProps={{ "aria-label": "Keep this scenario" }}
+              sx={{ mt: 1 }}
+            />
+          ) : null}
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <EvidenceCaseCard
+              item={one}
+              kind={evidence.source_kind}
+              simulated={Boolean(evidence.simulated)}
+              production={Boolean(evidence.production)}
+              observeHref={
+                observeHref(evidence.project_id, evidence.source_kind, one) ??
+                undefined
+              }
+            />
+          </Box>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+CaseList.propTypes = {
+  evidence: PropTypes.object.isRequired,
+  cases: PropTypes.array.isRequired,
+  dropped: PropTypes.array,
+  onToggle: PropTypes.func,
 };
 
 function runFailure(error, environmentId) {
@@ -530,107 +560,132 @@ function runFailure(error, environmentId) {
   );
 }
 
-// Drafting, the one review stop, and the run on the current version. The review
-// keeps or drops each drafted scenario; Run Epoch saves the kept ones and starts.
-// A blocked draft only shows why; the person plans again.
-function JobSteps({ status, onReplan }) {
-  const key = epochKey(status);
+// The one review stop: keep or drop each drafted scenario, set what the epoch is held
+// to, then Run Epoch saves the kept ones and starts it.
+function ReviewStep({ status }) {
   const evidence = status.evidenceImport;
-  const cases = evidence?.cases ?? [];
-  const keepable = cases.filter((one) => KEEPABLE.has(one.status));
+  const keepable = evidence.cases.filter(isKeepable);
   const [dropped, setDropped] = useState([]);
   const kept = keepable.filter((one) => !dropped.includes(one.id));
   const launch = useLaunchForm(status.defaults);
+  const f = launch.fields;
   const run = useRunIssueEpoch(status.jobId);
   const stop = useStopIssueEpoch(status.jobId);
-  const baseline = status.baseline;
-  const shown = key === "review" ? keepable : cases;
-
+  const toggle = (id) =>
+    setDropped((current) =>
+      current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
+    );
   return (
     <>
-      <Box sx={{ px: 3, pb: 2 }} data-testid={`epoch-step-${key}`}>
-        {key === "drafting" ? (
-          <Alert severity="info" sx={{ mb: 1.5 }}>
-            {`Drafting ${plural(cases.length, "scenario")} from the issue's traces. One builder turn, billed as authoring credits.`}
-          </Alert>
-        ) : null}
-        {key === "measuring" ? (
-          <Alert severity="info" sx={{ mb: 1.5 }}>
-            {baseline
-              ? `Ran ${baseline.completed_count} of ${plural(baseline.scenarios, "scenario")} on the current version, ${baseline.failed_count} failing so far. The epoch starts when this run ends.`
-              : "Running the kept scenarios on the current version. The epoch starts when this run ends."}
-          </Alert>
-        ) : null}
-        {key === "review" ? (
-          <Typography
-            sx={{ typography: "s1", color: "text.secondary", mb: 1.5 }}
-          >
-            {`${plural(keepable.length, "scenario")} to review. Keep the ones that show the issue. Run Epoch adds the kept ones to the environment's scenarios and runs them on the current version first.`}
-          </Typography>
-        ) : null}
-        <Stack spacing={1.25}>
-          {shown.map((one) => (
-            <Stack
-              key={one.id}
-              direction="row"
-              spacing={1}
-              alignItems="flex-start"
-            >
-              {key === "review" ? (
-                <Checkbox
-                  size="small"
-                  checked={!dropped.includes(one.id)}
-                  onChange={() =>
-                    setDropped((current) =>
-                      current.includes(one.id)
-                        ? current.filter((x) => x !== one.id)
-                        : [...current, one.id],
-                    )
-                  }
-                  inputProps={{ "aria-label": "Keep this scenario" }}
-                  sx={{ mt: 1 }}
-                />
-              ) : null}
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <EvidenceCaseCard
-                  item={one}
-                  kind={evidence?.source_kind}
-                  simulated={Boolean(evidence?.simulated)}
-                  production={Boolean(evidence?.production)}
-                  observeHref={pickHref(evidence?.project_id, {
-                    ...one,
-                    unit: evidence?.source_kind,
-                  })}
-                />
-              </Box>
-            </Stack>
-          ))}
-        </Stack>
-        {key === "review" ? (
-          <Box sx={{ mt: 2 }} data-testid="epoch-launch-form">
-            {launch.rows}
-          </Box>
-        ) : null}
+      <Box sx={{ px: 3, pb: 2 }} data-testid="epoch-step-review">
+        <Typography sx={{ typography: "s1", color: "text.secondary", mb: 1.5 }}>
+          {`${plural(keepable.length, "scenario")} to review. Keep the ones that show the issue. Run Epoch adds the kept ones to the environment's scenarios and runs them on the current version first.`}
+        </Typography>
+        <CaseList
+          evidence={evidence}
+          cases={keepable}
+          dropped={dropped}
+          onToggle={toggle}
+        />
+        <Box sx={{ mt: 2 }} data-testid="epoch-launch-form">
+          <SurfacesRow
+            surfaces={status.defaults.surfaces}
+            value={f.surfaces}
+            onChange={f.setSurfaces}
+          />
+          <LaunchLimits
+            limits={status.defaults}
+            modelsNote={MODELS_NOTE}
+            models={[]}
+            onModels={() => {}}
+            latencyMargin={f.latencyMargin}
+            onLatencyMargin={f.setLatencyMargin}
+            costMargin={f.costMargin}
+            onCostMargin={f.setCostMargin}
+            costLimit={f.costLimit}
+            onCostLimit={f.setCostLimit}
+            budget={f.budget}
+            onBudget={f.setBudget}
+            minutes={f.minutes}
+            onMinutes={f.setMinutes}
+            minutesFromSuite
+          />
+        </Box>
         <Box sx={{ mt: 1.5 }}>
           {runFailure(run.error, status.environmentId)}
           {stop.error ? (
             <Alert severity="error">
-              {fixErrorOf(stop.error).message || "Could not stop it."}
+              {fixErrorOf(stop.error).message || "Could not discard it."}
             </Alert>
           ) : null}
         </Box>
       </Box>
-      <Footer
-        note={
-          launch.error && key === "review" ? launch.error : FOOTER_NOTE[key]
-        }
-      >
+      <Footer note={launch.error || "Nothing runs until you start it."}>
+        <Button
+          size="small"
+          onClick={() => stop.mutate()}
+          disabled={stop.isPending}
+          sx={{ color: "text.secondary" }}
+        >
+          Discard
+        </Button>
+        <LoadingButton
+          size="small"
+          variant="contained"
+          color="primary"
+          disabled={!kept.length || !!launch.error}
+          loading={run.isPending}
+          onClick={() =>
+            run.mutate({ case_ids: kept.map((one) => one.id), ...launch.body })
+          }
+          data-testid="epoch-run"
+        >
+          Run Epoch
+        </LoadingButton>
+      </Footer>
+    </>
+  );
+}
+ReviewStep.propTypes = { status: PropTypes.object.isRequired };
+
+const PROGRESS_NOTE = {
+  drafting: "Drafting goes on if you close this.",
+  blocked: "Each scenario says why it can't run.",
+  measuring: "The epoch starts on its own when this run ends.",
+};
+
+// Drafting, a blocked draft and the run on the current version: what is happening,
+// and the one way out of each.
+function JobProgress({ status, onPlan }) {
+  const key = epochKey(status);
+  const evidence = status.evidenceImport;
+  const stop = useStopIssueEpoch(status.jobId);
+  const baseline = status.baseline;
+  return (
+    <>
+      <Box sx={{ px: 3, pb: 2 }} data-testid={`epoch-step-${key}`}>
+        <Alert
+          severity={key === "blocked" ? "warning" : "info"}
+          sx={{ mb: 1.5 }}
+        >
+          {key === "measuring" && baseline
+            ? `Ran ${baseline.completed_count} of ${plural(baseline.scenarios, "scenario")} on the current version, ${baseline.failed_count} failing so far. The epoch starts when this run ends.`
+            : epochSentence(status)}
+        </Alert>
+        <CaseList evidence={evidence} cases={evidence.cases} />
+        {stop.error ? (
+          <Alert severity="error" sx={{ mt: 1.5 }}>
+            {fixErrorOf(stop.error).message || "Could not stop it."}
+          </Alert>
+        ) : null}
+      </Box>
+      <Footer note={PROGRESS_NOTE[key]}>
         {key === "blocked" ? (
           <Button
             size="small"
             variant="contained"
             color="primary"
-            onClick={onReplan}
+            onClick={onPlan}
           >
             Plan again
           </Button>
@@ -644,34 +699,16 @@ function JobSteps({ status, onReplan }) {
             {key === "measuring" ? "Stop" : "Discard"}
           </Button>
         )}
-        {key === "review" ? (
-          <LoadingButton
-            size="small"
-            variant="contained"
-            color="primary"
-            disabled={!kept.length || !!launch.error}
-            loading={run.isPending}
-            onClick={() =>
-              run.mutate({
-                case_ids: kept.map((one) => one.id),
-                ...launch.body,
-              })
-            }
-            data-testid="epoch-run"
-          >
-            Run Epoch
-          </LoadingButton>
-        ) : null}
       </Footer>
     </>
   );
 }
-JobSteps.propTypes = {
+JobProgress.propTypes = {
   status: PropTypes.object.isRequired,
-  onReplan: PropTypes.func.isRequired,
+  onPlan: PropTypes.func.isRequired,
 };
 
-// The epoch started while the drawer was open: say so, and open it from here.
+// The epoch is running: say so, and open it from here.
 function Started({ fix }) {
   return (
     <EmptyState
@@ -695,11 +732,108 @@ function Started({ fix }) {
 }
 Started.propTypes = { fix: PropTypes.object.isRequired };
 
+// The job ended while the drawer was open: say how, and plan again only on a click.
+function Ended({ status, onPlan }) {
+  return (
+    <EmptyState
+      variant="no-results"
+      icon="solar:magic-stick-3-linear"
+      title={epochLabel(status)}
+      description={epochSentence(status)}
+      action={
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          onClick={onPlan}
+        >
+          Run Epoch again
+        </Button>
+      }
+      secondaryAction={
+        status.epoch ? (
+          <Button
+            size="small"
+            variant="outlined"
+            component={RouterLink}
+            href={epochHref(status.epoch)}
+          >
+            {`View ${fixName(status.epoch)}`}
+          </Button>
+        ) : null
+      }
+    />
+  );
+}
+Ended.propTypes = {
+  status: PropTypes.object.isRequired,
+  onPlan: PropTypes.func.isRequired,
+};
+
 const TITLES = {
   drafting: "Drafting scenarios",
   review: "Review the drafted scenarios",
   blocked: "None of the drafts can run",
   measuring: "Measuring the current version",
+};
+
+// A new plan only follows a click: opening Run Epoch on an issue whose job ended (or
+// has none), Run Epoch again, or Plan again. It is for the job the click was on.
+const planningFor = (status) => {
+  const key = epochKey(status);
+  return PRE_LAUNCH[key] || isEpochLive(status)
+    ? null
+    : status?.jobId ?? NO_JOB;
+};
+
+// Mounted while the drawer is open, so what it opened on decides the first view.
+function DrawerBody({ status, clusterId, projectId, issueTitle }) {
+  const [planFor, setPlanFor] = useState(() => planningFor(status));
+  const jobId = status?.jobId ?? NO_JOB;
+  const key = epochKey(status);
+  const planning = planFor === jobId;
+  const plan = () => setPlanFor(jobId);
+  let body;
+  if (planning) {
+    body = <NewPlan clusterId={clusterId} projectId={projectId} />;
+  } else if (PRE_LAUNCH[key]) {
+    // The job's own read carries its drafts and defaults; the list's summary doesn't.
+    if (!status.evidenceImport || !status.defaults) {
+      body = <ContentSkeleton variant="rows" rows={3} sx={{ mx: 3 }} />;
+    } else if (key === "review") {
+      body = <ReviewStep key={status.jobId} status={status} />;
+    } else {
+      body = <JobProgress key={status.jobId} status={status} onPlan={plan} />;
+    }
+  } else if (isEpochLive(status)) {
+    body = <Started fix={status.epoch} />;
+  } else {
+    body = <Ended status={status} onPlan={plan} />;
+  }
+  return (
+    <Box
+      sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}
+      data-testid="run-epoch-drawer"
+    >
+      <Box sx={{ px: 3, pt: 3, pb: 1, pr: 6 }}>
+        <Typography sx={{ typography: "m2", fontWeight: 600 }}>
+          {(!planning && TITLES[key]) || "Run Epoch"}
+        </Typography>
+        {issueTitle ? (
+          <Typography noWrap sx={{ typography: "s1", color: "text.tertiary" }}>
+            {issueTitle}
+          </Typography>
+        ) : null}
+      </Box>
+      {body}
+    </Box>
+  );
+}
+DrawerBody.propTypes = {
+  status: PropTypes.object,
+  clusterId: PropTypes.string.isRequired,
+  projectId: PropTypes.string.isRequired,
+  issueTitle: PropTypes.string,
 };
 
 // Run Epoch from an issue, in one drawer: the environment the first time, the slim
@@ -712,48 +846,16 @@ export default function RunEpochDrawer({
   issueTitle,
 }) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
-  const status = useIssueEpoch({ clusterId, projectId });
-  // A blocked job is not open: planning again starts a new one beside it.
-  const [replanFor, setReplanFor] = useState(null);
-  if (!allowed) return null;
-  const key = epochKey(status);
-  const replanning = key === "blocked" && replanFor === status.jobId;
-  const preLaunch = PRE_LAUNCH[key] && !replanning ? key : null;
-  let body = (
-    <NewPlan clusterId={clusterId} projectId={projectId} open={open} />
-  );
-  if (preLaunch) {
-    body = (
-      <JobSteps
-        key={status.jobId}
-        status={status}
-        onReplan={() => setReplanFor(status.jobId)}
-      />
-    );
-  } else if (isEpochLive(status)) {
-    body = <Started fix={status.epoch} />;
-  }
+  const { status, known } = useIssueEpoch({ clusterId, projectId });
+  if (!allowed || !known || !projectId) return null;
   return (
     <SideDrawer open={open} onClose={onClose} width={640}>
-      <Box
-        sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}
-        data-testid="run-epoch-drawer"
-      >
-        <Box sx={{ px: 3, pt: 3, pb: 1, pr: 6 }}>
-          <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-            {TITLES[preLaunch] || "Run Epoch"}
-          </Typography>
-          {issueTitle ? (
-            <Typography
-              noWrap
-              sx={{ typography: "s1", color: "text.tertiary" }}
-            >
-              {issueTitle}
-            </Typography>
-          ) : null}
-        </Box>
-        {body}
-      </Box>
+      <DrawerBody
+        status={status}
+        clusterId={clusterId}
+        projectId={projectId}
+        issueTitle={issueTitle}
+      />
     </SideDrawer>
   );
 }

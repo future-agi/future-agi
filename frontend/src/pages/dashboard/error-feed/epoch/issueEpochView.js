@@ -2,9 +2,11 @@
 // the list icon. Pure: the issue's epoch job, as epochFromIssue.js reads it, plus the
 // epoch's own read once one started. Labels come from the epoch page's map.
 import {
+  OUR_FAILURES,
   STATE_LABEL,
   STEP_LABEL,
   fixName,
+  isShipped,
   noSafeHeadline,
   shipLabel,
   winnerOf,
@@ -78,20 +80,8 @@ const JOB_ENDINGS = {
   },
 };
 
-// Failures that are ours, not the agent's (fixRunView's list, and the issue job's
-// own dispatch): the user can only retry.
-const OUR_FAILURES = new Set([
-  "fix_engine_failed",
-  "fix_engine_died",
-  "fix_watch_failed",
-  "fix_workflow_lost",
-  "fix_dispatch_failed",
-  "fix_variations_failed",
-  "scheduler_unavailable",
-  "issue_epoch_dispatch_failed",
-]);
-
-// Failed splits four ways (#77).
+// Failed splits four ways (#77). Failures that are ours come from the epoch page's own
+// list; the issue job's dispatch failure is mapped in JOB_ENDINGS.
 export function failedReason(code) {
   if (code === "fix_deadline") return "ran out of time";
   if (code === "fix_queue_timeout") return "couldn't start";
@@ -138,11 +128,13 @@ export function epochLabelLong(status) {
   return `${label}: ${reasonOf(status)}`;
 }
 
-const triedCount = (fix) => (fix.candidates || []).length;
+// " after 2 candidates", or "" when only the job's summary of the epoch is read: it
+// carries no candidates, so it can't say how many ran.
 const whenEnded = (fix) => {
-  const n = triedCount(fix);
-  if (!n) return "before any candidate ran";
-  return `after ${n} ${n === 1 ? "candidate" : "candidates"}`;
+  if (fix.summary) return "";
+  const n = (fix.candidates || []).length;
+  if (!n) return " before any candidate ran";
+  return ` after ${n} ${n === 1 ? "candidate" : "candidates"}`;
 };
 
 const STEP_PHRASE = {
@@ -172,13 +164,6 @@ function strengthText(fix) {
   return null;
 }
 
-export const isShippedFix = (fix) => {
-  const winner = winnerOf(fix);
-  if (!winner) return false;
-  if (winner.pull_request_url) return true;
-  return winner.agent_version_id === fix.environment?.default_agent_version_id;
-};
-
 function readyText(fix) {
   const name = fixName(fix);
   const winner = winnerOf(fix);
@@ -187,7 +172,8 @@ function readyText(fix) {
     : `${name} is ready for review.`;
   let shipped = null;
   if (winner?.pull_request_url) shipped = "Its pull request is open.";
-  else if (isShippedFix(fix)) shipped = "It is the environment's default now.";
+  else if (isShipped(fix, winner))
+    shipped = "It is the environment's default now.";
   return [lead, strengthText(fix), shipped].filter(Boolean).join(" ");
 }
 
@@ -196,11 +182,14 @@ function failedText(fix) {
   const code = fix.failure?.code;
   const again = fix.retryable ? " Retry it." : "";
   if (code === "fix_deadline")
-    return `${name} ran out of its time limit ${whenEnded(fix)}. Nothing changed. Run Epoch again with a longer time limit.`;
+    return `${name} ran out of its time limit${whenEnded(fix)}. Nothing changed. Run Epoch again with a longer time limit.`;
   if (code === "fix_queue_timeout")
     return `Too many epochs were running, so ${name} could not start. Nothing changed.${again}`;
   if (!code || OUR_FAILURES.has(code))
     return `${name} stopped because of a problem on our side, not your agent. Nothing changed.${again}`;
+  // Only the epoch's own read carries the message; its page says what to change.
+  if (!fix.failure?.message)
+    return `${name} stopped on something only you can change. Its page says what.`;
   return `${name} stopped on something only you can change: ${sentence(fix.failure.message)}`;
 }
 
@@ -222,9 +211,9 @@ function epochText(fix) {
     case "not_reproduced":
       return "The issue's scenarios did not fail often enough on the current version. It may already be fixed, or the scenarios miss what triggers it.";
     case "out_of_budget":
-      return `${name} reached its budget ${whenEnded(fix)}. Nothing changed. Run Epoch again with a larger budget.`;
+      return `${name} reached its budget${whenEnded(fix)}. Nothing changed. Run Epoch again with a larger budget.`;
     case "stopped":
-      return `${name} was stopped ${whenEnded(fix)}. Nothing changed.`;
+      return `${name} was stopped${whenEnded(fix)}. Nothing changed.`;
     case "too_few_cases":
       return "Too few of the issue's scenarios failed on the current version to search for a change. Run Epoch again and pick other traces.";
     case "failed":
@@ -239,7 +228,7 @@ const PRE_LAUNCH_TEXT = {
     "Drafting scenarios from the issue's traces. This is one builder turn, billed as authoring credits.",
   review: "The drafted scenarios are ready. Review them, then run the epoch.",
   blocked:
-    "None of the drafted scenarios can run, and each one says why. Plan again with other traces.",
+    "None of the drafted scenarios can run, and each one says why. Plan again and swap the traces that can't run.",
   measuring:
     "Running the reviewed scenarios on the current version. The epoch starts when that run ends.",
 };
@@ -284,7 +273,7 @@ export function primaryAction(status) {
   if (key === "ready") {
     const winner = winnerOf(fix);
     // An uploaded agent's winner, once it is the default, has nothing left to ship.
-    if (!winner || (isShippedFix(fix) && !winner.pull_request_url))
+    if (!winner || (isShipped(fix, winner) && !winner.pull_request_url))
       return view(fix);
     return {
       kind: "ship",

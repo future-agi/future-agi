@@ -379,7 +379,7 @@ export default function ErrorFeedTable({
 
   const rows = useMemo(() => rowsProp ?? [], [rowsProp]);
   // Each visible issue's latest epoch, in one read for the page.
-  const epochs = useIssueEpochs(rows.map((r) => r.cluster_id));
+  const { jobs: epochs } = useIssueEpochs(rows.map((r) => r.cluster_id));
   const showError = pageState === FEED_PAGE_STATE.ERROR;
   const showNoProjects = pageState === FEED_PAGE_STATE.NO_PROJECTS;
   const showSkeleton =

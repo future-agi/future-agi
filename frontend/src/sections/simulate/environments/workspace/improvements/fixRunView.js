@@ -125,7 +125,7 @@ const whenEnded = (fix) =>
     : "before any candidate ran";
 
 // Failures that are ours, not the agent's: the user can only retry.
-const OUR_FAILURES = new Set([
+export const OUR_FAILURES = new Set([
   "fix_engine_failed",
   "fix_engine_died",
   "fix_watch_failed",

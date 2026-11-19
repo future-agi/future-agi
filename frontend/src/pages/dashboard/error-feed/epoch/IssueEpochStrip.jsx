@@ -50,7 +50,7 @@ StopJob.propTypes = { jobId: PropTypes.string.isRequired };
 // other ways on. The header holds the main action.
 export default function IssueEpochStrip({ clusterId, projectId, onRunAgain }) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
-  const status = useIssueEpoch({ clusterId, projectId });
+  const { status } = useIssueEpoch({ clusterId, projectId });
   const key = epochKey(status);
   if (!allowed || !key) return null;
   const mark = epochIcon(status);
