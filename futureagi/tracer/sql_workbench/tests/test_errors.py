@@ -143,7 +143,7 @@ def test_names_an_identifier_only_when_the_user_typed_it(code, message, sql, exp
         # Present only as part of a longer user token: not a whole-token match.
         (47, "Unknown expression identifier `cost`", "SELECT total_cost FROM spans"),
         (215, "Column `model` is not under aggregate function", "SELECT models"),
-        # Physical table and tenant literals are never echoed.
+        # Physical table names and organization/project values are never echoed.
         (47, f"Missing columns: '{ORG}'", f"SELECT '{ORG}' FROM spans"),
         (16, f"There's no column `{PHYSICAL}_v2`", "SELECT 1 FROM spans"),
         # Internal aliases are never echoed, even if somehow typed.
@@ -155,8 +155,8 @@ def test_names_an_identifier_only_when_the_user_typed_it(code, message, sql, exp
 def test_category_only_when_the_name_is_not_the_users(code, message, sql):
     result = errors.user_message(server(code, message), sql)
     assert result == errors.USER_ERRORS[code][1]
-    for secret in (PHYSICAL, ORG, PROJECT, "project_id", "__sql_cte"):
-        assert secret not in result
+    for hidden_value in (PHYSICAL, ORG, PROJECT, "project_id", "__sql_cte"):
+        assert hidden_value not in result
 
 
 def test_identifier_match_is_case_sensitive_and_verbatim():

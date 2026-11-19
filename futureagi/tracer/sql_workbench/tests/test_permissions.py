@@ -966,9 +966,7 @@ def test_worker_releases_a_cancelled_slot_only_after_the_scan_returns(tenants):
     ).exists()
 
 
-def test_driver_text_with_compiled_sql_and_tenant_literals_never_leaks(
-    tenants, monkeypatch
-):
+def test_failed_query_error_and_log_show_only_safe_text(tenants, monkeypatch):
     """A ClickHouse error echoes the compiled query: physical database and
     table names, the scope filter and the org/project UUIDs. Neither the stored
     error nor the log record may carry any of it; the code alone is logged."""
@@ -1001,7 +999,7 @@ def test_driver_text_with_compiled_sql_and_tenant_literals_never_leaks(
         def emit(self, record):
             records.append(record)
 
-    quiet = logging.getLogger(f"test.sql_workbench.leak.{uuid4().hex}")
+    quiet = logging.getLogger(f"test.sql_workbench.errors.{uuid4().hex}")
     quiet.propagate = False
     quiet.setLevel(logging.DEBUG)
     quiet.addHandler(Capture())
@@ -1013,7 +1011,7 @@ def test_driver_text_with_compiled_sql_and_tenant_literals_never_leaks(
     assert job.state == "failed"
     assert job.error == errors.UNKNOWN_IDENTIFIER[1]
     assert "project_id" not in job.error
-    secrets = [
+    hidden_values = [
         seen["sql"],
         seen["filters"],
         seen["database"],
@@ -1038,9 +1036,9 @@ def test_driver_text_with_compiled_sql_and_tenant_literals_never_leaks(
             *(f"{k}={v!r}" for k, v in extras.items()),
         ]
     )
-    for secret in secrets:
-        assert secret not in job.error
-        assert secret not in logged
+    for hidden_value in hidden_values:
+        assert hidden_value not in job.error
+        assert hidden_value not in logged
 
 
 def test_execution_deadline_is_anchored_to_the_actual_start(tenants, monkeypatch):
