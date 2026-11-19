@@ -51,211 +51,34 @@ One binary. One config. No proprietary control plane.
 
 ## 📈 Benchmarks
 
-> **Methodology:** gateway routes to a **mock OpenAI upstream** (returns a canned response instantly) so we measure pure gateway processing, not provider latency. Load driven by [`hey`](https://github.com/rakyll/hey) with an authenticated internal key. Every run is reproducible — mock upstream, configs, and commands are committed under [`bench/`](./bench/).
+### Measure routing and HTTP handlers locally
 
-### 🏋️ t3.xlarge (4 vCPU / 16 GB)
+From the repository root, run the committed Go benchmarks. No provider key or running gateway is required.
 
-End-to-end latency (client → gateway → mock upstream → client), 4 vCPU / 16 GB Docker container, Linux 6.8.
+```bash
+cd agentcc-gateway
+go test -run='^$' -bench=. -benchmem ./internal/routing/ ./internal/server/
+```
 
-| Workload | Concurrency | Throughput | P50 | P95 | P99 | Success |
-|---|---:|---:|---:|---:|---:|---:|
-| 🔻 Baseline (direct to mock) | 200 | 58 852 req/s | 1.2 ms | 13.3 ms | 31.9 ms | 100 % |
-| **Gateway, bare proxy** | 50 | **28 904 req/s** | **1.4 ms** | **3.8 ms** | **5.6 ms** | 100 % |
-| **Gateway, bare proxy** | 100 | **29 584 req/s** | 2.6 ms | 7.9 ms | 12.3 ms | 100 % |
-| **Gateway, bare proxy** | 200 | **28 889 req/s** | 5.4 ms | 14.8 ms | 20.8 ms | 100 % |
-| **Gateway + 3 guardrails** | 200 | **29 049 req/s** | 5.1 ms | 16.2 ms | 31.0 ms | 100 % |
+The [routing benchmarks](./internal/routing/weighted_bench_test.go) measure weighted target selection. The server benchmarks exercise [router dispatch](./internal/server/router_test.go) and [HTTP handlers](./internal/server/benchmark_test.go); the chat handlers call a local test upstream. Compare `ns/op` and `allocs/op` for the same benchmark on the same machine.
 
-**Even inside a 4-vCPU container, the gateway holds ~29 k req/s at P99 ≤ 20 ms with 100 % success. 3 inline guardrails add negligible cost at this concurrency profile — CPU is already the bottleneck.**
+These are not end-to-end throughput or tail-latency measurements. The mock-upstream setup used for the historical load figures is not included in this repository, so those figures are not a target for these commands.
 
-### 🏎️ Unconstrained on host (reference) — M4 Max, 14 cores, 36 GB
+### Optional: measure a configured gateway
 
-| Workload | Concurrency | Throughput | P50 | P95 | P99 | Success |
-|---|---:|---:|---:|---:|---:|---:|
-| 🔻 Baseline (direct to mock) | 200 | 62 288 req/s | 2.6 ms | 6.3 ms | 12.7 ms | 100 % |
-| Gateway, bare proxy | 50 | 28 276 req/s | 1.4 ms | 2.8 ms | 10.7 ms | 100 % |
-| Gateway, bare proxy | 100 | **34 659 req/s** | 2.7 ms | 5.1 ms | **6.1 ms** | 100 % |
-| Gateway, bare proxy | 200 | 34 834 req/s | 4.7 ms | 11.8 ms | 22.2 ms | 100 % |
-| Gateway + 3 guardrails | 200 | 27 765 req/s | 4.9 ms | 19.2 ms | 32.6 ms | 100 % |
+From `agentcc-gateway/`, start the gateway with your local configuration:
 
-### Gateway-added overhead (subtract baseline at matched concurrency)
+```bash
+go run ./cmd/agentcc --config config.yaml
+```
 
-| Config | P50 overhead | P95 overhead | P99 overhead |
-|---|---:|---:|---:|
-| Bare proxy (routing + auth + metrics) | **+2.1 ms** | **+5.5 ms** | **+9.5 ms** |
-| + 3 inline guardrails (PII · prompt-injection · secrets) | **+2.3 ms** | +12.9 ms | +19.9 ms |
+In a second terminal in `agentcc-gateway/`, inspect the [load-test client](./cmd/loadtest) options without sending requests:
 
-### Gateway-internal wall time (`go test -bench`, no network I/O)
+```bash
+go run ./cmd/loadtest -help
+```
 
-These numbers measure **what the gateway itself does per request** — fed through the full handler pipeline via `httptest.NewRecorder()`, with an in-process mock OpenAI upstream. No TCP loopback, no kernel socket, no driver. Pure Go wall time.
-
-| Operation | ns/op | µs | allocs/op |
-|---|---:|---:|---:|
-| **Weighted target select** (3 targets, 0 allocs) | **~9.9 ns** | 0.010 µs | 0 |
-| **Weighted target select** (16 targets, 0 allocs) | **~22 ns** | 0.022 µs | 0 |
-| HTTP router — static hot path dispatch | **36 ns** | 0.036 µs | 1 |
-| HTTP router — `/health` | 36 ns | 0.036 µs | 1 |
-| HTTP router — not-found fall-through | 471 ns | 0.47 µs | 4 |
-| HTTP router — 1 path parameter | 578 ns | 0.58 µs | 14 |
-| HTTP router — 3 path parameters | 1 309 ns | 1.3 µs | 23 |
-| Full read endpoint (`GET /v1/models`) — routing + auth + plugins + JSON response | **5 186 ns** | **~5 µs** | 50 |
-| Full chat completion (`POST /v1/chat/completions`) — all of the above + proxy to mock upstream | **66 258 ns** | **~66 µs** | 233 |
-
-**Translation:**
-- The gateway's **dispatch cost per request is ~36 ns** — the cost of choosing which handler to call.
-- A complete auth-checked read endpoint flows through in **~5 µs** — that is the floor on end-to-end gateway overhead when there is no upstream call.
-- A full chat-completion proxy — route, auth, resolve model, run plugins, rewrite the request, round-trip to the upstream, parse and rewrite the response — runs in **~66 µs** of gateway-internal wall time. Any external latency on top is provider latency, not ours.
-
-Reproduce: `go test -bench=. -benchmem -run=^$ ./internal/server/`
-
-### 🏁 How we compare to the rest
-
-Every row below uses the **same methodology** each vendor uses for their own claim. When vendors didn't publish numbers, those cells stay empty — we don't make them up.
-
-<table>
-<thead>
-<tr>
-<th align="left">Metric (matching their methodology)</th>
-<th align="right">Agent Command Center</th>
-<th align="right">Bifrost</th>
-<th align="right">LiteLLM</th>
-<th align="right">Portkey</th>
-<th align="right">Helicone</th>
-<th align="right">Kong AI</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>End-to-end P95 @ ~1k RPS <sub>(client-observed)</sub></td>
-<td align="right"><b>2.8 ms</b> 🏆</td>
-<td align="right">—</td>
-<td align="right">8 ms</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>End-to-end P99 @ 100c <sub>(sustained 34 k req/s)</sub></td>
-<td align="right"><b>6.1 ms</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Gateway-internal wall time, full read path <sub>(in-process)</sub></td>
-<td align="right"><b>5 µs</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Gateway-internal wall time, full chat proxy <sub>(parallel, in-process)</sub></td>
-<td align="right"><b>~24 µs</b></td>
-<td align="right">11 µs¹</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Weighted key / target selection</td>
-<td align="right"><b>~9.9 ns</b> (3 targets) 🏆 <br> ~22 ns (16 targets)</td>
-<td align="right">~10 ns²</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>HTTP router dispatch <sub>(static route — ours only; Bifrost doesn't publish)</sub></td>
-<td align="right"><b>36 ns</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Sustained throughput @ 4 vCPU, 16 GB <sub>(t3.xlarge profile)</sub></td>
-<td align="right"><b>28 889 rps</b> 🏆</td>
-<td align="right">5 000 rps¹</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Sustained throughput @ 100c unconstrained</td>
-<td align="right"><b>34 659 rps</b></td>
-<td align="right">—</td>
-<td align="right">1 000 rps</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Cost with 3 inline guardrails <sub>(vs bare, 4 vCPU)</sub></td>
-<td align="right"><b>+0.5 % / +1.4 ms P95</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Hardware used for benchmark</td>
-<td align="right">4 vCPU / 16 GB container (M4 Max cores)</td>
-<td align="right">t3.xlarge (Intel, 4 vCPU)</td>
-<td align="right">undisclosed</td>
-<td align="right">undisclosed</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Binary / image size</td>
-<td align="right">17 MB</td>
-<td align="right">~20 MB</td>
-<td align="right">n/a (Python)</td>
-<td align="right"><b>122 KB</b> 🏆</td>
-<td align="right">~300 MB</td>
-<td align="right">~60 MB</td>
-</tr>
-<tr>
-<td>Reproducible harness committed in-repo</td>
-<td align="right">✅</td>
-<td align="right">⚠️ partial</td>
-<td align="right">❌</td>
-<td align="right">❌</td>
-<td align="right">❌</td>
-<td align="right">❌</td>
-</tr>
-</tbody>
-</table>
-
-<sup>¹ Bifrost claim: "11 µs gateway overhead at 5 k RPS on t3.xlarge, 4 vCPU" — [github.com/maximhq/bifrost](https://github.com/maximhq/bifrost).</sup><br>
-<sup>² Bifrost claim: "~10 ns to pick weighted API keys".</sup>
-
-### What the numbers mean
-
-- **Against LiteLLM**, the closest OpenAI-compatible Python proxy: at roughly the same workload class (~1 k RPS, client-observed end-to-end), our **P95 is 2.8 ms vs their 8 ms — a ~2.9× latency reduction**, and we sustain ~34 k rps vs their 1 k rps baseline on comparable boxes. This is the cleanest head-to-head we have; both claims use the same methodology.
-
-- **Against Bifrost**, the fastest published Go gateway: Bifrost claims **5 000 req/s** at 11 µs overhead on t3.xlarge (4 vCPU). **On the same t3.xlarge profile** our gateway sustains **~28 900 req/s — roughly 5.7×** the RPS at P99 ≤ 21 ms with 100 % success. On the apples-to-apples microbench, our **weighted target selection runs at ~9.9 ns** (vs their ~10 ns key-pick — we're slightly faster) and our **HTTP router dispatches in 36 ns**. Full chat pipeline in-process measures ~5 µs for a read path and ~66 µs for a full proxy round-trip through the plugin pipeline.
-
-- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 4 semantic cache backends, MCP/A2A/batch/files/realtime/responses endpoints, multi-tenant RBAC, and clustering — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
-
-- **Against Helicone + Kong AI Gateway**: neither publishes performance numbers. Run our harness, then theirs, then tell us.
-
-### What our harness measures
-
-- **Guardrail-on throughput** — at 200c / 10 k reqs with 3 inline guardrails: ~29 k req/s, +1.4 ms P95 vs bare.
-- **Gateway-internal wall time at ns precision** — full `ServeHTTP` pipeline in-process via `httptest.NewRecorder()`, no loopback TCP.
-- **End-to-end latency under load** — `hey`-driven, P50/P95/P99 across 50 / 100 / 200 concurrency.
-
-Every number above is reproducible by running [`bench/run.sh`](./bench/run.sh) or `docker run --rm --cpuset-cpus="0-3" --memory=16g acc-bench`. PRs with your own machine's numbers welcome.
-
+The chat client sends requests to the gateway URL and models you choose. It does not supply gateway authentication or start a mock provider. Use it only with a compatible test configuration: requests to a real provider can incur charges, including warmups. The results include upstream latency.
 
 ---
 
@@ -470,6 +293,52 @@ Corrections welcome — open an issue or send a PR.
 
 **Surface area at a glance:** 🔌 **112 routes** across 24 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **8 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
+### Selected-key guardrail policy limits
+
+Dashboard **Guardrails → Policies** binds policies to selected API keys. Org
+checks still run first; key policies cannot weaken them. Monitor policies do not
+block or rewrite client output. Dormant legacy key policies remain dormant until
+an explicit policy save activates their gateway configuration.
+
+The enforcement repair has two deliberate compatibility trade-offs, still
+subject to owner feature, image-budget and rollout approval:
+
+- **Selected-key response caching is bypassed.** Every applicable selected-key
+  policy bypasses exact, semantic and conditional edge-cache reads and writes,
+  including Monitor policies and policies with empty or disabled checks.
+  `x-agentcc-cache: skip_key_policy` identifies this path. Admitted requests reach
+  the provider instead of reusing cached output, which can increase latency and
+  provider cost. This conservative choice is broader than bypassing only known
+  request-dependent checks; it is not cache feature parity. Keys with no
+  applicable scoped policy retain their existing cache behavior. Effective
+  failure policy, timeout and pipeline settings remain part of the policy
+  fingerprint; an old request cannot populate a newly changed policy partition.
+- **Blocking output checks require nonstreaming requests.** An applicable
+  selected-key Enforce Block post-stage check, such as Hallucination Detection,
+  causes an HTTP text stream to return `403 stream_guardrail_unsupported` before
+  the provider is invoked. This also applies to clean output and `fail_open`
+  configurations. Use a nonstreaming request for these policies; nonstreaming
+  support does not imply streaming support. Speech has the separate
+  supported-direction rules documented below.
+
+Pass-through routes inspect projections but forward the original body. A
+projection-only redaction is reported as unsupported wire remediation and cannot
+hide the original content from a later Block check. Supported chat remediation
+still changes the actual forwarded request. Enabled checks with no resolvable
+implementation produce an unavailable result: Enforce Block returns
+`503 guardrail_unavailable` when fail-closed; fail-open logs the failure, and
+Monitor stays nonblocking. Arbitrary names can legitimately resolve to deployed
+static/custom implementations, so a successful policy save is not proof that an
+implementation exists on every gateway.
+
+**Monitor stream observation is incomplete.** With request/trace body capture
+disabled, post-stage checks receive no reconstructed output text and may record
+no `would_block` result. An empty guardrail-results list is not proof that the
+stream was inspected or passed. Even enabled capture is bounded and omits
+tool-call deltas. This repair does not enable persistent body logging or promise
+complete streamed-output observability; Monitor's unchanged-output guarantee is
+separate from that observation gap.
+
 ### 🌈 Modalities
 
 Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint, except video, which is limited to the support matrix below.
@@ -524,6 +393,18 @@ sessions, and Cartesia `/stt/turns/websocket` with a blocking post-stage check, 
 HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection.
 `/v1/realtime` remains unsupported and returns 501 `realtime_not_supported`; use a
 documented vendor speech route.
+
+Dashboard key policies (Guardrails → Policies) apply to speech sessions opened with
+one of their keys, with two differences from chat. Only an Enforce policy's Block
+checks run on speech relays: Monitor (log only) policies and Warn or Log checks would
+only write a log line there, so they never hold, buffer or refuse speech traffic. An
+Enforce policy's Block checks run only in the direction the session reads as text: its
+pre-stage checks on synthesis input, its post-stage checks on transcripts. A check
+for the other direction is skipped instead of refusing the session, so enforcing a
+pre-stage check (secret detection, PII, injection, blocklist and the like) on a key
+leaves that key's transcription sessions connected. Cartesia
+`/stt/turns/websocket` reads neither direction, so no key-policy check runs there.
+Org-wide checks keep the refusal described above.
 
 Supported text units are checked synchronously before any held frame is released.
 Pre-stage checks see the text as a request message; post-stage checks see it once,
@@ -829,7 +710,7 @@ Every guardrail runs in the pipeline with configurable request/response/streamin
 | 17 | `webhook` | Call your own HTTP endpoint for custom checks |
 | 18 | `futureagi` | Future AGI platform integration (90+ evals + Protect scanners) |
 
-<sup>Per-guardrail latency varies by payload, provider, and scanner. Run [`bench/`](./bench/) to measure against your workload.</sup>
+<sup>Per-guardrail latency varies by payload, provider, and scanner. See [Benchmarks](#-benchmarks) before measuring a configured gateway.</sup>
 
 #### 🤝 External guardrail vendors — 15 first-class adapters
 
@@ -1027,7 +908,7 @@ Every request goes through a pluggable router stack. Mix and match — per virtu
 |---|---|---|
 | **Weighted round-robin** | `roundrobin` | Distribute traffic across providers by configurable weights |
 | **Latency-aware** | `latency` | Route to the provider with the lowest current P95 for the same model |
-| **Cost-optimized** | `costopt` | Route to the cheapest provider that meets your SLO |
+| **Cost-optimized** | `costopt` | Round-robin among targets with the lowest configured priority value. No price or latency lookup. |
 | **Adaptive** | `adaptive` | Online learning — continuously adjust weights based on success/latency |
 | **Complexity-based** | `complexity` | Route simple queries to small/fast models, complex queries to large models |
 | **Conditional** | `conditional` | Rule-based routing (by user, region, header, model family, prompt length…) |
@@ -1266,53 +1147,6 @@ rules still apply.
 | ☁️ AWS / GCP / Azure | ✅ | Fargate · Cloud Run · ACI |
 | 🛒 AWS Marketplace | Coming soon | |
 | 🔒 Air-gapped | ✅ | No phone-home |
-
----
-
-## 🔬 Reproduce the benchmarks
-
-Numbers above are fully reproducible. Two modes:
-
-### Containerised (matches the t3.xlarge-equivalent numbers)
-
-```bash
-# Build the self-contained bench image
-docker build -f bench/Dockerfile.bench -t acc-bench .
-
-# Pin to 4 vCPU / 16 GB (t3.xlarge resource profile)
-docker run --rm --cpuset-cpus="0-3" --memory=16g acc-bench
-
-# Or unconstrained (uses all host cores)
-docker run --rm acc-bench
-```
-
-The image bundles the gateway, mock upstream, `hey`, the configs, and a runner script. Output prints throughput and P50/P95/P99 for every profile to stdout in ~30 seconds.
-
-### Host-direct (matches the unconstrained numbers)
-
-```bash
-brew install hey            # or: go install github.com/rakyll/hey@latest
-
-bash bench/run.sh           # full suite
-bash bench/run.sh --quick   # short (5k reqs per profile)
-```
-
-What the harness does:
-
-1. Builds a minimal OpenAI-compatible **mock upstream** ([`bench/mock-upstream.go`](./bench/mock-upstream.go)) that returns a canned chat-completion instantly — so measurements reflect gateway processing, not provider latency.
-2. Starts **two gateway instances** side by side: bare ([`bench/bench.config.yaml`](./bench/bench.config.yaml)) and guardrails-on ([`bench/bench-guardrails.config.yaml`](./bench/bench-guardrails.config.yaml)).
-3. Drives load with `hey` at 50 / 100 / 200 concurrent against each profile.
-4. Runs `go test -bench=./internal/server/` for the Go microbenchmarks.
-5. Reports throughput + P50/P95/P99 for every profile.
-
-Real-provider smoke test (needs an actual API key):
-
-```bash
-# Point at any provider in your config and hit it through the loadtest binary
-bin/loadtest -c 10 -n 50 -models gpt-4o-mini
-```
-
-**Commit your numbers** — we aggregate community results across hardware. PRs welcome.
 
 ---
 

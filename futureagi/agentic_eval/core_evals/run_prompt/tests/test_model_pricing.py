@@ -124,6 +124,24 @@ class TestTokenBasedPricing:
         assert result["total_cost"] == 0.000585
         assert result["pricing_source"] == "available_models"
 
+    @pytest.mark.requires_ee
+    def test_calculate_cost_prices_cached_vertex_gemini_37_flash_input_separately(self):
+        # The Vertex name carries the same cache-read rate as the Gemini API name,
+        # so cached input is not charged at the full input rate.
+        result = calculate_total_cost(
+            "vertex_ai/gemini-3.7-flash",
+            {
+                "prompt_tokens": 1000,
+                "cached_input_tokens": 800,
+                "completion_tokens": 100,
+            },
+        )
+
+        assert result["prompt_cost"] == 0.00021
+        assert result["completion_cost"] == 0.000375
+        assert result["total_cost"] == 0.000585
+        assert result["pricing_source"] == "available_models"
+
     def test_calculate_cost_prices_gemini_38_flash(self):
         result = calculate_total_cost(
             "gemini-3.8-flash",

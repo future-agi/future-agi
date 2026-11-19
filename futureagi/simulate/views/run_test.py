@@ -137,6 +137,10 @@ from simulate.serializers.test_execution import (
     TestExecutionStatusSerializer,
 )
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.call_provider import (
+    call_agent_provider_expression,
+    execution_agent_provider,
+)
 from simulate.services.call_rerun import (
     call_snapshot,
     clear_call_for_rerun,
@@ -1868,6 +1872,44 @@ class CallExecutionAPIView(APIView):
             )
 
 
+def _flat_kpi_evals(
+    values: dict[tuple[str, str, str], object], system_keys: set[str]
+) -> dict[str, object]:
+    """Keep each binding's preferred key unless a system KPI or another eval owns it."""
+
+    def project(key: str) -> str:
+        # Run detail's canonicalKeys hides the underscore-to-camel projection of each key.
+        return re.sub(r"_([a-z0-9])", lambda match: match[1].upper(), key)
+
+    natural = {name for name, _, _ in values}
+    # A name equal to another name's projection (tier1 for tier_1) would be hidden.
+    hidden = {project(key) for key in natural if project(key) != key} & natural
+    if len(natural) == len(values) and natural.isdisjoint(system_keys) and not hidden:
+        return {name: value for (name, _, _), value in values.items()}
+
+    reserved = natural | system_keys
+    reserved_projections = {project(key) for key in reserved}
+    used = system_keys.copy()
+    priority = {"score": 0, "numeric": 1, "distribution": 2}
+    keys = {}
+    for metric in sorted(values, key=lambda m: (priority[m[2]], m[1], m[0])):
+        name, binding_id, _ = metric
+        key = name
+        if key in used or key in hidden:
+            key = f"{name}__{binding_id}"
+            while (
+                key in reserved
+                or key in reserved_projections
+                or project(key) in reserved
+            ):
+                key += "_"
+            reserved.add(key)
+            reserved_projections.add(project(key))
+        keys[metric] = key
+        used.add(key)
+    return {keys[metric]: value for metric, value in values.items()}
+
+
 class RunTestKPIsView(APIView):
     """
     API View to get combined KPI values for a specific run test
@@ -2014,9 +2056,8 @@ class RunTestKPIsView(APIView):
                 eval_rows = cursor.fetchall()
 
             # Assemble eval averages from SQL results
-            eval_averages = {}
-            choice_metric_ids = set()
-            choice_counts = {}  # {metric_name: {choice_value: count}}
+            eval_metrics: dict[tuple[str, str, str], object] = {}
+            choice_counts: dict[tuple[str, str], dict[str, int]] = {}
 
             for (
                 metric_id,
@@ -2026,34 +2067,26 @@ class RunTestKPIsView(APIView):
                 choice_value,
                 choice_count,
             ) in eval_rows:
+                name = metric_name.lower().replace(" ", "_")
                 if output_type in ("Pass/Fail", "score"):
-                    field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
-                    eval_averages[field_name] = float(avg_value) if avg_value else 0
+                    eval_metrics[f"avg_{name}", metric_id, "score"] = (
+                        float(avg_value) if avg_value else 0
+                    )
                 elif output_type == "choices":
-                    if choice_value is not None:
-                        # String/array choice: accumulate counts
-                        choice_metric_ids.add(metric_id)
-                        base_name = metric_name.lower().replace(" ", "_")
-                        if base_name not in choice_counts:
-                            choice_counts[base_name] = {"_metric_id": metric_id}
-                        choice_counts[base_name][choice_value.lower()] = choice_count
-                    elif avg_value is not None:
-                        # Numeric choice: already averaged
-                        field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
-                        eval_averages[field_name] = float(avg_value)
+                    if choice_value is None and avg_value is not None:
+                        eval_metrics[f"avg_{name}", metric_id, "numeric"] = float(
+                            avg_value
+                        )
                     else:
-                        # Fully-errored choices metric: register it so the UI
-                        # renders a zeroed chart card instead of dropping the
-                        # whole eval bar.
-                        choice_metric_ids.add(metric_id)
-                        base_name = metric_name.lower().replace(" ", "_")
-                        if base_name not in choice_counts:
-                            choice_counts[base_name] = {"_metric_id": metric_id}
+                        # Even a fully errored binding gets a zeroed chart with its labels.
+                        counts = choice_counts.setdefault((metric_id, name), {})
+                        if choice_value is not None:
+                            counts[choice_value.lower()] = choice_count
 
             # Fetch choices config for choice-type eval metrics
-            if choice_metric_ids:
+            if choice_counts:
                 simulate_eval_configs = SimulateEvalConfig.objects.filter(
-                    id__in=list(choice_metric_ids)
+                    id__in={metric_id for metric_id, _ in choice_counts}
                 ).select_related("eval_template")
                 config_choices_map = {}
                 for sec in simulate_eval_configs:
@@ -2069,19 +2102,19 @@ class RunTestKPIsView(APIView):
                     if choices:
                         config_choices_map[str(sec.id)] = choices
 
-                for base_name, data in choice_counts.items():
-                    mid = data.pop("_metric_id")
-                    choices_list = config_choices_map.get(str(mid), [])
-                    if not choices_list:
-                        choices_list = list(data)
+                for (metric_id, name), counts in choice_counts.items():
+                    choices_list = config_choices_map.get(metric_id) or list(counts)
+                    field = (name, metric_id, "distribution")
                     if choices_list:
-                        eval_averages[base_name] = {
-                            str(choice): data.get(str(choice).lower(), 0)
-                            for choice in choices_list
+                        eval_metrics[field] = {
+                            **{
+                                str(c): counts.get(str(c).lower(), 0)
+                                for c in choices_list
+                            },
+                            "choices": choices_list,
                         }
-                        eval_averages[base_name]["choices"] = choices_list
                     else:
-                        eval_averages[base_name] = data
+                        eval_metrics[field] = counts
 
             # --- Scenario graphs ---
             scenario_graphs = {}
@@ -2163,7 +2196,7 @@ class RunTestKPIsView(APIView):
             }
 
             # Add evaluation averages to response
-            kpi_data.update(eval_averages)
+            kpi_data.update(_flat_kpi_evals(eval_metrics, set(kpi_data)))
 
             return Response(kpi_data, status=status.HTTP_200_OK)
 
@@ -2303,6 +2336,7 @@ class RunTestCallExecutionsView(APIView):
             if call_exec_ids:
                 call_execs = (
                     CallExecution.objects.filter(id__in=call_exec_ids)
+                    .annotate(result_provider=call_agent_provider_expression())
                     .select_related(
                         "scenario",
                         "test_execution",
@@ -2326,6 +2360,8 @@ class RunTestCallExecutionsView(APIView):
                     "call_execution__test_execution",
                     "call_execution__test_execution__simulator_agent",
                     "call_execution__test_execution__agent_definition",
+                    "call_execution__test_execution__agent_version",
+                    "call_execution__agent_version",
                 )
 
                 for snapshot in snapshots:
@@ -2598,6 +2634,7 @@ class TestExecutionDetailView(APIView):
             # Get call executions for this test execution
             call_executions = (
                 CallExecution.objects.filter(test_execution=test_execution)
+                .annotate(result_provider=call_agent_provider_expression())
                 .select_related(
                     "scenario",
                     "test_execution",
@@ -2893,15 +2930,28 @@ class TestExecutionDetailView(APIView):
                 start = (page - 1) * page_size
                 end = start + page_size
                 paginated_calls = call_executions[start:end]
+                # Mirrors the dispatch in _apply_grouping. Basic groups keep the
+                # request in their links; scenario dataset groups keep bare links.
+                basic_grouping = not any(
+                    field.startswith("scenario_") and "dataset" in field
+                    for field in row_groups
+                )
+
+                def page_link(number):
+                    if not basic_grouping:
+                        return f"?page={number}"
+                    params = request.query_params.copy()
+                    params["page"] = str(number)
+                    return f"?{params.urlencode()}"
 
                 # Create a custom paginated response for grouped results
                 return Response(
                     {
                         "count": len(call_executions),
                         "next": (
-                            f"?page={page + 1}" if end < len(call_executions) else None
+                            page_link(page + 1) if end < len(call_executions) else None
                         ),
-                        "previous": f"?page={page - 1}" if page > 1 else None,
+                        "previous": page_link(page - 1) if page > 1 else None,
                         "results": paginated_calls,
                         "total_pages": (len(call_executions) + page_size - 1)
                         // page_size,
@@ -3076,8 +3126,8 @@ class TestExecutionDetailView(APIView):
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
             response_data["provider"] = (
-                test_execution.agent_definition.provider
-                if test_execution.agent_definition
+                execution_agent_provider(test_execution)
+                if test_execution.agent_definition_id or test_execution.agent_version_id
                 else "prompt"
             )
             response_data["agent_type"] = agent_type

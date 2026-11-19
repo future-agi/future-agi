@@ -12456,7 +12456,7 @@
         "/agentcc/guardrail-policies/{id}/apply/": {
             "post": {
                 "operationId": "agentcc_guardrail-policies_apply",
-                "description": "Apply this policy to specific keys or projects.",
+                "description": "Apply to dashboard key UUIDs, or persist a project-only assignment.",
                 "parameters": [
                     {
                         "name": "data",
@@ -95313,6 +95313,11 @@
                     "title": "Applied projects",
                     "type": "object"
                 },
+                "runs_on_gateway": {
+                    "title": "Runs on gateway",
+                    "type": "boolean",
+                    "readOnly": true
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -169188,12 +169193,14 @@
                     "title": "Start time",
                     "type": "string",
                     "format": "date-time",
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "end_time": {
                     "title": "End time",
                     "type": "string",
                     "format": "date-time",
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "created_at": {

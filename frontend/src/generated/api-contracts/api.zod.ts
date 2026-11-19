@@ -6285,6 +6285,7 @@ export const AgentccGuardrailPoliciesListResponse = zod.object({
         .optional(),
       applied_keys: zod.object({}).passthrough().optional(),
       applied_projects: zod.object({}).passthrough().optional(),
+      runs_on_gateway: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -6370,6 +6371,7 @@ export const AgentccGuardrailPoliciesReadResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6426,6 +6428,7 @@ export const AgentccGuardrailPoliciesUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6489,6 +6492,7 @@ export const AgentccGuardrailPoliciesPartialUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6504,7 +6508,7 @@ export const AgentccGuardrailPoliciesDeleteParams = zod.object({
 });
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const AgentccGuardrailPoliciesApplyParams = zod.object({
   id: zod
@@ -68019,8 +68023,6 @@ export const TracerEvalTaskCreateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),
@@ -72875,8 +72877,6 @@ export const TracerEvalTaskUpdateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),
@@ -73989,8 +73989,6 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),

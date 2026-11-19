@@ -3341,6 +3341,7 @@ export interface AgentccGuardrailPolicyApi {
   priority?: number;
   applied_keys?: AgentccGuardrailPolicyApiAppliedKeys;
   applied_projects?: AgentccGuardrailPolicyApiAppliedProjects;
+  readonly runs_on_gateway?: boolean;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -31004,8 +31005,8 @@ export interface EvalTaskApi {
   run_type: EvalTaskApiRunType;
   row_type?: EvalTaskApiRowType;
   status?: EvalTaskApiStatus;
-  start_time?: string;
-  end_time?: string;
+  readonly start_time?: string;
+  readonly end_time?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
   evals_details?: EvalTaskApiEvalsDetails;

@@ -167,8 +167,8 @@ export const pipelineStatus = (
   });
 };
 
-// The backend stages that make up each build milestone — the same grouping the
-// product uses for its tabs (harnessShared TAB_STAGES / EVENT_STAGE_GROUPS).
+// The backend stages that make up each build milestone — the same grouping as
+// harnessShared's EVENT_STAGE_GROUPS.
 const MILESTONE_STAGES = {
   understand: ["understanding_agent"],
   build: ["generating_environment", "building_environment", "generating_data"],

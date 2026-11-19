@@ -198,12 +198,12 @@ def _reply(
     return said if said is not None and str(said.content or "").strip() else None
 
 
-def _same(value: JsonValue, seeded: JsonValue) -> bool:
+def _same(value: object, seeded: object) -> bool:
     """Whether a fact is the seeded value. A number and a number, or a number and its text, by exact decimal value
     (never through a float, which takes 9007199254740993 for 9007199254740992); text and text exactly, so "02134" is
     not 2134's ZIP and "+15551234567" not "15551234567"; None, true and false only as themselves."""
 
-    def number(one: JsonValue) -> bool:
+    def number(one: object) -> bool:
         return isinstance(one, (int, float)) and not isinstance(one, bool)
 
     # Nested values field by field and item by item, by the same rule: `{"vip": true}` is never `{"vip": 1}`.

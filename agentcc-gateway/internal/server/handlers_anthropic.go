@@ -143,6 +143,10 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !completeNativeInput("anthropic", body) {
+		rc.GuardrailInputUnsupported = "Messages input contains content without a complete text projection"
+	}
+
 	// Fast path: provider natively speaks Anthropic.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
 		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
@@ -177,7 +181,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	canonicalReq, drops, err := translator.RequestToCanonical(body)
 	if err != nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusBadRequest,
 			Type:    models.ErrTypeInvalidRequest,
 			Message: err.Error(),
@@ -349,7 +353,7 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 	var respBody []byte
 	var statusCode int
 
-	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		respBody, statusCode, callErr = ap.CreateAnthropicMessage(ctx, body, headers)
 		if callErr != nil {
@@ -359,6 +363,7 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 		if statusCode < 400 {
 			applyAnthropicUsage(rc, respBody)
 			rc.GuardrailResponse = assistantText(anthropicResponseText(respBody))
+			setNativeOutputProjection(rc, "anthropic", respBody)
 		}
 		return nil
 	})
@@ -447,7 +452,7 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	var statusCode int
 
 	// Post-plugins wait for the close, when the counts are known.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	if err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		stream, statusCode, callErr = ap.StreamAnthropicMessage(ctx, body, headers)
 		if callErr == nil {
@@ -625,7 +630,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	mapping := takeToolNameMapping(canonicalReq)
 
 	var canonicalResp *models.ChatCompletionResponse
-	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
 		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
@@ -639,14 +644,14 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	if err != nil {
 		var apiErr *models.APIError
 		if errors.As(err, &apiErr) {
-			status, body, ct := translator.ErrorFromCanonical(apiErr)
+			status, body, ct := inspectionErrorFromCanonical(w, translator, apiErr)
 			h.setAgentccHeaders(w, rc)
 			w.Header().Set("Content-Type", ct)
 			w.WriteHeader(status)
 			w.Write(body)
 			return
 		}
-		status, body, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, body, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusBadGateway,
 			Type:    models.ErrTypeServer,
 			Message: err.Error(),
@@ -663,7 +668,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 		canonicalResp = rc.Response
 	}
 	if canonicalResp == nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusInternalServerError,
 			Type:    models.ErrTypeServer,
 			Message: "no response from provider",
@@ -709,7 +714,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	}
 
 	if marshalErr != nil {
-		status, errBody, ct := translator.ErrorFromCanonical(&models.APIError{
+		status, errBody, ct := inspectionErrorFromCanonical(w, translator, &models.APIError{
 			Status:  http.StatusInternalServerError,
 			Type:    models.ErrTypeServer,
 			Message: "failed to format response: " + marshalErr.Error(),
@@ -749,7 +754,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 
 	// Pre-plugins run before the upstream stream opens; post-plugins wait for
 	// the final chunk, which is where usage arrives.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	if err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
 		// Do not commit a 200/SSE response until the upstream has actually
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
