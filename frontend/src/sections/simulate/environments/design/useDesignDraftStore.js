@@ -3,6 +3,9 @@ import { createJSONStorage, devtools, persist } from "zustand/middleware";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
 import { READ_MS, draftNameOf, mergeDesignFiles } from "./design";
 
+// Drafts kept in this browser; creating one drops the oldest past this.
+export const MAX_DESIGN_DRAFTS = 20;
+
 // Designs waiting for approval, keyed by draft id. Stub: there's no design
 // API yet, so a draft lives in this browser only, and the page reads it from
 // here. Persisted so a refresh or a return later finds the same draft.
@@ -12,7 +15,8 @@ export const useDesignDraftStore = create(
       (set, get, store) => ({
         drafts: {},
 
-        // files: [{ id, name, size, type }]. Returns the new draft's id.
+        // files: [{ id, name, size, type }]. Each file keeps the personal data
+        // choice it was added under. Returns the new draft's id.
         createDesignDraft: ({
           name,
           description = "",
@@ -27,15 +31,26 @@ export const useDesignDraftStore = create(
             id,
             name: name?.trim() || draftNameOf(description, files),
             description: description.trim(),
-            files,
-            personalChoice: files.length ? personalChoice : null,
+            files: personalChoice
+              ? files.map((f) => ({ ...f, personalChoice }))
+              : files,
             agent,
             scenarioCount,
             createdAt: now,
             readUntil: files.length ? now + READ_MS : 0,
           };
           set(
-            (s) => ({ drafts: { ...s.drafts, [id]: draft } }),
+            (s) => {
+              // The new draft always stays, even on a createdAt tie.
+              const kept = Object.values(s.drafts)
+                .sort((a, b) => b.createdAt - a.createdAt)
+                .slice(0, MAX_DESIGN_DRAFTS - 1);
+              return {
+                drafts: Object.fromEntries(
+                  [...kept, draft].map((d) => [d.id, d]),
+                ),
+              };
+            },
             false,
             "createDesignDraft",
           );

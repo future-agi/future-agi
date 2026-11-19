@@ -15,7 +15,8 @@ import SectionCard from "../components/SectionCard";
 import SideDrawer from "../components/SideDrawer";
 import UiOnlyFlag from "../components/UiOnlyFlag";
 import BuildFilesField from "../buildDrawer/forms/shared/BuildFilesField";
-import { uiOnlyToast } from "../buildDrawer/starts/startUtils";
+import { PERSONAL_DATA, uiOnlyToast } from "../buildDrawer/starts/startUtils";
+import { focusRing } from "../buildDrawer/drawerStyles";
 import { extOf } from "../buildDrawer/forms/shared/buildFiles";
 import { ROLES } from "../workspace/sources/sources.constants";
 
@@ -27,6 +28,7 @@ const linkSx = {
   textUnderlineOffset: 2,
   color: "text.primary",
   "&:hover": { color: "text.secondary" },
+  "&.Mui-focusVisible": focusRing,
 };
 
 /* One part of the design: a heading with its count, then its lines on
@@ -165,6 +167,15 @@ function FilePreview({ file, summary, onClose }) {
           ROLES.find((r) => r.label === file.role)?.option || file.role,
         ],
         ["Agent reads it", READS[file.role]],
+        // Only files dropped with the question carry an answer.
+        ...(file.personalChoice
+          ? [
+              [
+                "Personal data",
+                PERSONAL_DATA.find(([v]) => v === file.personalChoice)?.[1],
+              ],
+            ]
+          : []),
       ]
     : [];
   return (

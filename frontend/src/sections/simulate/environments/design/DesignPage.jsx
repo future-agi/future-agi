@@ -100,11 +100,15 @@ function turnsOf(draft, summary) {
       count(summary.tools.length, "tool"),
       count(summary.rules.length, "rule"),
     ].filter(Boolean);
+    // Only an agent's build can have nothing found and still not be blocked.
+    const found = counts.length
+      ? `The design has ${counts.join(", ")}, each saying where it came from.${unread} It's on the right.`
+      : `No records, tools or rules yet.${unread} The tools are read from the agent's code when it builds.`;
     text = summary.approveBlocked
       ? read
         ? `I read ${read}, but it doesn't say what the agent does.${unread} There's nothing to build yet. ${ask}`
         : `There's nothing to build yet.${unread} ${ask}`
-      : `${read ? `I read ${read}. ` : ""}The design has ${counts.join(", ")}, each saying where it came from.${unread} It's on the right. Nothing is built until you approve.`;
+      : `${read ? `I read ${read}. ` : ""}${found} Nothing is built until you approve.`;
   }
   turns.push({ id: "found", role: "builder", steps: [{ kind: "note", text }] });
   // One question at a time: only the first open one is asked.
