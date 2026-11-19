@@ -73,6 +73,8 @@ services:
       # the suite's unsaved changes exist only with versioning on.
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      # Actors and test conditions, which the actor flows cover.
+      HARNESS_ACTORS_ENABLED: "true"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       # Ask's cost confirm appears above this many rows (5,000 in production,
@@ -86,6 +88,7 @@ services:
     volumes: !reset []
     environment:
       HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_ACTORS_ENABLED: "true"
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9

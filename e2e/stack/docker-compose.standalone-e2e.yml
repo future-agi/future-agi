@@ -42,6 +42,7 @@ services:
       # Environment versions and drafts, as production runs them (see docker-compose.e2e.yml).
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      HARNESS_ACTORS_ENABLED: "true"
       # Ask's cost confirm appears above this many rows (5,000 in production,
       # tfc/settings/settings.py); OBS-E2E-064 reaches it with four traces.
       INSTANT_EVAL_CONFIRM_ROWS: "3"
