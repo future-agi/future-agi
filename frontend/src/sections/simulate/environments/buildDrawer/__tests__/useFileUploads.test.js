@@ -39,8 +39,8 @@ describe("useFileUploads", () => {
     const failed = result.current.failed[0];
     act(() => result.current.retry(failed.id));
     expect(result.current.uploading).toHaveLength(1);
-    // The failed notes.exe still counts, so the total doesn't shrink.
-    expect(uploadsLabel(result.current)).toBe("Uploading 3 of 3…");
+    // The failed notes.exe stays in the total but isn't counted as uploaded.
+    expect(uploadsLabel(result.current)).toBe("Uploading 2 of 3…");
     await act(() => vi.advanceTimersByTimeAsync(3000));
     expect(statuses(result)["fail-refunds.csv"]).toBe("done");
     expect(result.current.done).toHaveLength(2);

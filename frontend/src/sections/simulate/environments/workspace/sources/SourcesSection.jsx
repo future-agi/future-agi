@@ -113,6 +113,14 @@ export default function SourcesSection({
   const sources = all.filter((source) => !source.ui?.removed);
   const removed = all.filter((source) => source.ui?.removed);
   const saved = sources.filter(isSaved);
+  // Rows already listed when the tab opens don't slide in again; only rows
+  // added or removed while it's open do.
+  const listed = useRef(null);
+  const placeOf = (source) =>
+    `${source.ui?.removed ? "removed" : "listed"}:${source.source_id}`;
+  if (listed.current === null && all.length)
+    listed.current = new Set(all.map(placeOf));
+  const isNew = (source) => !listed.current?.has(placeOf(source));
   const notSaved = sources.length - saved.length;
   const files = participantFilesOf(saved);
 
@@ -231,7 +239,7 @@ export default function SourcesSection({
             <Collapse
               key={source.source_id}
               in
-              appear
+              appear={isNew(source)}
               timeout={timeout}
               sx={{
                 "& + &": { borderTop: "1px solid", borderColor: "divider" },
@@ -287,7 +295,12 @@ export default function SourcesSection({
             {COPY.removed(removed.length)}
           </Typography>
           {removed.map((source) => (
-            <Collapse key={source.source_id} in appear timeout={timeout}>
+            <Collapse
+              key={source.source_id}
+              in
+              appear={isNew(source)}
+              timeout={timeout}
+            >
               <Stack
                 direction="row"
                 alignItems="center"
