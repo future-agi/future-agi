@@ -12638,8 +12638,8 @@ def run_evaluation_task(evaluation_data):
 
         futures = {}
         failed_metric_ids = set()
-        success_counts = defaultdict(int)
-        reporting_inputs = {}
+        success_counts: defaultdict[str, int] = defaultdict(int)
+        reporting_inputs: dict[str, tuple[Any, Any]] = {}
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(str(metric_id))
@@ -14531,10 +14531,16 @@ class CompareDatasetsView(APIView):
 
                 comparison_datasets = list(datasets)
 
+                # While processing, progress is the last uploaded one-based page.
+                # Wait for the whole requested range, but not nonexistent pages.
+                last_required_page = min(
+                    end_page - 1, int(metadata.get("total_pages", 0))
+                )
                 loop_start = time.time()
                 while (
                     metadata.get("status") == "processing"
-                    and metadata.get("total_processed") >= start_page
+                    and start_page <= last_required_page
+                    and (metadata.get("total_processed") or 0) < last_required_page
                 ):
                     logger.info("waiting for files to be created")
                     metadata = self.read_metadata_safely(metadata_path)

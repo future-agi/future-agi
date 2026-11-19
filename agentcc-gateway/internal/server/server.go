@@ -50,29 +50,31 @@ import (
 
 // Server is the Agentcc gateway HTTP server.
 type Server struct {
-	videoAudit       *audit.Logger
-	videoAuditOnce   sync.Once
-	cfg              *config.Config
-	configPath       string
-	httpServer       *http.Server
-	registry         *providers.Registry
-	engine           *pipeline.Engine
-	handlers         *Handlers
-	catalogue        *modeldb.Catalogue
-	keyStore         *auth.KeyStore
-	keyHandlers      *KeyHandlers
-	metricsRegistry  *metrics.Registry
-	batchProcessor   *batch.Processor
-	clusterMgr       *cluster.Manager
-	TenantStore      *tenant.Store
-	OrgProviderCache *providers.OrgProviderCache
-	asyncWorker      *async.Worker
-	videoWorker      *lifecycle.Worker
-	videoExporter    otel.SpanExporter
-	videoInitErr     error
-	shadowFlusher    *routing.ShadowFlusher
-	router           *Router
-	ready            atomic.Bool
+	videoAudit          *audit.Logger
+	videoAuditOnce      sync.Once
+	cfg                 *config.Config
+	configPath          string
+	httpServer          *http.Server
+	registry            *providers.Registry
+	engine              *pipeline.Engine
+	handlers            *Handlers
+	catalogue           *modeldb.Catalogue
+	keyStore            *auth.KeyStore
+	keyHandlers         *KeyHandlers
+	metricsRegistry     *metrics.Registry
+	batchProcessor      *batch.Processor
+	clusterMgr          *cluster.Manager
+	TenantStore         *tenant.Store
+	OrgProviderCache    *providers.OrgProviderCache
+	asyncWorker         *async.Worker
+	videoWorker         *lifecycle.Worker
+	videoExporter       otel.SpanExporter
+	videoInitErr        error
+	shadowFlusher       *routing.ShadowFlusher
+	closeMCP            func()
+	router              *Router
+	internalInspections []RouteInspection
+	ready               atomic.Bool
 
 	// httpsServer serves the same handler over TLS when server.tls is on;
 	// certs feeds it the certificate and reloads it when its files change.
@@ -130,6 +132,12 @@ func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
 
 // New creates a new gateway server.
 func New(cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
+	return NewWithStartupContext(context.Background(), cfg, configPath, registry, engine, keyStore, guardrailEngine, policyStore, metricsRegistry, modelDBPtr, tenantStore, onOrgConfigChange, redisClients...)
+}
+
+// NewWithStartupContext lets shutdown interrupt an in-progress MCP handshake.
+// Accepted sessions are owned by the server, not by the handshake context.
+func NewWithStartupContext(startup context.Context, cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
 	var redisClient *redisstate.Client
 	if len(redisClients) > 0 {
 		redisClient = redisClients[0]
@@ -311,8 +319,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	handlers.asyncKeyRequired = !authEnabled && cfg.LicenseAuth.Enabled
 	handlers.resultIPACL = cfg.IPACL
 
+	asyncInspection := s.registerInternalInspection("internal.async", "queued executor inspection is unsupported")
 	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
+		// Never restore HTTP inspection receipts or creator verdicts from job
+		// metadata. Selected blocking policies refuse this unqualified executor.
+		rc.Inspection = models.NewInspectionState(asyncInspection)
 		rc.Model = req.Model
 		rc.Request = req
 		rc.IsStream = false
@@ -328,6 +340,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
@@ -404,6 +417,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		handlers.scheduledRetryAttempts = retryAttempts
 
 		// The execute function calls back into the gateway pipeline.
+		scheduledInspection := s.registerInternalInspection("internal.scheduled", "scheduled executor has no authenticated inspection context")
 		schedExecuteFn := func(requestJSON json.RawMessage) (json.RawMessage, error) {
 			var req models.ChatCompletionRequest
 			if err := json.Unmarshal(requestJSON, &req); err != nil {
@@ -411,6 +425,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			}
 
 			rc := models.AcquireRequestContext()
+			rc.Inspection = models.NewInspectionState(scheduledInspection)
 			rc.Model = req.Model
 			rc.Request = &req
 			rc.IsStream = false
@@ -423,6 +438,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			rc.Provider = provider.ID()
 
 			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+				noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 				if err != nil {
 					return err
@@ -459,24 +475,27 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		)
 	}
 
-	// Build route table.
+	// Build route table. Every registration, including future Handle calls,
+	// inherits declaration admission and the nonbuffering release boundary.
 	router := NewRouter()
+	router.configureInspection(engine, authKeyStore, cfg.IPACL, tenantStore)
 
-	// Proxy endpoints.
-	router.Handle("POST", "/v1/chat/completions", handlers.ChatCompletion)
-	router.Handle("POST", "/v1/completions", handlers.TextCompletion)
-	router.Handle("POST", "/v1/embeddings", handlers.CreateEmbedding)
+	// Text support is declared at registration, not guessed from an endpoint
+	// label later in the pipeline. Actual complete projections remain required.
+	router.HandleInspected("POST", "/v1/chat/completions", handlers.ChatCompletion, textInspection("chat.completions"))
+	router.HandleInspected("POST", "/v1/completions", handlers.TextCompletion, textInspection("completions"))
+	router.HandleInspected("POST", "/v1/embeddings", handlers.CreateEmbedding, models.InspectionContract{Operation: "embeddings.create", Input: models.InspectionSupported, Reason: "text-only input is inspected; embedding output is opaque"})
 	router.Handle("POST", "/v1/images/generations", handlers.CreateImage)
-	router.Handle("POST", "/v1/audio/speech", handlers.CreateSpeech)
+	router.HandleInspected("POST", "/v1/audio/speech", handlers.CreateSpeech, models.InspectionContract{Operation: "audio.speech", Input: models.InspectionSupported, Reason: "complete synthesis text is inspected; binary audio output is opaque"})
 	router.Handle("POST", "/v1/audio/transcriptions", handlers.CreateTranscription)
-	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
+	router.HandleInspected("POST", "/v1/audio/speech/stream", handlers.StreamSpeech, models.InspectionContract{Operation: "audio.speech.stream", Input: models.InspectionSupported, Reason: "complete synthesis text is inspected; binary audio stream output is opaque"})
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
 	// Structured decisions, on the customer's own provider key only.
 	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
 	router.Handle("POST", "/v1/decisions", handlers.Decisions)
-	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
-	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
+	router.handleInspected("GET", "/v1/decisions/models", handlers.DecisionModels, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.HandleInspected("POST", "/v1/responses", handlers.CreateResponse, textInspection("responses.create"))
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)
 	// Files API.
@@ -488,11 +507,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Native Anthropic Messages API.
 	router.Handle("POST", "/v1/messages/count_tokens", handlers.AnthropicCountTokens) // count_tokens before /v1/messages
-	router.Handle("POST", "/v1/messages", handlers.AnthropicMessages)
+	router.HandleInspected("POST", "/v1/messages", handlers.AnthropicMessages, textInspection("messages.create"))
 
-	router.Handle("POST", "/v1/count_tokens", handlers.CountTokens)
-	router.Handle("GET", "/v1/models", handlers.ListModels)
-	router.Handle("GET", "/v1/models/{model}", handlers.GetModel)
+	router.handleInspected("POST", "/v1/count_tokens", handlers.CountTokens, RouteInspection{Auth: inspectionAuthMiddleware})
+	modelCatalogInspection := RouteInspection{Auth: inspectionAuthCatalog, Contract: models.InspectionContract{
+		Input: models.InspectionNotApplicable, Output: models.InspectionNotApplicable,
+		Reason: "exact model catalog operation emits only configured model identifiers, owner, numeric limits/pricing and capability flags; it neither reads nor returns inference content",
+	}}
+	router.handleInspected("GET", "/v1/models", handlers.ListModels, modelCatalogInspection)
+	router.handleInspected("GET", "/v1/models/{model}", handlers.GetModel, modelCatalogInspection)
 
 	// Assistants API.
 	router.Handle("POST", "/v1/assistants", handlers.CreateAssistant)
@@ -543,8 +566,13 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("DELETE", "/v1/vector_stores/{vector_store_id}", handlers.DeleteVectorStore)
 
 	// Native Google GenAI API.
-	router.Handle("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler)
-	router.Handle("POST", "/v1beta/models/{provider}/{model_action}", handlers.GenAIHandler)
+	genaiInspection := RouteInspection{Auth: inspectionAuthGenAI, Discriminator: "genai-action", Variants: []models.InspectionContract{
+		textInspection("generateContent"), textInspection("streamGenerateContent"),
+		{Operation: "countTokens", Reason: "native count input and response shape are not completely inspected"},
+		{Operation: "embedContent", Reason: "native embedding input and response shape are not completely inspected"},
+	}}
+	router.handleInspected("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler, genaiInspection)
+	router.handleInspected("POST", "/v1beta/models/{provider}/{model_action}", handlers.GenAIHandler, genaiInspection)
 
 	// Search API.
 	router.Handle("POST", "/v1/search", handlers.Search)
@@ -563,11 +591,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		MaxMessageSize:     16 * 1024 * 1024,
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
-	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
+	router.handleInspected("GET", "/v1/realtime", realtimeHandler.HandleRealtime, RouteInspection{Auth: inspectionAuthRealtime})
 
 	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
 	for _, ep := range speech.Endpoints() {
-		router.Handle("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path))
+		router.handleInspected("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path), RouteInspection{Auth: inspectionAuthSpeech})
 	}
 
 	// Video Generation API.
@@ -580,14 +608,14 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("DELETE", "/v1/videos/{video_id}", handlers.DeleteVideo)
 
 	// Scheduled completions API.
-	router.Handle("POST", "/v1/scheduled", handlers.SubmitScheduled)
-	router.Handle("GET", "/v1/scheduled", handlers.ListScheduledJobs)
-	router.Handle("GET", "/v1/scheduled/{job_id}", handlers.GetScheduledJob)
-	router.Handle("DELETE", "/v1/scheduled/{job_id}", handlers.CancelScheduledJob)
+	router.handleInspected("POST", "/v1/scheduled", handlers.SubmitScheduled, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("GET", "/v1/scheduled", handlers.ListScheduledJobs, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("GET", "/v1/scheduled/{job_id}", handlers.GetScheduledJob, RouteInspection{Auth: inspectionAuthMiddleware})
+	router.handleInspected("DELETE", "/v1/scheduled/{job_id}", handlers.CancelScheduledJob, RouteInspection{Auth: inspectionAuthMiddleware})
 
 	// Async inference endpoints.
-	router.Handle("GET", "/v1/async/{job_id}", handlers.GetAsyncJob)
-	router.Handle("DELETE", "/v1/async/{job_id}", handlers.DeleteAsyncJob)
+	router.handleInspected("GET", "/v1/async/{job_id}", handlers.GetAsyncJob, RouteInspection{Auth: inspectionAuthStored})
+	router.handleInspected("DELETE", "/v1/async/{job_id}", handlers.DeleteAsyncJob, RouteInspection{Auth: inspectionAuthStored})
 
 	// Health endpoints.
 	router.Handle("GET", "/healthz", s.healthHandler)
@@ -607,8 +635,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 
 	// Batch API endpoints.
+	batchInspection := s.registerInternalInspection("internal.batch", "batch executor has no authenticated inspection context")
 	batchHandler := func(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, map[string]string, error) {
 		rc := models.AcquireRequestContext()
+		rc.Inspection = models.NewInspectionState(batchInspection)
 		rc.Model = req.Model
 		rc.Request = req
 		rc.IsStream = false // batch requests are non-streaming
@@ -621,6 +651,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
@@ -737,6 +768,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			Separator:       cfg.MCP.Separator,
 		})
 
+		s.closeMCP = sync.OnceFunc(mcpServer.Close)
+
 		// Attach per-key tool filtering if auth is configured.
 		if authEnabled && authKeyStore != nil {
 			mcpServer.SetKeyAuth(&mcpKeyAuth{keyStore: authKeyStore})
@@ -793,7 +826,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				},
 				ToolsCacheTTL: serverCfg.ToolsCacheTTL,
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if startup.Err() != nil {
+				break
+			}
+			ctx, cancel := context.WithTimeout(startup, 30*time.Second)
 			if err := client.Connect(ctx); err != nil {
 				slog.Error("failed to connect to MCP server", "server", id, "error", err)
 				cancel()
@@ -803,8 +839,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			mcpServer.RegisterClient(client)
 		}
 
-		router.Handle("POST", endpoint, mcpServer.HandlePost)
-		router.Handle("GET", endpoint, mcpServer.HandleSSE)
+		router.handleInspected("POST", endpoint, mcpServer.HandlePost, RouteInspection{Auth: inspectionAuthMCP})
+		router.handleInspected("GET", endpoint, mcpServer.HandleSSE, RouteInspection{Auth: inspectionAuthMiddleware})
 
 		// Admin endpoints for MCP.
 		router.Handle("GET", "/-/mcp/status", func(w http.ResponseWriter, r *http.Request) {
@@ -905,6 +941,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		a2aRegistry := a2a.NewRegistry(agentConfigs)
+		s.registerInternalInspection("internal.a2a.chat", "delegates to authenticated chat HTTP dispatch; outer A2A selected blocking operations are unsupported")
 		a2aExecutor := func(ctx context.Context, caller a2a.Caller, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 			body, err := json.Marshal(req)
 			if err != nil {
@@ -925,7 +962,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			}
 
 			rec := httptest.NewRecorder()
-			handlers.ChatCompletion(rec, httpReq)
+			// The executor is an internal HTTP caller, not an exemption from
+			// registration admission, current-key binding or release decisions.
+			router.ServeHTTP(rec, httpReq)
 
 			if rec.Code >= http.StatusBadRequest {
 				var errResp models.ErrorResponse
@@ -965,10 +1004,16 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 
 		router.Handle("GET", "/.well-known/agent.json", a2aServer.HandleAgentCard)
-		router.Handle("GET", "/v1/.well-known/agent.json", a2aServer.HandleAgentCard)
-		router.Handle("POST", "/a2a", a2aServer.HandleMessage)
-		router.Handle("POST", "/v1/a2a", a2aServer.HandleMessage)
-		router.Handle("GET", "/v1/agents", a2aServer.ListAgents)
+		router.handleInspected("GET", "/v1/.well-known/agent.json", a2aServer.HandleAgentCard, RouteInspection{Auth: inspectionAuthMiddleware})
+		// All JSON-RPC methods remain opaque at dispatch. Do not parse/buffer a
+		// body merely to exempt a method: historical task artifacts are content.
+		a2aInspection := RouteInspection{Auth: inspectionAuthMiddleware, Discriminator: "opaque-a2a-method", Contract: models.InspectionContract{Reason: "A2A request and historical artifacts lack complete inspection"}}
+		for _, method := range []string{a2a.MethodMessageSend, a2a.MethodTasksSend, a2a.MethodMessageStream, a2a.MethodTasksGet, a2a.MethodTasksCancel} {
+			a2aInspection.Variants = append(a2aInspection.Variants, models.InspectionContract{Operation: method, Reason: a2aInspection.Contract.Reason})
+		}
+		router.handleInspected("POST", "/a2a", a2aServer.HandleMessage, a2aInspection)
+		router.handleInspected("POST", "/v1/a2a", a2aServer.HandleMessage, a2aInspection)
+		router.handleInspected("GET", "/v1/agents", a2aServer.ListAgents, RouteInspection{Auth: inspectionAuthMiddleware})
 
 		slog.Info("a2a protocol enabled", "agents", len(cfg.A2A.Agents))
 	}
@@ -1094,7 +1139,14 @@ func (s *Server) listen() ([]gatewayListener, error) {
 }
 
 // Start begins listening for HTTP requests. Blocks until the server stops.
-func (s *Server) Start() error {
+func (s *Server) Start() (err error) {
+	// New may already have connected MCP children. On a failed Start the
+	// caller can exit immediately, without ever entering Shutdown.
+	defer func() {
+		if err != nil && s.closeMCP != nil {
+			s.closeMCP()
+		}
+	}()
 	if s.videoInitErr != nil {
 		return fmt.Errorf("video initialization failed: %w", s.videoInitErr)
 	}
@@ -1155,6 +1207,10 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("shutting down gateway...")
 	s.ready.Store(false)
+	// Let active requests drain, but also reap children on an early return.
+	if s.closeMCP != nil {
+		defer s.closeMCP()
+	}
 
 	// Drain and deregister cluster node.
 	if s.clusterMgr != nil {

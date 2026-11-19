@@ -189,7 +189,7 @@ describe("CallDrawer — chat branch", () => {
     // The reason shows once in the failed-eval banner already.
     expect(screen.getAllByText("wrong amount")).toHaveLength(1);
     await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
-    expect(screen.getAllByText("Failed")).toHaveLength(2);
+    expect(screen.getAllByText("Failed")).toHaveLength(3);
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
     expect(screen.queryByText("Fix with AI")).not.toBeInTheDocument();
     expect(screen.queryByText("Add Evals")).not.toBeInTheDocument();
@@ -744,7 +744,7 @@ describe("CallDrawer — the call's traces", () => {
     expect(useCallTraces).toHaveBeenLastCalledWith("exec-1", "voice-1");
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-left-tabs",
-      "Traces",
+      "Traces,World state",
     );
   });
 
@@ -770,7 +770,7 @@ describe("CallDrawer — the call's traces", () => {
 
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-left-tabs",
-      "Traces",
+      "Traces,World state",
     );
   });
 
@@ -791,7 +791,7 @@ describe("CallDrawer — the call's traces", () => {
     expect(useCallTraces).toHaveBeenLastCalledWith(null, "voice-1");
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-left-tabs",
-      "Traces",
+      "Traces,World state",
     );
   });
 
