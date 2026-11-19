@@ -175,3 +175,35 @@ export const decisionSentence = (one) => {
   if (parts[0] === one.name) parts.shift();
   return parts.length ? `${parts.map(capital).join(". ")}.` : "";
 };
+
+export const showValue = (value) =>
+  value === undefined || value === null
+    ? "—"
+    : typeof value === "object"
+      ? JSON.stringify(value)
+      : String(value);
+
+export const KIND_TONE = {
+  added: "success.dark",
+  changed: "info.dark",
+  removed: "error.main",
+};
+
+/* Each participant's calls as counts, one row each, with what it committed
+   and read as chips under its row. Attempted, refused and committed are
+   never summed into one number. */
+/* Attempted and Committed always show; Read, Refused, Faulted and
+   Duplicate only when some participant has one, and then only non-zero
+   counts are printed. */
+export const OPTIONAL_COUNTS = [
+  { key: "read", tone: "text.secondary" },
+  { key: "refused", tone: "warning.dark" },
+  { key: "faulted", tone: "error.main" },
+  { key: "duplicate", tone: "error.main" },
+];
+
+export const ACTION_TONE = {
+  committed: "text.primary",
+  read: "text.secondary",
+  warning: "warning.dark",
+};

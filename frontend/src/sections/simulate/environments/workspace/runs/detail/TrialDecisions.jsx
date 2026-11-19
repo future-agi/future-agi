@@ -54,7 +54,9 @@ export default function TrialDecisions({ approvals, decisions }) {
                     {one.request.action || "A request"}
                   </Typography>,
                   <Stack key="d" spacing={0.125}>
-                    <Typography sx={{ typography: "s3", fontWeight: 500 }}>
+                    <Typography
+                      sx={{ typography: "s3", fontWeight: "fontWeightMedium" }}
+                    >
                       {one.decision.name || "—"}
                     </Typography>
                     <Typography
@@ -100,7 +102,9 @@ export default function TrialDecisions({ approvals, decisions }) {
               label: one.line,
               cells: [
                 <Box key="l">
-                  <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                  <Typography
+                    sx={{ typography: "s3", fontWeight: "fontWeightSemiBold" }}
+                  >
                     {one.name}
                   </Typography>
                   <Typography sx={{ ...quiet, color: "text.primary" }}>
@@ -110,7 +114,7 @@ export default function TrialDecisions({ approvals, decisions }) {
                     <Typography
                       sx={{
                         typography: "s3",
-                        fontWeight: 600,
+                        fontWeight: "fontWeightSemiBold",
                         color: "error.main",
                         mt: 0.25,
                       }}

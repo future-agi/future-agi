@@ -1,465 +1,22 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
-import { Box, Link, Stack, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { Link, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import TrialDecisions from "./TrialDecisions";
 import { Callout, Count, GridTable, Section } from "./trialChangesParts";
 import {
   MONO,
   QUIET as quiet,
   TRIAL_CHANGES_COPY as C,
-  groupBlocked,
-  groupNames,
-  saidText,
 } from "./trialChanges.constants";
 
-const show = (value) =>
-  value === undefined || value === null
-    ? "—"
-    : typeof value === "object"
-      ? JSON.stringify(value)
-      : String(value);
-
-const KIND_TONE = {
-  added: "success.dark",
-  changed: "info.dark",
-  removed: "error.main",
-};
-
-/* One record: its table and key, what happened to it, then a Field ·
-   Before · After table. Changed fields come first, highlighted; the
-   unchanged ones fold away behind a toggle. */
-function RecordChange({ one }) {
-  const [open, setOpen] = useState(false);
-  const fields = [
-    ...new Set([
-      ...Object.keys(one.before || {}),
-      ...Object.keys(one.after || {}),
-    ]),
-  ];
-  const changedSet = new Set(
-    one.kind === "changed" ? one.fields || [] : fields,
-  );
-  const changed = fields.filter((f) => changedSet.has(f));
-  const unchanged = fields.filter((f) => !changedSet.has(f));
-  const shown = open ? [...changed, ...unchanged] : changed;
-  const label =
-    one.kind === "changed"
-      ? C.recordChanged(one.fields || [])
-      : C.recordKinds[one.kind] || one.kind;
-  return (
-    <Box>
-      <Stack
-        direction="row"
-        alignItems="baseline"
-        spacing={1}
-        aria-label={`${one.table} ${JSON.stringify(one.key)} · ${label}`}
-        sx={{ mb: 0.5, flexWrap: "wrap" }}
-      >
-        <Typography
-          sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO }}
-        >
-          {`${one.table} ${JSON.stringify(one.key)}`}
-        </Typography>
-        <Typography
-          sx={{
-            typography: "s3",
-            fontWeight: 500,
-            color: KIND_TONE[one.kind] || "text.secondary",
-          }}
-        >
-          {label}
-        </Typography>
-      </Stack>
-      {one.kind !== "changed" ? (
-        <GridTable
-          cols="minmax(96px, 0.8fr) minmax(0, 2fr)"
-          head={[
-            C.recordsHead.field,
-            one.kind === "removed" ? C.recordsHead.before : C.recordsHead.after,
-          ]}
-          rows={fields.map((f) => ({
-            key: f,
-            cells: [
-              <Typography
-                key="f"
-                sx={{
-                  typography: "s3",
-                  fontFamily: MONO,
-                  fontWeight: 500,
-                  wordBreak: "break-all",
-                }}
-              >
-                {f}
-              </Typography>,
-              <Typography
-                key="v"
-                sx={{
-                  ...quiet,
-                  fontFamily: MONO,
-                  color: "text.primary",
-                  textDecoration:
-                    one.kind === "removed" ? "line-through" : "none",
-                }}
-              >
-                {show((one.kind === "removed" ? one.before : one.after)?.[f])}
-              </Typography>,
-            ],
-          }))}
-        />
-      ) : (
-        <GridTable
-          cols="minmax(96px, 0.8fr) minmax(0, 1fr) minmax(0, 1fr)"
-          head={[
-            C.recordsHead.field,
-            C.recordsHead.before,
-            C.recordsHead.after,
-          ]}
-          rows={shown.map((f) => {
-            const isChanged = changedSet.has(f);
-            return {
-              key: f,
-              sx: (theme) =>
-                isChanged && one.kind === "changed"
-                  ? { bgcolor: alpha(theme.palette.info.main, 0.04) }
-                  : {},
-              cells: [
-                <Typography
-                  key="f"
-                  sx={{
-                    typography: "s3",
-                    fontFamily: MONO,
-                    fontWeight: isChanged ? 600 : 400,
-                    color: isChanged ? "text.primary" : "text.secondary",
-                    wordBreak: "break-all",
-                  }}
-                >
-                  {f}
-                </Typography>,
-                <Typography
-                  key="b"
-                  sx={{
-                    ...quiet,
-                    fontFamily: MONO,
-                    color: one.before ? "text.secondary" : "text.disabled",
-                    textDecoration:
-                      isChanged && one.kind !== "added"
-                        ? "line-through"
-                        : "none",
-                  }}
-                >
-                  {one.before ? show(one.before[f]) : "—"}
-                </Typography>,
-                <Typography
-                  key="a"
-                  sx={{
-                    ...quiet,
-                    fontFamily: MONO,
-                    color: one.after
-                      ? isChanged
-                        ? "text.primary"
-                        : "text.secondary"
-                      : "text.disabled",
-                  }}
-                >
-                  {one.after ? show(one.after[f]) : "—"}
-                </Typography>,
-              ],
-            };
-          })}
-        />
-      )}
-      {one.kind === "changed" && unchanged.length > 0 && (
-        <Typography
-          component="button"
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          sx={{
-            mt: 0.5,
-            p: 0,
-            border: 0,
-            bgcolor: "transparent",
-            cursor: "pointer",
-            typography: "s3",
-            fontWeight: 500,
-            color: "primary.main",
-          }}
-        >
-          {C.unchangedFields(unchanged.length, open)}
-        </Typography>
-      )}
-    </Box>
-  );
-}
-RecordChange.propTypes = { one: PropTypes.object.isRequired };
-
-// `outside` replaces "no record changed" when the agent committed changes outside the test world.
-function RecordsSection({ records, outside }) {
-  const changes = records?.changes || [];
-  return (
-    <Section
-      title={C.recordsHeading}
-      count={changes.length || null}
-      data-testid="records-before-after"
-    >
-      {changes.length === 0 && (
-        <Typography
-          sx={outside ? { ...quiet, color: "warning.dark" } : quiet}
-          data-testid={outside ? "changed-outside-world" : undefined}
-        >
-          {outside ? outside.message : C.recordsEmpty}
-        </Typography>
-      )}
-      <Stack spacing={1.5}>
-        {changes.map((one, index) => (
-          <RecordChange key={`${one.table}-${index}`} one={one} />
-        ))}
-      </Stack>
-      {(records?.skipped || []).map((one) => (
-        <Typography key={`skipped-${one.table}`} sx={{ ...quiet, mt: 0.75 }}>
-          {C.notCompared(one.table, one.why)}
-        </Typography>
-      ))}
-      {records?.truncated > 0 && (
-        <Typography sx={{ ...quiet, mt: 0.75 }}>
-          {C.truncated(records.truncated)}
-        </Typography>
-      )}
-    </Section>
-  );
-}
-
-RecordsSection.propTypes = {
-  outside: PropTypes.shape({
-    code: PropTypes.string,
-    message: PropTypes.string,
-  }),
-  records: PropTypes.shape({
-    changes: PropTypes.arrayOf(PropTypes.object),
-    skipped: PropTypes.arrayOf(PropTypes.object),
-    truncated: PropTypes.number,
-  }),
-};
-
-/* Each participant's calls as counts, one row each, with what it committed
-   and read as chips under its row. Attempted, refused and committed are
-   never summed into one number. */
-/* Attempted and Committed always show; Read, Refused, Faulted and
-   Duplicate only when some participant has one, and then only non-zero
-   counts are printed. */
-const OPTIONAL_COUNTS = [
-  { key: "read", tone: "text.secondary" },
-  { key: "refused", tone: "warning.dark" },
-  { key: "faulted", tone: "error.main" },
-  { key: "duplicate", tone: "error.main" },
-];
-
-function CallsSection({ changes }) {
-  const extra = OPTIONAL_COUNTS.filter(({ key }) =>
-    changes.some((one) => one[key]),
-  );
-  const cols = `minmax(120px, 1.4fr) repeat(${2 + extra.length}, minmax(64px, 0.6fr))`;
-  const H = C.callsHead;
-  const head = [
-    H.who,
-    { label: H.attempted, align: "right" },
-    { label: H.committed, align: "right" },
-    ...extra.map(({ key }) => ({ label: H[key], align: "right" })),
-  ];
-  return (
-    <Section title={C.callsHeading} hint={C.about}>
-      <GridTable
-        cols={cols}
-        head={head}
-        rows={changes.map((one) => ({
-          key: one.who,
-          label: C.counts(one),
-          cells: [
-            <Typography
-              key="n"
-              sx={{
-                typography: "s2",
-                fontWeight: 500,
-                wordBreak: "break-word",
-              }}
-            >
-              {one.name}
-            </Typography>,
-            <Count key="a" value={one.attempted} />,
-            <Count key="c" value={one.committed} tone="text.primary" />,
-            ...extra.map(({ key, tone }) => (
-              <Count key={key} value={one[key]} tone={tone} hideZero />
-            )),
-          ],
-          below: <ParticipantActions one={one} />,
-        }))}
-      />
-    </Section>
-  );
-}
-CallsSection.propTypes = { changes: PropTypes.array.isRequired };
-
-const ACTION_TONE = {
-  committed: "text.primary",
-  read: "text.secondary",
-  warning: "warning.dark",
-};
-
-/* A label, then the calls as a plain list in call order, repeats counted. */
-function ActionLine({ label, names, tone, sentence, chipTestId }) {
-  return (
-    <Stack
-      aria-label={sentence}
-      direction="row"
-      spacing={1}
-      alignItems="baseline"
-    >
-      <Typography
-        sx={{ ...quiet, width: 140, flexShrink: 0, color: "text.disabled" }}
-      >
-        {label}
-      </Typography>
-      <Typography
-        sx={{
-          ...quiet,
-          minWidth: 0,
-          color: ACTION_TONE[tone] || "text.primary",
-        }}
-      >
-        {names.map((name, i) => (
-          <span key={`${name}-${i}`}>
-            {i > 0 && ", "}
-            <span data-testid={chipTestId}>{name}</span>
-          </span>
-        ))}
-      </Typography>
-    </Stack>
-  );
-}
-ActionLine.propTypes = {
-  label: PropTypes.string.isRequired,
-  names: PropTypes.arrayOf(PropTypes.string).isRequired,
-  tone: PropTypes.string,
-  sentence: PropTypes.string,
-  chipTestId: PropTypes.string,
-};
-
-function ParticipantActions({ one }) {
-  const lines = [];
-  if (one.committed_actions?.length)
-    lines.push(
-      <ActionLine
-        key="c"
-        label={C.committedLabel}
-        sentence={C.committed(one.committed_actions)}
-        names={groupNames(one.committed_actions)}
-        tone="committed"
-      />,
-    );
-  if (one.read_actions?.length)
-    lines.push(
-      <ActionLine
-        key="r"
-        label={C.readLabel}
-        sentence={C.read(one.read_actions)}
-        names={groupNames(one.read_actions)}
-        tone="read"
-      />,
-    );
-  if (one.answer_lost_actions?.length)
-    lines.push(
-      <ActionLine
-        key="t"
-        label={C.answerLostLabel}
-        sentence={C.answerLost(one.answer_lost_actions)}
-        names={groupNames(one.answer_lost_actions)}
-        tone="warning"
-      />,
-    );
-  if (one.blocked?.length)
-    lines.push(
-      <Box key="b">
-        <ActionLine
-          chipTestId="blocked-call"
-          label={C.blockedLabel}
-          names={groupBlocked(one.blocked).map((call) => C.blockedCall(call))}
-          tone="warning"
-        />
-      </Box>,
-    );
-  if (one.no_change && !one.committed_actions?.length)
-    lines.push(
-      <Typography key="n" sx={{ ...quiet, color: "text.disabled" }}>
-        {C.noChange}
-      </Typography>,
-    );
-  if (!lines.length) return null;
-  return <Stack spacing={0.5}>{lines}</Stack>;
-}
-ParticipantActions.propTypes = { one: PropTypes.object.isRequired };
-
-/* What the actors wrote before the agent started, as a short chat: who
-   and what they said (or did). Folded by default; the server's sentence
-   stays on each row as its label. */
-function PreRunSection({ entries }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Section
-      title={C.preRunHeading}
-      count={entries.length}
-      caption={C.preRunCaption}
-      hint={C.preRunAbout}
-    >
-      <Link
-        component="button"
-        type="button"
-        underline="hover"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        sx={{ typography: "s3", fontWeight: 500 }}
-      >
-        {C.preRunToggle(entries.length, open)}
-      </Link>
-      {open && (
-        <Stack
-          spacing={0.75}
-          sx={{
-            mt: 0.75,
-            pl: 1.25,
-            borderLeft: "2px solid",
-            borderColor: "divider",
-          }}
-        >
-          {entries.map((one, index) => {
-            const said = saidText(one.arguments);
-            const channel = one.arguments?.channel || one.channel;
-            return (
-              <Box key={`pre-${index}`} aria-label={one.line}>
-                <Stack direction="row" spacing={0.75} alignItems="baseline">
-                  <Typography sx={{ typography: "s3", fontWeight: 600 }}>
-                    {one.name}
-                  </Typography>
-                  {channel && (
-                    <Typography sx={{ ...quiet, color: "text.disabled" }}>
-                      {channel}
-                    </Typography>
-                  )}
-                </Stack>
-                <Typography sx={{ ...quiet, color: "text.primary" }}>
-                  {said || (one.action ? C.preRunDid(one.action) : one.line)}
-                </Typography>
-              </Box>
-            );
-          })}
-        </Stack>
-      )}
-    </Section>
-  );
-}
-PreRunSection.propTypes = { entries: PropTypes.array.isRequired };
+import TrialDecisions from "./TrialDecisions";
+import { CallsSection } from "./CallsSection";
+import { PreRunSection } from "./PreRunSection";
+import { RecordsSection } from "./RecordChange";
 
 // A start that differs is reported among the notices instead.
+// Same insets as the Transcript tab in the drawer.
+const ROOT_SX = { px: 2, pt: 1.25, pb: 2 };
+
 export default function TrialChangesPanel({ trialState }) {
   if (!trialState)
     return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
@@ -498,6 +55,8 @@ function WorldState({ trialState }) {
       alignItems="center"
       justifyContent="space-between"
       spacing={2}
+      // A one-line caption: it sits closer to what follows than a section does.
+      sx={{ mb: -1 }}
     >
       <Typography sx={quiet}>{started || ""}</Typography>
       {trialState.end_state_url && (
@@ -509,7 +68,7 @@ function WorldState({ trialState }) {
           title={C.endStateHint}
           sx={{
             typography: "s3",
-            fontWeight: 500,
+            fontWeight: "fontWeightMedium",
             display: "inline-flex",
             alignItems: "center",
             gap: 0.5,
@@ -546,7 +105,7 @@ function WorldState({ trialState }) {
 
   if (!changes.length && !decisions.length && !preRun.length)
     return (
-      <Stack spacing={2} sx={{ p: 2 }}>
+      <Stack spacing={2} sx={ROOT_SX}>
         {topLine}
         {callouts}
         {!unreadable && <Typography sx={quiet}>{C.empty}</Typography>}
@@ -554,7 +113,7 @@ function WorldState({ trialState }) {
       </Stack>
     );
   return (
-    <Stack spacing={2.5} sx={{ p: 2 }}>
+    <Stack spacing={2} sx={ROOT_SX}>
       {topLine}
       {callouts}
       {changes.length > 0 && <CallsSection changes={changes} />}
@@ -583,7 +142,7 @@ function WorldState({ trialState }) {
                 cells: [
                   <Typography
                     key="w"
-                    sx={{ typography: "s3", fontWeight: 500 }}
+                    sx={{ typography: "s3", fontWeight: "fontWeightMedium" }}
                   >
                     {line.name}
                   </Typography>,
@@ -618,7 +177,10 @@ function WorldState({ trialState }) {
                       cells: [
                         <Typography
                           key="w"
-                          sx={{ typography: "s3", fontWeight: 600 }}
+                          sx={{
+                            typography: "s3",
+                            fontWeight: "fontWeightSemiBold",
+                          }}
                         >
                           {C.usageTotalLabel}
                         </Typography>,
@@ -629,7 +191,7 @@ function WorldState({ trialState }) {
                           key="$"
                           sx={{
                             typography: "s2",
-                            fontWeight: 600,
+                            fontWeight: "fontWeightSemiBold",
                             fontVariantNumeric: "tabular-nums",
                           }}
                         >

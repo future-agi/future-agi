@@ -15,7 +15,7 @@ export function Section({ title, count, caption, hint, children, ...rest }) {
         spacing={0.75}
         sx={{ mb: 0.75 }}
       >
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
           {title}
         </Typography>
         {count != null && (
@@ -44,11 +44,7 @@ export function Section({ title, count, caption, hint, children, ...rest }) {
             </Box>
           </Tooltip>
         )}
-        {caption && (
-          <Typography sx={{ ...quiet, color: "text.disabled" }}>
-            {caption}
-          </Typography>
-        )}
+        {caption && <Typography sx={quiet}>{caption}</Typography>}
       </Stack>
       {children}
     </Box>
@@ -94,7 +90,7 @@ export function GridTable({ cols, head, rows, testId }) {
                 ...cell,
                 py: 0.5,
                 typography: "s3",
-                fontWeight: 500,
+                fontWeight: "fontWeightMedium",
                 color: "text.secondary",
                 textAlign: h?.align || "left",
               }}
@@ -167,7 +163,11 @@ export function Callout({ tone = "warning", title, lines, testId }) {
           sx={{ color: `${tone}.dark`, flexShrink: 0 }}
         />
         <Typography
-          sx={{ typography: "s2", fontWeight: 600, color: `${tone}.dark` }}
+          sx={{
+            typography: "s2",
+            fontWeight: "fontWeightSemiBold",
+            color: `${tone}.dark`,
+          }}
         >
           {title}
         </Typography>
@@ -209,7 +209,7 @@ export function Count({ value, tone, hideZero }) {
       sx={{
         typography: "s2",
         fontVariantNumeric: "tabular-nums",
-        fontWeight: zero ? 400 : 500,
+        fontWeight: zero ? "fontWeightRegular" : "fontWeightMedium",
         color: zero ? "text.disabled" : tone ? `${tone}` : "text.primary",
       }}
     >
