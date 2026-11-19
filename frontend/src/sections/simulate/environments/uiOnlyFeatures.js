@@ -123,7 +123,7 @@ export const UI_ONLY_FEATURES = Object.freeze({
   designReview: {
     label: "Review the design",
     ask: "a design job endpoint (see #3612) that reads the description and attached files, returns the proposed records, tools, rules, people and scenarios with their sources and open questions, saves the draft, and starts the build on approval",
-    note: "UI only: the design is proposed in this browser from sample rules. Nothing is sent, and approving builds nothing.",
+    note: "UI only: the design is proposed in this browser from sample rules. Nothing is sent, and approving runs a sample build.",
   },
   designBuild: {
     label: "Build an approved design",
