@@ -404,6 +404,23 @@ def platform_model_gateway() -> tuple[str, str]:
     return url.rstrip("/"), key
 
 
+# The harness's own settings, sent from the platform's environment to the guest: in the simulator material, and to every
+# command that builds, certifies or proves in the sandbox.
+ALK_GUEST_SETTINGS = (
+    # Off has to travel: decided here, enforced inside the sandbox.
+    "ALK_VOICEMAIL_SCENARIOS",
+    "ALK_HARNESS_WORKERS_AT_ONCE",
+    # Runtime instances in the one sandbox for validation and proving (a ceiling; its own limits decide), the
+    # offline pass's budget, and the time and rounds a build hands held cases back to the writer.
+    "ALK_VALIDATION_INSTANCES",
+    "ALK_PROVE_SUITE_SECONDS",
+    "ALK_HELD_CASE_REPAIR_SECONDS",
+    "ALK_HELD_CASE_ROUNDS",
+    # The guest waits this long for the build; unset, it falls back to its own default.
+    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+)
+
+
 def _platform_simulator_material() -> dict[str, str]:
     """Return control-process-only simulator config.
 
@@ -488,17 +505,7 @@ def _platform_simulator_material() -> dict[str, str]:
         "ALK_BACKGROUND_NOISE",
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         "HARNESS_CALLER_BARGE_IN_RATE",
-        # Off has to travel: decided here, enforced inside the sandbox.
-        "ALK_VOICEMAIL_SCENARIOS",
-        "ALK_HARNESS_WORKERS_AT_ONCE",
-        # Runtime instances in the one sandbox for validation and proving (a ceiling; its own limits decide), the
-        # offline pass's budget, and the time and rounds a build hands held cases back to the writer.
-        "ALK_VALIDATION_INSTANCES",
-        "ALK_PROVE_SUITE_SECONDS",
-        "ALK_HELD_CASE_REPAIR_SECONDS",
-        "ALK_HELD_CASE_ROUNDS",
-        # The guest waits this long for the build; unset, it falls back to its own default.
-        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+        *ALK_GUEST_SETTINGS,
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -2935,16 +2942,14 @@ class HostedHarnessGateway:
                 for name, value in simulator_env.items()
                 if name
                 in {
+                    *ALK_GUEST_SETTINGS,
                     "ALK_HARNESS",
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
-                    "ALK_HARNESS_WORKERS_AT_ONCE",
-                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
                     "AGENTCC_BASE_URL",
                     "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
-                    "ALK_VOICEMAIL_SCENARIOS",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
                 }
@@ -3234,11 +3239,10 @@ class HostedHarnessGateway:
             for name, value in simulator_env.items()
             if name
             in {
+                *ALK_GUEST_SETTINGS,
                 "ALK_HARNESS",
                 "ALK_HARNESS_MODEL",
-                "ALK_HARNESS_WORKERS_AT_ONCE",
                 "ALK_SIMULATOR_FUNDING",
-                "ALK_VOICEMAIL_SCENARIOS",
                 "AGENTCC_BASE_URL",
                 "AGENTCC_API_KEY",
                 "ALK_CLAUDE_GATEWAY_URL",

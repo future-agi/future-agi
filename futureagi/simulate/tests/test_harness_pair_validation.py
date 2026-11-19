@@ -2435,6 +2435,31 @@ def _validation_proofs(environment):
 
 
 class TestScenarioProving:
+    def test_a_validate_sandbox_command_carries_the_harness_settings(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        # The settings that decide how a Validate proves reach the command that proves, not only the build's.
+        sent = {
+            "AGENTCC_BASE_URL": "https://gateway.example.test",
+            "ALK_VALIDATION_INSTANCES": "1",
+            "ALK_PROVE_SUITE_SECONDS": "5400",
+            "ALK_HELD_CASE_REPAIR_SECONDS": "900",
+        }
+        monkeypatch.setattr(
+            "simulate.services.hosted_harness_gateway._platform_simulator_material",
+            lambda: dict(sent),
+        )
+        environment = _environment(user, workspace, "pv-prove-settings", storage)
+        started = _start(environment, purpose="prove")
+        _launch(gateway, started.job)
+
+        env = gateway.client.sandbox.process.session_request.env
+        assert {name: env.get(name) for name in sent if name.startswith("ALK_")} == {
+            "ALK_VALIDATION_INSTANCES": "1",
+            "ALK_PROVE_SUITE_SECONDS": "5400",
+            "ALK_HELD_CASE_REPAIR_SECONDS": "900",
+        }
+
     def test_prove_only_job_on_certified_pair(self, user, workspace, storage, gateway):
         # A certified pairing with its sealed files, as a prove-only check finds it.
         environment = _environment(user, workspace, "pv-prove-only", storage)
@@ -2647,6 +2672,9 @@ def test_a_check_runs_two_hours_by_default_and_as_long_as_its_setting_says(setti
 def test_the_proving_settings_reach_the_sandbox(monkeypatch):
     from simulate.services.hosted_harness_gateway import _platform_simulator_material
 
+    monkeypatch.setenv("ALK_HARNESS", "gemini")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     for name, value in (
         ("ALK_VALIDATION_INSTANCES", "6"),
         ("ALK_PROVE_SUITE_SECONDS", "5400"),
