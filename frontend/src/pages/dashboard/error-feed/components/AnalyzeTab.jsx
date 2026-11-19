@@ -1350,7 +1350,7 @@ ComposeArea.propTypes = {
 const STARTER_SUGGESTIONS = [
   "Show me a failing trace",
   "What changed before this started?",
-  "How do I verify the fix?",
+  "How do I verify a change?",
 ];
 
 // ── Stored analysis ───────────────────────────────────────────────────────
