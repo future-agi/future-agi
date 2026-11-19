@@ -1,9 +1,10 @@
 import PropTypes from "prop-types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Box,
   Button,
+  Fade,
   IconButton,
   ListItemIcon,
   Menu,
@@ -25,6 +26,8 @@ import {
 } from "src/api/simulate-environments/designBuild";
 import ChatSplitPane from "../components/ChatSplitPane";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
+import usePrefersReducedMotion from "../components/usePrefersReducedMotion";
+import RenameEnvironmentDialog from "../workspace/RenameEnvironmentDialog";
 import { designSummary } from "./design";
 import DesignReview from "./DesignReview";
 import { useDesignDraftStore } from "./useDesignDraftStore";
@@ -165,11 +168,21 @@ const BUILD_PILL = {
 
 /* The bar above the chat and the design: back, the draft's name, where it
    stands, and its overflow menu. */
-function DesignHeader({ draft, blocked, build }) {
+function DesignHeader({ draft, blocked, build, suggestedName }) {
   const navigate = useNavigate();
   const discard = useDesignDraftStore((s) => s.discardDesignDraft);
+  const renameDraft = useDesignDraftStore((s) => s.renameDraft);
+  const reduce = usePrefersReducedMotion();
   const [anchor, setAnchor] = useState(null);
   const [confirm, setConfirm] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  // A typed name is never overwritten; the suggestion is only offered.
+  const offer =
+    draft.nameTyped && suggestedName && suggestedName !== draft.name
+      ? suggestedName
+      : null;
+  const lastOffer = useRef(offer);
+  if (offer) lastOffer.current = offer;
   const root = paths.dashboard.simulate.environments.root;
   const [status, label] =
     build?.status === "saved"
@@ -206,7 +219,33 @@ function DesignHeader({ draft, blocked, build }) {
       >
         {draft.name}
       </Typography>
+      <CustomTooltip show title="Rename environment" size="small" arrow>
+        <IconButton
+          aria-label="Rename environment"
+          size="small"
+          onClick={() => setRenaming(true)}
+          sx={{ color: "text.subtitle" }}
+        >
+          <Iconify icon="solar:pen-linear" width={15} />
+        </IconButton>
+      </CustomTooltip>
       <StatusBadge status={status} label={label} variant="badge" />
+      <Fade in={!!offer} timeout={reduce ? 0 : undefined} unmountOnExit>
+        <Button
+          size="small"
+          variant="text"
+          onClick={() => renameDraft(draft.id, lastOffer.current)}
+          sx={{ typography: "s2", flexShrink: 0 }}
+        >
+          {`Use '${lastOffer.current}'?`}
+        </Button>
+      </Fade>
+      <RenameEnvironmentDialog
+        open={renaming}
+        env={draft}
+        onClose={() => setRenaming(false)}
+        onSave={(name) => renameDraft(draft.id, name)}
+      />
       <Box flex={1} />
       <CustomTooltip show title="More actions" size="small" arrow>
         <IconButton
@@ -266,6 +305,7 @@ DesignHeader.propTypes = {
     status: PropTypes.string,
     release: PropTypes.shape({ version: PropTypes.number }),
   }),
+  suggestedName: PropTypes.string,
 };
 
 /**
@@ -300,6 +340,13 @@ export default function DesignPage() {
     () => draft && designSummary(draft, now),
     [draft, now],
   );
+  const renameDraft = useDesignDraftStore((s) => s.renameDraft);
+  const suggested = summary?.suggestedName;
+  // The builder's suggestion fills an untitled name; a typed one stays.
+  useEffect(() => {
+    if (draft && !draft.nameTyped && suggested && suggested !== draft.name)
+      renameDraft(draftId, suggested, { typed: false });
+  }, [draft, draftId, suggested, renameDraft]);
   const turns = useMemo(
     () => (draft ? turnsOf(draft, summary, build) : []),
     [draft, summary, build],
@@ -363,6 +410,7 @@ export default function DesignPage() {
         draft={draft}
         blocked={!summary.readingParts.length && summary.approveBlocked}
         build={build}
+        suggestedName={summary.suggestedName}
       />
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <ChatSplitPane chat={chat} busy={summary.readingParts.length > 0}>
