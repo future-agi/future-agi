@@ -1386,7 +1386,7 @@ def _member_scenario_edits(
 
     fields = (
         HostedHarnessProvider._DESCRIPTIVE_FIELDS
-        | HostedHarnessProvider._BEHAVIOURAL_FIELDS
+        | HostedHarnessProvider._behavioural_fields()
     )
     edits: dict[str, dict[str, Any]] = {}
     for key in scenario_keys:
@@ -1438,7 +1438,7 @@ def _scenario_edits(
     }
     fields = (
         HostedHarnessProvider._DESCRIPTIVE_FIELDS
-        | HostedHarnessProvider._BEHAVIOURAL_FIELDS
+        | HostedHarnessProvider._behavioural_fields()
     )
     edits: dict[str, dict[str, Any]] = {}
     for registration in registrations:

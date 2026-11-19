@@ -114,10 +114,12 @@ export default function ChatCallDrawer({
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
   const [artifact, setArtifact] = useState("transcript");
-  const { callDetail, isLoading, error: detailError } = useCallDetail(task.id);
+  const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
-  const showChanges = artifact === "world_changes";
+  // The World changes view exists only while the deployment has actors on, which the call's detail says.
+  const actorsOn = Boolean(callDetail?.actorsEnabled);
+  const showChanges = actorsOn && artifact === "world_changes";
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -261,27 +263,16 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            {actorsOn && (
+              <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            )}
           </CustomTabs>
 
           <Box
             {...ownsArrowKeys}
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
-            {showChanges && isLoading ? (
-              // Loading, not "not recorded".
-              <Stack alignItems="center" sx={{ py: 6 }}>
-                <CircularProgress size={20} />
-              </Stack>
-            ) : showChanges && detailError && !callDetail ? (
-              // The call's detail could not be read: said so, never "not recorded", which is a claim about the trial.
-              <Typography
-                role="alert"
-                sx={{ typography: "s2", color: "error.main", p: 2 }}
-              >
-                {TRIAL_CHANGES_COPY.loadFailed}
-              </Typography>
-            ) : showChanges ? (
+            {showChanges ? (
               <TrialChangesPanel trialState={callDetail?.trial_state ?? null} />
             ) : showTraces ? (
               <Box

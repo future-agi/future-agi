@@ -114,14 +114,22 @@ export default function VoiceCallDrawer({
           />
         ),
       },
-      {
-        label: TRIAL_CHANGES_COPY.tab,
-        value: "world_changes",
-        icon: "solar:global-linear",
-        content: <TrialChangesPanel trialState={data?.trial_state ?? null} />,
-      },
+      // The World changes view shows only while the deployment has actors on.
+      ...(data?.actors_enabled
+        ? [
+            {
+              label: TRIAL_CHANGES_COPY.tab,
+              value: "world_changes",
+              icon: "solar:global-linear",
+              content: (
+                <TrialChangesPanel trialState={data?.trial_state ?? null} />
+              ),
+            },
+          ]
+        : []),
     ],
     [
+      data?.actors_enabled,
       data?.trial_state,
       callTraces.projectId,
       callTraces.isError,

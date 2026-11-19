@@ -484,6 +484,16 @@ describe("mapCallDetail", () => {
     expect(d.stats.toolCalls).toBe(1);
   });
 
+  it("says actors are on only when the server says so", () => {
+    expect(
+      mapCallDetail({ id: "c1", actors_enabled: true }).actorsEnabled,
+    ).toBe(true);
+    expect(
+      mapCallDetail({ id: "c1", actors_enabled: false }).actorsEnabled,
+    ).toBe(false);
+    expect(mapCallDetail({ id: "c1" }).actorsEnabled).toBe(false);
+  });
+
   it("returns null for a missing payload", () => {
     expect(mapCallDetail(null)).toBeNull();
   });

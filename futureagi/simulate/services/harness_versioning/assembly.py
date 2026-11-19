@@ -549,7 +549,11 @@ def _predates_cast(
 
 
 def _cast(environment_version: HarnessEnvironmentVersion) -> str | None:
-    """The environment version's cast, by digest; None when it has no actors."""
+    """The environment version's cast, by digest; None when it has no actors or actors are off."""
+    from simulate.services.harness_versioning.versions import actors_enabled
+
+    if not actors_enabled():
+        return None
     actors = (environment_version.documents or {}).get("actor_digests") or {}
     if not any(not str(key).startswith("#") for key in actors):
         return None
