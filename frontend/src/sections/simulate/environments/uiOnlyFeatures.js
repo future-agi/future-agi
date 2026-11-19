@@ -125,6 +125,11 @@ export const UI_ONLY_FEATURES = Object.freeze({
     ask: "a design job endpoint (see #3612) that reads the description and attached files, returns the proposed records, tools, rules, people and scenarios with their sources and open questions, saves the draft, and starts the build on approval",
     note: "UI only: the design is proposed in this browser from sample rules. Nothing is sent, and approving builds nothing.",
   },
+  designBuild: {
+    label: "Build an approved design",
+    ask: "the design job's approve and build (see #3612): approving starts the cloud build, polled for its stages (records and data, tool handlers, rules and checks, scenarios), its validation checks with what failed, and the saved release's version, kept with the draft so a reload resumes it",
+    note: 'UI only: the build is timed in this browser and a records file named with "broken" fails a check. Nothing is built or saved.',
+  },
   designDocuments: {
     label: "File uploads",
     ask: "the design documents upload (see #3612) wired here: one request per file with its progress, answered with the stored document's id, and refused as too large, unsupported or a repeated name",
