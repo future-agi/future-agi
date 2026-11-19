@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cleanup, render, screen } from "src/utils/test-utils";
+import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
 import PropTypes from "prop-types";
 import TrialChangesPanelView from "../TrialChangesPanel";
 
@@ -109,6 +109,8 @@ describe("TrialChangesPanel", () => {
                   tool: "issue_refund",
                   count: 3,
                 },
+                // An older trial sent no count: one call, grouped with its host.
+                { host: "refunds.example.com", method: "CONNECT", tool: null },
               ],
             },
           ],
@@ -120,7 +122,10 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
     expect(
       screen.getAllByTestId("blocked-call").map((one) => one.textContent),
-    ).toEqual(["refunds.example.com CONNECT ×1", "api.example.com POST ×3"]);
+    ).toEqual(["refunds.example.com CONNECT ×2", "api.example.com POST ×3"]);
+    // No faulted or read column when nobody faulted or read.
+    expect(screen.queryByText("Faulted")).toBeNull();
+    expect(screen.queryByText("Read")).toBeNull();
     expect(
       screen.getByText("No change: it committed nothing"),
     ).toBeInTheDocument();
@@ -209,14 +214,23 @@ describe("TrialChangesPanel", () => {
       screen.getByLabelText("Committed: crm.request_approval, crm.update_deal"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · crm.request_approval · 12% is within my limit",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · Did nothing · already approved",
       ),
+    ).toBeInTheDocument();
+    // On screen the choice reads as plain sentences beside the name.
+    expect(
+      screen.getByText(
+        "Chose to run crm.request_approval. Why: 12% is within my limit.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Chose to do nothing. Why: already approved."),
     ).toBeInTheDocument();
   });
 
@@ -279,12 +293,12 @@ describe("TrialChangesPanel", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Alex Vance · Timed out · No answer: their fallback action was tried for them and refused by the world",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Alex Vance · Timed out · No answer: their fallback action was taken for them",
       ),
     ).toBeInTheDocument();
@@ -354,7 +368,9 @@ describe("TrialChangesPanel", () => {
         }}
       />,
     );
-    expect(screen.getByText("Priya: 20% for Acme?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 message" }));
+    expect(screen.getByLabelText("Priya: 20% for Acme?")).toBeInTheDocument();
+    expect(screen.getByText("20% for Acme?")).toBeInTheDocument();
     expect(
       screen.getByLabelText(
         "request_discount, then Priya: approve · the agent waited for the decision",
@@ -651,7 +667,7 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · approvals.put · committed · Refused",
       ),
     ).toBeInTheDocument();
@@ -691,7 +707,7 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · approvals.put · committed · Approved",
       ),
     ).toBeInTheDocument();

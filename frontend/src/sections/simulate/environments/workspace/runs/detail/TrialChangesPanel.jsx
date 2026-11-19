@@ -4,17 +4,14 @@ import { Box, Link, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import TrialDecisions from "./TrialDecisions";
-import {
-  ActionChip,
-  Callout,
-  Count,
-  GridTable,
-  Section,
-} from "./trialChangesParts";
+import { Callout, Count, GridTable, Section } from "./trialChangesParts";
 import {
   MONO,
   QUIET as quiet,
   TRIAL_CHANGES_COPY as C,
+  groupBlocked,
+  groupNames,
+  saidText,
 } from "./trialChanges.constants";
 
 const show = (value) =>
@@ -248,18 +245,27 @@ RecordsSection.propTypes = {
 /* Each participant's calls as counts, one row each, with what it committed
    and read as chips under its row. Attempted, refused and committed are
    never summed into one number. */
+/* Attempted and Committed always show; Read, Refused, Faulted and
+   Duplicate only when some participant has one, and then only non-zero
+   counts are printed. */
+const OPTIONAL_COUNTS = [
+  { key: "read", tone: "text.secondary" },
+  { key: "refused", tone: "warning.dark" },
+  { key: "faulted", tone: "error.main" },
+  { key: "duplicate", tone: "error.main" },
+];
+
 function CallsSection({ changes }) {
-  const dup = changes.some((one) => one.duplicate);
-  const cols = `minmax(120px, 1.4fr) repeat(${dup ? 6 : 5}, minmax(56px, 0.6fr))`;
+  const extra = OPTIONAL_COUNTS.filter(({ key }) =>
+    changes.some((one) => one[key]),
+  );
+  const cols = `minmax(120px, 1.4fr) repeat(${2 + extra.length}, minmax(64px, 0.6fr))`;
   const H = C.callsHead;
   const head = [
     H.who,
     { label: H.attempted, align: "right" },
     { label: H.committed, align: "right" },
-    { label: H.read, align: "right" },
-    { label: H.refused, align: "right" },
-    { label: H.faulted, align: "right" },
-    ...(dup ? [{ label: H.duplicate, align: "right" }] : []),
+    ...extra.map(({ key }) => ({ label: H[key], align: "right" })),
   ];
   return (
     <Section title={C.callsHeading} hint={C.about}>
@@ -282,12 +288,9 @@ function CallsSection({ changes }) {
             </Typography>,
             <Count key="a" value={one.attempted} />,
             <Count key="c" value={one.committed} tone="text.primary" />,
-            <Count key="r" value={one.read} tone="text.secondary" />,
-            <Count key="x" value={one.refused} tone="warning.dark" />,
-            <Count key="f" value={one.faulted} tone="text.secondary" />,
-            ...(dup
-              ? [<Count key="d" value={one.duplicate} tone="error.main" />]
-              : []),
+            ...extra.map(({ key, tone }) => (
+              <Count key={key} value={one[key]} tone={tone} hideZero />
+            )),
           ],
           below: <ParticipantActions one={one} />,
         }))}
@@ -297,37 +300,40 @@ function CallsSection({ changes }) {
 }
 CallsSection.propTypes = { changes: PropTypes.array.isRequired };
 
+const ACTION_TONE = {
+  committed: "text.primary",
+  read: "text.secondary",
+  warning: "warning.dark",
+};
+
+/* A label, then the calls as a plain list in call order, repeats counted. */
 function ActionLine({ label, names, tone, sentence, chipTestId }) {
   return (
     <Stack
       aria-label={sentence}
       direction="row"
       spacing={1}
-      alignItems="flex-start"
+      alignItems="baseline"
     >
       <Typography
-        sx={{
-          ...quiet,
-          width: 140,
-          flexShrink: 0,
-          color: "text.disabled",
-          pt: 0.25,
-        }}
+        sx={{ ...quiet, width: 140, flexShrink: 0, color: "text.disabled" }}
       >
         {label}
       </Typography>
-      <Stack
-        direction="row"
-        useFlexGap
-        flexWrap="wrap"
-        sx={{ gap: 0.5, minWidth: 0 }}
+      <Typography
+        sx={{
+          ...quiet,
+          minWidth: 0,
+          color: ACTION_TONE[tone] || "text.primary",
+        }}
       >
         {names.map((name, i) => (
-          <Box component="span" key={`${name}-${i}`} data-testid={chipTestId}>
-            <ActionChip name={name} tone={tone} />
-          </Box>
+          <span key={`${name}-${i}`}>
+            {i > 0 && ", "}
+            <span data-testid={chipTestId}>{name}</span>
+          </span>
         ))}
-      </Stack>
+      </Typography>
     </Stack>
   );
 }
@@ -347,7 +353,7 @@ function ParticipantActions({ one }) {
         key="c"
         label={C.committedLabel}
         sentence={C.committed(one.committed_actions)}
-        names={one.committed_actions}
+        names={groupNames(one.committed_actions)}
         tone="committed"
       />,
     );
@@ -357,7 +363,7 @@ function ParticipantActions({ one }) {
         key="r"
         label={C.readLabel}
         sentence={C.read(one.read_actions)}
-        names={one.read_actions}
+        names={groupNames(one.read_actions)}
         tone="read"
       />,
     );
@@ -367,7 +373,7 @@ function ParticipantActions({ one }) {
         key="t"
         label={C.answerLostLabel}
         sentence={C.answerLost(one.answer_lost_actions)}
-        names={one.answer_lost_actions}
+        names={groupNames(one.answer_lost_actions)}
         tone="warning"
       />,
     );
@@ -377,7 +383,7 @@ function ParticipantActions({ one }) {
         <ActionLine
           chipTestId="blocked-call"
           label={C.blockedLabel}
-          names={one.blocked.map((call) => C.blockedCall(call))}
+          names={groupBlocked(one.blocked).map((call) => C.blockedCall(call))}
           tone="warning"
         />
       </Box>,
@@ -392,6 +398,66 @@ function ParticipantActions({ one }) {
   return <Stack spacing={0.5}>{lines}</Stack>;
 }
 ParticipantActions.propTypes = { one: PropTypes.object.isRequired };
+
+/* What the actors wrote before the agent started, as a short chat: who
+   and what they said (or did). Folded by default; the server's sentence
+   stays on each row as its label. */
+function PreRunSection({ entries }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Section
+      title={C.preRunHeading}
+      count={entries.length}
+      caption={C.preRunCaption}
+      hint={C.preRunAbout}
+    >
+      <Link
+        component="button"
+        type="button"
+        underline="hover"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        sx={{ typography: "s3", fontWeight: 500 }}
+      >
+        {C.preRunToggle(entries.length, open)}
+      </Link>
+      {open && (
+        <Stack
+          spacing={0.75}
+          sx={{
+            mt: 0.75,
+            pl: 1.25,
+            borderLeft: "2px solid",
+            borderColor: "divider",
+          }}
+        >
+          {entries.map((one, index) => {
+            const said = saidText(one.arguments);
+            const channel = one.arguments?.channel || one.channel;
+            return (
+              <Box key={`pre-${index}`} aria-label={one.line}>
+                <Stack direction="row" spacing={0.75} alignItems="baseline">
+                  <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                    {one.name}
+                  </Typography>
+                  {channel && (
+                    <Typography sx={{ ...quiet, color: "text.disabled" }}>
+                      {channel}
+                    </Typography>
+                  )}
+                </Stack>
+                <Typography sx={{ ...quiet, color: "text.primary" }}>
+                  {said || (one.action ? C.preRunDid(one.action) : one.line)}
+                </Typography>
+              </Box>
+            );
+          })}
+        </Stack>
+      )}
+    </Section>
+  );
+}
+PreRunSection.propTypes = { entries: PropTypes.array.isRequired };
 
 // A start that differs is reported among the notices instead.
 export default function TrialChangesPanel({ trialState }) {
@@ -494,24 +560,7 @@ function WorldState({ trialState }) {
       {changes.length > 0 && <CallsSection changes={changes} />}
       {records && <RecordsSection records={records} outside={outside} />}
       <TrialDecisions approvals={approvals} decisions={decisions} />
-      {preRun.length > 0 && (
-        <Section
-          title={C.preRunHeading}
-          caption={C.preRunCaption}
-          hint={C.preRunAbout}
-        >
-          <Stack spacing={0.5}>
-            {preRun.map((one, index) => (
-              <Typography
-                key={`pre-${index}`}
-                sx={{ ...quiet, color: "text.primary" }}
-              >
-                {one.line}
-              </Typography>
-            ))}
-          </Stack>
-        </Section>
-      )}
+      {preRun.length > 0 && <PreRunSection entries={preRun} />}
       {usage.length > 0 && (
         <Section title={C.usageHeading} caption={C.usageNote}>
           <GridTable

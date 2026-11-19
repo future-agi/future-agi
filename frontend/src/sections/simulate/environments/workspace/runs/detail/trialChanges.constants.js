@@ -29,7 +29,7 @@ export const TRIAL_CHANGES_COPY = {
     `Committed but answered with a timeout: ${actions.join(", ")}`,
   committedTwice: (action) => `Committed twice: ${action}`,
   blocked: (one) =>
-    `Blocked: ${one.host}${one.method ? ` (${one.method})` : ""} ×${one.count}`,
+    `Blocked: ${one.host}${one.method ? ` (${one.method})` : ""} ×${one.count ?? 1}`,
   noChange: "No change: it committed nothing",
   decisionsHeading: "What the actors chose",
   preRunHeading: "Before the run",
@@ -69,7 +69,7 @@ export const TRIAL_CHANGES_COPY = {
   answerLostLabel: "Answered with a timeout",
   blockedLabel: "Blocked outside the world",
   blockedCall: (one) =>
-    `${one.host}${one.method ? ` ${one.method}` : ""} ×${one.count}`,
+    `${one.host}${one.method ? ` ${one.method}` : ""} ×${one.count ?? 1}`,
   endStateHint: "The world's records and action log as this trial ended",
   recordsHead: { field: "Field", before: "Before", after: "After" },
   unchangedFields: (n, open) =>
@@ -77,6 +77,9 @@ export const TRIAL_CHANGES_COPY = {
       ? "Hide unchanged fields"
       : `Show ${n} unchanged field${n === 1 ? "" : "s"}`,
   preRunCaption: "The starting point · not graded",
+  preRunToggle: (n, open) =>
+    open ? "Hide" : `Show ${n} message${n === 1 ? "" : "s"}`,
+  preRunDid: (action) => `Ran ${action}`,
   approvalsHead: {
     request: "Request",
     decision: "Decision",
@@ -108,4 +111,67 @@ export const TRIAL_CHANGES_COPY = {
   after: "After",
   notCompared: (table, why) => `Not compared: ${table} (${why})`,
   truncated: (n) => `And ${n} more changes.`,
+};
+
+/* Repeated names as one entry with a count, in first-call order:
+   ["get_deal", "get_deal", "update_deal"] -> ["get_deal ×2", "update_deal"]. */
+export const groupNames = (names) => {
+  const seen = new Map();
+  names.forEach((name) => seen.set(name, (seen.get(name) || 0) + 1));
+  return [...seen].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
+};
+
+/* Blocked calls to the same host and method as one entry; an older trial
+   sent no count, which means one call. */
+export const groupBlocked = (calls) => {
+  const seen = new Map();
+  calls.forEach((one) => {
+    const key = `${one.host}\u0000${one.method || ""}`;
+    const had = seen.get(key);
+    seen.set(key, {
+      ...one,
+      count: (had?.count || 0) + (one.count ?? 1),
+    });
+  });
+  return [...seen.values()];
+};
+
+/* What a pre-run entry said, when it posted a message. */
+export const saidText = (args) =>
+  args && (args.text || args.message || args.content || args.body);
+
+const OUTCOME_SENTENCE = {
+  committed: "It went through.",
+  refused: "The world refused it.",
+  faulted: "It faulted.",
+  duplicate: "It was already done, so it was not repeated.",
+};
+const VERDICT_SENTENCE = {
+  approved: "They approved the request.",
+  refused: "They refused the request.",
+};
+const capital = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+/* An actor's choice as plain sentences, without the name (shown beside
+   it). Scheduled and decided actions are worded here from their fields;
+   any other play keeps the server's own words, as sentences. */
+export const decisionSentence = (one) => {
+  if (one.play === "mocked" || one.play === "live") {
+    const did = one.action
+      ? one.play === "mocked"
+        ? `Ran ${one.action}, as the scenario scheduled.`
+        : `Chose to run ${one.action}.`
+      : "Chose to do nothing.";
+    return [
+      did,
+      OUTCOME_SENTENCE[one.outcome],
+      VERDICT_SENTENCE[one.verdict],
+      one.why && `Why: ${one.why}.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  const parts = String(one.line || "").split(" · ");
+  if (parts[0] === one.name) parts.shift();
+  return parts.length ? `${parts.map(capital).join(". ")}.` : "";
 };

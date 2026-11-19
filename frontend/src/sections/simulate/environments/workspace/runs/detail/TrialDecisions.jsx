@@ -5,6 +5,7 @@ import {
   MONO,
   QUIET as quiet,
   TRIAL_CHANGES_COPY as C,
+  decisionSentence,
 } from "./trialChanges.constants";
 
 /* What the agent did about a decision: a change committed after a refusal
@@ -95,11 +96,15 @@ export default function TrialDecisions({ approvals, decisions }) {
             cols="minmax(0, 1fr)"
             rows={decisions.map((one, index) => ({
               key: `${one.actor}-${index}`,
+              // The server's sentence stays as the row's label.
+              label: one.line,
               cells: [
                 <Box key="l">
-                  {/* The row's sentence as the server words it. */}
+                  <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+                    {one.name}
+                  </Typography>
                   <Typography sx={{ ...quiet, color: "text.primary" }}>
-                    {one.line}
+                    {decisionSentence(one)}
                   </Typography>
                   {one.committed_after_refusal && (
                     <Typography
@@ -151,6 +156,11 @@ TrialDecisions.propTypes = {
       name: PropTypes.string.isRequired,
       // The whole row, worded by the server.
       line: PropTypes.string.isRequired,
+      play: PropTypes.string,
+      action: PropTypes.string,
+      outcome: PropTypes.string,
+      verdict: PropTypes.string,
+      why: PropTypes.string,
       committed_after_refusal: PropTypes.bool,
     }),
   ).isRequired,

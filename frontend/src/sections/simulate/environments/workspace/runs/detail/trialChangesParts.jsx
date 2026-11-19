@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { MONO, QUIET as quiet } from "./trialChanges.constants";
+import { QUIET as quiet } from "./trialChanges.constants";
 
 /* One section of the tab: a title, an optional count and an optional
    one-line caption; the body sits under it. */
@@ -73,7 +73,8 @@ export function GridTable({ cols, head, rows, testId }) {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: 1,
-        overflow: "hidden",
+        // A narrow drawer scrolls the table sideways rather than cut columns.
+        overflowX: "auto",
       }}
     >
       {head && (
@@ -141,47 +142,6 @@ GridTable.propTypes = {
   testId: PropTypes.string,
 };
 
-/* A tool or field name, in mono. `tone`: committed (solid), read (muted),
-   warning or error. */
-export function ActionChip({ name, tone = "committed" }) {
-  const color = {
-    committed: "text.primary",
-    read: "text.secondary",
-    warning: "warning.dark",
-    error: "error.main",
-  }[tone];
-  return (
-    <Box
-      component="span"
-      sx={(theme) => ({
-        display: "inline-block",
-        px: 0.75,
-        py: 0.125,
-        borderRadius: "4px",
-        border: "1px solid",
-        borderColor:
-          tone === "warning"
-            ? alpha(theme.palette.warning.main, 0.4)
-            : tone === "error"
-              ? alpha(theme.palette.error.main, 0.4)
-              : "divider",
-        bgcolor: tone === "read" ? "transparent" : "background.paper",
-        typography: "s3",
-        fontFamily: MONO,
-        color,
-        lineHeight: 1.6,
-        wordBreak: "break-all",
-      })}
-    >
-      {name}
-    </Box>
-  );
-}
-ActionChip.propTypes = {
-  name: PropTypes.string.isRequired,
-  tone: PropTypes.oneOf(["committed", "read", "warning", "error"]),
-};
-
 /* A tinted note box (no edge stripe): a title and its lines. */
 export function Callout({ tone = "warning", title, lines, testId }) {
   return (
@@ -238,9 +198,12 @@ Callout.propTypes = {
   testId: PropTypes.string,
 };
 
-/* A count in a table cell: zero reads quiet, a non-zero count in its tone. */
-export function Count({ value, tone }) {
+/* A count in a table cell: a non-zero count in its tone. With `hideZero`
+   a zero (or a count an older trial never sent) leaves the cell empty;
+   otherwise a zero reads quiet. */
+export function Count({ value, tone, hideZero }) {
   const zero = !value;
+  if (zero && hideZero) return null;
   return (
     <Typography
       sx={{
@@ -257,4 +220,5 @@ export function Count({ value, tone }) {
 Count.propTypes = {
   value: PropTypes.number,
   tone: PropTypes.string,
+  hideZero: PropTypes.bool,
 };
