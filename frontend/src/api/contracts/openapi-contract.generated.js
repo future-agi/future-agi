@@ -98314,6 +98314,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         original: {
           $ref: "#/definitions/RecordedReplayOriginal",
         },
+        stopped: {
+          $ref: "#/definitions/ReplayStop",
+        },
+        live_run: {
+          $ref: "#/definitions/LiveRun",
+        },
+        agent_changed: {
+          title: "Agent changed",
+          description:
+            "On a recorded replay: it ran another agent version than the original trial.",
+          type: "boolean",
+        },
       },
     },
     SimulateRunV3EvaluationResult: {
@@ -108959,6 +108971,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 2000,
           minLength: 1,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
         },
       },
       "x-nullable": true,
@@ -123625,6 +123645,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    LiveRun: {
+      description:
+        "On a recorded replay: the run that tries its agent version on the live test world.",
+      required: ["scenario_id", "agent_version_id"],
+      type: "object",
+      properties: {
+        scenario_id: {
+          title: "Scenario id",
+          description:
+            "The replayed scenario, to run once on the live test world.",
+          type: "string",
+          minLength: 1,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          description:
+            "The agent version the replay ran; null for the environment's default.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     RecordedReplayOriginal: {
       description:
         "Set when this trial is itself a recorded replay: the trial it replays.",
@@ -123656,6 +123700,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "no_score",
             "error",
           ],
+        },
+      },
+      "x-nullable": true,
+    },
+    ReplayStop: {
+      description: "On a recorded replay that stopped: the call it stopped at.",
+      required: ["call", "tool", "diverged"],
+      type: "object",
+      properties: {
+        call: {
+          title: "Call",
+          description: "The number of the call the replay stopped at.",
+          type: "integer",
+        },
+        tool: {
+          title: "Tool",
+          description: "That call's tool.",
+          type: "string",
+          minLength: 1,
+        },
+        diverged: {
+          title: "Diverged",
+          description:
+            "The agent took another path than the original trial; else the recording could not answer the call.",
+          type: "boolean",
         },
       },
       "x-nullable": true,

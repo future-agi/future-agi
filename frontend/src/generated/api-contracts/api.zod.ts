@@ -51613,6 +51613,7 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       .string()
       .min(1)
       .max(simulateApiHarnessAttemptsResultsBodyFailureMessageMax),
+    details: zod.record(zod.string(), zod.string()).optional(),
   }),
   reason: zod
     .string()
@@ -61486,6 +61487,45 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       })
       .describe(
         "Set when this trial is itself a recorded replay: the trial it replays.",
+      ),
+    stopped: zod
+      .object({
+        call: zod
+          .number()
+          .describe("The number of the call the replay stopped at."),
+        tool: zod.string().min(1).describe("That call's tool."),
+        diverged: zod
+          .boolean()
+          .describe(
+            "The agent took another path than the original trial; else the recording could not answer the call.",
+          ),
+      })
+      .optional()
+      .describe("On a recorded replay that stopped: the call it stopped at."),
+    live_run: zod
+      .object({
+        scenario_id: zod
+          .string()
+          .min(1)
+          .describe(
+            "The replayed scenario, to run once on the live test world.",
+          ),
+        agent_version_id: zod
+          .string()
+          .uuid()
+          .describe(
+            "The agent version the replay ran; null for the environment's default.",
+          ),
+      })
+      .optional()
+      .describe(
+        "On a recorded replay: the run that tries its agent version on the live test world.",
+      ),
+    agent_changed: zod
+      .boolean()
+      .optional()
+      .describe(
+        "On a recorded replay: it ran another agent version than the original trial.",
       ),
   }),
   scoring_status: zod.enum([

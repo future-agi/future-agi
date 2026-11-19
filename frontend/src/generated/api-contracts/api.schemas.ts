@@ -23689,6 +23689,8 @@ export const HarnessFailureApiDomain = {
   platform_sync: "platform_sync",
 } as const;
 
+export type HarnessFailureApiDetails = { [key: string]: string };
+
 export interface HarnessFailureApi {
   domain: HarnessFailureApiDomain;
   /**
@@ -23706,6 +23708,7 @@ export interface HarnessFailureApi {
    * @maxLength 2000
    */
   message: string;
+  details?: HarnessFailureApiDetails;
 }
 
 export interface HarnessResultReceiptApi {
@@ -28105,6 +28108,34 @@ export interface RecordedReplayOriginalApi {
   outcome?: RecordedReplayOriginalApiOutcome;
 }
 
+/**
+ * On a recorded replay that stopped: the call it stopped at.
+ */
+export interface ReplayStopApi {
+  /** The number of the call the replay stopped at. */
+  call: number;
+  /**
+   * That call's tool.
+   * @minLength 1
+   */
+  tool: string;
+  /** The agent took another path than the original trial; else the recording could not answer the call. */
+  diverged: boolean;
+}
+
+/**
+ * On a recorded replay: the run that tries its agent version on the live test world.
+ */
+export interface LiveRunApi {
+  /**
+   * The replayed scenario, to run once on the live test world.
+   * @minLength 1
+   */
+  scenario_id: string;
+  /** The agent version the replay ran; null for the environment's default. */
+  agent_version_id: string;
+}
+
 export interface RecordedReplayApi {
   /** The trial can be replayed with the tool answers it recorded. */
   available: boolean;
@@ -28114,6 +28145,10 @@ export interface RecordedReplayApi {
    */
   unavailable_reason: string;
   original: RecordedReplayOriginalApi;
+  stopped?: ReplayStopApi;
+  live_run?: LiveRunApi;
+  /** On a recorded replay: it ran another agent version than the original trial. */
+  agent_changed?: boolean;
 }
 
 export interface CallExecutionV3DetailResponseApi {
