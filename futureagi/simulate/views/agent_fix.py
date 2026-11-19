@@ -158,7 +158,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         )
         return paginator.get_paginated_response(
             AgentFixRunSerializer(
-                page, many=True, context={"issue_links": jobs_of_epochs(page)}
+                page, many=True, context={"issue_links": jobs_of_epochs(page or [])}
             ).data
         )
 

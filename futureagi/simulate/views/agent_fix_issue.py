@@ -75,7 +75,10 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
         )
 
     def _project(self, request, project_id) -> Project | None:
-        return project_queryset_for_request(request).filter(id=project_id).first()
+        project: Project | None = (
+            project_queryset_for_request(request).filter(id=project_id).first()
+        )
+        return project
 
     def _issue(self, request, data):
         project = self._project(request, data["project_id"])
@@ -83,7 +86,9 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
 
     def _environment(self, request, environment_id, issue) -> HostedHarnessJob | None:
         """The caller's environment that may take evidence from the issue's project."""
-        environment = self._environments(request).filter(id=environment_id).first()
+        environment: HostedHarnessJob | None = (
+            self._environments(request).filter(id=environment_id).first()
+        )
         if environment is None or not evidence_project(
             project_queryset_for_request(request), environment, issue.project_id
         ):
@@ -102,6 +107,17 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
                 "fix_run",
             )
             .first()
+        )
+
+    def _detail(self, request, pk, status_code: int = status.HTTP_200_OK) -> Response:
+        """The job as its detail reads it now, or not found."""
+        job = self._job(request, pk)
+        if job is None:
+            missing: Response = _not_found()
+            return missing
+        return Response(
+            AgentFixIssueJobDetailSerializer(issue_job_view(job, detail=True)).data,
+            status=status_code,
         )
 
     @validated_request(
@@ -205,21 +221,11 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
             user=request.user,
             endpoint_base_url=_public_base_url(request),
         )
-        return Response(
-            AgentFixIssueJobDetailSerializer(
-                issue_job_view(self._job(request, job.id), detail=True)
-            ).data,
-            status=status.HTTP_201_CREATED,
-        )
+        return self._detail(request, job.id, status.HTTP_201_CREATED)
 
     @validated_request(responses={200: AgentFixIssueJobDetailSerializer})
     def retrieve(self, request, pk=None):
-        job = self._job(request, pk)
-        if job is None:
-            return _not_found()
-        return Response(
-            AgentFixIssueJobDetailSerializer(issue_job_view(job, detail=True)).data
-        )
+        return self._detail(request, pk)
 
     @validated_request(
         request_serializer=AgentFixIssueRunSerializer,
@@ -250,12 +256,7 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
             ),
             user=request.user,
         )
-        return Response(
-            AgentFixIssueJobDetailSerializer(
-                issue_job_view(self._job(request, pk), detail=True)
-            ).data,
-            status=status.HTTP_202_ACCEPTED,
-        )
+        return self._detail(request, pk, status.HTTP_202_ACCEPTED)
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
@@ -269,8 +270,4 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
         if job is None:
             return _not_found()
         stop_issue_job(job)
-        return Response(
-            AgentFixIssueJobDetailSerializer(
-                issue_job_view(self._job(request, pk), detail=True)
-            ).data
-        )
+        return self._detail(request, pk)

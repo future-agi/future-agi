@@ -61,9 +61,12 @@ class AgentFixIssueRunSerializer(AgentFixLaunchSerializer):
     """Run Epoch after the review: the drafted scenarios kept, and the launch form's
     settings. The baseline takes the place of the launch form's run and scenarios."""
 
-    source_run_id = None
-    target_scenario_keys = None
-    protected_scenario_keys = None
+    REPLACED_BY_BASELINE = (
+        "source_run_id",
+        "target_scenario_keys",
+        "protected_scenario_keys",
+    )
+
     case_ids = serializers.ListField(
         child=serializers.UUIDField(),
         min_length=1,
@@ -71,6 +74,12 @@ class AgentFixIssueRunSerializer(AgentFixLaunchSerializer):
         help_text="The import's cases to keep: drafted ones, and repeats of scenarios"
         " the suite already holds.",
     )
+
+    def get_fields(self):
+        fields = super().get_fields()
+        for name in self.REPLACED_BY_BASELINE:
+            del fields[name]
+        return fields
 
 
 class AgentFixIssueSamplePickSerializer(serializers.Serializer):

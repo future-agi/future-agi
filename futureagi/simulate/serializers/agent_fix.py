@@ -371,7 +371,9 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
         job = (links if links is not None else jobs_of_epochs([fix_run])).get(
             fix_run.id
         )
-        issue = live_issue(job.evidence_import.source_issue) if job else None
+        if job is None:
+            return None
+        issue = live_issue(job.evidence_import.source_issue)
         if issue is None:
             return None
         return {

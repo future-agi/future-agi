@@ -472,6 +472,8 @@ def issue_scenarios(
     found: dict[str, TraceErrorGroup | None] = {}
     for case in cases:
         issue = case.evidence_import.source_issue
+        if issue is None:  # the filter reads only imports of an issue
+            continue
         if issue.id not in live:
             live[issue.id] = live_issue(issue)
         found.setdefault(case.scenario_key, live[issue.id])

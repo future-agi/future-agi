@@ -96,7 +96,9 @@ _BASELINE_PATIENCE = timedelta(hours=12)
 STOPPED = IssueJobEnding(code="stopped", message="Stopped")
 
 
-def _refused(code: str, message: str, status_code: int = 409, **details: Any):
+def _refused(
+    code: str, message: str, status_code: int = 409, **details: Any
+) -> HostedHarnessError:
     return HostedHarnessError(
         code, message, status_code=status_code, details=details or None
     )
@@ -199,6 +201,7 @@ def create_issue_job(
             member_of_source[case.source_id]
             for case in cases
             if case.status == EvidenceImportCase.Status.DUPLICATE
+            and case.duplicate_of is not None
             and case.duplicate_of.evidence_import_id != evidence_import.id
             and case.duplicate_of.status != EvidenceImportCase.Status.ADDED
         ]:
@@ -410,11 +413,12 @@ def _run(
         added = [
             case for case in cases if case.status == EvidenceImportCase.Status.DRAFTED
         ]
+        # A kept repeat runs as the scenario its original was added as.
         keys = list(
             dict.fromkeys(
                 case.scenario_key
                 if case.status == EvidenceImportCase.Status.DRAFTED
-                else case.duplicate_of.scenario_key
+                else (case.duplicate_of or case).scenario_key
                 for case in cases
             )
         )
@@ -615,6 +619,6 @@ def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
         if phase != IssueJobPhase.MEASURING:
             discard_evidence_import(locked.evidence_import)
         _set_ending(locked, STOPPED)
-    if phase == IssueJobPhase.MEASURING:
+    if phase == IssueJobPhase.MEASURING and locked.baseline_run is not None:
         _cancel_run(locked.baseline_run)
     return locked
