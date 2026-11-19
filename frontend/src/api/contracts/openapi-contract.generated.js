@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1154,
+  endpointCount: 1159,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27908,6 +27908,150 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/agent-fix-issues/": {
+      get: {
+        operationId: "simulate_api_agent-fix-issues_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          cluster_ids: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssueStatusList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_agent-fix-issues_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixIssueCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/plan/": {
+      get: {
+        operationId: "simulate_api_agent-fix-issues_plan",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          cluster_id: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 20,
+            },
+          },
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          environment_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssuePlan",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/{id}/": {
+      get: {
+        operationId: "simulate_api_agent-fix-issues_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/{id}/run/": {
+      post: {
+        operationId: "simulate_api_agent-fix-issues_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixIssueRun",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/{id}/stop/": {
+      post: {
+        operationId: "simulate_api_agent-fix-issues_stop",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/agent-fix-runs/": {
       get: {
         operationId: "simulate_api_agent-fix-runs_list",
@@ -51639,6 +51783,229 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentFixIssueCreate: {
+      required: ["cluster_id", "project_id", "environment_id", "member_ids"],
+      type: "object",
+      properties: {
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          maxLength: 20,
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        member_ids: {
+          description:
+            "The plan's picks after any swap: each pick's member_id.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+      },
+    },
+    AgentFixIssueJobDetail: {
+      required: [
+        "id",
+        "phase",
+        "issue",
+        "environment",
+        "sample",
+        "ending",
+        "baseline",
+        "epoch",
+        "created_at",
+        "evidence_import",
+        "defaults",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        phase: {
+          title: "Phase",
+          type: "string",
+          enum: [
+            "drafting",
+            "review",
+            "blocked",
+            "measuring",
+            "launched",
+            "ended",
+          ],
+        },
+        issue: {
+          $ref: "#/definitions/AgentFixIssue",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixIssueEnvironment",
+        },
+        sample: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+        ending: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        baseline: {
+          $ref: "#/definitions/AgentFixIssueBaseline",
+        },
+        epoch: {
+          $ref: "#/definitions/AgentFixIssueEpoch",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        evidence_import: {
+          $ref: "#/definitions/EvidenceImport",
+        },
+        defaults: {
+          $ref: "#/definitions/AgentFixIssueDefaults",
+        },
+      },
+    },
+    AgentFixIssuePlan: {
+      required: [
+        "issue",
+        "environment",
+        "blocked",
+        "sample",
+        "open_job_id",
+        "issue_scenarios",
+        "defaults",
+      ],
+      type: "object",
+      properties: {
+        issue: {
+          $ref: "#/definitions/AgentFixIssue",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixIssueEnvironment",
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        sample: {
+          $ref: "#/definitions/AgentFixIssueSample",
+        },
+        open_job_id: {
+          title: "Open job id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        issue_scenarios: {
+          $ref: "#/definitions/AgentFixIssueScenarios",
+        },
+        defaults: {
+          $ref: "#/definitions/AgentFixIssueDefaults",
+        },
+      },
+    },
+    AgentFixIssueRun: {
+      required: ["surfaces", "budget_credits", "case_ids"],
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["prompt", "tools", "settings", "code"],
+          },
+          minItems: 1,
+        },
+        locked_paths: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 512,
+            minLength: 1,
+          },
+          default: [],
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+          maximum: 50000,
+          minimum: 1,
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+          maximum: 1440,
+          minimum: 1,
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
+        },
+        case_ids: {
+          description:
+            "The import's cases to keep: drafted ones, and repeats of scenarios the suite already holds.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+      },
+    },
+    AgentFixIssueStatusList: {
+      required: ["results"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueStatus",
+          },
+        },
+      },
+    },
     AgentFixLaunch: {
       required: [
         "source_run_id",
@@ -51931,6 +52298,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        issue: {
+          $ref: "#/definitions/AgentFixEpochIssue",
+        },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
           type: "array",
@@ -52089,6 +52459,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Limited validation",
           type: "boolean",
           readOnly: true,
+        },
+        issue: {
+          $ref: "#/definitions/AgentFixEpochIssue",
         },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
@@ -64468,7 +64841,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call", "transcript", "dataset"],
+          enum: ["session", "call", "trace", "transcript", "dataset"],
         },
         created_at: {
           title: "Created at",
@@ -64550,17 +64923,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call", "transcript", "dataset"],
+          enum: ["session", "call", "trace", "transcript", "dataset"],
         },
         project_id: {
           title: "Project id",
-          description: "Session and call imports: the Observe project.",
+          description: "Session, call and trace imports: the Observe project.",
           type: "string",
           format: "uuid",
         },
         ids: {
           description:
-            "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
+            "Session, call, trace and dataset imports: session ids, the trace ids of calls or traces, or row ids, in the order picked.",
           type: "array",
           items: {
             type: "string",
@@ -64644,7 +65017,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call", "transcript", "dataset"],
+          enum: ["session", "call", "trace", "transcript", "dataset"],
         },
         source_name: {
           title: "Source name",
@@ -70357,7 +70730,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessSuiteMember: {
-      required: ["scenario_key", "number", "name", "use_case"],
+      required: [
+        "scenario_key",
+        "number",
+        "name",
+        "use_case",
+        "issue_cluster_id",
+        "issue_project_id",
+      ],
       type: "object",
       properties: {
         scenario_key: {
@@ -70376,6 +70756,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         use_case: {
           title: "Use case",
           type: "string",
+        },
+        issue_cluster_id: {
+          title: "Issue cluster id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        issue_project_id: {
+          title: "Issue project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
       },
     },
@@ -95798,6 +96190,289 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentFixFailure: {
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssue: {
+      required: ["cluster_id", "project_id", "title"],
+      type: "object",
+      properties: {
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueBaseline: {
+      required: [
+        "run_id",
+        "state",
+        "scenarios",
+        "completed_count",
+        "failed_count",
+      ],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        completed_count: {
+          title: "Completed count",
+          type: "integer",
+        },
+        failed_count: {
+          title: "Failed count",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueDefaults: {
+      required: [
+        "surfaces",
+        "budget_credits",
+        "budget_credits_max",
+        "max_minutes_max",
+        "reply_latency_margin_pct",
+        "cost_margin_pct",
+      ],
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchSurface",
+          },
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+        },
+        budget_credits_max: {
+          title: "Budget credits max",
+          type: "integer",
+        },
+        max_minutes_max: {
+          title: "Max minutes max",
+          type: "integer",
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixIssueEnvironment: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixIssueEpoch: {
+      required: [
+        "id",
+        "number",
+        "environment_id",
+        "state",
+        "step",
+        "failure_code",
+        "retryable",
+        "limited_validation",
+        "pull_request_url",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        step: {
+          title: "Step",
+          type: "string",
+          enum: ["variations", "reproduce", "search", "verify", "done"],
+          "x-nullable": true,
+        },
+        failure_code: {
+          title: "Failure code",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+        },
+        limited_validation: {
+          title: "Limited validation",
+          type: "boolean",
+        },
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueSamplePick: {
+      required: ["member_id", "unit", "source_id", "reason", "started_at"],
+      type: "object",
+      properties: {
+        member_id: {
+          title: "Member id",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["call", "session", "trace"],
+        },
+        source_id: {
+          title: "Source id",
+          type: "string",
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: ["example", "cited", "recent"],
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixIssueSample: {
+      required: ["unit", "picks", "alternates"],
+      type: "object",
+      properties: {
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["call", "session", "trace"],
+          "x-nullable": true,
+        },
+        picks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+        alternates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+      },
+    },
+    AgentFixIssueScenarios: {
+      required: ["held", "limit"],
+      type: "object",
+      properties: {
+        held: {
+          title: "Held",
+          type: "integer",
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueStatus: {
+      required: ["cluster_id", "project_id", "job"],
+      type: "object",
+      properties: {
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        job: {
+          $ref: "#/definitions/AgentFixIssueJob",
+        },
+      },
+    },
     AgentFixAgent: {
       required: ["name", "kind", "version_id", "version_number", "ref"],
       type: "object",
@@ -95829,23 +96504,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
-    },
-    AgentFixFailure: {
-      required: ["code", "message"],
-      type: "object",
-      properties: {
-        code: {
-          title: "Code",
-          type: "string",
-          minLength: 1,
-        },
-        message: {
-          title: "Message",
-          type: "string",
-          minLength: 1,
-        },
-      },
-      "x-nullable": true,
     },
     AgentFixLaunchDefaults: {
       required: [
@@ -96188,6 +96846,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    AgentFixEpochIssue: {
+      required: ["job_id", "cluster_id", "project_id"],
+      type: "object",
+      properties: {
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+      "x-nullable": true,
     },
     AgentFixReport: {
       required: ["ending", "summary", "winner_candidate_id"],
@@ -123126,6 +123806,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    AgentFixIssueJob: {
+      required: [
+        "id",
+        "phase",
+        "issue",
+        "environment",
+        "sample",
+        "ending",
+        "baseline",
+        "epoch",
+        "created_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        phase: {
+          title: "Phase",
+          type: "string",
+          enum: [
+            "drafting",
+            "review",
+            "blocked",
+            "measuring",
+            "launched",
+            "ended",
+          ],
+        },
+        issue: {
+          $ref: "#/definitions/AgentFixIssue",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixIssueEnvironment",
+        },
+        sample: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+        ending: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        baseline: {
+          $ref: "#/definitions/AgentFixIssueBaseline",
+        },
+        epoch: {
+          $ref: "#/definitions/AgentFixIssueEpoch",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+      },
     },
     AgentFixOverride: {
       required: ["allowed", "regressions", "reason", "by", "at"],

@@ -59,11 +59,13 @@ def create_evidence_import(
     source_kind: SourceKind,
     source_ids: list[str],
     user,
+    source_issue=None,
 ) -> tuple[EvidenceImport, dict[str, SourceEvidence]]:
     """Freeze ``source_ids`` as an import for ``environment``, each with a
     fingerprint of what it holds now (blank when part of it could not be read).
-    Returns the import and the evidence it was made from, so the caller can
-    show it without reading Observe again."""
+    ``source_issue`` is the Error Feed issue they are traces of, when an epoch is
+    run from it. Returns the import and the evidence it was made from, so the
+    caller can show it without reading Observe again."""
     evidence = import_evidence(project, source_kind, source_ids)
     with transaction.atomic():
         environment = _lock(environment.id)
@@ -72,6 +74,7 @@ def create_evidence_import(
             workspace_id=environment.workspace_id,
             environment=environment,
             project=project,
+            source_issue=source_issue,
             agent_version_id=environment.agent_version_id,
             source_kind=source_kind,
             created_by=user,

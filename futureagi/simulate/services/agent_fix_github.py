@@ -28,6 +28,7 @@ from simulate.selectors.agent_fix import (
     overridable_regressions,
     verdict_tiers,
 )
+from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import (
     base_moved,
@@ -583,6 +584,7 @@ def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
 _EVIDENCE_SOURCES = {
     "session": ("session", "sessions", " from Observe"),
     "call": ("call", "calls", " from Observe"),
+    "trace": ("trace", "traces", " from Observe"),
     "transcript": ("transcript", "transcripts", ""),
     "dataset": ("dataset row", "dataset rows", ""),
 }
@@ -640,6 +642,24 @@ def _fix_link(candidate: AgentFixCandidate) -> str:
     )
 
 
+def _issue_link(candidate: AgentFixCandidate) -> str:
+    """The Error Feed issue the epoch was run from, by its id with a link to it, as
+    the feed shows it now (after a merge, the issue it was merged into). Never its
+    title: the feed writes that from the traces."""
+    job = jobs_of_epochs([candidate.fix_run]).get(candidate.fix_run_id)
+    issue = live_issue(job.evidence_import.source_issue) if job else None
+    if issue is None:
+        return ""
+    base = str(getattr(settings, "FRONTEND_BASE_URL", "") or "").rstrip("/")
+    named = (
+        f"[{issue.cluster_id}]({base}/dashboard/error-feed/"
+        f"{quote(issue.cluster_id, safe='')})"
+        if base
+        else issue.cluster_id
+    )
+    return f"Run from Error Feed issue {named}."
+
+
 def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     """The title and body: what the whole change does, the verdict it earned, the files it
     changes and why, what could still go wrong, and where it came from. Both say so when
@@ -682,7 +702,11 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     )
     tail = "\n\n".join(
         part
-        for part in (_fix_link(candidate), "Opened by Epoch on Future AGI.")
+        for part in (
+            _issue_link(candidate),
+            _fix_link(candidate),
+            "Opened by Epoch on Future AGI.",
+        )
         if part
     )
     body = _fit(head, tail)

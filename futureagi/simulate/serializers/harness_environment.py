@@ -1455,6 +1455,10 @@ class HarnessSuiteMemberSerializer(serializers.Serializer):
     number = serializers.IntegerField()
     name = serializers.CharField(allow_blank=True)
     use_case = serializers.CharField(allow_blank=True)
+    # The Error Feed issue whose traces Run Epoch drafted this scenario from; null for
+    # any other scenario.
+    issue_cluster_id = serializers.CharField(allow_null=True)
+    issue_project_id = serializers.UUIDField(allow_null=True)
 
 
 class HarnessVerifyCreateSerializer(serializers.Serializer):

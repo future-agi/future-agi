@@ -481,6 +481,9 @@ def _ensure_workflows_registered() -> None:
     # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.agent_fix_issue_workflow import (
+            AgentFixIssueWorkflow,
+        )
         from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
         from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
             HostedHarnessGatewayWorkflow,
@@ -495,6 +498,7 @@ def _ensure_workflows_registered() -> None:
                 SimulationRunnerWorkflow,
                 HostedHarnessGatewayWorkflow,
                 AgentFixWorkflow,
+                AgentFixIssueWorkflow,
             ],
         )
     except ImportError as e:
@@ -781,6 +785,7 @@ def _ensure_activities_registered() -> None:
     # native voice queues.
     try:
         from simulate.temporal.activities.agent_fix import (
+            advance_agent_fix_issue,
             advance_agent_fix_variations,
             close_agent_fix_run,
             launch_agent_fix_sandbox,
@@ -811,13 +816,14 @@ def _ensure_activities_registered() -> None:
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
                 advance_agent_fix_variations,
+                advance_agent_fix_issue,
                 launch_agent_fix_sandbox,
                 watch_agent_fix_engine,
                 release_agent_fix_sandbox,
                 close_agent_fix_run,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=12)
+        log.info("registered_hosted_runner_activities", count=13)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

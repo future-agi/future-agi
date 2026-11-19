@@ -33,6 +33,7 @@ from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
+    AgentFixIssueJob,
     AgentFixRun,
     AgentVersion,
     CallExecution,
@@ -1372,6 +1373,23 @@ def launch_blocker(
             " finish.",
             status_code=409,
         )
+    # An issue's baseline holds the environment for the epoch launched from it.
+    if (
+        AgentFixIssueJob.no_workspace_objects.filter(
+            environment=source_run.environment,
+            baseline_run__isnull=False,
+            fix_run__isnull=True,
+            ending__isnull=True,
+        )
+        .exclude(baseline_run=source_run)
+        .exists()
+    ):
+        return HostedHarnessError(
+            "issue_epoch_measuring",
+            "An epoch from an Error Feed issue is starting in this environment. Wait"
+            " for it, or open it.",
+            status_code=409,
+        )
     if usage:
         decision = check_harness_action(str(source_run.organization_id), "agent_fix")
         if not decision["allowed"]:
@@ -1493,6 +1511,23 @@ def variations_source_moved(
     )
 
 
+def launch_surfaces(offered: Iterable[Surface]) -> list[LaunchSurface]:
+    """Each part of an agent the launch form names, and whether an epoch may change it
+    on this kind of agent."""
+    allowed = set(offered)
+    return [
+        LaunchSurface(
+            id=surface,
+            label=label,
+            allowed=surface in allowed,
+            reason=None
+            if surface in allowed
+            else f"Epoch can't change the {label.lower()} of this kind of agent.",
+        )
+        for surface, label in SURFACE_LABELS.items()
+    ]
+
+
 def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
     try:
         return agent_kind(environment)
@@ -1574,17 +1609,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             ],
             protected_scenario_keys=[one.key for one in scenarios if one.passed],
         ),
-        surfaces=[
-            LaunchSurface(
-                id=surface,
-                label=label,
-                allowed=surface in offered,
-                reason=None
-                if surface in offered
-                else f"Epoch can't change the {label.lower()} of this kind of agent.",
-            )
-            for surface, label in SURFACE_LABELS.items()
-        ],
+        surfaces=launch_surfaces(offered),
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,

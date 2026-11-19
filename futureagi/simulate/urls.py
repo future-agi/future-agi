@@ -6,6 +6,7 @@ from simulate.views.agent_fix import (
     AgentFixModelView,
     AgentFixRunViewSet,
 )
+from simulate.views.agent_fix_issue import AgentFixIssueJobViewSet
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -149,6 +150,9 @@ router.register(
 )
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
 router.register(r"agent-fix-runs", AgentFixRunViewSet, basename="agent-fix-run")
+router.register(
+    r"agent-fix-issues", AgentFixIssueJobViewSet, basename="agent-fix-issue"
+)
 router.register(r"agent-fix-engine", AgentFixEngineViewSet, basename="agent-fix-engine")
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
