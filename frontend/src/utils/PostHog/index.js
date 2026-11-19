@@ -1,6 +1,7 @@
 export {
   initPostHog,
   identifyPostHogUser,
+  hasPostHogMember,
   resetPostHogUser,
   trackPostHogEvent,
   isFeatureEnabled,

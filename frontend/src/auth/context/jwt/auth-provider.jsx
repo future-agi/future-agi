@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { useMemo, useEffect, useReducer, useCallback } from "react";
+import { useMemo, useEffect, useReducer, useCallback, useRef } from "react";
 
 import axios, { endpoints } from "src/utils/axios";
 import axiosPackage from "axios";
@@ -13,8 +13,15 @@ import {
   setRememberMe,
   setSession,
 } from "./utils";
-import { identifyUser, resetUser } from "src/utils/Mixpanel";
-import { identifyPostHogUser, resetPostHogUser } from "src/utils/PostHog";
+import { resetUser } from "src/utils/Mixpanel";
+import { resetPostHogUser } from "src/utils/PostHog";
+import {
+  clearConsentIdentityHandoff,
+  identifyMember,
+  matchingConsentIdentity,
+  prepareConsentIdentityHandoff,
+  takeConsentIdentityHandoff,
+} from "./consent-identity-handoff";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUser } from "@sentry/react";
 import logger from "src/utils/logger";
@@ -105,7 +112,17 @@ export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const queryClient = useQueryClient();
 
-  const initialize = useCallback(async () => {
+  const identityAttempt = useRef(null);
+  const bootstrapped = useRef(false);
+  const invalidateIdentity = useCallback(() => {
+    identityAttempt.current = null;
+    clearConsentIdentityHandoff();
+  }, []);
+
+  const hydrate = useCallback(async (receipt) => {
+    // Superseded requests cannot authorize a later analytics handoff.
+    const attempt = {};
+    identityAttempt.current = attempt;
     try {
       const accessToken = localStorage.getItem(STORAGE_KEY);
 
@@ -134,6 +151,10 @@ export function AuthProvider({ children }) {
           return;
         }
 
+        const reuse =
+          identityAttempt.current === attempt
+            ? matchingConsentIdentity(receipt, user)
+            : null;
         // Store user ID in sessionStorage for cross-tab user detection
         sessionStorage.setItem(SS_KEY_USER_ID, user?.id);
 
@@ -141,12 +162,12 @@ export function AuthProvider({ children }) {
         if (user?.remember_me) {
           setRememberMe(user.remember_me);
         }
-        identifyUser(user);
-        identifyPostHogUser(user);
+        const member = identifyMember(user, reuse);
         setUser({
           id: user?.id,
           email: user?.email,
         });
+        attempt.member = member;
 
         dispatch({
           type: "INITIAL",
@@ -166,6 +187,7 @@ export function AuthProvider({ children }) {
         });
       }
     } catch (error) {
+      delete attempt.member;
       // Only clear session for authentication errors (401, 403) or specific user_not_found error
       // Don't clear session for network errors (no response) or server errors (5xx)
       if (
@@ -186,15 +208,34 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const initialize = useCallback(() => {
+    clearConsentIdentityHandoff();
+    return hydrate(null);
+  }, [hydrate]);
+
   useEffect(() => {
-    initialize();
-  }, [initialize]);
+    const prepare = () =>
+      prepareConsentIdentityHandoff(identityAttempt.current?.member);
+    window.__prepareConsentIdentityHandoff = prepare;
+    // StrictMode rebinds effects: re-install the callback, but don't consume
+    // the receipt or start the same mount's /me request a second time.
+    if (!bootstrapped.current) {
+      bootstrapped.current = true;
+      hydrate(takeConsentIdentityHandoff());
+    }
+    return () => {
+      if (window.__prepareConsentIdentityHandoff === prepare) {
+        delete window.__prepareConsentIdentityHandoff;
+      }
+    };
+  }, [hydrate]);
 
   // Cross-tab user change detection
   // When another tab logs in as a different user, force logout this tab
   useEffect(() => {
     const handleStorageChange = (event) => {
       if (event.key === SAML_AUTH_GENERATION_KEY) {
+        invalidateIdentity();
         queryClient.clear();
         SESSION_KEYS_TO_CLEAR.forEach((key) => sessionStorage.removeItem(key));
         dispatch({ type: "LOGOUT" });
@@ -207,6 +248,10 @@ export function AuthProvider({ children }) {
 
       const newToken = event.newValue;
       const currentUserId = sessionStorage.getItem(SS_KEY_USER_ID);
+      const newUserId = decodeTokenUserId(newToken);
+      if (!newToken || !currentUserId || newUserId !== currentUserId) {
+        invalidateIdentity();
+      }
 
       // Token was cleared (logout in another tab)
       if (!newToken) {
@@ -219,8 +264,6 @@ export function AuthProvider({ children }) {
       }
 
       // Token changed - check if it's a different user
-      const newUserId = decodeTokenUserId(newToken);
-
       if (currentUserId && newUserId && currentUserId !== newUserId) {
         // Different user logged in from another tab
         logger.warn(
@@ -242,11 +285,14 @@ export function AuthProvider({ children }) {
     return () => {
       window.removeEventListener("storage", handleStorageChange);
     };
-  }, [queryClient]);
+  }, [queryClient, invalidateIdentity]);
 
   // LOGIN
   const login = useCallback(async (response) => {
     if (response.status !== 200) return;
+    clearConsentIdentityHandoff();
+    const attempt = {};
+    identityAttempt.current = attempt;
     const { access: accessToken, refresh: refreshToken } = response.data;
     const userResponse = await axiosPackage.get(
       `${HOST_API}${endpoints.auth.me}`,
@@ -267,8 +313,7 @@ export function AuthProvider({ children }) {
     // Store user ID in sessionStorage for cross-tab user detection
     sessionStorage.setItem(SS_KEY_USER_ID, user.id);
 
-    identifyUser(user);
-    identifyPostHogUser(user);
+    const member = identifyMember(user);
     setUser({
       id: user.id,
       email: user.email,
@@ -276,6 +321,7 @@ export function AuthProvider({ children }) {
     if (user?.remember_me) {
       setRememberMe(user.remember_me);
     }
+    attempt.member = member;
 
     dispatch({
       type: "LOGIN",
@@ -330,6 +376,7 @@ export function AuthProvider({ children }) {
 
   // LOGOUT
   const logout = useCallback(async () => {
+    invalidateIdentity();
     try {
       const accessToken = localStorage.getItem(STORAGE_KEY);
       setSession(null);
@@ -361,21 +408,25 @@ export function AuthProvider({ children }) {
       // it must not get the previous account's cached responses.
       queryClient.clear();
     }
-  }, [queryClient]);
+  }, [queryClient, invalidateIdentity]);
 
-  const updateUserData = useCallback((userData) => {
-    try {
-      dispatch({
-        type: "UPDATE",
-        payload: {
-          user: { ...userData },
-        },
-      });
-    } catch (error) {
-      logger.error("Update user data Error:", error);
-      throw error; // Ensure errors are caught by caller
-    }
-  }, []);
+  const updateUserData = useCallback(
+    (userData) => {
+      try {
+        invalidateIdentity();
+        dispatch({
+          type: "UPDATE",
+          payload: {
+            user: { ...userData },
+          },
+        });
+      } catch (error) {
+        logger.error("Update user data Error:", error);
+        throw error; // Ensure errors are caught by caller
+      }
+    },
+    [invalidateIdentity],
+  );
 
   // ----------------------------------------------------------------------
 
