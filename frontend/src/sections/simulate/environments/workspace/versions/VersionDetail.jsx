@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   Box,
-  CircularProgress,
   MenuItem,
   Stack,
   Table,
@@ -21,16 +20,26 @@ import {
 import { VERSIONS_COPY } from "../workspace.constants";
 import { refusalText } from "../evals/refusalText";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import ContentSkeleton from "src/components/content-skeleton";
 import { PreflightReport } from "../agents/PreflightStatus";
 import { named } from "../agents/agentVersionStatus";
 import VersionDiff from "./VersionDiff";
 import { isEmptyDiff } from "./isEmptyDiff";
+import { ChangesSkeleton } from "./HistorySkeleton";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
 function SuiteMembers({ envId, version }) {
   const { data, isLoading } = useSuiteMembers(envId, version.id);
-  if (isLoading) return <CircularProgress size={18} />;
+  if (isLoading) {
+    return (
+      <ContentSkeleton
+        rows={3}
+        role="status"
+        label={VERSIONS_COPY.detail.membersLoading}
+      />
+    );
+  }
   // A failed refresh keeps the members it already has.
   if (!data) {
     return (
@@ -133,7 +142,7 @@ export default function VersionDetail({
   const body = () => {
     if (first) return note(detail.first);
     if (noRecord && against) return note(detail.notComparable);
-    if (isLoading) return <CircularProgress size={18} />;
+    if (isLoading) return <ChangesSkeleton label={detail.loading} />;
     if (isError) {
       return (
         <Typography sx={{ typography: "s2", color: "status.danger.fg" }}>

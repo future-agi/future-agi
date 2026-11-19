@@ -535,14 +535,17 @@ describe("VersionsPanel", () => {
     expect(screen.queryByTestId("diff-group-Actors")).toBeNull();
   });
 
-  it("shows a spinner while the changes load and an error if they fail", async () => {
+  it("shows a skeleton while the changes load and an error if they fail", async () => {
     const user = userEvent.setup();
     state.diffLoading = true;
     const { unmount } = render(<VersionsPanel env={ENV} />);
     await user.click(row("environment", "v2"));
-    expect(
-      within(screen.getByTestId("version-detail")).getByRole("progressbar"),
-    ).toBeInTheDocument();
+    const detail = screen.getByTestId("version-detail");
+    // A skeleton shaped like the changes, not a spinner.
+    expect(within(detail).getByRole("status")).toHaveTextContent(
+      "Loading the changes",
+    );
+    expect(within(detail).queryByRole("progressbar")).toBeNull();
     unmount();
 
     state.diffLoading = false;
@@ -821,6 +824,13 @@ describe("VersionsPanel", () => {
       screen.getByText("1 scenario in Unnumbered version"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/null/)).toBeNull();
+  });
+
+  it("shows a skeleton of the History tab while the versions load", () => {
+    state.versions = undefined;
+    render(<VersionsPanel env={ENV} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading versions");
+    expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
   it("filters the timeline to scenario versions", async () => {

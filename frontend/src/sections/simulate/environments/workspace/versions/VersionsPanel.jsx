@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Box,
-  CircularProgress,
   Stack,
   ToggleButton,
   ToggleButtonGroup,
@@ -18,6 +17,7 @@ import {
 import { VERSIONS_COPY } from "../workspace.constants";
 import { named } from "../agents/agentVersionStatus";
 import HistoryEntry from "./HistoryEntry";
+import HistorySkeleton from "./HistorySkeleton";
 import {
   HISTORY_KINDS,
   filterEntries,
@@ -193,7 +193,7 @@ export default function VersionsPanel({ env }) {
     </Stack>
   );
 
-  if (isLoading) return frame(<CircularProgress size={22} />);
+  if (isLoading) return <HistorySkeleton label={VERSIONS_COPY.loading} />;
   if (isVersioningDisabled(error)) {
     return frame(
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
