@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 
 import pytest
 import sentry_sdk
@@ -153,8 +154,12 @@ def test_span_exception_text_is_not_sent_with_the_transaction_or_next_event():
         before_send_transaction=sentry._before_send_transaction,
         traces_sample_rate=1.0,
         include_local_variables=False,
+        max_value_length=sentry._MAX_TEXT,
     ) as transport:
+        # A truncated custom value also puts its key in the SDK's _meta tree.
+        sentry_sdk.set_context("job", {MARKER: "x" * 10_000})
         with sentry_sdk.start_transaction(name="process job", op="task") as txn:
+            txn.set_context("error", {"detail": MARKER})
             txn.set_data("exception.message", MARKER)
             txn.set_tag("error.detail", MARKER)
             with sentry_sdk.start_span(op="task.read", description=MARKER) as span:
@@ -189,10 +194,13 @@ def test_span_exception_text_is_not_sent_with_the_transaction_or_next_event():
         [error] = first["exception"]["values"]
         assert error["type"] == "LookupError"
         assert error["value"] == sentry._REDACTED
-        assert error["mechanism"]["handled"] is True
+        assert error["mechanism"] == {"type": "generic", "handled": True}
+        assert "job" not in first["contexts"]
+        assert "job" not in second["contexts"]
         [item] = transaction.items
         assert item.headers["type"] == "transaction"
         event = item.payload.json
+        assert set(event["contexts"]) == {"trace"}
         assert event["contexts"]["trace"]["trace_id"] == txn.trace_id
         [child] = event["spans"]
         assert child["span_id"] == span.span_id
@@ -222,6 +230,39 @@ def test_over_budget_span_list_is_dropped_without_losing_the_transaction(monkeyp
         assert MARKER.encode() not in following.serialize()
 
 
+def test_profile_and_transaction_share_trace_despite_over_budget_context():
+    with sentry_capture(
+        before_send_transaction=sentry._before_send_transaction,
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    ) as transport:
+        with sentry_sdk.start_transaction(name="process job", op="task") as txn:
+            txn.set_context("error", {"details": [MARKER] * (sentry._MAX_ITEMS + 1)})
+            # A short transaction may finish before the SDK takes two samples.
+            # Wait for real samples rather than bypassing Profile.valid().
+            profile = sentry_sdk.get_isolation_scope().profile
+            assert profile is not None and profile.sampled
+            deadline = time.monotonic() + 5
+            while profile.unique_samples < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert profile.unique_samples >= 2
+
+        [envelope] = transport.envelopes
+        items = {item.headers["type"]: item.payload.json for item in envelope.items}
+        event = items["transaction"]
+        trace = event["contexts"]["trace"]
+        assert trace["trace_id"] == txn.trace_id
+        assert trace["span_id"] == txn.span_id
+        assert "error" not in event["contexts"]
+        assert envelope.headers["trace"]["sampled"] == "true"
+        assert envelope.headers["trace"]["sample_rate"] == "1.0"
+        [linked] = items["profile"]["transactions"]
+        assert linked["id"] == event["event_id"]
+        assert linked["trace_id"] == txn.trace_id
+        assert items["profile"]["profile"]["samples"]
+        assert MARKER.encode() not in envelope.serialize()
+
+
 def test_parameterized_log_entries_preserve_the_template_not_the_rendering():
     with sentry_capture(
         LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
@@ -246,6 +287,37 @@ def test_parameterized_log_entries_preserve_the_template_not_the_rendering():
             assert event["level"] == "error"
         assert following["message"] == "next diagnostic"
         assert len(transport.envelopes) == 3
+        assert all(MARKER.encode() not in e.serialize() for e in transport.envelopes)
+
+
+def test_usage_log_templates_only_retain_validated_count_arguments():
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        include_local_variables=False,
+    ) as transport:
+        logger = logging.getLogger(LOGGER)
+        logger.error("job failed input_tokens=%d", 17)
+        logger.error("job %s failed output_tokens=%d", MARKER, 23)
+        # Python logging rejects a string for %d before Sentry sees the record.
+        # Exercise the same SDK hook with an inconsistent structured log entry.
+        sentry_sdk.capture_event(
+            {"logentry": {"message": "job failed input_tokens=%d", "params": [MARKER]}}
+        )
+        logger.error("job failed input_tokens=%s", MARKER)
+        sentry_sdk.capture_message("next diagnostic")
+
+        count, mixed, malformed, wrong_placeholder, following = transport.events
+        assert count["logentry"] == {
+            "message": "job failed input_tokens=%d",
+            "params": [17],
+        }
+        assert mixed["logentry"] == {
+            "message": "job %s failed output_tokens=%d",
+            "params": [sentry._REDACTED, 23],
+        }
+        for event in (malformed, wrong_placeholder):
+            assert event["logentry"] == {"message": sentry._REDACTED}
+        assert following["message"] == "next diagnostic"
         assert all(MARKER.encode() not in e.serialize() for e in transport.envelopes)
 
 

@@ -183,9 +183,10 @@ _USAGE_FIELDS = frozenset(
         "token_count",
     }
 )
-_USAGE_COUNT = re.compile(
-    r"(?<![\w.-])(?:" + "|".join(sorted(_USAGE_FIELDS)) + r")=[0-9]{1,18}(?=$|[ )])"
-)
+_USAGE_ASSIGNMENT = r"(?<![\w.-])(?:" + "|".join(sorted(_USAGE_FIELDS)) + r")="
+_USAGE_COUNT = re.compile(_USAGE_ASSIGNMENT + r"[0-9]{1,18}(?=$|[ )])")
+# Match every percent sign so unsupported directives cannot shift argument indices.
+_LOG_DIRECTIVE = re.compile(_USAGE_ASSIGNMENT + r"%d(?=$|[ )])|%[sd]|%")
 _SENSITIVE_NAMES = (*SENSITIVE_KEY_SUBSTRINGS, *_CREDENTIAL_ALIASES)
 _SENSITIVE_TEXT = (*_SENSITIVE_NAMES, "credential", "<saml:", "<samlp:")
 
@@ -376,7 +377,7 @@ def _span_structure(span: dict) -> dict:
     ):
         value = span.get(key)
         if type(value) is str and len(value) <= 128 and re.fullmatch(pattern, value):
-            result[key] = _scrub_text(value)
+            result[key] = value if key.endswith("_id") else _scrub_text(value)
     # SDK child spans carry status as a tag; the root trace uses a field.
     for owner in (span, span.get("tags")):
         if type(owner) is dict:
@@ -402,7 +403,8 @@ def _span_structure(span: dict) -> dict:
             ("trace_id", r"[0-9a-fA-F]{32}"),
             ("public_key", r"[0-9a-fA-F]{32}"),
             ("org_id", r"[0-9]+"),
-            ("sample_rate", r"[01](?:\.\d+)?"),
+            ("sample_rate", r"0(?:\.[0-9]+)?|1(?:\.0+)?"),
+            ("sample_rand", r"0(?:\.[0-9]+)?"),
             ("sampled", r"true|false"),
         ):
             value = sampling.get(key)
@@ -434,13 +436,20 @@ def _scrub_transaction_spans(event: dict) -> None:
             for key in ("component", "region", "cloud_deployment")
             if type(tags) is dict and key in tags
         }
-    contexts = event.get("contexts")
-    if type(contexts) is dict and "trace" in contexts:
-        trace = contexts["trace"]
-        if type(trace) is dict:
-            contexts["trace"] = _span_structure(trace)
-        else:
-            contexts.pop("trace")
+    if "contexts" in event:
+        # set_context accepts arbitrary text, including on the root transaction.
+        # Read trace independently: Profile.to_json needs its ID even when an
+        # unrelated scope or transaction context exceeds the scrubber budget.
+        contexts = event["contexts"]
+        trace = contexts.get("trace") if type(contexts) is dict else None
+        event["contexts"] = (
+            {"trace": _span_structure(trace)} if type(trace) is dict else {}
+        )
+    # The SDK serializer can mirror discarded field names in its annotations.
+    meta = event.get("_meta")
+    if type(meta) is dict:
+        meta.pop("contexts", None)
+        meta.pop("spans", None)
 
 
 def _log_params(params: Any, message: str) -> dict | list | None:
@@ -466,6 +475,56 @@ def _log_params(params: Any, message: str) -> dict | list | None:
             result[key] = scalar(value)
         return result
     return [scalar(value) for value in params]
+
+
+def _usage_log_params(template: str, params: Any) -> list | None:
+    """Allow exact usage-field=%d assignments without rendering any arguments."""
+    if type(params) not in (list, tuple) or not 0 < len(params) <= _MAX_ITEMS:
+        return None
+    safe: list = []
+    literals = []
+    start = 0
+    for directive in _LOG_DIRECTIVE.finditer(template):
+        if len(safe) >= len(params) or directive[0] == "%":
+            return None  # Unsupported directive or inconsistent arity.
+        if directive[0].startswith("%"):
+            safe.append(_REDACTED)
+        else:
+            count = params[len(safe)]
+            if type(count) is not int or not 0 <= count < 2**63:
+                return None
+            safe.append(count)
+            literals.append(template[start : directive.start()])
+            start = directive.end()
+    if not start or len(safe) != len(params):
+        return None
+    # Only the validated assignments are exempt from the sensitive-text check.
+    literals.append(template[start:])
+    return safe if _scrub_text(" ".join(literals)) != _REDACTED else None
+
+
+def _parameterized_logentry(entry: dict, log_record: object) -> dict:
+    template = entry.get("message")
+    if type(template) is not str or len(template) > _MAX_TEXT or "%" not in template:
+        return {"message": _REDACTED}
+    # Validate the original template, not the SDK's rendering of record.msg.
+    if log_record is not None:
+        original = getattr(log_record, "msg", None)
+        if type(original) is not str or original != template:
+            return {"message": _REDACTED}
+    formatted = entry.get("formatted")
+    if type(formatted) is str and template == formatted:
+        return {"message": _REDACTED}  # No distinct template to retain.
+    message = _scrub_text(template)
+    if message == _REDACTED:
+        counts = _usage_log_params(template, entry["params"])
+        if counts is not None:
+            return {"message": template, "params": counts}
+    elif "formatted" not in entry or _scrub_text(formatted) != _REDACTED:
+        params = _log_params(entry["params"], message)
+        if params is not None:
+            return {"message": message, "params": params}
+    return {"message": message}
 
 
 def _scrub_event(
@@ -507,9 +566,6 @@ def _scrub_event(
             and type(extra[k]) is int
             and 0 <= extra[k] < 2**63
         }
-    if "contexts" in event:
-        contexts = _scrub(event["contexts"])
-        event["contexts"] = contexts if type(contexts) is dict else {}
 
     frame_match = _scrub_frames(event)
     replacement = None
@@ -531,8 +587,19 @@ def _scrub_event(
             for key in ("exception_id", "parent_id"):
                 if type(mechanism.get(key)) is int and 0 <= mechanism[key] < 2**63:
                     safe_mechanism[key] = mechanism[key]
-            if "type" in mechanism:
-                safe_mechanism["type"] = _scrub_text(mechanism["type"])
+            capture_type = mechanism.get("type")
+            if type(capture_type) is str and capture_type in (
+                "generic",
+                "logging",
+                "excepthook",
+                "threading",
+                "asyncio",
+                "django",
+                "celery",
+                "asgi",
+                "wsgi",
+            ):
+                safe_mechanism["type"] = capture_type
             value["mechanism"] = safe_mechanism
         else:
             value.pop("mechanism", None)
@@ -548,41 +615,26 @@ def _scrub_event(
             event.pop("logentry")
         else:
             params = entry.get("params")
-            message = _scrub_text(entry.get("message"))
-            formatted = _scrub_text(entry.get("formatted"))
             # A formatted string may include a repr or an unlabelled secret;
             # never send it alongside parameters. Keep the static title.
             has_params = params is not None and not (
                 type(params) in (list, tuple, dict) and not params
             )
-            rendered = "formatted" in entry and (
-                "message" not in entry or message != formatted
-            )
             if has_params:
-                if log_record is not None:
-                    # Validate the original template, not the SDK's rendering
-                    # of record.msg (it need not have been a string).
-                    template = _scrub_text(getattr(log_record, "msg", None))
-                    if message != template:
-                        message = _REDACTED
-                if "%" not in message or message == formatted:
-                    message = _REDACTED  # No distinct template to retain.
-                safe_entry: dict[str, Any] = {"message": message}
-                if message != _REDACTED and (
-                    "formatted" not in entry or formatted != _REDACTED
-                ):
-                    safe_params = _log_params(params, message)
-                    if safe_params is not None:
-                        safe_entry["params"] = safe_params
-                event["logentry"] = safe_entry
-            elif rendered:
-                event["logentry"] = {"message": _REDACTED}
+                event["logentry"] = _parameterized_logentry(entry, log_record)
             else:
-                event["logentry"] = {
-                    k: v
-                    for k, v in (("message", message), ("formatted", formatted))
-                    if k in entry
-                }
+                message = _scrub_text(entry.get("message"))
+                formatted = _scrub_text(entry.get("formatted"))
+                if "formatted" in entry and (
+                    "message" not in entry or message != formatted
+                ):
+                    event["logentry"] = {"message": _REDACTED}
+                else:
+                    event["logentry"] = {
+                        k: v
+                        for k, v in (("message", message), ("formatted", formatted))
+                        if k in entry
+                    }
     return event
 
 
@@ -682,7 +734,11 @@ def _scrub_breadcrumbs(event: dict) -> None:
 
 def _before_send_transaction(event: "Event", hint: "Hint") -> "Event | None":
     try:
-        _scrub_event(cast(dict, event))
+        clean = _scrub_event(cast(dict, event))
+        if clean.get("type") == "transaction":
+            trace = clean.get("contexts", {}).get("trace", {})
+            if "trace_id" not in trace or "span_id" not in trace:
+                return None  # Never hand a malformed trace to profile serialization.
     except Exception:  # noqa: BLE001 - drop SDK transactions on any scrubbing failure
         return None
     return event
