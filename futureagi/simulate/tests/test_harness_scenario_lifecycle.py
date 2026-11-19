@@ -1142,3 +1142,99 @@ def test_a_refused_case_names_the_tools_the_agent_lacks(
     assert view["reason_text"] == (
         f"Needs {named}, which agent version {_label(environment)} doesn't have."
     )
+
+
+def test_a_case_still_stating_a_changed_rule_s_old_value_carries_a_warning_saying_so():
+    from simulate.services.harness_scenario_lifecycle import (
+        old_values_by_case,
+        warning_text,
+    )
+
+    documents = {
+        "contract": {
+            "hard_constraints": ["Refund only within 14 days of delivery."],
+            "tools": [],
+            "amendments": [
+                "rule removed — Refund only within 30 days of delivery.: policy",
+                "rule removed — Refund only within 20 days of delivery.: policy",
+                "rule added — Refund only within 14 days of delivery.: policy",
+            ],
+        },
+        "sub_goals": [
+            {"name": "declined", "what": "Declines past the 20-day window."},
+            {"name": "looked_up", "what": "Looks the order up."},
+        ],
+    }
+    contents = {
+        "refuse-late": {
+            "name": "refuse_late",
+            "use_case": "Refuse a refund outside the 30-day window.",
+            "instruction": "Delivered 41 days ago.",
+            "sub_goals": ["declined"],
+        },
+        "lookup": {
+            "name": "lookup",
+            "use_case": "Look up an order delivered 3 days ago.",
+            "sub_goals": ["looked_up"],
+        },
+    }
+
+    found = old_values_by_case(documents, contents)
+
+    assert set(found) == {"refuse-late"}
+    assert warning_text("states_old_value", None, **found["refuse-late"]) == (
+        "Its text still says 20 days, 30 days, which a changed rule no longer states (the rules say 14 days). "
+        "Update the case to what the rules say."
+    )
+    # An environment whose rules never changed warns about nothing.
+    assert (
+        old_values_by_case(
+            {**documents, "contract": {**documents["contract"], "amendments": []}},
+            contents,
+        )
+        == {}
+    )
+
+
+def test_a_proved_case_still_stating_an_old_rule_value_reads_the_warning(
+    user, workspace, storage
+):
+    from simulate.tests.test_harness_affected_scenarios import _doc
+
+    environment = _environment(user, workspace, storage, "old-rule-value")
+    stale = _doc("refuse-late", use_case="Refuse a refund outside the 30-day window.")
+    fresh = _doc("lookup", use_case="Look up an order delivered 3 days ago.")
+    _suite(environment, [stale, fresh])
+    for document in (stale, fresh):
+        # A saved member keeps the case's words (use case, instruction, controls), as Save writes them.
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version,
+            scenario_key=document["scenario_key"],
+        ).update(content=document)
+    version = environment.environment_version
+    HarnessEnvironmentVersion.no_workspace_objects.filter(id=version.id).update(
+        documents={
+            **(
+                HarnessEnvironmentVersion.no_workspace_objects.get(
+                    id=version.id
+                ).documents
+                or {}
+            ),
+            "contract": {
+                "hard_constraints": ["Refund only within 14 days of delivery."],
+                "amendments": [
+                    "rule removed — Refund only within 30 days of delivery.: policy",
+                    "rule added — Refund only within 14 days of delivery.: policy",
+                ],
+            },
+        }
+    )
+    environment.environment_version.refresh_from_db()
+    _proofs(environment, {"refuse-late": PROVED, "lookup": PROVED})
+
+    views = _views(environment)
+
+    assert views["refuse-late"]["warning"] == "states_old_value"
+    assert "still says 30 days" in views["refuse-late"]["warning_text"]
+    assert "(the rules say 14 days)" in views["refuse-late"]["warning_text"]
+    assert views["lookup"]["warning"] is None

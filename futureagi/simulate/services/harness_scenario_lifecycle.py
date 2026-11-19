@@ -115,6 +115,10 @@ WARNING_TEXTS = {
     "evidence_not_captured": (
         "{check} reads {evidence}, which this agent does not share with the test; it will read Not measured."
     ),
+    "states_old_value": (
+        "Its text still says {values}, which a changed rule no longer states{now}. Update the case to what the "
+        "rules say."
+    ),
 }
 EVIDENCE_LABELS = {"tool_calls": "the tool calls", "world_state": "the world's records"}
 # The readiness row that says whether the agent gives the harness each kind of evidence.
@@ -595,6 +599,7 @@ def scenario_lifecycle(
 
     failed = failed_changes(environment) if default else {}
     good: LifecycleState = "active" if saved else "validated"
+    old_values = old_values_by_case(environment_version.documents or {}, contents)
     views: dict[str, LifecycleView] = {}
     for key in contents:
         row: Mapping[str, Any] = rows.get(key) or {}
@@ -769,6 +774,11 @@ def scenario_lifecycle(
                     check=missing[0],
                     evidence=EVIDENCE_LABELS[missing[1]],
                 )
+        if key in old_values and not view["warning"] and view["state"] != "archived":
+            view["warning"] = "states_old_value"
+            view["warning_text"] = warning_text(
+                "states_old_value", entry, **old_values[key]
+            )
         if view["proof"] is not None and entry is not None:
             made_with = entry.get("agent_version_id") or proved_with
             proof = view["proof"]
@@ -777,6 +787,63 @@ def scenario_lifecycle(
             proof["suite_version_id"] = str(suite_version.id)
         views[key] = view
     return views
+
+
+def old_values_by_case(
+    documents: Mapping[str, Any], contents: Mapping[str, Any]
+) -> dict[str, dict[str, str]]:
+    """Each case whose own text, or a sub-goal it names, still states a value a changed rule or tool no longer
+    states (the contract's amendments say what changed), with the old values and what the rules say now."""
+    contract = documents.get("contract")
+    if not isinstance(contract, Mapping) or not contract.get("amendments"):
+        return {}
+    try:
+        from fi.alk.harness.rule_values import (
+            now_stated,
+            old_value_mentions,
+            scenario_texts,
+            sub_goal_texts,
+        )
+    except ImportError:
+        return {}
+    goals = {
+        one.get("name"): one
+        for one in documents.get("sub_goals") or []
+        if isinstance(one, Mapping)
+    }
+    found: dict[str, dict[str, str]] = {}
+    for key, content in contents.items():
+        if not isinstance(content, Mapping):
+            continue
+        texts = scenario_texts(content) + [
+            text
+            for name in content.get("sub_goals") or []
+            if name in goals
+            for text in sub_goal_texts(goals[name])
+        ]
+        values = sorted({value for _, value in old_value_mentions(contract, texts)})
+        if not values:
+            continue
+        now = sorted(
+            {
+                one
+                for value in values
+                for one in now_stated(contract, value.split(" ", 1)[1])
+            }
+        )
+        found[key] = {
+            "values": ", ".join(_plural(one) for one in values),
+            "now": f" (the rules say {', '.join(_plural(one) for one in now)})"
+            if now
+            else "",
+        }
+    return found
+
+
+def _plural(value: str) -> str:
+    """`30 day` as a person writes it: `30 days`."""
+    number, unit = value.split(" ", 1)
+    return value if number == "1" else f"{number} {unit}s"
 
 
 # Reasons a case is held because something could not be read, never because a proof found anything.
