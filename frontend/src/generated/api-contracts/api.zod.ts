@@ -36631,6 +36631,7 @@ export const SimulateApiAgentFixIssuesReadResponse = zod.object({
               .string()
               .describe("Its drafted scenario's title; blank until drafted."),
           })
+          .nullable()
           .describe(
             "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
           ),
@@ -37093,6 +37094,7 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
               .string()
               .describe("Its drafted scenario's title; blank until drafted."),
           })
+          .nullable()
           .describe(
             "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
           ),
@@ -47336,6 +47338,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({
             .string()
             .describe("Its drafted scenario's title; blank until drafted."),
         })
+        .nullable()
         .describe(
           "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
         ),
@@ -47706,6 +47709,7 @@ export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesRespon
                 .string()
                 .describe("Its drafted scenario's title; blank until drafted."),
             })
+            .nullable()
             .describe(
               "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
             ),
