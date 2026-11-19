@@ -45073,6 +45073,11 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         ),
       keys: zod.array(zod.string().min(1)),
       truncated: zod.boolean(),
+      names: zod
+        .record(zod.string(), zod.string().min(1))
+        .describe(
+          "Each listed case's current name, by its key; a case without one is shown by its key.",
+        ),
       by: zod
         .record(
           zod.string(),
@@ -45656,6 +45661,11 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           ),
         keys: zod.array(zod.string().min(1)),
         truncated: zod.boolean(),
+        names: zod
+          .record(zod.string(), zod.string().min(1))
+          .describe(
+            "Each listed case's current name, by its key; a case without one is shown by its key.",
+          ),
         by: zod
           .record(
             zod.string(),
@@ -67881,6 +67891,11 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
             ),
           keys: zod.array(zod.string().min(1)),
           truncated: zod.boolean(),
+          names: zod
+            .record(zod.string(), zod.string().min(1))
+            .describe(
+              "Each listed case's current name, by its key; a case without one is shown by its key.",
+            ),
           by: zod
             .record(
               zod.string(),

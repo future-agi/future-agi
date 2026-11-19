@@ -5,7 +5,7 @@ import { Button, Stack, Typography } from "@mui/material";
 import { useRunSelection } from "src/api/simulate-environments/versions";
 import { RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 
-// What the run will hold back and why: one line per reason, and the held-back keys on request.
+// What the run will hold back and why: one line per reason, and the held-back cases by name on request.
 // One component over one hook, so a fuller readiness panel can take its place.
 export function HeldBackView({ selection }) {
   const [shown, setShown] = useState(false);
@@ -43,7 +43,7 @@ export function HeldBackView({ selection }) {
           </Button>
           {shown && (
             <Typography sx={{ typography: "s3", color: "text.subtitle" }} data-testid="held-back-keys">
-              {held.keys.join(", ")}
+              {held.keys.map((key) => held.names?.[key] || key).join(", ")}
             </Typography>
           )}
         </>

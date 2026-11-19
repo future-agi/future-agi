@@ -10,7 +10,7 @@ refuses it and the check has not answered yet.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypedDict, cast
 from uuid import UUID
@@ -352,8 +352,7 @@ def selection_report(
             "next": _unproved_next(pairing, bundle, placement),
             "running": requested - len(by_bucket["blocked"]),
             "held_back": {
-                "count": len(held_back),
-                **_capped(held_back),
+                **_held_list(held_back, _case_names(placed)),
                 "by": dict(held_counts),
             },
             "reasons": held_reasons,
@@ -467,6 +466,8 @@ class HeldBack(TypedDict):
     count: int
     keys: list[str]
     truncated: bool
+    # Each listed case's current name, by its key; a case without one is shown by its key.
+    names: dict[str, str]
     # Held-back cases per row that held them.
     by: dict[str, int]
 
@@ -491,6 +492,17 @@ class RunPlan:
     # The report the decision was made from, and the evidence revision it read.
     report: ReadinessReport
     revision: str
+
+
+def _held_list(held: list[str], names: Mapping[str, str]) -> HeldBack:
+    """The held-back cases as the run dialog lists them, each with its current name."""
+    listed = _capped(held)
+    return {
+        "count": len(held),
+        **listed,
+        "names": {key: names[key] for key in listed["keys"] if names.get(key)},
+        "by": {},
+    }
 
 
 def _held_back(
@@ -584,7 +596,10 @@ def select_for_run(
             **_scope(pairing, placement, keys),
             "requested": len(keys),
             "running": len(keys) - len(held),
-            "held_back": {"count": len(held), **_capped(held), "by": dict(by)},
+            "held_back": {
+                **_held_list(held, _case_names(placement.placed)),
+                "by": dict(by),
+            },
             "reasons": reasons,
             "next": _unproved_next(pairing, bundle, placement),
         },
@@ -709,6 +724,10 @@ def _digests(suite_version_id: UUID | None, keys: list[str]) -> dict[str, str]:
             suite_version_id=suite_version_id, scenario_key__in=keys
         ).values_list("scenario_key", "content")
     }
+
+
+def _case_names(placed: Iterable[Any]) -> dict[str, str]:
+    return {one.case.key: one.case.name for one in placed if one.case.name}
 
 
 def _capped(keys: list[str]) -> CaseList:

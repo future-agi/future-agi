@@ -133423,7 +133423,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessRunHeldBack: {
-      required: ["count", "keys", "truncated", "by"],
+      required: ["count", "keys", "truncated", "names", "by"],
       type: "object",
       properties: {
         count: {
@@ -133441,6 +133441,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         truncated: {
           title: "Truncated",
           type: "boolean",
+        },
+        names: {
+          title: "Names",
+          description:
+            "Each listed case's current name, by its key; a case without one is shown by its key.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
         },
         by: {
           title: "By",

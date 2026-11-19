@@ -920,6 +920,10 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
     count = serializers.IntegerField(min_value=0)
     keys = serializers.ListField(child=serializers.CharField())
     truncated = serializers.BooleanField()
+    names = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="Each listed case's current name, by its key; a case without one is shown by its key.",
+    )
     by = serializers.DictField(
         child=serializers.IntegerField(min_value=0),
         help_text=(

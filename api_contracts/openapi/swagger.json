@@ -147548,6 +147548,7 @@
                 "count",
                 "keys",
                 "truncated",
+                "names",
                 "by"
             ],
             "type": "object",
@@ -147567,6 +147568,15 @@
                 "truncated": {
                     "title": "Truncated",
                     "type": "boolean"
+                },
+                "names": {
+                    "title": "Names",
+                    "description": "Each listed case's current name, by its key; a case without one is shown by its key.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 },
                 "by": {
                     "title": "By",

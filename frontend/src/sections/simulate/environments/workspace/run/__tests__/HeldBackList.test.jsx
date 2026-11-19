@@ -7,7 +7,12 @@ import { HeldBackView } from "../HeldBackList";
 const selection = {
   requested: 10,
   running: 8,
-  held_back: { count: 2, keys: ["refund-old", "draft-case"], by: { scenario_archived: 1, not_validated: 1 } },
+  held_back: {
+    count: 2,
+    keys: ["refund-old", "draft-case"],
+    names: { "refund-old": "refuse_refund_outside_20_day_window" },
+    by: { scenario_archived: 1, not_validated: 1 },
+  },
   reasons: {
     scenario_archived: "Archived on 14 Nov 2026: old route",
     not_validated: "Not validated on these versions yet.",
@@ -24,7 +29,10 @@ describe("Run dialog held-back list", () => {
     expect(list).toHaveTextContent("1 held back: Not validated on these versions yet.");
     expect(screen.queryByTestId("held-back-keys")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Show cases" }));
-    expect(screen.getByTestId("held-back-keys")).toHaveTextContent("refund-old, draft-case");
+    // Each case by its current name; one without a name by its key.
+    expect(screen.getByTestId("held-back-keys")).toHaveTextContent(
+      /^refuse_refund_outside_20_day_window, draft-case$/,
+    );
   });
 
   const unproved = {

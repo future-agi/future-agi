@@ -762,6 +762,24 @@ def _run_metadata(run):
     return run.payload["metadata"]
 
 
+def test_held_back_cases_are_listed_with_their_current_names():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _case_names, _held_list
+
+    placed = [
+        SimpleNamespace(case=SimpleNamespace(key="refuse-30", name="refuse_20_days")),
+        SimpleNamespace(case=SimpleNamespace(key="lookup", name="")),
+    ]
+
+    held = _held_list(["refuse-30", "lookup"], _case_names(placed))
+
+    assert (held["keys"], held["names"]) == (
+        ["refuse-30", "lookup"],
+        {"refuse-30": "refuse_20_days"},
+    )
+
+
 class TestHoldBack:
     def test_a_run_holds_back_the_blocked_cases_and_names_them(
         self, user, workspace, storage
@@ -778,6 +796,7 @@ class TestHoldBack:
             "count": 4,
             "keys": REFUND_KEYS,
             "truncated": False,
+            "names": {key: key for key in REFUND_KEYS},
             "by": {"tool_routing": 4},
         }
         assert "issue_refund reaches production" in chosen["reasons"]["tool_routing"]
