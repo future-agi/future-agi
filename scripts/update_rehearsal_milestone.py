@@ -445,6 +445,9 @@ class SnapshotMilestone(ShippingRehearsal):
                    for ref in self.image_inspections['app']['RepoDigests']),
                'source digest identity unavailable')
         self.record('image-inspections.json', self.image_inspections)
+        if locks:
+            # _wait_healthy starts Compose. Check the full inspected set before any service starts.
+            self._checked_dependency_images(model, locks)
         self._wait_healthy()
         self._remember_resources()
         from deploy.update.contracts import InstallationBinding
@@ -453,6 +456,25 @@ class SnapshotMilestone(ShippingRehearsal):
             self.root, self.root/'.env', self.root/'.env', 'standalone', False, self.project,
             (self.root/'docker-compose.yml',), (), self.context, self.daemon, os.geteuid())
         self.registration = SimpleNamespace(binding=binding)
+
+    def _checked_dependency_images(self, model, retained):
+        """Return the canonical observed rows, refusing any difference from a retained lock."""
+        from deploy.update.manifest import parse_image_ref
+        p = producer()
+        actual = []
+        for service in ('postgres', 'clickhouse'):
+            # Retained Compose files use short Hub names (postgres:16); signed
+            # proofs require the canonical tagged reference for the same image.
+            image = parse_image_ref(model['services'][service]['image'])
+            digests = {parse_image_ref(ref).digest for ref in self.image_inspections[service]['RepoDigests']
+                       if parse_image_ref(ref).name == image.name}
+            p.need(len(digests) == 1, 'dependency image digest is ambiguous')
+            actual.append(dict(service=service, image=str(image), digest=digests.pop()))
+        if retained:
+            p.equal(sorted(actual, key=lambda row: row['service']),
+                    sorted((dict(row, image=str(parse_image_ref(row['image']))) for row in retained),
+                           key=lambda row: row['service']), 'retained dependency lock differs')
+        return tuple(sorted(actual, key=lambda row: row['service']))
 
     def _wait_healthy(self):
         p = producer()

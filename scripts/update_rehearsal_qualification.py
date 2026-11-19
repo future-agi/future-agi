@@ -211,23 +211,8 @@ class QualificationRehearsal(RestoreMilestone):
         self.descriptor = self.row.release.manifest
 
     def install_and_boot(self):
-        from deploy.update.manifest import parse_image_ref
         super().install_and_boot()
-        actual = []
-        model = self.installation.config(refresh=True)
-        for service in ('postgres', 'clickhouse'):
-            # Retained Compose files use short Hub names (postgres:16); signed
-            # proofs require the canonical tagged reference for the same image.
-            image = parse_image_ref(model['services'][service]['image'])
-            digests = {parse_image_ref(ref).digest for ref in self.image_inspections[service]['RepoDigests']
-                       if parse_image_ref(ref).name == image.name}
-            p.need(len(digests) == 1, 'dependency image digest is ambiguous')
-            actual.append(dict(service=service, image=str(image), digest=digests.pop()))
-        if self.dependencies:
-            p.equal(sorted(actual, key=lambda row: row['service']),
-                    sorted((dict(row, image=str(parse_image_ref(row['image']))) for row in self.dependencies),
-                           key=lambda row: row['service']), 'retained dependency lock differs')
-        self.dependencies = tuple(sorted(actual, key=lambda row: row['service']))
+        self.dependencies = self._checked_dependency_images(self.installation.config(refresh=True), self.dependencies)
         from scripts.update_rehearsal_spool import ObservedSpoolWitness
         self.spool_witness = ObservedSpoolWitness(self)
 

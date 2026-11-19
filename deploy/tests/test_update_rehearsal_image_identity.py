@@ -374,7 +374,7 @@ class LockedDependencyBootTests(unittest.TestCase):
         return FakeDaemon({'docker.io/library/postgres:16': NEW,
                            'docker.io/clickhouse/clickhouse-server:25.3-alpine': CLICKHOUSE})
 
-    def qualification_boot(self, lock, daemon):
+    def qualification_boot(self, lock, daemon, compose_run):
         """Run the real milestone pull/inspect and the real qualification lock check."""
         driver = object.__new__(q.QualificationRehearsal)
         driver.project, driver.context, driver.platform = 'unit-image', 'colima-fagi-update', 'linux/amd64'
@@ -382,17 +382,24 @@ class LockedDependencyBootTests(unittest.TestCase):
         driver._secret_values, driver.policy, driver.deadline = set(), object(), 100
         driver.dependencies = lock
         driver.record = mock.Mock()
-        driver._wait_healthy = mock.Mock(side_effect=StopIteration('validated before boot'))
+        driver.boot_timeout = 600
         installation = mock.Mock()
         installation.config.return_value = copy.deepcopy(self.MODEL)
         installation.docker_run.side_effect = daemon
+        installation.compose_args.side_effect = lambda *args: ['docker', 'compose', *args]
+        installation.run = compose_run
+
+        class ComposeStarted(Exception):
+            pass
+
+        compose_run.side_effect = ComposeStarted
         driver._docker = lambda *args, check=True: daemon(*args).stdout
         driver._json = lambda *args: json.loads(daemon(*args).stdout)
 
         def milestone_boot(self):
             try:
                 milestones.SnapshotMilestone.install_and_boot(self)
-            except StopIteration:
+            except ComposeStarted:
                 pass
 
         with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
@@ -409,7 +416,10 @@ class LockedDependencyBootTests(unittest.TestCase):
 
     def test_locked_digest_boots_although_the_tag_now_resolves_elsewhere(self):
         daemon = self.daemon()
-        driver = self.qualification_boot(LOCK, daemon)
+        start = mock.Mock()
+        driver = self.qualification_boot(LOCK, daemon, start)
+        start.assert_called_once_with(['docker', 'compose', 'up', '-d', '--no-build', '--pull', 'never'],
+                                      timeout=mock.ANY)
         self.assertEqual(driver.dependencies, LOCK)
         self.assertEqual(driver.image_inspections['postgres']['RepoDigests'], ['postgres@'+OLD])
         self.assertEqual(daemon.local['postgres:16'], OLD)
@@ -422,21 +432,28 @@ class LockedDependencyBootTests(unittest.TestCase):
     def test_without_a_lock_the_moved_tag_is_what_boots(self):
         # First hop: nothing retained to pin, so the tag is pulled and observed.
         daemon = self.daemon()
-        driver = self.qualification_boot((), daemon)
+        start = mock.Mock()
+        driver = self.qualification_boot((), daemon, start)
+        start.assert_called_once()
         self.assertEqual(dict((r['service'], r['digest']) for r in driver.dependencies)['postgres'], NEW)
         self.assertEqual(daemon.pulls('postgres:16'), [('pull', '--platform', 'linux/amd64', 'postgres:16')])
 
-    def test_a_genuine_lock_mismatch_is_still_refused(self):
+    def test_inconsistent_lock_is_refused_before_compose_starts(self):
         cases = (
             # The lock names another tag or repository: nothing is pinned, the
             # Compose tag is pulled, and the comparison refuses.
             (LOCK[0], dict(LOCK[1], image='docker.io/library/postgres:17')),
             (LOCK[0], dict(LOCK[1], image='docker.io/example/postgres:16')),
             (LOCK[0], dict(LOCK[1], service='other')),
+            (LOCK[0],),
+            (*LOCK, LOCK[1]),
         )
         for lock in cases:
-            with self.subTest(lock=lock[1]), self.assertRaisesRegex(p.RehearsalError, 'retained dependency lock differs'):
-                self.qualification_boot(lock, self.daemon())
+            with self.subTest(lock=lock):
+                start = mock.Mock()
+                with self.assertRaisesRegex(p.RehearsalError, 'retained dependency lock differs'):
+                    self.qualification_boot(lock, self.daemon(), start)
+                start.assert_not_called()
 
     def test_pinned_image_whose_daemon_digest_differs_is_still_refused(self):
         class StoresAnotherDigest(FakeDaemon):
@@ -447,8 +464,10 @@ class LockedDependencyBootTests(unittest.TestCase):
                     self.images[OLD]['RepoDigests'] = ['postgres@'+NEW]
                 return result
         daemon = StoresAnotherDigest(self.daemon().tags)
+        start = mock.Mock()
         with self.assertRaisesRegex(p.RehearsalError, 'retained dependency lock differs'):
-            self.qualification_boot(LOCK, daemon)
+            self.qualification_boot(LOCK, daemon, start)
+        start.assert_not_called()
 
     def test_lock_selection_is_exact_for_service_repository_and_tag(self):
         from scripts.update_rehearsal_shipping import locked_dependency_ref
