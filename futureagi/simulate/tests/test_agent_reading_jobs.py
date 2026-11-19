@@ -825,3 +825,28 @@ class TestReadingStepCheck:
 
         assert step.status == "done"
         assert asked == [("v-1", "workflow-run-7")]
+
+    def test_the_reading_step_passes_its_check_to_the_bill(
+        self, agent, monkeypatch, no_evals
+    ):
+        """The reading step hands its check to the reading, so the charge is keyed by
+        the check and not by the version alone."""
+        from simulate.services import agent_version_steps
+
+        version = _connect(agent)
+        assert _runtime(version).preflight_status == Status.PENDING
+        _reading(
+            monkeypatch,
+            (None, {"agent": {}}, {}, {"stages": [{"stage": "understanding-agent"}]}),
+        )
+        monkeypatch.setattr(
+            agent_reading_sandbox,
+            "_store_reading",
+            lambda *_a, **_k: agent_reading_sandbox.ReadOutcome("stored"),
+        )
+        billed = _billed(monkeypatch)
+
+        step = agent_version_steps.read(version.id, check_id="run-1")
+
+        assert step.status == "done"
+        assert [one["check_id"] for one in billed] == ["run-1"]

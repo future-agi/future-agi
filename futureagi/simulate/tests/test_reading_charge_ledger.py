@@ -335,9 +335,9 @@ def test_a_retried_reading_step_is_charged_once(ledger, organization):
 def test_inside_one_check_a_reading_that_died_early_and_its_retries_are_one_charge(
     ledger, organization
 ):
-    """Dileep's repro, inside one check: a first attempt that died early, then two
-    full ones, each under a new run id. The check is one charge, the first
-    attempt's; what its step retries read again is our cost."""
+    """A first attempt that died early, then two full ones, inside one check and
+    each under a new run id: the check is one charge, the first attempt's; what
+    its step retries read again is our cost."""
     from ee.usage.models.usage import UsageEventLog
 
     full, subject_id, check_id = _cost_file(), uuid4(), str(uuid4())
@@ -360,9 +360,8 @@ def test_inside_one_check_a_reading_that_died_early_and_its_retries_are_one_char
 @pytest.mark.requires_ee
 @requires_cloud_billing
 def test_a_new_check_of_the_same_version_is_its_own_charge(ledger, organization):
-    """Dileep's repro across checks: the reading that died early ended its check;
-    Try again starts a new one, whose full reading is charged with its own run and
-    amounts."""
+    """A reading that died early ends its check; Try again starts a new check,
+    whose full reading is charged with its own run and amounts."""
     from ee.usage.models.usage import UsageEventLog
 
     full, subject_id = _cost_file(), uuid4()
