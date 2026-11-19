@@ -198,7 +198,8 @@ export default function HistoryEntry({
         onClose={() => setConfirming(false)}
       />
       {expanded && (
-        <Box sx={{ pl: 8.5, pr: 2.5, pb: 2 }}>
+        // Full width, not indented under the title: the changes hold tables.
+        <Box sx={{ px: 2.5, pb: 2 }}>
           <VersionDetail
             envId={envId}
             move={move}
