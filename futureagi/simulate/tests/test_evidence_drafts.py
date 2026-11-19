@@ -18,6 +18,7 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+from structlog.testing import capture_logs
 
 from model_hub.models.ai_model import AIModel
 from simulate.models import (
@@ -108,6 +109,10 @@ def _command(environment, cases, sequence):
             "_origin": evidence_drafts.ORIGIN,
             "_evidence_import_id": str(cases[0].evidence_import_id),
             "_case_ids": [str(case.id) for case in cases],
+            # As start_drafting keeps it: the scenarios the turn starts from.
+            "_starting_scenarios": len(
+                (environment.suite_version.documents or {}).get("scenarios") or []
+            ),
         },
     )
     return conversation, command
@@ -172,6 +177,18 @@ def _refreshed(cases):
     return [EvidenceImportCase.objects.get(id=case.id) for case in cases]
 
 
+def test_the_turn_asks_for_each_case_s_scenario_by_its_name(cases):
+    """The builder's submit_scenario takes no key: it keys a new scenario by its
+    name. So the turn asks for the case's key as the scenario's name, never as a
+    scenario_key the builder has no way to pass."""
+    message = evidence_drafts.turn_message(cases, "session")
+
+    for case in cases:
+        key = evidence_drafts.scenario_key_for(case)
+        assert f"- case {case.id}: submit its scenario with name {key} (" in message
+    assert "scenario_key" not in message
+
+
 def test_a_save_before_the_turn_ends_is_refused(environment, cases, storage):
     conversation, command = _command(environment, cases, 10)
     key, digest = _save(
@@ -229,6 +246,134 @@ def test_the_last_save_keeps_each_case_as_a_proposal_and_nothing_else(
     assert environment.suite_version_id == suite_before
     lease.refresh_from_db()
     assert lease.state == HostedHarnessConversationLease.State.EXPIRED
+
+
+COUNTS = (
+    "started",
+    "scenarios",
+    "added",
+    "unmatched",
+    "unindexed",
+    "drafted",
+    "blocked",
+)
+
+
+def _counted(logs):
+    (landed,) = [one for one in logs if one["event"] == "evidence_draft_landed"]
+    return {count: landed[count] for count in COUNTS}
+
+
+def test_the_landing_counts_what_the_turn_added_and_no_case_took(
+    environment, cases, storage
+):
+    """The builder drafted the second case under a name of its own and wrote one
+    more folder its index leaves out. The landing counts against the suite the
+    turn started from (2 scenarios): 2 added, 1 that no case took, 1 folder out
+    of the index."""
+    conversation, command = _command(environment, cases, 13)
+    key_one = evidence_drafts.scenario_key_for(cases[0])
+    unindexed = {
+        "scenarios/written_not_indexed/scenario.json": json.dumps(
+            {"name": "written_not_indexed", "instruction": "call about it"}
+        )
+    }
+    key, digest = _save(
+        conversation,
+        command,
+        storage,
+        [key_one, "cancel_far_ahead_fee"],
+        **unindexed,
+    )
+    _end_turn(conversation, command, said="Drafted regression scenarios for both.")
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 13)
+
+    assert [c.status for c in _refreshed(cases)] == ["drafted", "blocked"]
+    assert _counted(logs) == {
+        "started": 2,
+        "scenarios": 4,
+        "added": 2,
+        "unmatched": 1,
+        "unindexed": 1,
+        "drafted": 1,
+        "blocked": 1,
+    }
+
+
+def test_an_edit_during_the_turn_never_moves_its_start(
+    environment, cases, storage, user
+):
+    """The count the turn started from is kept on its command: someone's suite
+    edit while it drafts (a scenario dropped) changes nothing it reports."""
+    conversation, command = _command(environment, cases, 14)
+    _other_edit(environment, user)
+    key, digest = _save(conversation, command, storage, ["cancel_far_ahead_fee"])
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 14)
+
+    assert {k: v for k, v in _counted(logs).items() if k in ("started", "added")} == {
+        "started": 2,
+        "added": 1,
+    }
+
+
+def test_a_turn_queued_before_the_count_was_kept_still_lands(
+    environment, cases, storage
+):
+    """A command from before the start count was kept on it still settles; only
+    the counts that need the start are unknown."""
+    conversation, command = _command(environment, cases, 16)
+    payload = {k: v for k, v in command.payload.items() if k != "_starting_scenarios"}
+    HostedHarnessConversationMessage.no_workspace_objects.filter(id=command.id).update(
+        payload=payload
+    )
+    command.refresh_from_db()
+    key_one = evidence_drafts.scenario_key_for(cases[0])
+    key, digest = _save(conversation, command, storage, [key_one])
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 16)
+
+    assert [c.status for c in _refreshed(cases)] == ["drafted", "blocked"]
+    counted = _counted(logs)
+    assert (counted["started"], counted["added"], counted["unmatched"]) == (
+        None,
+        None,
+        None,
+    )
+    assert counted["scenarios"] == 3
+
+
+@pytest.mark.parametrize("analyzer", ["missing", "finds nothing"])
+def test_the_landing_logs_no_name_the_builder_wrote(
+    environment, cases, storage, analyzer, django_capture_on_commit_callbacks
+):
+    """Scenario names are model text written from the evidence: no log line of a
+    landing carries one, whatever the redaction analyzer finds."""
+    conversation, command = _command(environment, cases, 15)
+    key, digest = _save(
+        conversation,
+        command,
+        storage,
+        ["refund_for_jane_doe", "call_back_jane_doe_at_example_com"],
+    )
+    _end_turn(conversation, command, said="Drafted both.")
+    found = None if analyzer == "missing" else [[], []]
+
+    with (
+        capture_logs() as logs,
+        patch.object(evidence_drafts, "find_pii", return_value=found),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _promote(conversation, command, key, digest, 15)
+
+    assert [c.status for c in _refreshed(cases)] == ["blocked", "blocked"]
+    assert "jane" not in json.dumps(logs, default=str).lower()
 
 
 def test_an_injected_environment_change_keeps_nothing(environment, cases, storage):

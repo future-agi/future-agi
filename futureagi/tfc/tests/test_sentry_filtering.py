@@ -24,6 +24,7 @@ from sentry_sdk.scope import global_event_processors
 from tfc.logging import sentry
 from tfc.logging.sentry import (
     _REDACTED,
+    _before_breadcrumb,
     _event_scrubber,
     _get_before_send,
     _is_sensitive_key,
@@ -476,3 +477,87 @@ def test_transaction_scrubber_keeps_mapping_breadcrumb_contract():
     assert out["breadcrumbs"]["values"][0]["data"] == {
         "url": "https://example.test/telemetry/heartbeat/"
     }
+
+
+def test_a_frame_with_no_module_drops_every_frames_vars():
+    """When the scrub cannot tell where a frame ran, it assumes trace ingestion."""
+    frames = [
+        {"function": "<generated>", "vars": {"batch": "span text"}},
+        {"module": "accounts.views", "vars": {"user_id": "1"}},
+    ]
+    event = {"threads": {"values": [{"stacktrace": {"frames": frames}}]}}
+
+    out = before_send(event, {})
+
+    assert out is not None
+    assert [
+        f for f in out["threads"]["values"][0]["stacktrace"]["frames"] if "vars" in f
+    ] == []
+
+
+@pytest.mark.parametrize(
+    ("module", "stripped"),
+    [
+        ("tracer.utils.trace_ingestion", True),  # the module itself
+        ("tracer.utils.otel.media", True),  # a dotted child
+        ("tracer.utils.otel_metrics", False),  # a neighbour sharing the prefix
+        ("tracer.utils", False),  # the parent package
+    ],
+)
+def test_the_module_match_stops_at_a_dot(module, stripped):
+    frames = [
+        {"module": module, "vars": {"batch": "span text"}},
+        {"module": "accounts.views", "vars": {"user_id": "1"}},
+    ]
+    event = {"exception": {"values": [{"stacktrace": {"frames": frames}}]}}
+
+    out = before_send(event, {})
+
+    assert out is not None
+    [value] = out["exception"]["values"]
+    with_vars = [f for f in value["stacktrace"]["frames"] if "vars" in f]
+    assert len(with_vars) == (0 if stripped else 2)
+
+
+def test_an_event_whose_stacks_cannot_be_walked_is_dropped():
+    """Stacks it cannot read may hold a span batch it cannot remove."""
+    assert before_send({"message": "boom", "threads": ["not-a-mapping"]}, {}) is None
+
+
+# One breadcrumb hook, two scrubs. Each test fails if its half is removed.
+
+
+def test_the_breadcrumb_hook_drops_the_grpc_framework_request():
+    """django_socio_grpc's request container holds the raw spans. The crumb keeps
+    its record without it, and a framework crumb it cannot read is dropped."""
+    crumb = {
+        "category": "django_socio_grpc.request",
+        "level": "warning",
+        "message": "Unauthenticated : ObservationSpan/Export",
+        "data": {
+            "request": "GRPCRequestContainer(grpc_request=resource_spans {...})",
+            "status_code": "UNAUTHENTICATED",
+        },
+    }
+
+    out = _before_breadcrumb(crumb, {})
+
+    assert out is not None
+    assert out["data"] == {"status_code": "UNAUTHENTICATED"}
+    assert out["message"] == "Unauthenticated : ObservationSpan/Export"
+    unreadable = {"category": "django_socio_grpc.services", "data": "[raw request]"}
+    assert _before_breadcrumb(unreadable, {}) is None
+
+
+def test_the_breadcrumb_hook_keeps_the_vertex_credential_scrub():
+    """The Vertex credential load failure's crumb loses its message and data."""
+    rejected = '{"private_key": "SENTINEL-PK-breadcrumb"}'
+    crumb = {
+        "category": "LiteLLM",
+        "message": sentry._VERTEX_LOAD_MESSAGE + rejected,
+        "data": {"args": [rejected]},
+    }
+
+    out = _before_breadcrumb(crumb, {})
+
+    assert out == {"category": "LiteLLM", "message": sentry._VERTEX_SAFE_MESSAGE}

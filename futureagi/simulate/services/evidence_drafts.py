@@ -81,7 +81,8 @@ def is_evidence_command(command: HostedHarnessConversationMessage | None) -> boo
 
 
 def scenario_key_for(case: EvidenceImportCase) -> str:
-    """The key the builder is told to write a case's scenario under."""
+    """The name the builder is told to give a case's scenario. The builder takes
+    no key for a new scenario and keys it by its name, so this is its key too."""
     return f"evidence-{case.id.hex[:12]}"
 
 
@@ -128,7 +129,7 @@ def turn_message(
     shows = shows or {}
     asks = SHOWN if production else SHOWN_NOT_PRODUCTION
     listed = "\n".join(
-        f"- case {case.id}: write it under scenario_key {scenario_key_for(case)} "
+        f"- case {case.id}: submit its scenario with name {scenario_key_for(case)} "
         f"(the {source_noun(source_kind)} {case.source_id} in the evidence)"
         + (
             f"; the person asks: {asks[shows[str(case.id)]]}"
@@ -189,6 +190,9 @@ def turn_message(
         "evidence contradicts what the person says it records) is not written: say "
         "which case and why in your final reply, naming any existing scenario it "
         "duplicates.\n"
+        "- Give each scenario exactly the name its case lists below, though it reads "
+        "as a code: this import finds a scenario by that name alone, and one under "
+        "any other name is lost.\n"
         "- Do not run scenarios.\n\n"
         f"Cases:\n{listed}"
     )
@@ -235,7 +239,13 @@ def land(
             )
         )
         if cases:
-            _settle(environment, cases, archive, _last_words(conversation, command))
+            _settle(
+                environment,
+                cases,
+                archive,
+                _last_words(conversation, command),
+                started=payload.get("_starting_scenarios"),
+            )
         import_id = str(payload.get("_evidence_import_id") or "")
 
         def close() -> None:
@@ -254,7 +264,11 @@ def _settle(
     cases: list[EvidenceImportCase],
     archive: bytes,
     last_words: str,
+    *,
+    started: int | None,
 ) -> None:
+    """``started`` is how many scenarios the suite the turn started from held, as
+    its command keeps it; None for a command from before it was kept."""
     files = archives.read_archive(archive)
     basis = (
         drafts.fresh_draft(environment, "environment")
@@ -277,9 +291,10 @@ def _settle(
     if added is None:
         _block(cases, ENVIRONMENT_CHANGED)
         return
+    documents = suite_documents(split.suite)
     by_token = {
         _token(spelling): document
-        for document in suite_documents(split.suite)
+        for document in documents
         for spelling in (
             document.get("scenario_key"),
             document.get("name"),
@@ -318,12 +333,39 @@ def _settle(
                 "updated_at",
             ]
         )
+    drafted = sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases)
+    grown = None if started is None else max(0, len(documents) - started)
+    # Counts only: a scenario's name is model text written from the evidence. A
+    # turn whose reply says it drafted while its cases block shows here as
+    # scenarios added that no case took, as folders a valid index leaves out (a
+    # suite without one is read from its folders), or as nothing added at all.
     logger.info(
         "evidence_draft_landed",
         environment=str(environment.id),
-        drafted=sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases),
+        evidence_import=str(cases[0].evidence_import_id),
+        started=started,
+        scenarios=len(documents),
+        added=grown,
+        unmatched=None if grown is None else max(0, grown - drafted),
+        unindexed=max(0, _folders(split.suite) - len(documents)),
+        drafted=drafted,
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
     )
+
+
+def _folders(suite: dict[str, bytes]) -> int:
+    """How many scenario folders the suite holds: each one's scenario.json, at
+    the depth suite_documents reads folders from."""
+    return sum(
+        path.count("/") == 2 and path.endswith("/scenario.json") for path in suite
+    )
+
+
+def _scenarios_at_start(environment: HostedHarnessJob) -> int:
+    """How many scenarios the suite a drafting sandbox starts from holds: the
+    suite draft over the saved suite, as the sandbox composes its workspace."""
+    basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
+    return len((basis.documents or {}).get("scenarios") or []) if basis else 0
 
 
 def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
@@ -526,6 +568,9 @@ def start_drafting(
                 "_origin": ORIGIN,
                 "_evidence_import_id": str(locked.id),
                 "_case_ids": [str(case.id) for case in cases],
+                # Kept now, so an edit while the turn drafts never moves what
+                # the landing counts its added scenarios against.
+                "_starting_scenarios": _scenarios_at_start(environment),
                 **({"_author_id": str(user.id)} if user is not None else {}),
             },
         )

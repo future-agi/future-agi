@@ -673,8 +673,10 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
     """
     from simulate.services.harness_credential_probes import (
         probe_all,
+        probe_livekit_phone_routing,
         probe_provider_target,
     )
+    from simulate.services.phone_telephony import platform_phone_telephony
 
     if secret_payload["source"]["kind"] == "remote":
         return []
@@ -709,6 +711,14 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
         )
         if target is not None:
             results.append(target)
+    if connector == "phone" and mode == "connect_only":
+        routing = probe_livekit_phone_routing(
+            str(config.get("phone_number") or ""),
+            secret_values,
+            platform_phone_telephony().get("SIP_OUTBOUND_FROM_NUMBER", ""),
+        )
+        if routing is not None:
+            results.append(routing)
     return [result.as_dict() for result in results]
 
 
@@ -906,10 +916,14 @@ def _preflight_checks(
             )
         )
     target_probes = []
+    routing_probes = []
     key_probes = []
     for item in probe:
-        if str(item.get("provider") or "").endswith("_target"):
+        provider = str(item.get("provider") or "")
+        if provider.endswith("_target"):
             target_probes.append(item)
+        elif provider == "livekit_routing":
+            routing_probes.append(item)
         else:
             key_probes.append(item)
     checks.append(
@@ -930,6 +944,16 @@ def _preflight_checks(
             "Check the agent ID belongs to the account behind {aliases}",
         )
     )
+    if routing_probes:
+        checks.append(
+            _probe_check(
+                "phone_routing",
+                "Phone number reaches the agent",
+                routing_probes,
+                "",
+                "Fix the number, trunk or dispatch rule named above on your LiveKit project",
+            )
+        )
     checks.append(_dialer_check(connector))
     return checks
 
@@ -2118,6 +2142,15 @@ class HostedHarnessProvider:
         }
     )
 
+    @classmethod
+    def _behavioural_fields(cls) -> frozenset[str]:
+        """The behavioural fields an amend takes: `faults` only while actors are on."""
+        from simulate.services.harness_versioning.versions import actors_enabled
+
+        if actors_enabled():
+            return cls._BEHAVIOURAL_FIELDS
+        return cls._BEHAVIOURAL_FIELDS - {"faults"}
+
     def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
         from simulate.models.agent_definition import AgentDefinition
@@ -2125,7 +2158,7 @@ class HostedHarnessProvider:
         from simulate.services.harness_scenarios import NOISE_LABELS
 
         # A call has no turn budget; a chat has no accent or room behind the caller.
-        behavioural = self._BEHAVIOURAL_FIELDS - (
+        behavioural = self._behavioural_fields() - (
             {"max_turns"} if spoken else {"background_noise"}
         )
         persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
@@ -2525,7 +2558,7 @@ class HostedHarnessProvider:
                                 }
                             )
                             continue
-                    elif field in self._BEHAVIOURAL_FIELDS:
+                    elif field in self._behavioural_fields():
                         if not rework:
                             receipts.append(
                                 {

@@ -204,22 +204,27 @@ export default function VoiceCallDrawer({
             },
           ]
         : []),
-      {
-        label: TRIAL_CHANGES_COPY.tab,
-        value: "world_changes",
-        icon: "solar:global-linear",
-        content: (
-          <>
-            {attemptSelect}
-            <TrialChangesPanel
-              trialState={
-                chosen ? chosen.trial_state : data?.trial_state ?? null
-              }
-              underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
-            />
-          </>
-        ),
-      },
+      // The World state view shows only when the call detail says actors are on.
+      ...(data?.actors_enabled === true
+        ? [
+            {
+              label: TRIAL_CHANGES_COPY.tab,
+              value: "world_changes",
+              icon: "solar:global-linear",
+              content: (
+                <>
+                  {attemptSelect}
+                  <TrialChangesPanel
+                    trialState={
+                      chosen ? chosen.trial_state : data?.trial_state ?? null
+                    }
+                    underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
+                  />
+                </>
+              ),
+            },
+          ]
+        : []),
     ];
   }, [
     task.id,

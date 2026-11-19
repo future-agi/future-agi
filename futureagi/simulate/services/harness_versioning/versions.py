@@ -118,6 +118,10 @@ def versioning_enabled() -> bool:
     return bool(getattr(settings, "HARNESS_VERSIONING_ENABLED", False))
 
 
+def actors_enabled() -> bool:
+    return bool(getattr(settings, "HARNESS_ACTORS_ENABLED", False))
+
+
 def environment_head(job: HostedHarnessJob) -> HostedHarnessJob | None:
     """The environment a job belongs to, read fresh; ``None`` once it is deleted."""
     return (
