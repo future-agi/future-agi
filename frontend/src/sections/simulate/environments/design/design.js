@@ -237,7 +237,7 @@ function questionsOf(text) {
  * The design for a draft at time `now`: the brief, each part of the proposal
  * (null until its read time), the files used and the ones that couldn't be
  * read, the parts still being read, and whether Approve is blocked because
- * nothing says what the agent does.
+ * there is no agent, no readable file and nothing in the description to build.
  */
 export function designSummary(draft, now) {
   const { description = "", agent = null } = draft;
@@ -294,7 +294,8 @@ export function designSummary(draft, now) {
         src: "Simulated in the world",
       })),
   ];
-  const approveBlocked = !agent && toolRows.length === 0;
+  // A readable file is enough to build from, even when it names no tool.
+  const approveBlocked = !agent && !sources.length && toolRows.length === 0;
 
   // Records come with what the agent does; a table a file supplies isn't generated again.
   const records = approveBlocked
