@@ -135,11 +135,18 @@ _RUN_METADATA_FIELDS = (
 # case of the suite there, held-back ones included; only these fields stay, and a cause
 # only as a value from the closed set.
 _RUN_FAILURE_FIELDS = ("domain", "stage", "code", "message")
+# A run that stopped because a process it needs didn't start in time records this closed code,
+# without a cause: the run cannot tell which process it was, so the words don't say.
+START_TIMEOUT_CODE = "depends_on_timeout"
+START_TIMEOUT_LINE = (
+    "Stopped — a service this run needs didn't start in time. Run it again."
+)
 # The message a coding agent reads instead of the stored one, which can end with what
 # the guest printed: the label of its code.
 _FAILURE_LABELS = {
     "authoring_runtime_validation_failed": RUNTIME_VALIDATION_FAILED,
     "authoring_failed": AUTHORING_FAILED,
+    START_TIMEOUT_CODE: START_TIMEOUT_LINE,
 }
 # What each cause means and what to do next, in plain words; the stable code stays beside it.
 CAUSE_WORDS = {
@@ -151,6 +158,10 @@ CAUSE_WORDS = {
         "Didn't start in time — the agent wasn't ready within the limit. "
         "Run it again; if it repeats, make it start or listen sooner."
     ),
+    "dependency_not_ready_in_time": (
+        "Didn't start in time — a service this run needs wasn't ready within the limit. "
+        "Run it again."
+    ),
     "chat_target_timeout": (
         "Stopped — the agent didn't reply to a message in time. "
         "Run it again. If it repeats, make the agent reply faster."
@@ -159,29 +170,28 @@ CAUSE_WORDS = {
         "Stopped — the agent refused the connection. "
         "Check that it listens on the port it was given, then push a new agent version."
     ),
-    # Exit 78 is deterministic, so running it again cannot help; the agent's own start, on the
-    # reader's machine, shows the error. No guest text reaches the reader.
+    # No guest text reaches the reader, so the next step is the reader's own.
     "unknown": (
-        "The agent stopped before it was ready and didn't say why. "
-        "Start it on your own machine to see the error it prints."
+        "We couldn't run this agent version in its environment, and the run recorded no cause. "
+        "Run it again; if it repeats, start the agent on your own machine and check that it "
+        "comes up."
     ),
 }
 
 
-# A start timeout recorded without a cause (before failures carried one, or by an older
-# image) names its closed code in the failure; it reads as the slow start it was.
-_START_TIMEOUT_CODE = "depends_on_timeout"
-
-
 def failure_cause(failure: Mapping[str, Any]) -> str | None:
-    """The cause a failure reads with: its own from the closed set, or the slow start that a
-    start timeout without one names; None for a failure that has neither."""
-    cause = closed_failure_cause(failure["cause"]) if "cause" in failure else None
-    if cause in (None, UNKNOWN_FAILURE_CAUSE) and _START_TIMEOUT_CODE in (
-        f"{failure.get('code') or ''} {failure.get('message') or ''}"
-    ):
-        return "agent_not_ready_in_time"
-    return cause
+    """The cause a failure reads with: its own from the closed set (``unknown`` for a value
+    outside it), or None when it recorded none. Nothing else decides it: the message can carry
+    what the guest printed."""
+    return closed_failure_cause(failure["cause"]) if "cause" in failure else None
+
+
+def has_plain_words(failure: Mapping[str, Any]) -> bool:
+    """Whether a failure reads in fixed plain words for everyone: it has a cause, or it is a
+    run's start timeout."""
+    return (
+        failure_cause(failure) is not None or failure.get("code") == START_TIMEOUT_CODE
+    )
 
 
 def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:

@@ -878,6 +878,7 @@ FAILURE_CAUSES = frozenset(
     {
         "agent_exited_before_ready",
         "agent_not_ready_in_time",
+        "dependency_not_ready_in_time",
         "chat_target_timeout",
         "chat_target_refused",
     }

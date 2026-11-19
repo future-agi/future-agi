@@ -21,8 +21,10 @@ from simulate.models import TestExecution as Execution
 from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.held_back import (
     CAUSE_WORDS,
+    START_TIMEOUT_LINE,
     coding_agent_failure_message,
     failure_cause,
+    has_plain_words,
     held_back,
     verify_run,
     version_verify,
@@ -1018,6 +1020,7 @@ class TestWhatACodingAgentReads:
         [
             ("agent_exited_before_ready", "agent_exited_before_ready"),
             ("chat_target_timeout", "chat_target_timeout"),
+            ("dependency_not_ready_in_time", "dependency_not_ready_in_time"),
             ("unknown", "unknown"),
             # A guest that wrote free text in the cause: the key reads none of it.
             ("RuntimeError: {hidden} said hi", "unknown"),
@@ -1080,9 +1083,16 @@ class TestWhatACodingAgentReads:
                 "agent_exited_before_ready",
             ),
             (None, "agent: exited early", None),
-            # A start timeout recorded without a cause, or by an older image, is a slow start.
-            (None, _START_TIMEOUT, "agent_not_ready_in_time"),
-            ("unknown", _START_TIMEOUT, "agent_not_ready_in_time"),
+            # The cause decides, never the message: a start timeout recorded without a cause,
+            # or as unknown, is not read as the agent's slow start.
+            (None, _START_TIMEOUT, None),
+            ("unknown", _START_TIMEOUT, "unknown"),
+            # A process the agent depends on was not ready: its own cause, not the agent's.
+            (
+                "dependency_not_ready_in_time",
+                _START_TIMEOUT,
+                "dependency_not_ready_in_time",
+            ),
             # Exit 78 with no recorded cause: the unknown words, not the guest's message.
             ("unknown", "agent: exited early", "unknown"),
         ],
@@ -1096,7 +1106,7 @@ class TestWhatACodingAgentReads:
             "post",
             f"{BASE}/{environment.id}/run/",
             {"scenario_ids": _suite_keys(environment)[:2], "trials": 1},
-            HTTP_IDEMPOTENCY_KEY=f"person-cause-{cause}-{read}",
+            HTTP_IDEMPOTENCY_KEY=f"person-cause-{cause}-{read}-{len(detail)}",
         )
         assert created.status_code == 202, created.content
         raw = f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: {detail}"
@@ -1121,6 +1131,42 @@ class TestWhatACodingAgentReads:
         # With a cause every call says it plainly, and the guest text stays on the job.
         # Without one, a person's calls keep the stored message as before.
         assert reasons == ({_cause_read(read)} if read else {raw})
+        run.refresh_from_db()
+        assert run.failure["message"] == raw
+
+    def test_a_person_s_calls_read_a_run_s_start_timeout_in_plain_words(
+        self, api_client, environment, keys
+    ):
+        created = _as(
+            api_client,
+            keys.user,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": _suite_keys(environment)[:2], "trials": 1},
+            HTTP_IDEMPOTENCY_KEY="person-run-start-timeout",
+        )
+        assert created.status_code == 202, created.content
+        # The run path records the closed code and no cause; the message ends with what the
+        # process printed.
+        raw = f"{_START_TIMEOUT}\n--- output ---\nlistening soon"
+        run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
+        run.state = HostedHarnessJob.State.FAILED
+        run.failure = {
+            "domain": "infrastructure",
+            "stage": "running",
+            "code": "depends_on_timeout",
+            "message": raw,
+        }
+        run.save(update_fields=["state", "failure", "updated_at"])
+
+        project_terminal_job_onto_run(run, timezone.now())
+
+        reasons = set(
+            CallExecution.objects.filter(
+                test_execution_id=created.json()["test_execution_id"]
+            ).values_list("ended_reason", flat=True)
+        )
+        assert reasons == {START_TIMEOUT_LINE}
         run.refresh_from_db()
         assert run.failure["message"] == raw
 
@@ -1200,28 +1246,45 @@ def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():
         "Run it again; if it repeats, make it start or listen sooner. "
         "(cause: agent_not_ready_in_time)"
     )
-    # Exit 78 with no recorded cause: words only, with a next step and no code. It is
-    # deterministic, so they never say to run it again.
+    # A process the agent depends on was not ready: its own words, which never blame the agent.
+    assert coding_agent_failure_message(
+        {**failure, "cause": "dependency_not_ready_in_time"}
+    ) == (
+        "Didn't start in time — a service this run needs wasn't ready within the limit. "
+        "Run it again. (cause: dependency_not_ready_in_time)"
+    )
+    # Exit 78 with no recorded cause: words only, with a next step and no code.
     assert coding_agent_failure_message({**failure, "cause": "unknown"}) == (
-        "The agent stopped before it was ready and didn't say why. "
-        "Start it on your own machine to see the error it prints."
+        "We couldn't run this agent version in its environment, and the run recorded no "
+        "cause. Run it again; if it repeats, start the agent on your own machine and check "
+        "that it comes up."
     )
     # Without one, the fixed label for its code.
     assert (
         coding_agent_failure_message({"code": "authoring_runtime_validation_failed"})
         == "We couldn't run this agent version in its environment"
     )
-    # A start timeout without a cause, or with one nobody recorded, reads as the slow start;
-    # so does an older build's own start-timeout code.
+    # The cause decides, never the message, which can carry what the guest printed: an exit-78
+    # start timeout recorded as unknown, as an invalid value or with no cause stays so.
     start_timeout = {
         "code": "authoring_runtime_validation_failed",
         "message": f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: {_START_TIMEOUT}",
     }
-    for stored in ({}, {"cause": "unknown"}):
-        assert failure_cause({**start_timeout, **stored}) == "agent_not_ready_in_time"
-    assert (
-        failure_cause({"code": "depends_on_timeout", "domain": "infrastructure"})
-        == "agent_not_ready_in_time"
+    assert failure_cause({**start_timeout, "cause": "unknown"}) == "unknown"
+    assert failure_cause({**start_timeout, "cause": "depends_on_timeout"}) == "unknown"
+    assert failure_cause(start_timeout) is None
+    assert not has_plain_words(start_timeout)
+    # A run's start timeout, recorded by its closed code without a cause, reads as one: it names
+    # no process and never says it doesn't count against the agent.
+    run_timeout = {
+        "code": "depends_on_timeout",
+        "domain": "infrastructure",
+        "message": _START_TIMEOUT,
+    }
+    assert failure_cause(run_timeout) is None
+    assert has_plain_words(run_timeout)
+    assert coding_agent_failure_message(run_timeout) == (
+        "Stopped — a service this run needs didn't start in time. Run it again."
     )
     # A named cause wins over the code, and a failure with neither has none.
     assert (

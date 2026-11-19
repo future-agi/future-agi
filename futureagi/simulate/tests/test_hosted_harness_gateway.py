@@ -2844,6 +2844,7 @@ _NO_FILE = object()  # an older guest image writes no cause file
         (78, None, "unknown"),
         (78, "agent_exited_before_ready", "agent_exited_before_ready"),
         (78, "chat_target_timeout", "chat_target_timeout"),
+        (78, "dependency_not_ready_in_time", "dependency_not_ready_in_time"),
         (78, "RuntimeError: a held-back case", "unknown"),
         (78, ["agent_exited_before_ready"], "unknown"),
     ],

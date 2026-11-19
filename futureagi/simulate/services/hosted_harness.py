@@ -3121,7 +3121,7 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     """Move a terminal job's Run, and the calls it left open, to their end states."""
     from simulate.selectors.held_back import (
         coding_agent_failure_message,
-        failure_cause,
+        has_plain_words,
     )
 
     if not job.test_execution_id:
@@ -3129,11 +3129,12 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     failure = job.failure or {}
     message = failure.get("message")
     if message and (
-        failure_cause(failure) is not None
+        has_plain_words(failure)
         or ((job.payload or {}).get("metadata") or {}).get("coding_agent_key_id")
     ):
-        # A named cause reads in plain words for everyone, and a coding agent reads only
-        # fixed text: the stored message can end with guest output, which stays on the job.
+        # A cause or a run's start timeout reads in plain words for everyone, and a coding
+        # agent reads only fixed text: the stored message can end with guest output, which
+        # stays on the job.
         message = coding_agent_failure_message(failure)
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
