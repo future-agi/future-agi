@@ -19,6 +19,10 @@ import CustomTooltip from "src/components/tooltip";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { paths } from "src/routes/paths";
 import { RouterLink } from "src/routes/components";
+import {
+  useApproveDesign,
+  useDesignBuild,
+} from "src/api/simulate-environments/designBuild";
 import ChatSplitPane from "../components/ChatSplitPane";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { designSummary } from "./design";
@@ -78,10 +82,29 @@ function agentTurn(agent, summary) {
   };
 }
 
+// What the builder says once the design is approved, by build status.
+function buildTurn(build) {
+  const failed = build.validation?.checks.find((c) => !c.ok);
+  const text = {
+    building:
+      "Approved. Building the records and data, tool handlers, rules and checks, then the scenarios. It's checked before it saves.",
+    saved: `Built and checked, and saved as v${build.release?.version}. Nothing runs until you connect an agent and start a run.`,
+    needs_repair: [
+      failed && `A check failed: ${failed.label.toLowerCase()}.`,
+      failed?.detail,
+      "Nothing was saved and the draft is kept, so you can fix it and approve again.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  }[build.status === "validating" ? "building" : build.status];
+  return { id: "build", role: "builder", steps: [{ kind: "note", text }] };
+}
+
 // The builder's turns on a design, read only: an agent's build first says
 // what it read from the agent, then what it found, then its first open
-// question. Nothing is said before the page shows it.
-function turnsOf(draft, summary) {
+// question, then how the approved build went. Nothing is said before the page
+// shows it.
+function turnsOf(draft, summary, build) {
   const turns = draft.agent ? [agentTurn(draft.agent, summary)] : [];
   const reading = summary.readingParts.length > 0;
   let text;
@@ -129,17 +152,32 @@ function turnsOf(draft, summary) {
         },
       ],
     });
+  if (build) turns.push(buildTurn(build));
   return turns;
 }
 
+// The header pill once approved: [status, label] by build status.
+const BUILD_PILL = {
+  building: ["building", "Building"],
+  validating: ["building", "Validating"],
+  needs_repair: ["needs_changes", "Needs repair"],
+};
+
 /* The bar above the chat and the design: back, the draft's name, where it
    stands, and its overflow menu. */
-function DesignHeader({ draft, blocked }) {
+function DesignHeader({ draft, blocked, build }) {
   const navigate = useNavigate();
   const discard = useDesignDraftStore((s) => s.discardDesignDraft);
   const [anchor, setAnchor] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const root = paths.dashboard.simulate.environments.root;
+  const [status, label] =
+    build?.status === "saved"
+      ? ["passed", `Saved v${build.release?.version}`]
+      : BUILD_PILL[build?.status] || [
+          "needs_review",
+          blocked ? "Needs detail" : "Awaiting approval",
+        ];
   return (
     <Stack
       direction="row"
@@ -168,11 +206,7 @@ function DesignHeader({ draft, blocked }) {
       >
         {draft.name}
       </Typography>
-      <StatusBadge
-        status="needs_review"
-        label={blocked ? "Needs detail" : "Awaiting approval"}
-        variant="badge"
-      />
+      <StatusBadge status={status} label={label} variant="badge" />
       <Box flex={1} />
       <CustomTooltip show title="More actions" size="small" arrow>
         <IconButton
@@ -207,7 +241,7 @@ function DesignHeader({ draft, blocked }) {
         open={confirm}
         onClose={() => setConfirm(false)}
         title="Discard this draft?"
-        content={`${draft.name} and its design are removed. Nothing was built.`}
+        content={`${draft.name} and its design are removed.${build ? "" : " Nothing was built."}`}
         action={
           <Button
             size="small"
@@ -228,18 +262,26 @@ function DesignHeader({ draft, blocked }) {
 DesignHeader.propTypes = {
   draft: PropTypes.object.isRequired,
   blocked: PropTypes.bool,
+  build: PropTypes.shape({
+    status: PropTypes.string,
+    release: PropTypes.shape({ version: PropTypes.number }),
+  }),
 };
 
 /**
  * The design proposed before a build, from Build from scratch or an agent's
  * Build environment: the builder's chat on the left, the design on the right.
- * Nothing is built until it's approved, and approving is UI only for now.
+ * Nothing is built until it's approved; the build after approval is a stub
+ * for now (useDesignBuild).
  */
 export default function DesignPage() {
   const { draftId } = useParams();
   const draft = useDesignDraftStore((s) => s.drafts[draftId]);
   const addFilesToDesign = useDesignDraftStore((s) => s.addFilesToDesign);
   const setDepChoice = useDesignDraftStore((s) => s.setDepChoice);
+  const leaveOutFile = useDesignDraftStore((s) => s.leaveOutFile);
+  const build = useDesignBuild(draftId);
+  const approve = useApproveDesign(draftId);
   const readUntil = draft?.readUntil || 0;
   const [now, setNow] = useState(Date.now);
 
@@ -259,8 +301,8 @@ export default function DesignPage() {
     [draft, now],
   );
   const turns = useMemo(
-    () => (draft ? turnsOf(draft, summary) : []),
-    [draft, summary],
+    () => (draft ? turnsOf(draft, summary, build) : []),
+    [draft, summary, build],
   );
   const chat = useCallback(
     ({ collapse, open, collapseRef }) => (
@@ -320,6 +362,7 @@ export default function DesignPage() {
       <DesignHeader
         draft={draft}
         blocked={!summary.readingParts.length && summary.approveBlocked}
+        build={build}
       />
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <ChatSplitPane chat={chat} busy={summary.readingParts.length > 0}>
@@ -331,6 +374,9 @@ export default function DesignPage() {
               onDepChoice={(depId, choice) =>
                 setDepChoice(draftId, depId, choice)
               }
+              build={build}
+              onApprove={() => approve.mutate()}
+              onLeaveOut={(fileId) => leaveOutFile(draftId, fileId)}
             />
           </Box>
         </ChatSplitPane>

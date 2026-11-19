@@ -59,9 +59,53 @@ export const useDesignDraftStore = create(
           return id;
         },
 
+        // Approval: the stub build runs from this moment (designBuildOf).
+        startDesignBuild: (draftId) =>
+          set(
+            (s) =>
+              s.drafts[draftId]
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        build: { startedAt: Date.now() },
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "startDesignBuild",
+          ),
+
+        // A file left out to repair a failed build: the design is read again
+        // without it and waits for approval again.
+        leaveOutFile: (draftId, fileId) =>
+          set(
+            (s) =>
+              s.drafts[draftId]
+                ? {
+                    drafts: {
+                      ...s.drafts,
+                      [draftId]: {
+                        ...s.drafts[draftId],
+                        files: s.drafts[draftId].files.filter(
+                          (f) => f.id !== fileId,
+                        ),
+                        readUntil: Date.now() + READ_MS,
+                        build: null,
+                      },
+                    },
+                  }
+                : {},
+            false,
+            "leaveOutFile",
+          ),
+
         // Files added while the design waits (from the page, later the chat):
         // merged by name and read again. Returns the merge note, or null for
-        // an unknown draft.
+        // an unknown draft. Any edit drops a finished build, so the changed
+        // design waits for approval again.
         addFilesToDesign: (draftId, files) => {
           const draft = get().drafts[draftId];
           if (!draft) return null;
@@ -75,6 +119,7 @@ export const useDesignDraftStore = create(
                     ...draft,
                     files: next,
                     readUntil: Date.now() + READ_MS,
+                    build: null,
                   },
                 },
               }),
@@ -94,6 +139,7 @@ export const useDesignDraftStore = create(
                       ...s.drafts,
                       [draftId]: {
                         ...s.drafts[draftId],
+                        build: null,
                         depChoices: {
                           ...s.drafts[draftId].depChoices,
                           [depId]: choice,
