@@ -180,7 +180,7 @@ describe("ScenarioEditor negative controls and must pass", () => {
 
   it("adds a control and sends it as a re-proof edit", async () => {
     const { default: ScenarioEditor } = await import("../ScenarioEditor");
-    const onSave = vi.fn();
+    const onSave = vi.fn().mockResolvedValue({ refused: [], failed: false });
     render(
       <ScenarioEditor
         open
@@ -234,7 +234,7 @@ describe("ScenarioEditor negative controls and must pass", () => {
 
   it("sends must_pass without a re-proof", async () => {
     const { default: ScenarioEditor } = await import("../ScenarioEditor");
-    const onSave = vi.fn();
+    const onSave = vi.fn().mockResolvedValue({ refused: [], failed: false });
     render(
       <ScenarioEditor
         open
