@@ -3,11 +3,13 @@ import { useState } from "react";
 import {
   Box,
   ButtonBase,
+  Collapse,
   IconButton,
   Menu,
   MenuItem,
   Stack,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { relativeTime } from "src/utils/format-time";
@@ -41,6 +43,7 @@ export default function HistoryEntry({
   const { piece, version, badges, originLine } = entry;
   const [menu, setMenu] = useState(null);
   const [confirming, setConfirming] = useState(false);
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const { history, menu: MENU } = VERSIONS_COPY;
   const title = `${VERSIONS_COPY.pieces[piece]} ${named(version)}`;
   const meta = [
@@ -197,8 +200,10 @@ export default function HistoryEntry({
         onConfirm={confirm}
         onClose={() => setConfirming(false)}
       />
-      {expanded && (
-        // Full width, not indented under the title: the changes hold tables.
+      {/* Slides open and shut; mounted only while open, so its changes load
+          when the row is first opened. */}
+      <Collapse in={expanded} unmountOnExit timeout={reduceMotion ? 0 : "auto"}>
+        {/* Full width, not indented under the title: the changes hold tables. */}
         <Box sx={{ px: 2.5, pb: 2 }}>
           <VersionDetail
             envId={envId}
@@ -208,7 +213,7 @@ export default function HistoryEntry({
             siblings={siblings}
           />
         </Box>
-      )}
+      </Collapse>
     </Box>
   );
 }
