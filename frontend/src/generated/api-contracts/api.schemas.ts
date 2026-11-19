@@ -21968,7 +21968,9 @@ export interface HarnessRunPlanApi {
 
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
-  scenario_ids: string[];
+  scenario_ids?: string[];
+  /** A finished trial to replay with the tool answers it recorded; replaces scenario_ids, trials and seed. */
+  recorded_replay_of?: string;
   /**
    * @minimum 1
    * @maximum 20
@@ -26252,6 +26254,11 @@ export const TestExecutionItemResponseApiOutcomeStatus = {
   no_score: "no_score",
 } as const;
 
+export interface RecordedReplayOfApi {
+  call_execution_id: string;
+  test_execution_id: string;
+}
+
 export interface TestExecutionItemResponseApi {
   /** Comparable trials that passed. */
   trials_passed: number;
@@ -26319,6 +26326,7 @@ export interface TestExecutionItemResponseApi {
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
   readonly agent_differs?: boolean;
+  recorded_replay?: RecordedReplayOfApi;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -28071,6 +28079,43 @@ export interface TrialStateApi {
   notices: TrialNoticeApi[];
 }
 
+/**
+ * How the original trial ended; on a trial's detail only.
+ */
+export type RecordedReplayOriginalApiOutcome =
+  (typeof RecordedReplayOriginalApiOutcome)[keyof typeof RecordedReplayOriginalApiOutcome];
+
+export const RecordedReplayOriginalApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
+  passed: "passed",
+  failed: "failed",
+  inconclusive: "inconclusive",
+  no_score: "no_score",
+  error: "error",
+} as const;
+
+/**
+ * Set when this trial is itself a recorded replay: the trial it replays.
+ */
+export interface RecordedReplayOriginalApi {
+  call_execution_id: string;
+  test_execution_id: string;
+  /** How the original trial ended; on a trial's detail only. */
+  outcome?: RecordedReplayOriginalApiOutcome;
+}
+
+export interface RecordedReplayApi {
+  /** The trial can be replayed with the tool answers it recorded. */
+  available: boolean;
+  /**
+   * Why it can't, in the words the trial shows.
+   * @minLength 1
+   */
+  unavailable_reason: string;
+  original: RecordedReplayOriginalApi;
+}
+
 export interface CallExecutionV3DetailResponseApi {
   readonly id?: string;
   /** @minLength 1 */
@@ -28230,6 +28275,7 @@ export interface CallExecutionV3DetailResponseApi {
   comparable: boolean;
   /** @minLength 1 */
   not_comparable_reason: string;
+  recorded_replay: RecordedReplayApi;
   scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */
@@ -28805,6 +28851,7 @@ export interface RunExecutionApi {
   resume: RunResumeApi;
   summary: RunSummaryApi;
   fix_run?: RunFixRunApi;
+  recorded_replay?: RecordedReplayOfApi;
 }
 
 export interface SimulateRunV3ScoringCountsApi {

@@ -29,6 +29,8 @@ RECORDED_FIELDS = (
     "error",
     "fault",
     "received",
+    # The route and query of a call the agent made over HTTP through its tool proxy.
+    "path",
 )
 # A recording larger than this is refused rather than carried in the replay's run.
 MAX_RECORDING_BYTES = 1_000_000

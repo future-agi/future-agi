@@ -47977,7 +47977,15 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod.object({
         .min(1)
         .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsItemMax),
     )
-    .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax),
+    .max(simulateApiHarnessEnvironmentsRunBodyScenarioIdsMax)
+    .optional(),
+  recorded_replay_of: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A finished trial to replay with the tool answers it recorded; replaces scenario_ids, trials and seed.",
+    ),
   trials: zod
     .number()
     .min(1)
@@ -50752,7 +50760,15 @@ export const SimulateApiHarnessJobsRunsBody = zod.object({
     .array(
       zod.string().min(1).max(simulateApiHarnessJobsRunsBodyScenarioIdsItemMax),
     )
-    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax),
+    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax)
+    .optional(),
+  recorded_replay_of: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "A finished trial to replay with the tool answers it recorded; replaces scenario_ids, trials and seed.",
+    ),
   trials: zod
     .number()
     .min(1)
@@ -58491,6 +58507,12 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
           })
           .nullish(),
         agent_differs: zod.boolean().optional(),
+        recorded_replay: zod
+          .object({
+            call_execution_id: zod.string().uuid(),
+            test_execution_id: zod.string().uuid(),
+          })
+          .optional(),
       }),
     )
     .optional(),
@@ -61437,6 +61459,35 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       "False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons.",
     ),
   not_comparable_reason: zod.string().min(1),
+  recorded_replay: zod.object({
+    available: zod
+      .boolean()
+      .describe("The trial can be replayed with the tool answers it recorded."),
+    unavailable_reason: zod
+      .string()
+      .min(1)
+      .describe("Why it can't, in the words the trial shows."),
+    original: zod
+      .object({
+        call_execution_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
+        outcome: zod
+          .enum([
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "no_score",
+            "error",
+          ])
+          .optional()
+          .describe("How the original trial ended; on a trial's detail only."),
+      })
+      .describe(
+        "Set when this trial is itself a recorded replay: the trial it replays.",
+      ),
+  }),
   scoring_status: zod.enum([
     "not_applicable",
     "pending",
@@ -62372,6 +62423,12 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .object({
         id: zod.string().uuid(),
         label: zod.string(),
+      })
+      .optional(),
+    recorded_replay: zod
+      .object({
+        call_execution_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
       })
       .optional(),
   }),

@@ -57070,6 +57070,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "trial_state",
         "comparable",
         "not_comparable_reason",
+        "recorded_replay",
         "scoring_status",
         "csat_status",
         "csat_reason",
@@ -57577,6 +57578,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+        recorded_replay: {
+          $ref: "#/definitions/RecordedReplay",
         },
         scoring_status: {
           title: "Scoring status",
@@ -69716,7 +69720,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessRunCreate: {
-      required: ["scenario_ids"],
       type: "object",
       properties: {
         scenario_ids: {
@@ -69727,6 +69730,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
           maxItems: 1000,
+        },
+        recorded_replay_of: {
+          title: "Recorded replay of",
+          description:
+            "A finished trial to replay with the tool answers it recorded; replaces scenario_ids, trials and seed.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
         trials: {
           title: "Trials",
@@ -98283,6 +98294,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    RecordedReplay: {
+      required: ["available", "unavailable_reason", "original"],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          description:
+            "The trial can be replayed with the tool answers it recorded.",
+          type: "boolean",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          description: "Why it can't, in the words the trial shows.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        original: {
+          $ref: "#/definitions/RecordedReplayOriginal",
+        },
+      },
+    },
     SimulateRunV3EvaluationResult: {
       required: [
         "id",
@@ -117038,6 +117071,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         fix_run: {
           $ref: "#/definitions/RunFixRun",
         },
+        recorded_replay: {
+          $ref: "#/definitions/RecordedReplayOf",
+        },
       },
     },
     RunFacets: {
@@ -117547,6 +117583,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Agent differs",
           type: "boolean",
           readOnly: true,
+        },
+        recorded_replay: {
+          $ref: "#/definitions/RecordedReplayOf",
         },
       },
     },
@@ -123585,6 +123624,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    RecordedReplayOriginal: {
+      description:
+        "Set when this trial is itself a recorded replay: the trial it replays.",
+      required: ["call_execution_id", "test_execution_id"],
+      type: "object",
+      properties: {
+        call_execution_id: {
+          title: "Call execution id",
+          type: "string",
+          format: "uuid",
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        outcome: {
+          title: "Outcome",
+          description:
+            "How the original trial ended; on a trial's detail only.",
+          type: "string",
+          enum: [
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "no_score",
+            "error",
+          ],
+        },
+      },
+      "x-nullable": true,
     },
     ActorDecision: {
       description:
@@ -134456,6 +134530,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    RecordedReplayOf: {
+      required: ["call_execution_id", "test_execution_id"],
+      type: "object",
+      properties: {
+        call_execution_id: {
+          title: "Call execution id",
+          type: "string",
+          format: "uuid",
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     RunFixRun: {
       required: ["id", "label"],
