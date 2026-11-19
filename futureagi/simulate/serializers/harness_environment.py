@@ -127,7 +127,7 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
     environment_version = EnvironmentVersionRefSerializer(allow_null=True)
     # True when the run covered only some of the environment's scenarios;
     # null for a Simulate run, which has no environment to compare with.
-    partial = serializers.BooleanField(allow_null=True)
+    partial = serializers.BooleanField(allow_null=True)  # type: ignore[assignment]  # the API field is named partial, as BaseSerializer's own
     outcome_passed = serializers.IntegerField(
         allow_null=True, help_text="Passed receipts; null for a run without receipts."
     )

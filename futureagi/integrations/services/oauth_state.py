@@ -21,7 +21,7 @@ def read_state(
     state: str, *, salt: str, cache_prefix: str, ttl_seconds: int, label: str
 ) -> StateData:
     try:
-        state_data = signing.loads(state, salt=salt, max_age=ttl_seconds)
+        state_data: StateData = signing.loads(state, salt=salt, max_age=ttl_seconds)
     except signing.BadSignature as exc:
         raise ValueError(f"Invalid or expired {label} installation state.") from exc
     stored = cache.get(f"{cache_prefix}:{state_data.get('nonce', '')}")

@@ -105,7 +105,7 @@ class AgentVersionResponseSerializer(VersionCheckFields, serializers.ModelSerial
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     agent_kind = serializers.SerializerMethodField()
     api_key = serializers.SerializerMethodField()
-    source = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()  # type: ignore[assignment]  # the API field is named source, as Field's own
 
     class Meta:
         model = AgentVersion
@@ -230,7 +230,7 @@ class AgentVersionListResponseSerializer(
     is_active = serializers.ReadOnlyField()
     is_latest = serializers.ReadOnlyField()
     in_production = serializers.BooleanField(source="is_active", read_only=True)
-    source = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()  # type: ignore[assignment]  # the API field is named source, as Field's own
 
     class Meta:
         model = AgentVersion
@@ -333,7 +333,7 @@ class AgentVersionActionResponseSerializer(serializers.Serializer):
 
 class AgentToolSignatureSerializer(serializers.Serializer):
     arguments = serializers.ListField(child=serializers.CharField(), read_only=True)
-    required = serializers.ListField(child=serializers.CharField(), read_only=True)
+    required = serializers.ListField(child=serializers.CharField(), read_only=True)  # type: ignore[assignment]  # the API field is named required, as Field's own
     kind = serializers.CharField(read_only=True, allow_null=True)
 
 

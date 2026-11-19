@@ -446,7 +446,7 @@ def read_version(
             "agent_definition", "organization", "workspace"
         )
         .defer("credential_blob")
-        .filter(agent_version_id=version_id)
+        .filter(agent_version__id=version_id)
         .first()
     )
     if runtime is None:

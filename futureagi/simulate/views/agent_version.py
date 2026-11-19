@@ -113,7 +113,7 @@ class AgentVersionListView(APIView):
             result_page = paginator.paginate_queryset(versions, request)
 
             serializer = AgentVersionListResponseSerializer(
-                result_page, many=True, context=version_list_context(result_page)
+                result_page, many=True, context=version_list_context(result_page or [])
             )
             return paginator.get_paginated_response(serializer.data)
 

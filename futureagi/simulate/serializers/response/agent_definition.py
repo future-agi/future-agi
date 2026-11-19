@@ -175,7 +175,7 @@ class AgentFoundCheckSerializer(serializers.Serializer):
     """Whether what the first reading found still waits to be confirmed, and when
     it was."""
 
-    required = serializers.BooleanField()
+    required = serializers.BooleanField()  # type: ignore[assignment]  # the API field is named required, as Field's own
     done_at = serializers.DateTimeField(allow_null=True)
 
 

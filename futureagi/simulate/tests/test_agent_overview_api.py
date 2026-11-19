@@ -208,6 +208,26 @@ def test_a_code_agent_without_an_environment_takes_its_newest_version_source(
 
 
 @pytest.mark.django_db
+def test_a_code_agent_whose_first_reading_failed_keeps_its_source(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Unread Repo", provider="")
+    version = agent.create_version(description="", commit_message="v1", status="draft")
+    HarnessAgentVersionRuntime.objects.create(
+        agent_version=version,
+        agent_definition=agent,
+        organization=organization,
+        hash="sha256:" + "1" * 64,
+        source_kind="github",
+        trigger="connect",
+    )
+
+    row = _rows(auth_client)["Unread Repo"]
+
+    assert (row["agent_kind"], row["source"]) == (None, "github")
+
+
+@pytest.mark.django_db
 def test_list_counts_every_environment_and_lists_the_five_oldest(
     auth_client, organization, workspace
 ):
@@ -848,8 +868,16 @@ def test_a_scenario_removed_after_a_run_still_counts_for_that_run(
 
 
 @pytest.mark.django_db
+def _scenario_reads(captured):
+    return [
+        query["sql"]
+        for query in captured.captured_queries
+        if 'FROM "simulate_hosted_harness_scenario"' in query["sql"]
+    ]
+
+
 def test_run_summaries_read_every_environment_s_scenarios_in_one_query(
-    auth_client, organization, workspace, django_assert_max_num_queries
+    auth_client, organization, workspace
 ):
     agent = _agent(organization, workspace, "Northwind")
     for minutes in (1, 2, 3):
@@ -859,8 +887,11 @@ def test_run_summaries_read_every_environment_s_scenarios_in_one_query(
     url = f"{AGENTS}{agent.id}/runs/"
     with CaptureQueriesContext(connection) as one_page:
         auth_client.get(url, {"limit": 1})
-    with django_assert_max_num_queries(len(one_page.captured_queries)):
-        auth_client.get(url, {"limit": 3})
+    with CaptureQueriesContext(connection) as three_pages:
+        response = auth_client.get(url, {"limit": 3})
+
+    assert len(response.json()["results"]) == 3
+    assert len(_scenario_reads(one_page)) == len(_scenario_reads(three_pages)) == 1
 
 
 @pytest.mark.django_db

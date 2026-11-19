@@ -188,9 +188,10 @@ def find_replayed_job(
     idempotency_key: str,
     workspace=None,
     lock: bool = False,
+    request_digest: str | None = None,
 ) -> HostedHarnessJob | None:
     """The job this idempotency key already made for the same request, if any."""
-    request_digest = canonical_digest(payload)
+    request_digest = request_digest or canonical_digest(payload)
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         organization=organization,
         idempotency_key=idempotency_key,
@@ -224,6 +225,7 @@ def create_hosted_job(
     idempotency_key: str,
     workspace=None,
     on_create: Callable[[HostedHarnessJob], None] | None = None,
+    request_digest: str | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Create the job, or return the one this idempotency key already made.
 
@@ -231,7 +233,7 @@ def create_hosted_job(
     """
     from simulate.services.harness_agent_versions import advisory_xact_lock
 
-    request_digest = canonical_digest(payload)
+    request_digest = request_digest or canonical_digest(payload)
     with transaction.atomic():
         # Same-key creates take turns, so a concurrent one replays the first's job.
         advisory_xact_lock(idempotency_lock_name(organization, idempotency_key))
@@ -241,6 +243,7 @@ def create_hosted_job(
             idempotency_key=idempotency_key,
             workspace=workspace,
             lock=True,
+            request_digest=request_digest,
         )
         if existing is not None:
             return existing, False

@@ -664,6 +664,8 @@ def _observe_one(
         )
         .filter(id=watched.environment_id, environment__isnull=True, deleted=False)
         .first()
+        if watched.environment_id is not None
+        else None
     )
     if environment is None or environment.agent_version_id != (
         watched.parent_version_id

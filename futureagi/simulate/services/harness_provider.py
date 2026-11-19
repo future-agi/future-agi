@@ -32,6 +32,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.selectors.runs import user_runs
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
@@ -1332,7 +1333,7 @@ def _builds_connected_agent(organization, workspace, payload) -> bool:
         AgentDefinition.no_workspace_objects.filter(
             id=definition_id,
             organization=organization,
-            workspace_id=getattr(workspace, "id", None),
+            workspace=getattr(workspace, "id", None),
             deleted=False,
         )
         .only("id", "agent_type")
@@ -1462,6 +1463,7 @@ class HostedHarnessProvider:
         payload = request.validated_data
         # Taken out first: values never reach the checks, the digest or the job.
         secret_values = payload.pop("credential_values", None) or {}
+        client_digest = canonical_digest(payload)
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -1498,6 +1500,7 @@ class HostedHarnessProvider:
                 payload,
                 idempotency_key=idempotency_key,
                 workspace=workspace,
+                request_digest=client_digest,
             )
             if replayed is None and versioning_enabled() and not connected_build:
                 from simulate.services.harness_agent_changes import (
@@ -1554,6 +1557,7 @@ class HostedHarnessProvider:
                     payload,
                     idempotency_key=idempotency_key,
                     workspace=workspace,
+                    request_digest=client_digest,
                 )
                 on_create = None
                 if replayed is None and versioning_enabled():
@@ -1588,6 +1592,7 @@ class HostedHarnessProvider:
                     idempotency_key=idempotency_key,
                     workspace=workspace,
                     on_create=on_create,
+                    request_digest=client_digest,
                 )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
