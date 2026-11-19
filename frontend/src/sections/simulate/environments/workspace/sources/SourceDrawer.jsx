@@ -94,7 +94,8 @@ function UsedBy({ envId, source, readOnly, onRemoved }) {
       )}
       <RemoveSourceDialog
         envId={envId}
-        source={confirming ? source : null}
+        source={source}
+        open={confirming}
         onClose={() => setConfirming(false)}
         onRemoved={onRemoved}
       />
