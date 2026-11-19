@@ -36240,7 +36240,7 @@ export const SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = zod.record(
 );
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 
@@ -36627,7 +36627,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysItemMax = 255;
@@ -36799,7 +36799,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsReadParams = zod.object({
@@ -37155,7 +37155,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsCandidatesMakeDefaultParams = zod.object({
@@ -37228,7 +37228,7 @@ export const SimulateApiAgentFixRunsRetryParams = zod.object({
 export const SimulateApiAgentFixRunsRetryBody = zod.object({});
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsStopParams = zod.object({
