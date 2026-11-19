@@ -93,10 +93,27 @@ export const batchesOf = (prepared) => prepared.batches || [prepared];
 
 /**
  * A second prepare while a review is open joins it, so both batches can be
- * added. Items the open review already has (same id) aren't repeated.
+ * added. Items the open review already has (same id) aren't repeated, and
+ * files read again leave their older batch, which goes once it has none left.
  */
 export const mergePrepared = (current, next) => {
-  const known = new Set(current.ui.items.map((item) => item.id));
+  const fresh = new Set(next.ui.sources.map((source) => source.source_id));
+  const kept = batchesOf(current)
+    .map((batch) => ({
+      ...batch,
+      ui: {
+        ...batch.ui,
+        sources: batch.ui.sources.filter(
+          (source) => !fresh.has(source.source_id),
+        ),
+        items: batch.ui.items.filter((item) =>
+          filesOf(item).every((id) => !fresh.has(id)),
+        ),
+      },
+    }))
+    .filter((batch) => batch.ui.sources.length > 0);
+  const items = kept.flatMap((batch) => batch.ui.items);
+  const known = new Set(items.map((item) => item.id));
   const added = {
     ...next,
     ui: {
@@ -106,12 +123,15 @@ export const mergePrepared = (current, next) => {
   };
   return {
     ...current,
-    batches: [...batchesOf(current), added],
+    batches: [...kept, added],
     ui: {
       ...current.ui,
       readMs: Math.max(current.ui.readMs, next.ui.readMs),
-      sources: [...current.ui.sources, ...next.ui.sources],
-      items: [...current.ui.items, ...added.ui.items],
+      sources: [
+        ...kept.flatMap((batch) => batch.ui.sources),
+        ...next.ui.sources,
+      ],
+      items: [...items, ...added.ui.items],
     },
   };
 };

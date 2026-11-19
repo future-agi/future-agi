@@ -164,10 +164,10 @@ describe("Build from scratch", () => {
         target: { files: [new File([body], "orders.csv")] },
       });
     pick("a,b");
-    pick("a,b\n1,2");
+    pick("a,b\n".repeat(600));
     const list = screen.getByRole("list", { name: "Attached files" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-    expect(within(list).getByText("7 Bytes")).toBeInTheDocument();
+    expect(within(list).getByText("2 KB")).toBeInTheDocument();
   });
 
   it("shows the Falcon AI bar and says drafting isn't wired, without drafting", () => {

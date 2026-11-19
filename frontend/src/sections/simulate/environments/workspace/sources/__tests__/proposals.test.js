@@ -172,4 +172,31 @@ describe("mergePrepared", () => {
       ids(again.ui.items),
     );
   });
+
+  it("moves a file read again to the new batch, keeping the rest of its old one", () => {
+    const sources = read("returns-30.pdf", "orders.csv");
+    const first = {
+      import_ref: "ref-both",
+      ui: { readMs: 0, sources, items: proposalItemsOf(sources) },
+    };
+    const again = {
+      import_ref: "ref-again",
+      ui: {
+        readMs: 0,
+        sources: [sources[1]],
+        items: proposalItemsOf([sources[1]]),
+      },
+    };
+    const merged = mergePrepared(first, again);
+    const [kept] = batchesOf(merged);
+
+    expect(batchesOf(merged).map((one) => one.import_ref)).toEqual([
+      "ref-both",
+      "ref-again",
+    ]);
+    expect(kept.ui.sources).toEqual([sources[0]]);
+    expect(kept.ui.items.length).toBeGreaterThan(0);
+    expect(new Set(ids(merged.ui.items)).size).toBe(merged.ui.items.length);
+    expect(merged.ui.sources).toEqual(sources);
+  });
 });
