@@ -165,6 +165,13 @@ _initialized_components: set = set()
 # before serialization, so check sizes before scanning, copying or decoding.
 _MAX_TEXT = 8192
 _MAX_ITEMS = 128
+_HTTP_METHODS = frozenset({"GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"})
+_SPAN_STATUSES = frozenset(
+    "ok cancelled unknown_error invalid_argument deadline_exceeded not_found "
+    "already_exists permission_denied resource_exhausted failed_precondition aborted "
+    "out_of_range unimplemented internal_error unavailable data_loss "
+    "unauthenticated".split()
+)
 _USAGE_FIELDS = frozenset(
     {
         "input_tokens",
@@ -264,16 +271,20 @@ def _vertex_auth_frame(module: object, function: object) -> bool:
     )
 
 
+def _is_timestamp(value: Any) -> bool:
+    return type(value) is datetime or (
+        type(value) is str
+        and len(value) <= 40
+        and re.fullmatch(r"[0-9T:.+Z-]+", value) is not None
+    )
+
+
 def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
     # Breadcrumbs outlive their originating event. Do not keep rendered log
     # arguments, request bodies, or arbitrary integration data in the trail.
     result: dict[str, Any] = {}
     timestamp = crumb.get("timestamp")
-    if type(timestamp) is datetime or (
-        type(timestamp) is str
-        and len(timestamp) <= 40
-        and re.fullmatch(r"[0-9T:.+Z-]+", timestamp)
-    ):
+    if _is_timestamp(timestamp):
         result["timestamp"] = timestamp
     for key in ("category", "type", "level"):
         if key in crumb:
@@ -285,15 +296,7 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
     if type(data) is dict:
         fields: dict[str, Any] = {}
         method = data.get("method")
-        if type(method) is str and method in (
-            "GET",
-            "POST",
-            "PATCH",
-            "PUT",
-            "DELETE",
-            "HEAD",
-            "OPTIONS",
-        ):
+        if type(method) is str and len(method) <= 7 and method in _HTTP_METHODS:
             fields["method"] = method
         status = data.get("status_code")
         if type(status) is int and 100 <= status <= 599:
@@ -359,8 +362,120 @@ def _scrub_frames(event: dict) -> bool | None:
     return False if complete else None
 
 
-def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
+def _span_structure(span: dict) -> dict:
+    # Span descriptions, tags, data and exception events can contain copies
+    # of an exception's text. The separate transaction has no exception hint
+    # to identify those copies. Rebuild it from structural fields only.
+    result: dict[str, Any] = {}
+    for key, pattern in (
+        ("trace_id", r"[0-9a-fA-F]{32}"),
+        ("span_id", r"[0-9a-fA-F]{16}"),
+        ("parent_span_id", r"[0-9a-fA-F]{16}"),
+        ("op", r"[\w.-]+"),
+        ("origin", r"[\w.-]+"),
+    ):
+        value = span.get(key)
+        if type(value) is str and len(value) <= 128 and re.fullmatch(pattern, value):
+            result[key] = _scrub_text(value)
+    # SDK child spans carry status as a tag; the root trace uses a field.
+    for owner in (span, span.get("tags")):
+        if type(owner) is dict:
+            status = owner.get("status")
+            if type(status) is str and len(status) <= 32 and status in _SPAN_STATUSES:
+                if owner is span:
+                    result["status"] = status
+                else:
+                    result["tags"] = {"status": status}
+    for key in ("start_timestamp", "timestamp"):
+        value = span.get(key)
+        if (
+            _is_timestamp(value)
+            or type(value) is float
+            or (type(value) is int and value.bit_length() <= 64)
+        ):
+            result[key] = value
+    # The SDK moves these identifiers to the envelope header after the hook.
+    sampling = span.get("dynamic_sampling_context")
+    if type(sampling) is dict:
+        dsc = {}
+        for key, pattern in (
+            ("trace_id", r"[0-9a-fA-F]{32}"),
+            ("public_key", r"[0-9a-fA-F]{32}"),
+            ("org_id", r"[0-9]+"),
+            ("sample_rate", r"[01](?:\.\d+)?"),
+            ("sampled", r"true|false"),
+        ):
+            value = sampling.get(key)
+            if type(value) is str and len(value) <= 32 and re.fullmatch(pattern, value):
+                dsc[key] = value
+        result["dynamic_sampling_context"] = dsc
+    data = span.get("data")
+    if type(data) is dict:
+        error_type = data.get("exception.type")
+        if (
+            type(error_type) is str
+            and len(error_type) <= 128
+            and re.fullmatch(r"[\w.]+", error_type)
+        ):
+            result["data"] = {"exception.type": _scrub_text(error_type)}
+    return result
+
+
+def _scrub_transaction_spans(event: dict) -> None:
+    spans = _entries(event, "spans", _MAX_ITEMS)
+    if spans is not None:
+        event["spans"] = [_span_structure(span) for span in spans]
+    # The SDK promotes root-span tags to transaction-level tags. Do not
+    # forward arbitrary values from that second representation either.
+    if event.get("type") == "transaction" and "tags" in event:
+        tags = event["tags"]
+        event["tags"] = {
+            key: _scrub_text(tags[key])
+            for key in ("component", "region", "cloud_deployment")
+            if type(tags) is dict and key in tags
+        }
+    contexts = event.get("contexts")
+    if type(contexts) is dict and "trace" in contexts:
+        trace = contexts["trace"]
+        if type(trace) is dict:
+            contexts["trace"] = _span_structure(trace)
+        else:
+            contexts.pop("trace")
+
+
+def _log_params(params: Any, message: str) -> dict | list | None:
+    # The serializer can already have turned an arbitrary object into text.
+    # Unlabelled string arguments are opaque (including bare credentials);
+    # counts, flags and nulls have a representation we can check directly.
+    def scalar(value: Any) -> Any:
+        if value is None or type(value) in (bool, float):
+            return value
+        if type(value) is str and len(value) <= 7 and value in _HTTP_METHODS:
+            return value
+        if type(value) is int and value.bit_length() <= 64:
+            return value
+        return _REDACTED
+
+    if type(params) not in (tuple, list, dict) or len(params) > _MAX_ITEMS:
+        return None
+    if type(params) is dict:
+        result = {}
+        for key, value in params.items():
+            if _is_sensitive_key(key) or f"%({key})" not in message:
+                return None
+            result[key] = scalar(value)
+        return result
+    return [scalar(value) for value in params]
+
+
+def _scrub_event(
+    event: dict, *, vertex_log: bool = False, log_record: object = None
+) -> dict:
     _scrub_breadcrumbs(event)
+    _scrub_transaction_spans(event)
+    for key in ("logger", "level"):
+        if key in event:
+            event[key] = _scrub_text(event[key])
     request = event.get("request")
     if type(request) is dict:
         if _is_telemetry_url(request.get("url", "")):
@@ -405,6 +520,22 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
     for value in event.get("exception", {}).get("values", []):
         if "value" in value:
             value["value"] = replacement or _scrub_text(value["value"])
+        mechanism = value.get("mechanism")
+        if type(mechanism) is dict:
+            # The SDK can attach an independent description and arbitrary data
+            # here. Keep how the error was captured and its place in the chain.
+            safe_mechanism: dict[str, Any] = {}
+            for key in ("handled", "synthetic", "is_exception_group"):
+                if type(mechanism.get(key)) is bool:
+                    safe_mechanism[key] = mechanism[key]
+            for key in ("exception_id", "parent_id"):
+                if type(mechanism.get(key)) is int and 0 <= mechanism[key] < 2**63:
+                    safe_mechanism[key] = mechanism[key]
+            if "type" in mechanism:
+                safe_mechanism["type"] = _scrub_text(mechanism["type"])
+            value["mechanism"] = safe_mechanism
+        else:
+            value.pop("mechanism", None)
     if "message" in event:
         event["message"] = replacement or _scrub_text(event["message"])
     if "logentry" in event:
@@ -419,15 +550,32 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
             params = entry.get("params")
             message = _scrub_text(entry.get("message"))
             formatted = _scrub_text(entry.get("formatted"))
-            # Some integrations omit params after formatting. If we cannot
-            # establish that the two bounded strings agree, keep neither.
+            # A formatted string may include a repr or an unlabelled secret;
+            # never send it alongside parameters. Keep the static title.
             has_params = params is not None and not (
                 type(params) in (list, tuple, dict) and not params
             )
             rendered = "formatted" in entry and (
                 "message" not in entry or message != formatted
             )
-            if has_params or rendered:
+            if has_params:
+                if log_record is not None:
+                    # Validate the original template, not the SDK's rendering
+                    # of record.msg (it need not have been a string).
+                    template = _scrub_text(getattr(log_record, "msg", None))
+                    if message != template:
+                        message = _REDACTED
+                if "%" not in message or message == formatted:
+                    message = _REDACTED  # No distinct template to retain.
+                safe_entry: dict[str, Any] = {"message": message}
+                if message != _REDACTED and (
+                    "formatted" not in entry or formatted != _REDACTED
+                ):
+                    safe_params = _log_params(params, message)
+                    if safe_params is not None:
+                        safe_entry["params"] = safe_params
+                event["logentry"] = safe_entry
+            elif rendered:
                 event["logentry"] = {"message": _REDACTED}
             else:
                 event["logentry"] = {
@@ -642,6 +790,7 @@ def _get_before_send() -> Callable:
         try:
             _scrub_event(
                 event,
+                log_record=record,
                 vertex_log=_vertex_log_message(
                     record_name, getattr(record, "msg", None)
                 ),

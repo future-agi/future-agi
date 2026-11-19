@@ -55,7 +55,10 @@ def test_ordinary_event_and_next_event(at_ingestion):
                 for c in trail
             )
         assert first["logger"] == LOGGER
-        assert first["logentry"] == {"message": sentry._REDACTED}
+        assert first["logentry"] == {
+            "message": "job %s stopped",
+            "params": [sentry._REDACTED],
+        }
         assert second["exception"]["values"][-1]["type"] == "LookupError"
         assert second["exception"]["values"][-1]["value"] == "row missing"
         assert second["extra"] == {"count": 2, "input_tokens": 17}
@@ -145,6 +148,107 @@ def test_transaction_with_null_frames_keeps_the_event():
     assert event == {"stacktrace": {}, "message": sentry._REDACTED}
 
 
+def test_span_exception_text_is_not_sent_with_the_transaction_or_next_event():
+    with sentry_capture(
+        before_send_transaction=sentry._before_send_transaction,
+        traces_sample_rate=1.0,
+        include_local_variables=False,
+    ) as transport:
+        with sentry_sdk.start_transaction(name="process job", op="task") as txn:
+            txn.set_data("exception.message", MARKER)
+            txn.set_tag("error.detail", MARKER)
+            with sentry_sdk.start_span(op="task.read", description=MARKER) as span:
+                span.set_data("exception.type", "LookupError")
+                span.set_data("exception.message", MARKER)
+                span.set_tag("error.detail", MARKER)
+                sentry_sdk.add_breadcrumb(category="job", message=MARKER)
+                sentry_sdk.capture_event(
+                    {
+                        "exception": {
+                            "values": [
+                                {
+                                    "type": "LookupError",
+                                    "value": f"password={MARKER}",
+                                    "mechanism": {
+                                        "type": "generic",
+                                        "handled": True,
+                                        "description": MARKER,
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                )
+        sentry_sdk.capture_message("next diagnostic")
+
+        issue, transaction, following = transport.envelopes
+        assert MARKER.encode() not in issue.serialize()
+        assert MARKER.encode() not in transaction.serialize()
+        assert MARKER.encode() not in following.serialize()
+        first, second = transport.events
+        [error] = first["exception"]["values"]
+        assert error["type"] == "LookupError"
+        assert error["value"] == sentry._REDACTED
+        assert error["mechanism"]["handled"] is True
+        [item] = transaction.items
+        assert item.headers["type"] == "transaction"
+        event = item.payload.json
+        assert event["contexts"]["trace"]["trace_id"] == txn.trace_id
+        [child] = event["spans"]
+        assert child["span_id"] == span.span_id
+        assert child["op"] == "task.read"
+        assert child["data"] == {"exception.type": "LookupError"}
+        assert second["message"] == "next diagnostic"
+
+
+def test_over_budget_span_list_is_dropped_without_losing_the_transaction(monkeypatch):
+    monkeypatch.setattr(sentry, "_MAX_ITEMS", 2)
+    with sentry_capture(
+        before_send_transaction=sentry._before_send_transaction,
+        traces_sample_rate=1.0,
+    ) as transport:
+        with sentry_sdk.start_transaction(name="process job", op="task"):
+            for _ in range(3):
+                with sentry_sdk.start_span(op="task.read", description=MARKER):
+                    pass
+        sentry_sdk.capture_message("next diagnostic")
+        transaction, following = transport.envelopes
+        [item] = transaction.items
+        assert item.headers["type"] == "transaction"
+        assert item.payload.json["transaction"] == "process job"
+        assert not item.payload.json.get("spans")
+        assert transport.events[0]["message"] == "next diagnostic"
+        assert MARKER.encode() not in transaction.serialize()
+        assert MARKER.encode() not in following.serialize()
+
+
+def test_parameterized_log_entries_preserve_the_template_not_the_rendering():
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        include_local_variables=False,
+    ) as transport:
+        logger = logging.getLogger(LOGGER)
+        logger.error("%s stopped after %d retries", "GET", 3)
+        logger.error("job stopped: %s", MARKER)
+        sentry_sdk.capture_message("next diagnostic")
+
+        safe, unsafe, following = transport.events
+        assert safe["logentry"] == {
+            "message": "%s stopped after %d retries",
+            "params": ["GET", 3],
+        }
+        assert unsafe["logentry"] == {
+            "message": "job stopped: %s",
+            "params": [sentry._REDACTED],
+        }
+        for event in (safe, unsafe):
+            assert event["logger"] == LOGGER
+            assert event["level"] == "error"
+        assert following["message"] == "next diagnostic"
+        assert len(transport.envelopes) == 3
+        assert all(MARKER.encode() not in e.serialize() for e in transport.envelopes)
+
+
 def test_formatted_only_entry_keeps_the_logger_and_level():
     with sentry_capture(include_local_variables=False) as transport:
         sentry_sdk.add_breadcrumb(category="job", message=MARKER)
@@ -186,7 +290,7 @@ def test_uninspectable_arguments_are_not_rendered():
         sentry_sdk.capture_message("first diagnostic")
         sentry_sdk.capture_message("next diagnostic")
         first, second = transport.events
-        assert first["logentry"] == {"message": sentry._REDACTED}
+        assert first["logentry"] == {"message": "job %s", "params": [sentry._REDACTED]}
         assert second["message"] == "next diagnostic"
         assert MARKER not in json.dumps(transport.events)
         assert calls == []

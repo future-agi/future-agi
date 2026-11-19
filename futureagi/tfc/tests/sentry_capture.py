@@ -39,8 +39,10 @@ class EnvelopeTransport(Transport):
     def __init__(self):
         super().__init__()
         self.events = []
+        self.envelopes = []
 
     def capture_envelope(self, envelope):
+        self.envelopes.append(envelope)
         for item in envelope.items:
             if item.headers.get("type") == "event":
                 self.events.append(item.payload.json)

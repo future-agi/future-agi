@@ -120,19 +120,23 @@ async def test_a_broken_pipeline_import_is_reported_once(transport, monkeypatch,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("flavor", "package"),
+    ("flavor", "usage", "insights"),
     [
-        (DeploymentFlavor.CLOUD, False),
-        (DeploymentFlavor.SELF_HOSTED_EE, False),
-        (DeploymentFlavor.OSS, True),
+        (DeploymentFlavor.CLOUD, False, False),
+        (DeploymentFlavor.SELF_HOSTED_EE, False, False),
+        (DeploymentFlavor.OSS, True, False),
+        (DeploymentFlavor.OSS, False, True),
     ],
 )
 async def test_missing_stage_in_expected_install_is_reported(
-    transport, monkeypatch, flavor, package
+    transport, monkeypatch, flavor, usage, insights
 ):
+    monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("EE_LICENSE_KEY", raising=False)
     monkeypatch.setattr(service, "is_configured", lambda: True)
     monkeypatch.setattr(service, "get_deployment_flavor", lambda: flavor)
-    monkeypatch.setattr(ee_loader, "has_ee", lambda module: package)
+    packages = {"ee.usage": usage, "ee.agenthub.insights": insights}
+    monkeypatch.setattr(ee_loader, "has_ee", packages.__getitem__)
     cause = ModuleNotFoundError(
         "synthetic missing stage", name="ee.agenthub.insights.pipeline"
     )
@@ -148,20 +152,34 @@ async def test_missing_stage_in_expected_install_is_reported(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("licensed", [False, True], ids=["oss", "licensed"])
-async def test_self_hosted_startup_without_optional_packages(
-    transport, monkeypatch, licensed
+@pytest.mark.parametrize(
+    ("licensed", "usage", "flavor"),
+    [
+        (False, False, DeploymentFlavor.OSS),
+        (True, False, DeploymentFlavor.OSS),  # Incomplete install: startup falls back.
+        (True, True, DeploymentFlavor.SELF_HOSTED_EE),
+    ],
+    ids=["oss", "licensed-without-usage", "licensed-with-usage"],
+)
+async def test_self_hosted_startup_without_insights(
+    transport, monkeypatch, licensed, usage, flavor
 ):
     monkeypatch.setenv("CLOUD_DEPLOYMENT", "false")
     monkeypatch.setenv("EE_LICENSE_KEY", "synthetic-license" if licensed else "")
-    for name in (
-        "ee",
-        "ee.usage",
-        "ee.agenthub",
-        "ee.agenthub.insights",
-        "ee.agenthub.insights.pipeline",
-    ):
-        monkeypatch.setitem(sys.modules, name, None)
+    packages = {"ee.usage": usage, "ee.agenthub.insights": False}
+    monkeypatch.setattr(_bootstrap, "has_ee", packages.__getitem__)
+    monkeypatch.setattr(ee_loader, "has_ee", packages.__getitem__)
+    monkeypatch.setitem(
+        sys.modules,
+        "ee.usage.deployment",
+        SimpleNamespace(DeploymentMode=SimpleNamespace(is_cloud=lambda: False))
+        if usage
+        else None,
+    )
+    monkeypatch.setattr(_bootstrap, "_try_load_license_resolver", lambda: None)
+    missing = "ee.agenthub.insights"
+    cause = ModuleNotFoundError(f"No module named {missing!r}", name=missing)
+    _import_raising(monkeypatch, cause)
 
     # Exercise startup selection and restore the process-wide wiring afterward.
     for attr in (
@@ -174,7 +192,7 @@ async def test_self_hosted_startup_without_optional_packages(
         monkeypatch.setattr(service, attr, getattr(service, attr))
     _bootstrap.wire_resolvers()
     assert service.is_configured()
-    assert service.get_deployment_flavor() == DeploymentFlavor.OSS
+    assert service.get_deployment_flavor() == flavor
 
     error = await _run_stage()
     assert error.non_retryable
@@ -184,7 +202,7 @@ async def test_self_hosted_startup_without_optional_packages(
         return
 
     assert error.type == "InsightsPipelineImportError"
-    assert isinstance(error.__cause__, ModuleNotFoundError)
+    assert error.__cause__ is cause
     [event] = transport.events
     original, reported = event["exception"]["values"]
     assert original["type"] == "ModuleNotFoundError"
