@@ -58320,9 +58320,9 @@ export const getSimulateApiAgentFixIssuesListUrl = (
 };
 
 /**
- * Each named issue's newest job, for the issue list's epoch icon: one read per
+ * Each named issue's newest job, for the issue list's epoch icon: one call per
 page of issues. Without ``project_id`` the ids are read in every project the
-caller may read, so a page across projects is one read too; each result names
+caller may read, so a page across projects is one call too; each result names
 its project.
  */
 export const simulateApiAgentFixIssuesList = async (

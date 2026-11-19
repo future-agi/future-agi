@@ -50267,7 +50267,7 @@
         "/simulate/api/agent-fix-issues/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-issues_list",
-                "description": "Each named issue's newest job, for the issue list's epoch icon: one read per\npage of issues. Without ``project_id`` the ids are read in every project the\ncaller may read, so a page across projects is one read too; each result names\nits project.",
+                "description": "Each named issue's newest job, for the issue list's epoch icon: one call per\npage of issues. Without ``project_id`` the ids are read in every project the\ncaller may read, so a page across projects is one call too; each result names\nits project.",
                 "parameters": [
                     {
                         "name": "project_id",
