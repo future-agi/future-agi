@@ -252,13 +252,19 @@ def prepare_pieces(
     )
     suite_key = archives.suite_key(job.organization_id, job.id, suite_body)
     contract = _json(split.environment, "contract.json") or {}
+    from simulate.selectors.environment_documents import RUN_CONTRACT_VERSION
+
     runs_with = run_contract(job, split, built=built, full_build=full_build)
     sub_goals = _sub_goals(split.environment)
     scenarios = suite_documents(split.suite)
     environment_documents = {
         "contract": contract,
         # Only where it differs from the authored contract, so a version's diff still compares authored ones.
-        **({"run_contract": runs_with} if runs_with != contract else {}),
+        **(
+            {"run_contract": runs_with, "run_contract_version": RUN_CONTRACT_VERSION}
+            if runs_with != contract
+            else {}
+        ),
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
         "actor_digests": hashing.actor_digests(split.environment),
