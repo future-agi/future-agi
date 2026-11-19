@@ -1547,30 +1547,18 @@ def _simulation_mark(
 def _with_simulation_mark(
     payload: Mapping[str, Any], mark: Mapping[str, str]
 ) -> dict[str, Any]:
-    """A copy of the document that carries the mark, replacing any value already there."""
+    """A copy of the document that carries the mark and the actors switch, replacing any value already there."""
+    from simulate.services.harness_versioning.versions import actors_enabled
+
     document = dict(payload)
     metadata = dict(document.get("metadata") or {})
     metadata["customer_code_environment"] = dict(mark)
-    document["metadata"] = metadata
-    return document
-
-
-def actors_switch() -> dict[str, Any]:
-    """`metadata.actors` for every job document: whether the harness may author, play and apply actors and test
-    conditions, and the default share of scenarios that include an actor. Off always sends a share of none."""
-    from simulate.services.harness_versioning.versions import actors_enabled
-
-    if not actors_enabled():
-        return {"enabled": False, "share": [0.0, 0.0]}
-    low, high = settings.HARNESS_ACTORS_SHARE
-    return {"enabled": True, "share": [float(low), float(high)]}
-
-
-def _with_actors_switch(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """A copy of the document carrying `metadata.actors`, replacing any value already there."""
-    document = dict(payload)
-    metadata = dict(document.get("metadata") or {})
-    metadata["actors"] = actors_switch()
+    # Every job document says whether the harness may author, play and apply actors and test conditions.
+    on = actors_enabled()
+    metadata["actors"] = {
+        "enabled": on,
+        "share": list(settings.HARNESS_ACTORS_SHARE) if on else [0.0, 0.0],
+    }
     document["metadata"] = metadata
     return document
 
@@ -2404,11 +2392,7 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
-                    _with_actors_switch(
-                        _with_simulation_mark(
-                            guest_job_document(payload), simulation_mark
-                        )
-                    ),
+                    _with_simulation_mark(guest_job_document(payload), simulation_mark),
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode(),
@@ -2671,10 +2655,7 @@ class HostedHarnessGateway:
                 dispatch_payload, [alias for alias, _value in export_plan.secrets]
             )
         dispatch_payload = _with_used_scenario_keys(
-            _with_actors_switch(
-                _with_simulation_mark(dispatch_payload, simulation_mark)
-            ),
-            job,
+            _with_simulation_mark(dispatch_payload, simulation_mark), job
         )
         registered_snapshot_digest = (
             capacity.snapshot_digest or self.client.runtime_digest
@@ -3480,10 +3461,8 @@ class HostedHarnessGateway:
                 json.dumps(
                     _with_used_scenario_keys(
                         _with_egress_allowed_hosts(
-                            _with_actors_switch(
-                                _with_simulation_mark(
-                                    guest_job_document(job.payload), simulation_mark
-                                )
+                            _with_simulation_mark(
+                                guest_job_document(job.payload), simulation_mark
                             ),
                             allowed_domains,
                         ),
@@ -5597,11 +5576,8 @@ def _record_harness_spend(
 
 def all_actors(actors_file: Any) -> dict[str, Any] | None:
     """Every actor in the environment's one `actors.json`, speaking or acting only through the world, in the shape the
-    actor list stage output keeps: the scenarios list and drawer name each one, channel or not. None while actors are
-    off."""
-    from simulate.services.harness_versioning.versions import actors_enabled
-
-    if not actors_enabled() or not isinstance(actors_file, dict):
+    actor list stage output keeps: the scenarios list and drawer name each one, channel or not."""
+    if not isinstance(actors_file, dict):
         return None
     return {
         "call_actors": [

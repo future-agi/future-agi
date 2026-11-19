@@ -479,8 +479,10 @@ def create_selected_harness_run(
         if pins is not None and pins.assembles:
             _refuse_ungradable(pins, scenario_keys)
         from simulate.services.harness_tool_reach import refuse_production_only
+        from simulate.services.harness_versioning.versions import actors_enabled
 
-        refuse_production_only(environment, pins, scenario_keys)
+        if actors_enabled():
+            refuse_production_only(environment, pins, scenario_keys)
 
         manifest: list[dict[str, Any]] = []
         for scenario_key in scenario_keys:
@@ -1386,7 +1388,7 @@ def _member_scenario_edits(
 
     fields = (
         HostedHarnessProvider._DESCRIPTIVE_FIELDS
-        | HostedHarnessProvider._behavioural_fields()
+        | HostedHarnessProvider._BEHAVIOURAL_FIELDS
     )
     edits: dict[str, dict[str, Any]] = {}
     for key in scenario_keys:
@@ -1438,7 +1440,7 @@ def _scenario_edits(
     }
     fields = (
         HostedHarnessProvider._DESCRIPTIVE_FIELDS
-        | HostedHarnessProvider._behavioural_fields()
+        | HostedHarnessProvider._BEHAVIOURAL_FIELDS
     )
     edits: dict[str, dict[str, Any]] = {}
     for registration in registrations:

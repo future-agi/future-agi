@@ -1,23 +1,16 @@
-"""`HARNESS_ACTORS_ENABLED`: off, no actor surface is offered, no actor edit is taken and no build is certified again
-for a cast; on, all of them are."""
+"""`HARNESS_ACTORS_ENABLED`: off, no actor surface is offered, no actor edit or test condition is taken, and every
+job document tells the harness actors are off; on, all of it behaves as before the flag."""
 
 from __future__ import annotations
-
-from types import SimpleNamespace
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
-from simulate.models import HostedHarnessJob
 from simulate.models.test_execution import CallExecution
 from simulate.services.harness_environment import _actors_tab
 from simulate.services.harness_provider import HostedHarnessProvider
-from simulate.services.harness_versioning.assembly import _cast, certify_job_payload
-from simulate.services.hosted_harness_gateway import (
-    _with_actors_switch,
-    all_actors,
-    authoring_stage_outputs,
-)
+from simulate.services.harness_versioning.assembly import certify_job_payload
+from simulate.tests import test_harness_versioning_picks as picks
 from simulate.tests import test_model_tools_journey as journey
 from simulate.tests.test_harness_actors import BASE, MANAGER, _add, _built
 from simulate.tests.test_harness_amend_receipt_codes import _receipts, _set
@@ -134,79 +127,34 @@ def test_a_test_condition_is_applied_while_actors_are_on(user, workspace, settin
     ]
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_a_cast_asks_for_a_new_certify_only_while_actors_are_on(settings, enabled):
-    settings.HARNESS_ACTORS_ENABLED = enabled
-    version = SimpleNamespace(documents={"actor_digests": {"manager": "abc"}})
-
-    assert (_cast(version) is not None) is enabled
-
-
-# What a kit leaves after a build: the old kit writes no actors file; the actors kit writes one.
-OLD_KIT_ACTORS_FILE = None
-ACTORS_KIT_FILE = {
-    "schema": "actors/1",
-    "actors": [{"id": "friend", "name": "Rowan", "role": "r", "channel": "audio_mix"}],
-}
-
-
+@pytest.mark.parametrize("kind", ["build", "chat", "run", "certify"])
 @pytest.mark.parametrize(
-    ("enabled", "actors_file", "listed"),
+    ("enabled", "sent"),
     [
-        (False, OLD_KIT_ACTORS_FILE, False),
-        (False, ACTORS_KIT_FILE, False),
-        (True, OLD_KIT_ACTORS_FILE, False),
-        (True, ACTORS_KIT_FILE, True),
-    ],
-)
-def test_a_build_lists_the_kits_actors_only_while_actors_are_on(
-    settings, enabled, actors_file, listed
-):
-    settings.HARNESS_ACTORS_ENABLED = enabled
-
-    outputs = authoring_stage_outputs(
-        {"one_liner": "x"}, {}, [], call_actors=all_actors(actors_file)
-    )
-
-    assert any(one["kind"] == "call_actors" for one in outputs) is listed
-
-
-@pytest.mark.parametrize(
-    ("enabled", "share", "sent"),
-    [
-        (False, (0.15, 0.25), {"enabled": False, "share": [0.0, 0.0]}),
-        (True, (0.15, 0.25), {"enabled": True, "share": [0.15, 0.25]}),
-        (True, (0.0, 0.5), {"enabled": True, "share": [0.0, 0.5]}),
+        (False, {"enabled": False, "share": [0.0, 0.0]}),
+        (True, {"enabled": True, "share": [0.1, 0.3]}),
     ],
 )
 def test_every_job_document_says_whether_actors_are_on_and_their_share(
-    settings, monkeypatch, enabled, share, sent
+    organization, workspace, user, settings, monkeypatch, kind, enabled, sent
 ):
     settings.HARNESS_ACTORS_ENABLED = enabled
-    settings.HARNESS_ACTORS_SHARE = share
+    settings.HARNESS_ACTORS_SHARE = (0.1, 0.3)
+    if kind == "build":
+        document, _ = _authoring_document(monkeypatch)
+    elif kind == "chat":
+        document, _ = _chat_document(monkeypatch)
+    else:
+        world = _ExportWorld(
+            organization, workspace, user, settings, monkeypatch, bind="run_test"
+        )
+        settings.HARNESS_ACTORS_ENABLED = enabled
+        document = world.launch().job_json
+        if kind == "certify":
+            # A launch's certify job is made from its run document.
+            document = certify_job_payload(document, 3)
 
-    authoring, _ = _authoring_document(monkeypatch)
-    chat, _ = _chat_document(monkeypatch)
-    # A launch's certify job is made from its dispatched document, and keeps the switch.
-    certify = certify_job_payload(_with_actors_switch({"metadata": {}}), 3)
-
-    assert [one["metadata"]["actors"] for one in (authoring, chat, certify)] == [
-        sent
-    ] * 3
-
-
-@pytest.mark.parametrize("enabled", [False, True])
-def test_a_launched_run_document_says_whether_actors_are_on(
-    organization, workspace, user, settings, monkeypatch, enabled
-):
-    world = _ExportWorld(
-        organization, workspace, user, settings, monkeypatch, bind="run_test"
-    )
-    settings.HARNESS_ACTORS_ENABLED = enabled
-
-    world.launch()
-
-    assert world.job_json["metadata"]["actors"]["enabled"] is enabled
+    assert document["metadata"]["actors"] == sent
 
 
 @pytest.mark.parametrize(
@@ -227,16 +175,12 @@ def test_a_share_reads_as_min_and_max(text, share):
 
 @pytest.mark.usefixtures("versioning_on")
 @pytest.mark.parametrize("enabled", [False, True])
-def test_a_run_carries_a_saved_test_condition_and_its_call_says_whether_actors_are_on(
+def test_a_call_says_whether_actors_are_on(
     auth_client, user, workspace, settings, request, enabled
 ):
-    # Saved while actors were on, as an environment edited before the flag went off has it.
-    settings.HARNESS_ACTORS_ENABLED = True
     environment = journey._authored(
         user, workspace, f"flag-run-{enabled}", request.getfixturevalue("storage")
     )
-    assert journey._set_fault(auth_client, environment).status_code == 200
-    journey._save(environment, settings)
     settings.HARNESS_ACTORS_ENABLED = enabled
 
     run = journey._post_run(
@@ -246,13 +190,33 @@ def test_a_run_carries_a_saved_test_condition_and_its_call_says_whether_actors_a
         key=f"flag-run-{enabled}",
     )
     assert run.status_code == 202, run.content
-    job = HostedHarnessJob.no_workspace_objects.get(id=run.json()["job_id"])
-    edits = job.payload["metadata"]["scenario_edits"][journey._key(journey.NAMES[0])]
     call = CallExecution.objects.filter(
         test_execution_id=run.json()["test_execution_id"]
     ).first()
     detail = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
 
-    assert ("faults" in edits) is enabled
     assert detail.status_code == 200, detail.content
     assert detail.json()["actors_enabled"] is enabled
+
+
+@pytest.mark.usefixtures("versioning_on")
+@pytest.mark.parametrize(("enabled", "status"), [(False, 202), (True, 409)])
+def test_a_run_needing_a_production_only_tool_is_refused_only_while_actors_are_on(
+    auth_client, user, workspace, settings, request, enabled, status
+):
+    environment, suite = picks.TestProductionOnly()._blocked(
+        user, workspace, request.getfixturevalue("storage"), f"flag-prod-{enabled}"
+    )
+    settings.HARNESS_ACTORS_ENABLED = enabled
+
+    response = picks._post_run(
+        auth_client,
+        environment,
+        {
+            "scenario_ids": [picks._key(picks.NAMES[0])],
+            "trials": 1,
+            "suite_version_id": str(suite.id),
+        },
+    )
+
+    assert response.status_code == status, response.content

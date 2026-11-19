@@ -491,7 +491,6 @@ describe("mapCallDetail", () => {
     expect(
       mapCallDetail({ id: "c1", actors_enabled: false }).actorsEnabled,
     ).toBe(false);
-    expect(mapCallDetail({ id: "c1" }).actorsEnabled).toBe(false);
   });
 
   it("returns null for a missing payload", () => {

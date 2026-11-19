@@ -114,8 +114,8 @@ export default function VoiceCallDrawer({
           />
         ),
       },
-      // The World changes view shows only while the deployment has actors on.
-      ...(data?.actors_enabled
+      // False hides the World state view: the deployment has actors off.
+      ...(data?.actors_enabled !== false
         ? [
             {
               label: TRIAL_CHANGES_COPY.tab,

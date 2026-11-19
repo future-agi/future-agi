@@ -744,7 +744,7 @@ describe("CallDrawer — the call's traces", () => {
 
   it("gives a voice call a Traces tab beside the transcript, read for that call", () => {
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [], actors_enabled: true },
+      data: { id: "voice-1", transcript: [] },
       isPending: false,
     });
     useCallTraces.mockReturnValue({
@@ -771,7 +771,7 @@ describe("CallDrawer — the call's traces", () => {
 
   it("keeps the tab when the read fails, so the panel can say so", () => {
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [], actors_enabled: true },
+      data: { id: "voice-1", transcript: [] },
       isPending: false,
     });
     useCallTraces.mockReturnValue({
@@ -797,7 +797,7 @@ describe("CallDrawer — the call's traces", () => {
 
   it("gives a voice call a Traces tab even when the run has nothing to read", () => {
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [], actors_enabled: true },
+      data: { id: "voice-1", transcript: [] },
       isPending: false,
     });
 
