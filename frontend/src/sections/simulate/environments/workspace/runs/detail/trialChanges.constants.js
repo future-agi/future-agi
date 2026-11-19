@@ -77,7 +77,8 @@ export const TRIAL_CHANGES_COPY = {
   sharedRecord: (one) => `${one.argument} ${one.value}`,
   sharedAction: (action, who) =>
     `${who} · ${action.tool} · ${action.outcome}${action.write === true ? " (write)" : ""}`,
-  committedWrites: (n) => `Committed writes: ${n} (tools with recorded effects)`,
+  committedWrites: (n) =>
+    `Committed writes: ${n} (tools with recorded effects)`,
   sharedTruncated:
     "More records not shown: this trial's record reached its size limit",
   // Each record's served `truncation`; a cut list of records ("records") is said once, for the trial.
@@ -233,3 +234,7 @@ export const ACTION_TONE = {
 
 // A call's outcome while it is still under way (the server's `queued` and `in_progress`): its World state is not in yet.
 export const TRIAL_UNDER_WAY = new Set(["queued", "in_progress"]);
+
+// Records shared between a call's participants are not an actors feature: the tab shows them with actors off too.
+export const hasSharedRecords = (trialState) =>
+  Boolean(trialState?.shared_records?.length);

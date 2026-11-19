@@ -17,7 +17,17 @@ import { RecordsSection } from "./RecordChange";
 // Same insets as the Transcript tab in the drawer.
 const ROOT_SX = { px: 2, pt: 1.25, pb: 2 };
 
-export default function TrialChangesPanel({ trialState, underWay = false }) {
+export default function TrialChangesPanel({
+  trialState,
+  underWay = false,
+  sharedOnly = false,
+}) {
+  if (sharedOnly)
+    return (
+      <Stack spacing={2} sx={ROOT_SX}>
+        <SharedRecords trialState={trialState} />
+      </Stack>
+    );
   if (!trialState)
     return (
       <Typography sx={{ ...quiet, p: 2 }}>
@@ -35,11 +45,13 @@ TrialChangesPanel.propTypes = {
   trialState: PropTypes.object,
   // A call still running: its World state is still being collected.
   underWay: PropTypes.bool,
+  // Actors are off: only the records the call's participants shared.
+  sharedOnly: PropTypes.bool,
 };
 
 // Records more than one participant called, shown whether or not the trial changed anything.
 function SharedRecords({ trialState }) {
-  const shared = trialState.shared_records || [];
+  const shared = trialState?.shared_records || [];
   if (!shared.length) return null;
   return (
     <Box data-testid="shared-records">
@@ -72,7 +84,7 @@ function SharedRecords({ trialState }) {
     </Box>
   );
 }
-SharedRecords.propTypes = { trialState: PropTypes.object.isRequired };
+SharedRecords.propTypes = { trialState: PropTypes.object };
 
 function WorldState({ trialState }) {
   const changes = trialState.state_changes;
