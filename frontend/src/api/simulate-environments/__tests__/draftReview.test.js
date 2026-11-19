@@ -132,7 +132,14 @@ describe("edits added from files", () => {
       locator: "p2",
     });
 
-    // A later batch repeating a scenario joins the same row, counted once.
+    const supervisor = (at) => ({
+      id: `actor-src_1-${at}`,
+      kind: "actor",
+      title: "Actor: Supervisor approves refunds over $500",
+      cite: { sourceId: "src_1", ref: "policy.pdf", at },
+      actor: { name: "Supervisor" },
+    });
+    // Later batches repeating a scenario or an actor join the same row, counted once.
     appendAcceptedEdits(queryClient, envId, {
       accepted: [
         {
@@ -142,8 +149,15 @@ describe("edits added from files", () => {
           cite: { sourceId: "src_1", ref: "policy.pdf · p.4", at: "p4" },
           scenario: [{ t: "Return on day 30" }, { t: "Duplicate refund" }],
         },
+        supervisor("p5"),
       ],
     });
+    appendAcceptedEdits(queryClient, envId, { accepted: [supervisor("p6")] });
+    expect(
+      sampleFileEdits(reviewIn(queryClient)).changes.filter(
+        (one) => one.kind === "actor",
+      ),
+    ).toMatchObject([{ sources: [{ used: [{ locator: "p5" }] }] }]);
     const scenarios = sampleFileEdits(reviewIn(queryClient)).changes.filter(
       (one) => one.kind === "scenario",
     );

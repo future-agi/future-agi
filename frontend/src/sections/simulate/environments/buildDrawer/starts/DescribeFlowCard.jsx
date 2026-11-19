@@ -292,7 +292,7 @@ export default function DescribeFlowCard({
                         {f.name}
                       </Typography>
                       <Typography sx={{ ...T12, color: "text.disabled" }}>
-                        {formatFileSize(f.size)}
+                        {formatFileSize(f.size, { wholeKb: true })}
                       </Typography>
                     </Box>
                     <IconButton
