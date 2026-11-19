@@ -22,6 +22,9 @@ import {
   useExportErrorFeedTraces,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
+import IssueEpochAction from "./epoch/IssueEpochAction";
+import IssueEpochStrip from "./epoch/IssueEpochStrip";
+import RunEpochDrawer from "./epoch/RunEpochDrawer";
 import ErrorStatusChip from "./components/ErrorStatusChip";
 import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
 import ErrorMetadataPanel, {
@@ -113,6 +116,9 @@ export default function ErrorFeedDetailView() {
     retry: false,
   });
   const detail = shared ? shared.issue : fetchedDetail;
+  // Epoch on this issue: never on a shared page. Each part checks the org has Epoch
+  // and reads the issue's epoch itself; the reads are shared.
+  const [epochOpen, setEpochOpen] = useState(false);
   const updateIssue = useUpdateErrorFeedIssue();
   const exportTraces = useExportErrorFeedTraces();
   const { enqueueSnackbar } = useSnackbar();
@@ -237,7 +243,9 @@ export default function ErrorFeedDetailView() {
               <Button
                 size="small"
                 variant="text"
-                startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:arrow-left-linear" width={14} />
+                }
                 onClick={() => navigate("/dashboard/error-feed")}
                 sx={{
                   color: "text.secondary",
@@ -363,7 +371,10 @@ export default function ErrorFeedDetailView() {
                     size="small"
                     variant="outlined"
                     startIcon={
-                      <Iconify icon="solar:download-minimalistic-linear" width={14} />
+                      <Iconify
+                        icon="solar:download-minimalistic-linear"
+                        width={14}
+                      />
                     }
                     disabled={
                       exportTraces.isPending || !currentError.trace_count
@@ -422,11 +433,22 @@ export default function ErrorFeedDetailView() {
                   >
                     Ignore issue
                   </Button>
+                  <IssueEpochAction
+                    clusterId={currentError.cluster_id}
+                    onOpenDrawer={() => setEpochOpen(true)}
+                  />
                 </>
               )}
             </Stack>
           </Stack>
         </Box>
+
+        {!shared && (
+          <IssueEpochStrip
+            clusterId={currentError.cluster_id}
+            onRunAgain={() => setEpochOpen(true)}
+          />
+        )}
 
         {/* ── Tab bar ── */}
         <Box
@@ -438,7 +460,8 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          <Tabs sx={{ boxShadow: "none" }}
+          <Tabs
+            sx={{ boxShadow: "none" }}
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
           >
@@ -530,6 +553,13 @@ export default function ErrorFeedDetailView() {
             onClose={() => setShareDialogOpen(false)}
             resourceType="error_feed_issue"
             resourceId={currentError.cluster_id}
+          />
+          <RunEpochDrawer
+            open={epochOpen}
+            onClose={() => setEpochOpen(false)}
+            clusterId={currentError.cluster_id}
+            projectId={currentError.project_id}
+            issueTitle={currentError.error?.name}
           />
         </>
       )}

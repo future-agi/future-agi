@@ -58,6 +58,9 @@ vi.mock("../components/TracesTab", () => ({ default: () => null }));
 vi.mock("../components/TrendsTab", () => ({ default: () => null }));
 vi.mock("../components/ClusterHeadlineCard", () => ({ default: () => null }));
 vi.mock("../components/AnalyzeTab", () => ({ default: () => null }));
+vi.mock("../epoch/IssueEpochAction", () => ({ default: () => null }));
+vi.mock("../epoch/IssueEpochStrip", () => ({ default: () => null }));
+vi.mock("../epoch/RunEpochDrawer", () => ({ default: () => null }));
 
 describe("Error Feed detail: Copy cluster ID", () => {
   beforeEach(() => {

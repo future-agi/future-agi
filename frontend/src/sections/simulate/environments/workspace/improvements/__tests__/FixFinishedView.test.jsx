@@ -102,8 +102,9 @@ const shipPosts = () =>
     /make-default|pull-request/.test(url),
   );
 
+// The ship button and its confirm say the same: Open pull request or Make default.
 async function confirmShip(user, button) {
-  await user.click(await screen.findByRole("button", { name: "Ship" }));
+  await user.click(await screen.findByRole("button", { name: button }));
   const dialog = await screen.findByRole("dialog");
   return {
     dialog,
@@ -572,7 +573,11 @@ describe("FixFinishedView", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("The fix did not finish.")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Ship$/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: /^(Open pull request|Make default)$/,
+      }),
+    ).toBeNull();
   });
 
   it("offers Retry on a retryable failed fix and opens the new fix", async () => {
@@ -595,7 +600,10 @@ describe("FixFinishedView", () => {
 });
 
 describe("Ship, while the evals grade the winner", () => {
-  const shipButton = () => screen.findByRole("button", { name: "Ship" });
+  const shipButton = () =>
+    screen.findByRole("button", {
+      name: /^(Open pull request|Make default)$/,
+    });
 
   it("waits until grading finishes, and says why", async () => {
     updateFixtureFixRun("fix-ready-github", (f) => ({
@@ -691,7 +699,11 @@ describe("Ship", () => {
     expect(
       await screen.findByText("Could not activate v11"),
     ).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Ship" })).toBeEnabled();
+    // The confirm says Make default too: wait for it to close first.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      await screen.findByRole("button", { name: "Make default" }),
+    ).toBeEnabled();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {

@@ -27,6 +27,11 @@ vi.mock("src/api/project/observe-project-list", () => ({
   fetchAllObserveProjects,
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+// The rows' epoch icons read their own endpoint; these tests count feed reads only.
+vi.mock("src/api/errorFeed/epochFromIssue", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useIssueEpochs: () => ({}),
+}));
 
 import ErrorFeedView from "../ErrorFeedView";
 import { useErrorFeedStore } from "../store";

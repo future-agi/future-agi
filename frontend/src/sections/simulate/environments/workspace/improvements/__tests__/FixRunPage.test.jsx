@@ -99,6 +99,29 @@ describe("FixRunPage", () => {
     );
   });
 
+  it("starts the breadcrumb at the Error Feed issue it was run from", async () => {
+    const fix = fixOf("fix-search");
+    fix.issue = {
+      cluster_id: "S-1A2B3C4D",
+      project_id: "proj-1",
+      title: "Quotes a fare without the difference",
+      job_id: "job-1",
+    };
+    hooks.fixRun = { fix, isLoading: false, error: null };
+    renderPage("fix-search");
+    expect(screen.getByTestId("epoch-issue-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/error-feed/S-1A2B3C4D",
+    );
+    expect(screen.getByTestId("epoch-issue-crumb")).toHaveTextContent(
+      "S-1A2B3C4D",
+    );
+    expect(
+      screen.getByRole("link", { name: "Back to S-1A2B3C4D" }),
+    ).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
+    expect(screen.queryByRole("link", { name: "Back to epochs" })).toBeNull();
+  });
+
   it("offers no Stop and no stage on a finished fix", async () => {
     renderPage("fix-ready-archive");
     expect(await screen.findByText("Epoch 10")).toBeInTheDocument();

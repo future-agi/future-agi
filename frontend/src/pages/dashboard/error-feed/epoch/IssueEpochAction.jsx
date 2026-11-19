@@ -1,0 +1,74 @@
+import PropTypes from "prop-types";
+import { Button } from "@mui/material";
+
+import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
+import { useIssueEpoch } from "src/api/errorFeed/epochFromIssue";
+import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
+import RetryButton from "src/sections/simulate/environments/workspace/improvements/RetryButton";
+import ShipButton from "src/sections/simulate/environments/workspace/improvements/ShipButton";
+
+import { primaryAction } from "./issueEpochView";
+
+export const epochHref = (fix) =>
+  paths.dashboard.simulate.environments.improvement(fix.environment_id, fix.id);
+
+// The issue header's one main action for its epoch: Run Epoch, the drawer's next
+// step, the epoch's page, or what the epoch page itself would do next (ship, retry).
+export default function IssueEpochAction({ clusterId, onOpenDrawer }) {
+  const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
+  const status = useIssueEpoch(clusterId);
+  if (!allowed) return null;
+  const action = primaryAction(status);
+  const fix = status?.epoch;
+  if (action.kind === "ship") return <ShipButton fix={fix} />;
+  if (action.kind === "retry") return <RetryButton fix={fix} />;
+  if (action.kind === "view") {
+    return (
+      <Button
+        size="small"
+        variant="contained"
+        color="primary"
+        component={RouterLink}
+        href={epochHref(fix)}
+        endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+      >
+        {action.label}
+      </Button>
+    );
+  }
+  if (action.kind === "scenarios") {
+    return (
+      <Button
+        size="small"
+        variant="contained"
+        color="primary"
+        component={RouterLink}
+        href={paths.dashboard.simulate.environments.workspaceTab(
+          status.environmentId,
+          "scenarios",
+        )}
+      >
+        {action.label}
+      </Button>
+    );
+  }
+  return (
+    <Button
+      size="small"
+      variant="contained"
+      color="primary"
+      startIcon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
+      onClick={onOpenDrawer}
+      data-testid="issue-run-epoch"
+    >
+      {action.label}
+    </Button>
+  );
+}
+
+IssueEpochAction.propTypes = {
+  clusterId: PropTypes.string.isRequired,
+  onOpenDrawer: PropTypes.func.isRequired,
+};

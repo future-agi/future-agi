@@ -87,6 +87,11 @@ export function gradingNote(fix) {
 export const fixName = (fix) =>
   fix.number == null ? "Epoch" : `Epoch ${fix.number}`;
 
+// What shipping a winner does, as its button says: a GitHub agent's winner opens a
+// pull request, and an uploaded agent's becomes the environment's default.
+export const shipLabel = (fix) =>
+  fix.agent?.kind === "github" ? "Open pull request" : "Make default";
+
 export function identityLine(fix) {
   const agent = [`agent v${fix.agent.version_number}`, fix.agent.ref]
     .filter(Boolean)

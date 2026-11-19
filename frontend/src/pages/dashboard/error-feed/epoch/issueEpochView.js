@@ -1,0 +1,334 @@
+// What an issue says about its epoch: the label, one sentence, the next action and
+// the list icon. Pure: the issue's epoch job, as epochFromIssue.js reads it, plus the
+// epoch's own read once one started. Labels come from the epoch page's map.
+import {
+  STATE_LABEL,
+  STEP_LABEL,
+  fixName,
+  noSafeHeadline,
+  shipLabel,
+  winnerOf,
+} from "src/sections/simulate/environments/workspace/improvements/fixRunView";
+import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
+
+// Before the epoch starts: the builder drafts scenarios from the issue's traces, a
+// person reviews them, and the current version runs on the kept ones.
+export const PRE_LAUNCH = {
+  drafting: "Drafting scenarios",
+  review: "Drafts ready",
+  measuring: "Measuring",
+};
+
+// Why a job ended before its epoch started, read as one of the epoch's endings.
+// `reason` splits Failed the way an epoch's failure does.
+const JOB_ENDINGS = {
+  fix_targets_passed: {
+    as: "not_reproduced",
+    text: "None of the issue's scenarios failed on the current version, so there was nothing to search. It may already be fixed.",
+  },
+  fix_targets_too_few: {
+    as: "too_few_cases",
+    text: "Too few of the issue's scenarios failed on the current version to search for a change. Run Epoch again and pick other traces.",
+  },
+  stopped: {
+    as: "stopped",
+    text: "This epoch was stopped before it started. Nothing changed.",
+  },
+  evidence_draft_stale: {
+    as: "failed",
+    reason: "couldn't start",
+    text: "The environment changed after the drafts were reviewed, so they no longer fit it. Nothing changed. Run Epoch again to draft them on the current environment.",
+  },
+  fix_variations_source_moved: {
+    as: "failed",
+    reason: "couldn't start",
+    text: "The environment's scenarios were saved again while the current version was measured, so the epoch could not start from that run. Nothing changed. Run Epoch again.",
+  },
+  scenario_unavailable: {
+    as: "failed",
+    reason: "something only you can change",
+    text: "A scenario this epoch needs is no longer in the environment. Run Epoch again to draft it again.",
+  },
+  fix_run_active: {
+    as: "failed",
+    reason: "couldn't start",
+    text: "Another epoch is running in this environment. Run Epoch again when it ends.",
+  },
+  baseline_failed: {
+    as: "failed",
+    reason: "couldn't start",
+    text: "The run on the current version did not finish, so the epoch could not start. Nothing changed. Run Epoch again.",
+  },
+  issue_scenarios_cap: {
+    as: "failed",
+    reason: "something only you can change",
+    text: "This environment already holds the most scenarios from issues it can take. Remove some on its Scenarios tab, then run Epoch again.",
+    action: "scenarios",
+  },
+};
+
+// Failures that are ours, not the agent's (fixRunView's list): the user can only retry.
+const OUR_FAILURES = new Set([
+  "fix_engine_failed",
+  "fix_engine_died",
+  "fix_watch_failed",
+  "fix_workflow_lost",
+  "fix_dispatch_failed",
+  "fix_variations_failed",
+  "scheduler_unavailable",
+]);
+
+// Failed splits four ways (#77).
+export function failedReason(code) {
+  if (code === "fix_deadline") return "ran out of time";
+  if (code === "fix_queue_timeout") return "couldn't start";
+  if (!code || OUR_FAILURES.has(code)) return "a problem on our side";
+  return "something only you can change";
+}
+
+const jobEnding = (ending) =>
+  JOB_ENDINGS[ending?.code] || {
+    as: "failed",
+    reason: failedReason(ending?.code),
+    text: null,
+  };
+
+// One key per state the issue shows: a pre-launch phase, or the epoch's own state.
+export function epochKey(status) {
+  if (!status) return null;
+  if (status.epoch) return status.epoch.state;
+  if (status.ending) return jobEnding(status.ending).as;
+  return PRE_LAUNCH[status.phase] ? status.phase : null;
+}
+
+export const isEpochLive = (status) => {
+  const key = epochKey(status);
+  return !!PRE_LAUNCH[key] || FIX_LIVE_STATES.has(key);
+};
+
+function reasonOf(status) {
+  if (status.epoch) return failedReason(status.epoch.failure?.code);
+  return jobEnding(status.ending).reason;
+}
+
+export function epochLabel(status) {
+  const key = epochKey(status);
+  if (!key) return null;
+  if (PRE_LAUNCH[key]) return PRE_LAUNCH[key];
+  return STATE_LABEL[key] || key;
+}
+
+// The label with the failure's kind, for a hover or a badge's title.
+export function epochLabelLong(status) {
+  const label = epochLabel(status);
+  if (epochKey(status) !== "failed") return label;
+  return `${label}: ${reasonOf(status)}`;
+}
+
+const triedCount = (fix) => (fix.candidates || []).length;
+const whenEnded = (fix) => {
+  const n = triedCount(fix);
+  if (!n) return "before any candidate ran";
+  return `after ${n} ${n === 1 ? "candidate" : "candidates"}`;
+};
+
+const STEP_PHRASE = {
+  variations: "writing variations of the issue's scenarios",
+  reproduce: "reproducing the issue",
+  search: "searching for a change",
+  verify: "verifying the best candidate",
+};
+
+const sentence = (text) =>
+  text
+    ? `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/\.?$/, ".")}`
+    : "";
+
+// How strong a ready result is (#77): normal says nothing.
+function strengthText(fix) {
+  const github = fix.agent?.kind === "github";
+  if (fix.limited_validation) {
+    return github
+      ? "Limited validation: too few scenarios were held back to prove it, so its pull request opens as a draft."
+      : "Limited validation: too few scenarios were held back to prove it.";
+  }
+  const winner = winnerOf(fix);
+  if (winner && !winner.verdict?.held_back_pass_rate) {
+    return "Proven on the targets only: no scenario was held back.";
+  }
+  return null;
+}
+
+export const isShippedFix = (fix) => {
+  const winner = winnerOf(fix);
+  if (!winner) return false;
+  if (winner.pull_request_url) return true;
+  return winner.agent_version_id === fix.environment?.default_agent_version_id;
+};
+
+function readyText(fix) {
+  const name = fixName(fix);
+  const winner = winnerOf(fix);
+  const lead = winner
+    ? `${name} found a change that passed every check.`
+    : `${name} is ready for review.`;
+  let shipped = null;
+  if (winner?.pull_request_url) shipped = "Its pull request is open.";
+  else if (isShippedFix(fix)) shipped = "It is the environment's default now.";
+  return [lead, strengthText(fix), shipped].filter(Boolean).join(" ");
+}
+
+function failedText(fix) {
+  const name = fixName(fix);
+  const code = fix.failure?.code;
+  const again = fix.retryable ? " Retry it." : "";
+  if (code === "fix_deadline")
+    return `${name} ran out of its time limit ${whenEnded(fix)}. Nothing changed. Run Epoch again with a longer time limit.`;
+  if (code === "fix_queue_timeout")
+    return `Too many epochs were running, so ${name} could not start. Nothing changed.${again}`;
+  if (!code || OUR_FAILURES.has(code))
+    return `${name} stopped because of a problem on our side, not your agent. Nothing changed.${again}`;
+  return `${name} stopped on something only you can change: ${sentence(fix.failure.message)}`;
+}
+
+function epochText(fix) {
+  const name = fixName(fix);
+  switch (fix.state) {
+    case "queued":
+      return `${name} is queued.`;
+    case "running":
+      return STEP_PHRASE[fix.step]
+        ? `${name} is ${STEP_PHRASE[fix.step]}.`
+        : `${name} is running.`;
+    case "stopping":
+      return `${name} is stopping.`;
+    case "ready":
+      return readyText(fix);
+    case "no_improvement":
+      return `${noSafeHeadline(fix) || "No safe improvement: no candidate passed every check."} Nothing changed.`;
+    case "not_reproduced":
+      return "The issue's scenarios did not fail often enough on the current version. It may already be fixed, or the scenarios miss what triggers it.";
+    case "out_of_budget":
+      return `${name} reached its budget ${whenEnded(fix)}. Nothing changed. Run Epoch again with a larger budget.`;
+    case "stopped":
+      return `${name} was stopped ${whenEnded(fix)}. Nothing changed.`;
+    case "too_few_cases":
+      return "Too few of the issue's scenarios failed on the current version to search for a change. Run Epoch again and pick other traces.";
+    case "failed":
+      return failedText(fix);
+    default:
+      return null;
+  }
+}
+
+const PRE_LAUNCH_TEXT = {
+  drafting:
+    "Drafting scenarios from the issue's traces. This is one builder turn, billed as authoring credits.",
+  review: "The drafted scenarios are ready. Review them, then run the epoch.",
+  measuring:
+    "Running the reviewed scenarios on the current version. The epoch starts when that run ends.",
+};
+
+// One plain sentence: what happened, and what the person can do about it.
+export function epochSentence(status) {
+  if (!status) return null;
+  if (status.epoch) return epochText(status.epoch);
+  if (status.ending) {
+    const ending = jobEnding(status.ending);
+    if (ending.text) return ending.text;
+    // A refusal this map does not know: the platform's own message, in its words.
+    return sentence(status.ending.message) || "This epoch could not start.";
+  }
+  return PRE_LAUNCH_TEXT[status.phase] || null;
+}
+
+// The next action per state. `kind` tells the page what to render:
+//   run      open the Run Epoch drawer on a new plan
+//   drawer   open the drawer on the job's current step
+//   view     open the epoch page
+//   ship     the epoch page's ship button (Open pull request, Make default)
+//   retry    the epoch page's retry
+//   scenarios the environment's Scenarios tab
+const RUN = { kind: "run", label: "Run Epoch" };
+const AGAIN = { kind: "run", label: "Run Epoch again" };
+const view = (fix) => ({ kind: "view", label: `View ${fixName(fix)}` });
+
+const DRAWER_LABEL = {
+  drafting: "View drafts",
+  review: "Review drafts",
+  measuring: "View progress",
+};
+
+export function primaryAction(status) {
+  const key = epochKey(status);
+  if (!key) return RUN;
+  if (PRE_LAUNCH[key]) return { kind: "drawer", label: DRAWER_LABEL[key] };
+  const fix = status.epoch;
+  if (!fix) {
+    return jobEnding(status.ending).action === "scenarios"
+      ? { kind: "scenarios", label: "Open scenarios" }
+      : AGAIN;
+  }
+  if (FIX_LIVE_STATES.has(key)) return view(fix);
+  if (key === "ready") {
+    const winner = winnerOf(fix);
+    // An uploaded agent's winner, once it is the default, has nothing left to ship.
+    if (!winner || (isShippedFix(fix) && !winner.pull_request_url))
+      return view(fix);
+    return {
+      kind: "ship",
+      label: winner.pull_request_url ? "View pull request" : shipLabel(fix),
+    };
+  }
+  if (key === "failed" && fix.retryable)
+    return { kind: "retry", label: "Retry" };
+  return AGAIN;
+}
+
+// The actions beside the primary one: the epoch's page, and a new run once it ended.
+export function secondaryActions(status) {
+  const primary = primaryAction(status);
+  const fix = status?.epoch;
+  const out = [];
+  if (fix && primary.kind !== "view") out.push(view(fix));
+  if (epochKey(status) === "measuring")
+    out.push({ kind: "stop", label: "Stop" });
+  if (
+    fix &&
+    !isEpochLive(status) &&
+    primary.kind !== "run" &&
+    epochKey(status) !== "ready"
+  ) {
+    out.push(AGAIN);
+  }
+  return out;
+}
+
+// The icon after an issue's name in the list, distinct per ending, with its role.
+const ICONS = {
+  drafting: ["solar:magic-stick-3-linear", "info"],
+  review: ["solar:magic-stick-3-linear", "warning"],
+  measuring: ["solar:magic-stick-3-linear", "info"],
+  queued: ["solar:magic-stick-3-linear", "info"],
+  running: ["solar:magic-stick-3-linear", "info"],
+  stopping: ["solar:magic-stick-3-linear", "info"],
+  ready: ["solar:check-circle-linear", "success"],
+  no_improvement: ["solar:shield-cross-linear", "neutral"],
+  not_reproduced: ["solar:eye-closed-linear", "neutral"],
+  too_few_cases: ["solar:minus-circle-linear", "neutral"],
+  out_of_budget: ["solar:pause-circle-linear", "neutral"],
+  stopped: ["solar:stop-circle-linear", "neutral"],
+  failed: ["solar:danger-triangle-linear", "danger"],
+};
+
+export function epochIcon(status) {
+  const key = epochKey(status);
+  if (!key || !ICONS[key]) return null;
+  const [icon, role] = ICONS[key];
+  const name = status.epoch ? fixName(status.epoch) : "Epoch";
+  const step =
+    key === "running" && STEP_LABEL[status.epoch?.step]
+      ? ` · ${STEP_LABEL[status.epoch.step]}`
+      : "";
+  return { icon, role, tip: `${name} · ${epochLabelLong(status)}${step}` };
+}
