@@ -1515,11 +1515,11 @@
 - the previous entry is retired (deleted = true), not left live beside the new one
 - the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
 
-### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+### EVAL-E2E-016 — shipped link evaluators give correct format verdicts without network requests
 
-**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+**Goal:** Run the shipped link evaluators on well-formed links and ordinary prose using format-only validation without contacting any destination
 
-**Spec:** `flows/evals/link-destinations.spec.ts:16`
+**Spec:** `flows/evals/link-destinations.spec.ts:15`
 
 **Tags:** —
 
@@ -1527,15 +1527,15 @@
 
 1. resolve the two shipped system template IDs without rewriting their code
 2. open each system evaluator in the browser
-3. submit approved links, link-free prose and refused destinations in the Custom playground
-4. read exact verdicts and explanations
-5. inspect the exact request set on the owned canary
+3. submit well-formed links including formerly denied, private-host and redirecting destinations, plus link-free prose in the Custom playground
+4. read exact verdicts and explanations for all 16 evaluator and input combinations
+5. require empty browser and Temporal canary journals after every submission
 
 **Backend state verified:**
 
 - both shipped templates retain their system identity and text input contract
-- browser-submitted playground responses match the exact verdict and explanation matrix
-- the owned canary records only approved HEAD requests and never receives refused destinations
+- browser-submitted playground responses match the exact offline verdict and explanation matrix
+- both complete canary journals record zero destination requests in every case
 
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
@@ -2016,7 +2016,7 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:108`
 
 **Tags:** —
 
@@ -2036,7 +2036,7 @@
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:161`
 
 **Tags:** —
 

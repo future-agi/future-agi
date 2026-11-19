@@ -107,6 +107,10 @@ from .views.agent_version import (
     DeleteAgentVersionView,
     RestoreAgentVersionView,
 )
+from .views.agent_version_diff import (
+    AgentVersionChangelogView,
+    AgentVersionDiffView,
+)
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_github_webhook import HarnessGitHubWebhookView
@@ -348,6 +352,21 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/agent/",
         StoredAgentView.as_view(),
         name="agent-versions-stored-agent",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/diff/",
+        AgentVersionDiffView.as_view(),
+        name="agent-versions-diff",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/diff/<uuid:target_version_id>/",
+        AgentVersionDiffView.as_view(),
+        name="agent-versions-diff-direct",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/changelog/",
+        AgentVersionChangelogView.as_view(),
+        name="agent-versions-changelog",
     ),
     # Simulator Agent API endpoints
     path(
