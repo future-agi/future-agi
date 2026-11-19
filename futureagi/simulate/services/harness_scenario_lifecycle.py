@@ -111,6 +111,8 @@ WARNING_TEXTS = {
     "evidence_not_captured": (
         "{check} reads {evidence}, which this agent does not share with the test; it will read Not measured."
     ),
+    # ALK's own words (`recorded_note`) when it sends them.
+    "recorded_not_run": "{recorded}: recorded, not run (no world effect).",
 }
 EVIDENCE_LABELS = {"tool_calls": "the tool calls", "world_state": "the world's records"}
 # The readiness row that says whether the agent gives the harness each kind of evidence.
@@ -737,6 +739,19 @@ def scenario_lifecycle(
                     check=missing[0],
                     evidence=EVIDENCE_LABELS[missing[1]],
                 )
+        recorded = [str(one) for one in (entry or {}).get("recorded") or []]
+        if (
+            recorded
+            and view["state"] in ("validated", "active", "kept_as_written")
+            and not view["warning"]
+        ):
+            # Steps of tools with no world effect the proof recorded instead of running; the state stands.
+            view["warning"] = "recorded_not_run"
+            view["warning_text"] = str(
+                (entry or {}).get("recorded_note") or ""
+            ).strip() or warning_text(
+                "recorded_not_run", entry, recorded=", ".join(recorded)
+            )
         if view["proof"] is not None and entry is not None:
             made_with = entry.get("agent_version_id") or proved_with
             proof = view["proof"]

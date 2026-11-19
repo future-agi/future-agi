@@ -955,6 +955,39 @@ def test_a_proof_blocked_on_a_source_names_that_source(user, workspace, storage)
     )
 
 
+@pytest.mark.parametrize(
+    ("note", "text"),
+    [
+        (
+            "memorize: recorded, not run (no world effect)",
+            "memorize: recorded, not run (no world effect)",
+        ),
+        (None, "memorize, note: recorded, not run (no world effect)."),
+    ],
+)
+def test_a_proof_that_recorded_steps_instead_of_running_them_warns_and_keeps_its_state(
+    user, workspace, storage, note, text
+):
+    environment = _environment(user, workspace, storage, f"lc-recorded-{bool(note)}")
+    _suite(environment, _ten())
+    recorded = {**PROVED, "recorded": ["memorize", "note"][: 1 if note else 2]}
+    if note:
+        recorded["recorded_note"] = note
+    _proofs(environment, {**dict.fromkeys(KEYS, PROVED), REFUND_KEYS[0]: recorded})
+
+    views = _views(environment)
+
+    assert views[REFUND_KEYS[0]]["state"] == views[REFUND_KEYS[1]]["state"] == "active"
+    assert (
+        views[REFUND_KEYS[0]]["warning"],
+        views[REFUND_KEYS[0]]["warning_text"],
+    ) == (
+        "recorded_not_run",
+        text,
+    )
+    assert views[REFUND_KEYS[1]]["warning"] is None
+
+
 def test_a_case_citing_the_agent_s_own_source_reads_by_the_harness_verdict(
     user, workspace, storage
 ):
