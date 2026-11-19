@@ -189,7 +189,7 @@ def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
     )
     assert any(
         crumb.get("category") == "LiteLLM"
-        and "Failed to load vertex credentials" in crumb.get("message", "")
+        and crumb.get("message") == "Vertex credential loading failed"
         for crumb in event["breadcrumbs"]["values"]
     )
 
@@ -352,7 +352,7 @@ async def test_capability_gate_activity_denial_is_not_an_issue(
     sentry_sdk.capture_exception(RuntimeError("synthetic subsequent fault"))
     [event] = transport.events
     assert any(
-        crumb.get("message") == "Activity failed: denied_activity"
+        crumb.get("category") == "temporal.activity" and crumb.get("level") == "error"
         for crumb in event["breadcrumbs"]["values"]
     )
 

@@ -21,7 +21,8 @@ import json
 import os
 import re
 from collections.abc import Callable
-from typing import Any
+from datetime import datetime
+from typing import Any, cast
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
@@ -137,11 +138,6 @@ _CREDENTIAL_ALIASES = {
     "credential_cache_key",
     "resolved_cache_key",
 }
-_CREDENTIAL_FIELDS = {"private_key", "client_secret", "refresh_token"}
-# The SDK may already have rendered or truncated a JSON string or a dict repr.
-_CREDENTIAL_FIELD_IN_TEXT = re.compile(
-    r"""["'](?:private_key|client_secret|refresh_token)["']\s*:"""
-)
 _VERTEX_MODULE = "litellm.llms.vertex_ai.vertex_llm_base"
 _VERTEX_LOAD_MESSAGE = (
     "Failed to load vertex credentials. Check to see if credentials "
@@ -162,39 +158,78 @@ PROFILES_SAMPLE_RATE = float(
 _initialized_components: set = set()
 
 
+# The SDK caps serialized strings at this size too. Hooks may also be called
+# before serialization, so check sizes before scanning, copying or decoding.
+_MAX_TEXT = 8192
+_MAX_ITEMS = 128
+_USAGE_FIELDS = frozenset(
+    {"input_tokens", "output_tokens", "prompt_tokens", "completion_tokens",
+     "total_tokens", "max_tokens", "token_count"}
+)
+_USAGE_COUNT = re.compile(
+    r"(?<![\w.-])(?:" + "|".join(sorted(_USAGE_FIELDS)) + r")=[0-9]{1,18}(?=$|[ )])"
+)
+_SENSITIVE_NAMES = (*SENSITIVE_KEY_SUBSTRINGS, *_CREDENTIAL_ALIASES)
+_SENSITIVE_TEXT = (*_SENSITIVE_NAMES, "credential", "<saml:", "<samlp:")
+
+
 def _is_sensitive_key(key: Any) -> bool:
-    """True if a dict/header key looks like it carries a secret or PII token."""
-    if not isinstance(key, str):
-        return False
+    if type(key) is not str or len(key) > 128:
+        return True
     lowered = key.lower()
-    return lowered in _CREDENTIAL_ALIASES or any(
-        s in lowered for s in SENSITIVE_KEY_SUBSTRINGS
-    )
+    return any(s in lowered for s in _SENSITIVE_NAMES)
 
 
-_SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
-
-
-def _scrub(value: Any, depth: int = 0) -> Any:
-    """Recursively redact values under sensitive keys (defensive, bounded)."""
-    if depth > 6:
-        return value
-    if isinstance(value, str) and (
-        any(marker in value for marker in _SAML_VALUE_MARKERS)
-        or _CREDENTIAL_FIELD_IN_TEXT.search(value)
-    ):
+def _scrub_text(value: Any) -> str:
+    if type(value) is not str or len(value) > _MAX_TEXT:
         return _REDACTED
-    if isinstance(value, dict):
-        if not _CREDENTIAL_FIELDS.isdisjoint(value):
-            # Sections such as extra or headers must remain mappings in Sentry.
-            return dict.fromkeys(value, _REDACTED)
-        return {
-            k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
-            for k, v in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_scrub(v, depth + 1) for v in value]
+    probe = _USAGE_COUNT.sub("", value).lower()
+    if any(s in probe for s in _SENSITIVE_TEXT):
+        return _REDACTED
     return value
+
+
+def _scrub(value: Any) -> Any:
+    """Bound the whole walk, not just the width of each branch."""
+    remaining = 512
+    characters = 32_768
+
+    def visit(item: Any, depth: int) -> Any:
+        nonlocal remaining, characters
+        if depth > 6:
+            raise ValueError
+        if type(item) is str:
+            characters -= len(item)
+            if characters < 0:
+                raise ValueError
+            return _scrub_text(item)
+        if item is None or type(item) in (bool, float):
+            return item
+        if type(item) is int and item.bit_length() <= 64:
+            return item
+        if type(item) in (list, tuple, dict) and len(item) <= min(_MAX_ITEMS, remaining):
+            remaining -= len(item)  # Reserve all children, including opaque/redacted ones.
+            if type(item) is dict:
+                if any(k in item for k in ("private_key", "client_secret", "refresh_token")):
+                    return _REDACTED
+                result: dict[str, Any] = {}
+                for key, val in item.items():
+                    if type(key) is not str or len(key) > 128:
+                        raise ValueError
+                    if key in _USAGE_FIELDS and type(val) is int and 0 <= val < 2**63:
+                        result[key] = val
+                    elif _is_sensitive_key(key):
+                        result[key] = _REDACTED
+                    else:
+                        result[key] = visit(val, depth + 1)
+                return result
+            return [visit(v, depth + 1) for v in item]
+        raise ValueError
+
+    try:
+        return visit(value, 0)
+    except ValueError:
+        return _REDACTED
 
 
 def _vertex_log_message(logger: object, message: object) -> bool:
@@ -217,89 +252,162 @@ def _vertex_auth_frame(module: object, function: object) -> bool:
 
 
 def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
-    # A dropped log event still creates a breadcrumb on the *next* event.
-    # Strip the rendered message and its arguments before storing it in scope.
-    record = hint.get("log_record")
-    sensitive = _vertex_log_message(crumb.get("category"), crumb.get("message"))
-    if record is not None and record.exc_info:
-        tb = record.exc_info[2]
-        while tb is not None and not sensitive:
-            frame = tb.tb_frame
-            sensitive = _vertex_auth_frame(
-                frame.f_globals.get("__name__"), frame.f_code.co_name
-            )
-            tb = tb.tb_next
-    if sensitive:
-        crumb["message"] = _VERTEX_SAFE_MESSAGE
-        crumb.pop("data", None)
-    else:
-        # Other breadcrumbs can carry a serialized credential without coming
-        # from the provider logger (for example, an HTTP breadcrumb's data).
-        for key in ("message", "data"):
-            if key in crumb:
-                crumb[key] = _scrub(crumb[key])
-    return crumb
-
-
-def _scrub_event(event: dict, *, vertex_log: bool = False) -> None:
-    """
-    Redact obvious secrets/PII in-place before the event leaves the process.
-
-    Complements Sentry's server-side scrubbing and the EventScrubber denylist
-    so secrets never transit the wire even when send_default_pii is on.
-    """
-    request = event.get("request")
-    if isinstance(request, dict):
-        # Cookies are session/CSRF tokens almost by definition - redact wholesale.
-        if request.get("cookies"):
-            request["cookies"] = _REDACTED
-        for section in ("headers", "data", "env"):
-            if isinstance(request.get(section), dict):
-                request[section] = _scrub(request[section])
-        # Strip query-string credentials wholesale rather than parse them.
-        if isinstance(request.get("query_string"), str) and any(
-            s in request["query_string"].lower() for s in SENSITIVE_KEY_SUBSTRINGS
-        ):
-            request["query_string"] = _REDACTED
-
-    if isinstance(event.get("extra"), dict):
-        event["extra"] = _scrub(event["extra"])
-    contexts = event.get("contexts")
-    if isinstance(contexts, dict):
-        event["contexts"] = _scrub(contexts)
-
-    def entries(container: object, key: str) -> list[dict]:
-        items = container.get(key) if isinstance(container, dict) else None
-        if not isinstance(items, (list, tuple)):
-            return []
-        return [item for item in items if isinstance(item, dict)]
-
-    values = entries(event.get("exception"), "values")
-    threads = entries(event.get("threads"), "values")
-    frames = [
-        frame
-        for item in (*values, *threads)
-        for frame in entries(item.get("stacktrace"), "frames")
-    ]
-    if vertex_log or any(
-        _vertex_auth_frame(frame.get("module"), frame.get("function"))
-        for frame in frames
+    # Breadcrumbs outlive their originating event. Do not keep rendered log
+    # arguments, request bodies, or arbitrary integration data in the trail.
+    result: dict[str, Any] = {}
+    timestamp = crumb.get("timestamp")
+    if type(timestamp) is datetime or (
+        type(timestamp) is str
+        and len(timestamp) <= 40
+        and re.fullmatch(r"[0-9T:.+Z-]+", timestamp)
     ):
-        # Both the provider and its callers can hold raw credential fields under
-        # unrelated names. Keep the stack and exception types, not locals or
-        # free-form diagnostics (which can quote the rejected input verbatim).
+        result["timestamp"] = timestamp
+    for key in ("category", "type", "level"):
+        if key in crumb:
+            result[key] = _scrub_text(crumb[key])
+    if _vertex_log_message(crumb.get("category"), crumb.get("message")) or (
+        crumb.get("message") == _VERTEX_SAFE_MESSAGE
+    ):
+        result["message"] = _VERTEX_SAFE_MESSAGE
+    data = crumb.get("data")
+    if type(data) is dict:
+        fields: dict[str, Any] = {}
+        method = data.get("method")
+        if type(method) is str and method in (
+            "GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS",
+        ):
+            fields["method"] = method
+        status = data.get("status_code")
+        if type(status) is int and 100 <= status <= 599:
+            fields["status_code"] = status
+        result["data"] = fields
+    return result
+
+
+def _entries(container: dict, key: str, limit: int) -> list | tuple | None:
+    items = container.get(key)
+    if type(items) not in (list, tuple) or len(items) > min(limit, _MAX_ITEMS) or not all(
+        type(item) is dict for item in items
+    ):
+        container.pop(key, None)
+        return None
+    return cast("list | tuple", items)
+
+
+def _scrub_frames(event: dict) -> bool | None:
+    """Return whether a Vertex loader was found, or None for an incomplete walk."""
+    remaining = 512
+    complete = True
+    matched = False
+
+    def inspect_stack(owner: dict) -> None:
+        nonlocal remaining, complete, matched
+        if "stacktrace" not in owner:
+            return
+        stack = owner["stacktrace"]
+        if type(stack) is not dict:
+            owner.pop("stacktrace")
+            complete = False
+            return
+        frames = _entries(stack, "frames", remaining)
+        if frames is None:
+            complete = False
+            return
+        remaining -= len(frames)
         for frame in frames:
             frame.pop("vars", None)
-        for value in values:
-            value["value"] = _VERTEX_SAFE_MESSAGE
-        if "logentry" in event:
-            event["logentry"] = {"message": _VERTEX_SAFE_MESSAGE}
-        if "message" in event:
-            event["message"] = _VERTEX_SAFE_MESSAGE
+            matched |= _vertex_auth_frame(frame.get("module"), frame.get("function"))
+
+    inspect_stack(event)
+    for section in ("exception", "threads"):
+        if section not in event:
+            continue
+        container = event[section]
+        if type(container) is not dict:
+            event.pop(section)
+            complete = False
+            continue
+        items = _entries(container, "values", _MAX_ITEMS)
+        if items is None:
+            complete = False
+            continue
+        for item in items:
+            inspect_stack(item)
+    if matched:
+        return True
+    return False if complete else None
+
+
+def _scrub_event(event: dict, *, vertex_log: bool = False) -> dict:
+    _scrub_breadcrumbs(event)
+    request = event.get("request")
+    if type(request) is dict:
+        if _is_telemetry_url(request.get("url", "")):
+            request.pop("data", None)
+        if "url" in request:
+            url = _scrub_text(request["url"])
+            request["url"] = url.partition("?")[0].partition("#")[0]
+        for section in ("cookies", "query_string", "data"):
+            if section in request:
+                request[section] = _REDACTED
+        for section in ("headers", "env"):
+            if section in request:
+                clean = _scrub(request[section]) if type(request[section]) is dict else None
+                request[section] = clean if type(clean) is dict else {}
     else:
-        for frame in frames:
-            if isinstance(frame.get("vars"), dict):
-                frame["vars"] = _scrub(frame["vars"])
+        event.pop("request", None)
+
+    # Extras and frame locals are arbitrary application objects. Only retain
+    # exact, nonnegative diagnostic counts rather than guessing their meaning.
+    if "extra" in event:
+        extra = event["extra"]
+        event["extra"] = {
+            k: extra[k] for k in (*_USAGE_FIELDS, "count", "retry_count")
+            if type(extra) is dict and k in extra and type(extra[k]) is int
+            and 0 <= extra[k] < 2**63
+        }
+    if "contexts" in event:
+        contexts = _scrub(event["contexts"])
+        event["contexts"] = contexts if type(contexts) is dict else {}
+
+    frame_match = _scrub_frames(event)
+    replacement = None
+    if vertex_log or frame_match is True:
+        replacement = _VERTEX_SAFE_MESSAGE
+    elif frame_match is None:
+        replacement = _REDACTED
+    for value in event.get("exception", {}).get("values", []):
+        if "value" in value:
+            value["value"] = replacement or _scrub_text(value["value"])
+    if "message" in event:
+        event["message"] = replacement or _scrub_text(event["message"])
+    if "logentry" in event:
+        entry = event["logentry"]
+        # Never replay a format string, stringify parameters, or guess which
+        # argument produced part of a rendered message.
+        if replacement:
+            event["logentry"] = {"message": replacement}
+        elif type(entry) is not dict:
+            event.pop("logentry")
+        else:
+            params = entry.get("params")
+            message = _scrub_text(entry.get("message"))
+            formatted = _scrub_text(entry.get("formatted"))
+            # Some integrations omit params after formatting. If we cannot
+            # establish that the two bounded strings agree, keep neither.
+            has_params = params is not None and not (
+                type(params) in (list, tuple, dict) and not params
+            )
+            rendered = "formatted" in entry and (
+                "message" not in entry or message != formatted
+            )
+            if has_params or rendered:
+                event["logentry"] = {"message": _REDACTED}
+            else:
+                event["logentry"] = {
+                    k: v for k, v in (("message", message), ("formatted", formatted)) if k in entry
+                }
+    return event
 
 
 def _event_scrubber() -> Any:
@@ -350,16 +458,16 @@ def _expected_log_outcome(event: dict, hint: dict) -> bool:
     if isinstance(logentry, dict):
         candidates.extend([logentry.get("formatted"), logentry.get("message")])
     for payload in candidates:
-        if isinstance(payload, str):
+        if type(payload) is str and len(payload) <= _MAX_TEXT:
             try:
                 payload = json.loads(payload)
             except (ValueError, RecursionError):
                 continue
-        if not isinstance(payload, dict):
+        if type(payload) is not dict:
             continue
         identity = (event.get("logger"), payload.get("event"), payload.get("reason"))
         if not (
-            all(isinstance(value, str) for value in identity)
+            all(type(value) is str and len(value) <= 128 for value in identity)
             and payload.get("outcome") == "handled"
         ):
             continue
@@ -376,52 +484,31 @@ def _is_telemetry_url(url: object) -> bool:
     previously the prefix was hardcoded here and could silently drift from the
     middleware copy.
     """
-    if not url:
-        return False
+    if type(url) is not str or len(url) > _MAX_TEXT:
+        return True  # Unknown target: discard its body.
     from tfc.telemetry.middleware import SENSITIVE_BODY_PATHS
 
-    return any(pattern.search(str(url)) for pattern in SENSITIVE_BODY_PATHS)
+    return any(pattern.search(url) for pattern in SENSITIVE_BODY_PATHS)
 
 
-def _scrub_deployment_telemetry_event(event: dict) -> dict:
-    # Sentry's HTTP integrations record outbound POSTs to /telemetry/ as
-    # breadcrumbs with the request body in ``data.body``/``data.data``. The
-    # inbound ``request.url`` check below would not match those (the exception
-    # frame's URL is whatever the caller hit, not the breadcrumb's target), so
-    # the registration payload would still ship to Sentry via breadcrumbs even
-    # though the inbound branch scrubbed the request body. Walk breadcrumbs
-    # unconditionally and strip body fields whose ``url`` points at a telemetry
-    # path before running the inbound scrub.
-    breadcrumbs = event.get("breadcrumbs") or []
-    # Sentry SDK versions do not agree on the normalized breadcrumb shape:
-    # error events commonly expose {"values": [...]}, while transaction
-    # events can already expose the values list.  The scrubber runs inside
-    # ``before_send_transaction`` and must never turn a successful request
-    # into a 500 merely because the SDK chose the latter representation.
-    if isinstance(breadcrumbs, dict):
-        breadcrumbs = breadcrumbs.get("values") or []
-    if not isinstance(breadcrumbs, (list, tuple)):
-        breadcrumbs = []
+def _scrub_breadcrumbs(event: dict) -> None:
+    # Construct new records at send time, even for SDK-retained or restored
+    # scope breadcrumbs that never passed through our ingestion hook.
+    if "breadcrumbs" in event:
+        crumbs = event["breadcrumbs"]
+        wrapped = type(crumbs) is dict
+        items = crumbs.get("values") if wrapped else crumbs
+        clean = []
+        if type(items) in (list, tuple) and len(items) <= _MAX_ITEMS:
+            clean = [_before_breadcrumb(c, {}) for c in items if type(c) is dict]
+        event["breadcrumbs"] = {"values": clean} if wrapped else clean
 
-    for breadcrumb in breadcrumbs:
-        if not isinstance(breadcrumb, dict):
-            continue
-        data = breadcrumb.get("data") or {}
-        if not isinstance(data, dict):
-            continue
-        if _is_telemetry_url(data.get("url")):
-            for key in ("body", "data", "http.request.body", "request_body"):
-                data.pop(key, None)
-            breadcrumb["data"] = data
 
-    request = event.get("request") or {}
-    if not isinstance(request, dict) or not _is_telemetry_url(request.get("url")):
-        return event
-
-    request.pop("data", None)
-    for exception in (event.get("exception") or {}).get("values", []):
-        for frame in (exception.get("stacktrace") or {}).get("frames", []):
-            frame.pop("vars", None)
+def _before_send_transaction(event: dict, hint: dict) -> dict | None:
+    try:
+        _scrub_event(event)
+    except Exception:
+        return None
     return event
 
 
@@ -444,7 +531,9 @@ def _expected_vertex_credential_error(error: object) -> bool:
         )
 
     if isinstance(error, MalformedError):
-        message = str(error)
+        message = error.args[0] if len(error.args) == 1 else None
+        if type(message) is not str or len(message) > _MAX_TEXT:
+            return False
         return (
             message.startswith(
                 "Service account info was not in the expected format, missing fields "
@@ -455,7 +544,10 @@ def _expected_vertex_credential_error(error: object) -> bool:
 
     # The key loader, credential-shape validation and token-response parser all
     # raise plain ValueError. Match only known credential validation diagnostics.
-    return type(error) is ValueError and str(error).startswith(
+    if type(error) is not ValueError or len(error.args) != 1:
+        return False
+    message = error.args[0]
+    return type(message) is str and message.startswith(
         (
             "Unable to load PEM file.",
             "Could not deserialize key data.",
@@ -477,8 +569,6 @@ def _get_before_send() -> Callable:
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
-        event = _scrub_deployment_telemetry_event(event)
-
         # 1. Infrastructure logger noise - never actionable as an issue.
         logger_name = event.get("logger") or ""
         # Match on a dot boundary: "saml2" must not swallow "saml2_auth".
@@ -494,7 +584,7 @@ def _get_before_send() -> Callable:
         # (LiteLLM raises it to our code) is still sent.
         record = hint.get("log_record")
         record_name = getattr(record, "name", None)
-        if record_name in EXPECTED_OUTCOME_LOGGERS:
+        if type(record_name) is str and len(record_name) <= 128 and record_name in EXPECTED_OUTCOME_LOGGERS:
             return None
         # VertexBase.get_access_token logs and re-raises *all* load_auth
         # failures. Only malformed credentials and known refusals are expected.
@@ -525,8 +615,8 @@ def _get_before_send() -> Callable:
                 ),
             )
         except Exception:
-            # Never let scrubbing failures drop a real error.
-            pass
+            # Never emit the original payload after a partial scrub.
+            return None
 
         return event
 
@@ -682,14 +772,12 @@ def init_sentry(
             send_default_pii=True,
             event_scrubber=event_scrubber,
             # Keep stack frames and request values readable without bloating events.
-            max_value_length=8192,
-            # "medium" caps bodies at ~10KB: enough to debug, small enough that
-            # large uploads/payloads don't dominate the event volume or leak.
-            max_request_body_size="medium",
+            max_value_length=_MAX_TEXT,
+            max_request_body_size="never",  # Do not collect what the hook discards.
             max_breadcrumbs=100,
             attach_stacktrace=True,  # Attach stack traces to all messages
             include_source_context=True,  # Include source code context
-            include_local_variables=True,  # Capture local variables for debugging
+            include_local_variables=False,  # Never ask the SDK to render arbitrary locals
             # In-app marking for better stack traces
             in_app_include=[
                 "tfc",
@@ -703,9 +791,7 @@ def init_sentry(
             # Hooks
             before_send=_get_before_send(),
             before_breadcrumb=_before_breadcrumb,
-            before_send_transaction=lambda event, hint: (
-                _scrub_deployment_telemetry_event(event)
-            ),
+            before_send_transaction=_before_send_transaction,
             # Debug mode in staging for troubleshooting
             debug=IS_STAGING,
             # Session tracking
