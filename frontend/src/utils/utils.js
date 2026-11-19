@@ -584,7 +584,11 @@ export const getAveragePercentage = (a, b) => {
 
   return (a / b) * 100;
 };
-export function formatFileSize(bytes) {
+// wholeKb: under 1 MB, a whole number of KB and never below 1 KB.
+export function formatFileSize(bytes, { wholeKb = false } = {}) {
+  if (wholeKb && bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
   if (bytes === 0) {
     return "0 Bytes";
   }

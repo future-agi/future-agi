@@ -17,6 +17,7 @@ import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
 const INITIAL = { draft: "", scaffolds: [], files: [] };
 
+// Not the build forms' by-name merge: a message can carry two files that share a name.
 const sameFile = (a, b) => a.name === b.name && a.size === b.size;
 
 function composerReducer(state, action) {
