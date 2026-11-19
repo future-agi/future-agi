@@ -398,7 +398,7 @@ def test_live_selected_version_split_and_dashboard_share_source(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("structured", [None, "array", "map"])
 def test_split_exact_window_for_loads_and_structured_witnesses(
     skill_query_client, cohort_catalog, structured
 ):
@@ -420,7 +420,7 @@ def test_split_exact_window_for_loads_and_structured_witnesses(
             ("not_between", excluded, inside),
         ]
     ]
-    matches = {"tags": ["vip"]}
+    matches = {"tags": ["vip"], "profile": {"tier": "gold"}}
     rows = []
     for trace, load, witness in [
         ("good", inside, inside),
@@ -476,12 +476,14 @@ def test_split_exact_window_for_loads_and_structured_witnesses(
         [
             *dates,
             {
-                "column_id": "tags",
+                "column_id": "tags" if structured == "array" else "profile",
                 "filter_config": {
                     "col_type": "SPAN_ATTRIBUTE",
-                    "filter_type": "array",
+                    "filter_type": structured,
                     "filter_op": "contains",
-                    "filter_value": ["vip"],
+                    "filter_value": ["vip"]
+                    if structured == "array"
+                    else {"tier": "gold"},
                 },
             },
         ]

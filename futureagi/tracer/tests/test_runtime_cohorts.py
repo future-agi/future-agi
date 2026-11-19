@@ -79,7 +79,7 @@ def test_latency_sort_requires_the_measured_window_and_rejects_oversized_literal
     def build(cohort):
         return RuntimeLatencyQueryBuilderV2(
             project_id=project, filters=[date, cohort]
-        ).build_runtime_latency_page(LATENCY_DESC, max_read_bytes=256 * 1024**2)
+        ).build_runtime_latency_page(LATENCY_DESC)
 
     with pytest.raises(UnsupportedFilterShapeError, match="window changed"):
         build(cohort_filter(project, [str(uuid4())]))  # not a latency measurement

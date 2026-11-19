@@ -244,7 +244,7 @@ def move_windows(
 
 
 def adoption_state(
-    loads: Sequence[Mapping], *, to_version_id: str, context_rules: Mapping
+    loads: Sequence[Mapping], *, to_version_id: str | None, context_rules: Mapping
 ):
     """Classify verified after-window loads for ONE agent.
 
@@ -254,8 +254,10 @@ def adoption_state(
     """
     if not loads:
         return {"share": None, "not_moved_reason": "not_seen", "cached": False}
-    new = [row for row in loads if str(row["skill_version_id"]) == str(to_version_id)]
-    old = [row for row in loads if str(row["skill_version_id"]) != str(to_version_id)]
+    # A removed label has no destination; observed agents still have rows,
+    # but no verified version counts as having moved to the label.
+    new = [row for row in loads if str(row["skill_version_id"]) == to_version_id]
+    old = [row for row in loads if str(row["skill_version_id"]) != to_version_id]
     reasons = set()
     for row in old:
         if context_rules.get(row.get("via_context_version_id")) == "pinned":

@@ -61,6 +61,17 @@ def test_six_not_moved_reasons(loads, rules, reason):
     assert result["share"] == (None if not loads else 1 if reason == "got_new" else 0)
 
 
+def test_removed_label_keeps_observed_agent_without_claiming_adoption():
+    result = adoption_state(
+        [{"skill_version_id": "old"}], to_version_id=None, context_rules={}
+    )
+    assert result == {
+        "share": 0.0,
+        "not_moved_reason": "got_old_after_move",
+        "cached": False,
+    }
+
+
 @pytest.mark.parametrize(
     "rules,reason",
     [

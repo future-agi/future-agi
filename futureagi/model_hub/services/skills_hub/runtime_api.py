@@ -1647,7 +1647,7 @@ def comparison(*, principal, workspace, query):
             }
             for key in sorted(visible)
         ]
-        if event and new_id is not None
+        if event
         else []
     )
     for row in adoption:

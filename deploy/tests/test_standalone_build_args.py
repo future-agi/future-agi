@@ -1,6 +1,8 @@
 """Build args belong to the invocation that sends them, not a global set."""
 
 import importlib.util
+import os
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -30,6 +32,40 @@ class BuildArgTests(unittest.TestCase):
                     "FI_COLLECTOR_IMAGE",
                     "AGENTCC_GATEWAY_IMAGE",
                 },
+            )
+
+    def test_shell_invocations_route_build_args_for_each_topology(self):
+        for topology in ("standalone", "distributed"):
+            # Capture the argv produced by the shipping helper; do not pull or
+            # start a container in a CI guard test.
+            recipes = subprocess.check_output(
+                [
+                    "bash",
+                    "-ceu",
+                    'source bin/lib/build-local.sh; build_local_image() { printf "%s " "$@"; echo; }; build_local_images "$1" all guard',
+                    "--",
+                    topology,
+                ],
+                env={**os.environ, "VITE_SKILL_TRACES": "on"},
+                cwd=ROOT,
+                text=True,
+            ).splitlines()
+            self.assertEqual(
+                [line.split() for line in recipes if "VITE_SKILL_TRACES=" in line],
+                [
+                    [
+                        "futureagi/frontend:guard",
+                        "--build-arg",
+                        "VITE_SKILL_TRACES=on",
+                        "frontend",
+                    ]
+                ],
+            )
+            (backend,) = [
+                line for line in recipes if line.startswith("futureagi/future-agi:")
+            ]
+            self.assertEqual(
+                "--build-arg IMAGE_VARIANT=slim" in backend, topology == "standalone"
             )
 
     def test_same_argument_is_checked_for_both_destinations(self):

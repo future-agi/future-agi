@@ -6,6 +6,7 @@ native call goes through the real PG lock, driver, native DDL and schema ledger.
 """
 
 import ast
+import hashlib
 import json
 import os
 import subprocess
@@ -141,9 +142,20 @@ def test_native_stage_fresh_and_retry(topology):
             insert_rows(client, [span_row(project, "installed")])
             native_boot(args, db)
             assert query("SELECT count() FROM skill_trace_links FINAL") == [(1,)]
+            packaged = (
+                ROOT
+                / "futureagi/tracer/services/clickhouse/v2/schema/028_skill_attribution.sql"
+            )
+            # No unrelated schema file or duplicate receipt on re-entry.
             assert query(
-                "SELECT count() FROM schema_versions WHERE filename='028_skill_attribution.sql'"
-            ) == [(1,)]
+                "SELECT filename, toString(sha256), notes FROM schema_versions"
+            ) == [
+                (
+                    packaged.name,
+                    hashlib.sha256(packaged.read_bytes()).hexdigest(),
+                    "schema-topology/v1/local",
+                )
+            ]
             assert query("SELECT count() FROM spans FINAL") == [(1,)]
 
 

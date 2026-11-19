@@ -508,7 +508,9 @@ def run(
                     ]
                 ):
                     raise InstallError(
-                        "only the selected migration receipt may be inserted"
+                        "only the verified Skills migration receipt may be inserted"
+                        if with_skill_schema
+                        else "only the verified derived migration receipt may be inserted"
                     )
                 deadline.remaining()
                 return raw.insert(table, rows, column_names=column_names)

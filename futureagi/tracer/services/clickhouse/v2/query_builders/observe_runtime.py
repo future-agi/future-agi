@@ -1,5 +1,9 @@
 """Exact numbered Observe pages for a previously measured Runtime latency cohort."""
 
+from typing import Protocol, cast
+
+from django.conf import settings
+
 from tracer.services.clickhouse.query_builders.base import _unix_microseconds
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
@@ -18,8 +22,13 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 _COHORT_LITERAL_BUDGET = 192 * 1024
 
 
+class _ListReadLimits(Protocol):
+    # Installed dynamically from the validated numerical settings registry.
+    OBSERVABILITY_LIST_MAX_BYTES: int
+
+
 class RuntimeLatencyQueryBuilderV2(TraceListQueryBuilderV2):
-    def build_runtime_latency_page(self, sort_params, *, max_read_bytes: int):
+    def build_runtime_latency_page(self, sort_params):
         """Rank narrow replay coordinates, not hydrated spans or one grid block.
 
         The raw in-window witness matches cohort seed discovery. Canonical root
@@ -65,7 +74,10 @@ class RuntimeLatencyQueryBuilderV2(TraceListQueryBuilderV2):
             "page_size": self.page_size,
             # Application transport normally clears byte caps. The fixed rank
             # statement carries its own (tested) cap, never a client setting.
-            "read_bytes": min(max_read_bytes, 256 * 1024**2),
+            "read_bytes": min(
+                cast(_ListReadLimits, settings).OBSERVABILITY_LIST_MAX_BYTES,
+                256 * 1024**2,
+            ),
         }
         winner = self._filter_classifier_latest_select_sql("""
             argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,

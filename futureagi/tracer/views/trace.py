@@ -4985,11 +4985,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     },
                 )
 
-            count_result = read_page(
-                *builder.build_runtime_latency_page(
-                    list_sort, max_read_bytes=page_read_settings["max_bytes_to_read"]
-                )
-            )
+            count_result = read_page(*builder.build_runtime_latency_page(list_sort))
             (receipt,) = count_result.data
             total_count = receipt["total"]
             ranked = builder.runtime_latency_page_rows(receipt["page"])
