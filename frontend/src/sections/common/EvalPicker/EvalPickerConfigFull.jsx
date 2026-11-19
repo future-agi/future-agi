@@ -246,7 +246,12 @@ const EvalPickerConfigFull = ({
   );
   const [promptMessageError, setPromptMessageError] = useState("");
   const [sourceMapping, setSourceMapping] = useState({});
-  const sourceHasDraft = useRef(false);
+  // Readiness reports describe the currently visible schema, not user edits.
+  // In particular, a warm partial schema must not replace a saved binding.
+  const [taskPathEdits, setTaskPathEdits] = useState({});
+  const rememberTaskPath = useCallback((key, path) => {
+    setTaskPathEdits((prev) => ({ ...prev, [key]: path }));
+  }, []);
   const sourceRef = useRef(null);
 
   const localFormFilters = useWatch({
@@ -265,10 +270,7 @@ const EvalPickerConfigFull = ({
 
   const handleSourceReadyChange = useCallback((ready, mapping) => {
     setSourceReady(ready);
-    if (mapping) {
-      sourceHasDraft.current = true;
-      setSourceMapping(mapping);
-    }
+    if (mapping) setSourceMapping(mapping);
   }, []);
 
   // Dataset columns for autocomplete in editors
@@ -401,8 +403,12 @@ const EvalPickerConfigFull = ({
   const compositeUnionKeys = visibleSchema.keys;
   const taskMapping = useMemo(() => {
     if (!taskComposite) return sourceMapping;
-    return activeTaskCompositeMapping(childInputs.keys, sourceMapping);
-  }, [taskComposite, childInputs.keys, sourceMapping]);
+    return activeTaskCompositeMapping(childInputs.keys, {
+      ...evalData?.mapping,
+      ...sourceMapping,
+      ...taskPathEdits,
+    });
+  }, [taskComposite, childInputs.keys, evalData?.mapping, sourceMapping, taskPathEdits]);
   const taskMappingBlocked =
     taskComposite &&
     (Boolean(schemaBlocker) ||
@@ -2239,11 +2245,10 @@ const EvalPickerConfigFull = ({
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
                     requiredVariables={taskComposite ? visibleSchema.required : undefined}
-                    initialMapping={
-                      taskComposite && sourceHasDraft.current
-                        ? sourceMapping
-                        : evalData?.mapping
-                    }
+                    initialMapping={taskComposite
+                      ? { ...evalData?.mapping, ...taskPathEdits }
+                      : evalData?.mapping}
+                    onMappingEdit={taskComposite ? rememberTaskPath : undefined}
                     errorLocalizerEnabled={errorLocalizerActive}
                     localFilters={localApiFilters}
                     onReadinessChange={handleReadinessChange}

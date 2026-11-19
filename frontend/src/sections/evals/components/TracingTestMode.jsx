@@ -338,6 +338,7 @@ const MAPPING_AUTOCOMPLETE_SX = { flex: 1 };
 const MappingRow = React.memo(function MappingRow({
   variable,
   optional = false,
+  commitOnInput = false,
   options,
   value,
   allowCustomFieldPath,
@@ -385,10 +386,14 @@ const MappingRow = React.memo(function MappingRow({
               const next = val || "";
               setInputValue(next);
               clearTimeout(commitTimer.current);
-              commitTimer.current = setTimeout(() => {
+              const commit = () => {
                 lastCommitted.current = next;
                 onType(variable, next);
-              }, MAPPING_COMMIT_DEBOUNCE_MS);
+              };
+              // A task composite can save while an optional field is focused.
+              // Commit its draft now; attribute discovery debounces its query.
+              if (commitOnInput) commit();
+              else commitTimer.current = setTimeout(commit, MAPPING_COMMIT_DEBOUNCE_MS);
             },
           }
         : {})}
@@ -489,6 +494,7 @@ const MappingRow = React.memo(function MappingRow({
 });
 
 MappingRow.propTypes = {
+  commitOnInput: PropTypes.bool,
   optional: PropTypes.bool,
   variable: PropTypes.string.isRequired,
   options: PropTypes.arrayOf(PropTypes.string).isRequired,
@@ -510,6 +516,7 @@ const TracingTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       requiredVariables,
+      onMappingEdit,
       codeParams = {},
       runConfig,
       onTestResult,
@@ -734,12 +741,18 @@ const TracingTestMode = React.forwardRef(
       enabled: allowCustomFieldPath,
     });
 
+    const handleMappingSelect = useCallback((variable, path) => {
+      setMapping((prev) => ({ ...prev, [variable]: path }));
+      onMappingEdit?.(variable, path);
+    }, [onMappingEdit]);
+
     // ── Map-from-table: assign a column's path straight into a variable ──
     // Shared across every mapping surface — see useMapToVariable.
     const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
       variables,
       mapping,
       setMapping,
+      onAssign: onMappingEdit ? handleMappingSelect : undefined,
     });
 
     // Template ID ref (updated via imperative handle for first-test flow)
@@ -1577,15 +1590,12 @@ const TracingTestMode = React.forwardRef(
       [truncatedSet, spanDetail, walkedFromDetail],
     );
 
-    const handleMappingSelect = useCallback((variable, val) => {
-      setMapping((prev) => ({ ...prev, [variable]: val }));
-    }, []);
     const handleMappingType = useCallback(
       (variable, val) => {
         handleMappingInputChange(null, val);
-        setMapping((prev) => ({ ...prev, [variable]: val }));
+        handleMappingSelect(variable, val);
       },
-      [handleMappingInputChange],
+      [handleMappingInputChange, handleMappingSelect],
     );
     const handleMappingOpen = useCallback(
       (variable, val) => {
@@ -1766,7 +1776,7 @@ const TracingTestMode = React.forwardRef(
       setResult(null);
       setError(null);
 
-      if (!variables.length) {
+      if (!variables.length && !(taskMapping && isComposite && compositeAdhocConfig)) {
         onTestResult?.(
           false,
           "No variables to map — eval template may still be loading",
@@ -1895,6 +1905,7 @@ const TracingTestMode = React.forwardRef(
       isComposite,
       compositeAdhocConfig,
       startErrorLocalizerPoll,
+      taskMapping,
       codeParams,
       runConfig,
       model,
@@ -2615,6 +2626,7 @@ const TracingTestMode = React.forwardRef(
                       key={variable}
                       variable={variable}
                       optional={requiredVariables && !requiredVariables.includes(variable)}
+                      commitOnInput={taskMapping && isComposite}
                       options={optionsByVariable[variable] || fieldNames}
                       value={mapping[variable] || ""}
                       errorMessage={
@@ -2691,6 +2703,7 @@ TracingTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   requiredVariables: PropTypes.arrayOf(PropTypes.string),
+  onMappingEdit: PropTypes.func,
   codeParams: PropTypes.object,
   runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
