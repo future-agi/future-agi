@@ -61,6 +61,11 @@ from tracer.services.attachments.interfaces import (
 
 logger = structlog.get_logger(__name__)
 MAX_ATTEMPTS = 3
+# Claim-time revalidation may retire unclaimed work only for these permanent
+# source/policy revocations (import turned off or destination not approved).
+# Every other denial, including redaction_unavailable, 5xx, 429 and conflict,
+# re-raises unchanged and leaves the job exactly as it was.
+CLAIM_RETIRING_DENIALS = frozenset({("source_unavailable", 403)})
 LEASE_SECONDS = 900
 PUT_SECONDS = 30
 DRAIN_SECONDS = 15
@@ -1034,9 +1039,8 @@ def claim(job_id, *, scope_id, now):
             try:
                 _check_job(*rows, timezone.now())
             except AttachmentError as error:
-                # Only a permanent local revalidation denial may retire unclaimed work.
-                # Do not turn contention or unavailable evidence into a rejection.
-                if error.status >= 500 or error.status == 429 or error.code == "conflict":
+                # Only an allowlisted permanent revocation may retire unclaimed work.
+                if (error.code, error.status) not in CLAIM_RETIRING_DENIALS:
                     raise
                 _retire_locked(job, target, error.code, _terminal_denial(error.code), claim_denied=True)
                 _log_deferred(job.id, error.code)

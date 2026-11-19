@@ -538,7 +538,8 @@ def test_unapproved_destination_dead_letters_without_secret_canaries(
 ):
     data = wav_bytes(seconds=2)
     current = session(env)
-    request = body(current, data=data, envelope_id=envelope(env, data, current=current))
+    sealed = envelope(env, data, current=current, lifetime=timedelta(seconds=10))
+    request = body(current, data=data, envelope_id=sealed)
     _, job = submit_job(env[2], scope_id=env[0].id, body=request)
     settings.FI_ATTACHMENTS_IMPORT_HOSTS = ("other.example.com",)
     store = Store()
@@ -557,6 +558,9 @@ def test_unapproved_destination_dead_letters_without_secret_canaries(
         "deferred": 0,
     }
     assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
+    # The claim-time denial issues no lease, so nothing extends cleanup past the
+    # short-lived envelope; let the database clock pass its own expiry.
+    wait_for_db(AttachmentSourceEnvelope.objects.get(pk=sealed).expires_at + timedelta(seconds=1))
     assert envelopes.sweep() == 1
     assert not AttachmentSourceEnvelope.objects.exists()
 
