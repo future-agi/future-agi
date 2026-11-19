@@ -191,6 +191,35 @@ def test_a_scenario_the_builder_round_tripped_unchanged_is_not_a_change():
     assert (change["id"], change["fields"]) == ("scenario:lookup", ["_index", "tests"])
 
 
+def test_fixing_one_case_through_the_builder_lists_only_that_case():
+    """The builder rewrites every case's file without its index bookkeeping and rewrites its proofs record; only the
+    case it fixed is a change."""
+    keys = ("refund", "lookup", "status")
+    case = {"solution": [{"tool": "get_order"}], "tests": "refunds once"}
+    entries = [
+        {**case, "name": key, "steps": 1, "folder": f"scenarios/{key}"} for key in keys
+    ]
+    fixed = {**case, "name": "refund", "tests": "does not refund"}
+    default = _tree(
+        {},
+        **{"scenarios.json": entries, "proofs.json": {"refund": {"proved_at": "1"}}},
+        **{f"scenarios/{entry['name']}/scenario.json": entry for entry in entries},
+    )
+    draft = _tree(
+        {},
+        **{
+            "scenarios.json": [{**entries[0], **fixed}, *entries[1:]],
+            "proofs.json": {"refund": {"proved_at": "2"}},
+            "scenarios/refund/scenario.json": fixed,
+        },
+        **{f"scenarios/{key}/scenario.json": {**case, "name": key} for key in keys[1:]},
+    )
+
+    assert [(one["id"], one["fields"]) for one in compute_changes(default, draft)] == [
+        ("scenario:refund", ["_index", "tests"])
+    ]
+
+
 def _pair():
     default = _tree(
         {"tools": TOOLS, "persona": "calm"},
