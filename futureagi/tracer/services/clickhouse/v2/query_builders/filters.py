@@ -82,6 +82,10 @@ _EVAL_LEGACY_COLUMN_MARKERS = {
     "eval_scan._peerdb_version": "eval_scan.__eval_legacy_version__",
     "latest_eval._peerdb_is_deleted": "latest_eval.__eval_legacy_cdc_deleted__",
     "latest_eval._peerdb_version": "latest_eval.__eval_legacy_version__",
+    "physical_eval._peerdb_is_deleted": "physical_eval.__eval_legacy_cdc_deleted__",
+    "physical_eval._peerdb_version": "physical_eval.__eval_legacy_version__",
+    "candidate_eval._peerdb_is_deleted": "candidate_eval.__eval_legacy_cdc_deleted__",
+    "candidate_eval._peerdb_version": "candidate_eval.__eval_legacy_version__",
 }
 
 # ``model_hub_score`` is not part of the spans migration and retains PeerDB's
@@ -235,7 +239,10 @@ def _append_v2_settings(sql: str, *, aggregation_in_order: bool = True) -> str:
     v2 settings into it (don't double-apply). If not, append a fresh one.
 
     Handles trailing FORMAT clause: SETTINGS must come BEFORE FORMAT.
-    Ordered aggregation remains the default; individual helpers may opt out.
+    Ordered aggregation remains the default; individual helpers may opt out,
+    either through ``aggregation_in_order`` or by stating
+    ``optimize_aggregation_in_order`` in the statement's own SETTINGS clause,
+    which this boundary then leaves alone.
     """
     sql_stripped = sql.rstrip().rstrip(";").rstrip()
     # Check for an existing SETTINGS clause (case-insensitive, at end before
@@ -255,14 +262,21 @@ def _append_v2_settings(sql: str, *, aggregation_in_order: bool = True) -> str:
         *_V2_REQUIRED_SETTINGS,
         f"optimize_aggregation_in_order = {int(aggregation_in_order)}",
     )
-    settings_clause = "SETTINGS " + ", ".join(required_settings)
     existing = _re.search(r"\s+SETTINGS\s+", sql_stripped, _re.IGNORECASE)
     if existing:
         # Merge — append our settings to the existing clause (later wins on
-        # duplicate keys, which is what we want).
+        # duplicate keys, which is what we want for the required keys). The
+        # aggregation strategy is a DEFAULT this boundary supplies, never a
+        # veto: a statement that states ``optimize_aggregation_in_order``
+        # itself has chosen its execution shape (the seeded Users acquisition
+        # opts out of in-order reads as a whole), so that key is not repeated.
+        if _re.search(
+            r"\boptimize_aggregation_in_order\s*=", sql_stripped[existing.end() :]
+        ):
+            required_settings = _V2_REQUIRED_SETTINGS
         sql_stripped = sql_stripped + ", " + ", ".join(required_settings)
     else:
-        sql_stripped = sql_stripped + "\n" + settings_clause
+        sql_stripped = sql_stripped + "\nSETTINGS " + ", ".join(required_settings)
 
     return sql_stripped + format_clause
 
@@ -576,42 +590,13 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         """
 
         project_scope = self._project_scope_predicate("eu")
-        return f"""
-            WITH
-            matching_end_user_ids AS (
-                SELECT DISTINCT eu.end_user_id
+        return self._expand_end_user_ids_through_remap(
+            f"""SELECT DISTINCT eu.end_user_id
                 FROM end_users AS eu FINAL
                 WHERE {project_scope}
                   AND ({inner})
-                  AND eu.is_deleted = 0
-            ),
-            matching_end_user_group_ids AS (
-                SELECT DISTINCT remap_match.new_id
-                FROM end_user_id_remap AS remap_match FINAL
-                WHERE remap_match.old_id IN (
-                    SELECT end_user_id FROM matching_end_user_ids
-                )
-                   OR remap_match.new_id IN (
-                    SELECT end_user_id FROM matching_end_user_ids
-                )
-            ),
-            expanded_matching_end_user_ids AS (
-                SELECT arrayJoin(arrayDistinct(arrayConcat(
-                    groupArray(remap.old_id),
-                    [remap.new_id]
-                ))) AS expanded_end_user_id
-                FROM end_user_id_remap AS remap FINAL
-                WHERE remap.new_id IN (
-                    SELECT new_id FROM matching_end_user_group_ids
-                )
-                GROUP BY remap.new_id
-            )
-            SELECT end_user_id AS expanded_end_user_id
-            FROM matching_end_user_ids
-            UNION DISTINCT
-            SELECT expanded_end_user_id
-            FROM expanded_matching_end_user_ids
-        """
+                  AND eu.is_deleted = 0"""
+        )
 
     @staticmethod
     def _rewrite_filter_fragment(sql: str) -> str:

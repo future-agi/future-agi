@@ -1,0 +1,8 @@
+# The oldest release bin/update applies a newer release to in place. Older
+# installs upgrade with the release's own steps first: INSTALLATION.md ›
+# Upgrading for Standalone and Distributed, deploy/README.md › Upgrading a
+# production install for production (bin/update's refusal names the one).
+# Raise it in the PR that makes a release a mandatory stepping stone; lower it
+# only after rehearsing in-place updates from the older release.
+# v1.51.0 is the oldest release the updater has been rehearsed from.
+v1.51.0

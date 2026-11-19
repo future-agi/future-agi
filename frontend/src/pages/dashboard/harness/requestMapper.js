@@ -9,7 +9,7 @@
  * can materialize those, only platform-vault refs are forwarded.
  */
 
-export const MAX_SCENARIO_COUNT = 200;
+export const MAX_SCENARIO_COUNT = 1000;
 
 const GITHUB_URL_PATTERN =
   /^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\/tree\/(.+?))?(?:\/)?$/;

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import math
-from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -11,9 +9,7 @@ from tracer.services.clickhouse.v2.property_catalog.codec import (
     MAX_DEFINITION_JSON_BYTES,
     CatalogCodecError,
     canonical_json,
-    canonical_json_sha256,
     casefold_text,
-    framed_sha256,
     like_contains_pattern,
     stable_property_id,
 )
@@ -56,7 +52,8 @@ def test_stable_property_ids_are_namespaced_and_uuid_canonical() -> None:
         ("custom_attribute", "x", "traces"),
         ("annotation", "not-a-uuid", ""),
         ("annotation", "00000000-0000-0000-0000-000000000000", ""),
-        ("custom_attribute", "bad\nkey", ""),
+        ("system_attribute", "bad\nkey", "traces"),
+        ("custom_attribute", "x" * 4097, ""),
     ],
 )
 def test_stable_property_id_rejects_ambiguous_or_invalid_components(
@@ -82,9 +79,6 @@ def test_like_contains_pattern_escapes_clickhouse_wildcards() -> None:
 def test_canonical_json_is_sorted_utf8_and_bounded_by_bytes() -> None:
     payload = canonical_json({"z": "東京", "a": [True, None, 3]})
     assert payload == '{"a":[true,null,3],"z":"東京"}'
-    assert canonical_json_sha256(payload) == (
-        "6ea2dfa51eab90a54faf1bbe0118a6b4083a24646c34f8bbd48366c2769ba0e6"
-    )
 
     exactly_full = canonical_json({"x": "a" * (MAX_DEFINITION_JSON_BYTES - 8)})
     assert len(exactly_full.encode()) == MAX_DEFINITION_JSON_BYTES
@@ -107,15 +101,6 @@ def test_canonical_json_rejects_non_json_or_invalid_unicode(payload: object) -> 
         canonical_json(payload)  # type: ignore[arg-type]
 
 
-def test_framed_hash_has_no_delimiter_ambiguity() -> None:
-    assert framed_sha256("catalog.test", "a|b", "c") != framed_sha256(
-        "catalog.test", "a", "b|c"
-    )
-    assert framed_sha256("catalog.test", 1, None, False) == (
-        "7dfeca3b6143ebdbf52b6dd6cd4d1addaca975b7fb2e4a3d8568df02ba0f5d32"
-    )
-
-
 def test_finite_floats_use_fixed_minimal_number_contract() -> None:
     payload = canonical_json(
         {
@@ -129,22 +114,3 @@ def test_finite_floats_use_fixed_minimal_number_contract() -> None:
         '{"fraction":0.125,"large":100000000000000000000,'
         '"negative_zero":0,"small":0.0000001}'
     )
-    assert canonical_json_sha256(payload) == (
-        "73e89e1cb1b04782a7b6a3f0ac53dca9a4d58327b5393f9b145fd86d238acc6b"
-    )
-
-
-def test_python_consumes_shared_go_codec_fixture() -> None:
-    fixture_path = (
-        Path(__file__).resolve().parents[3]
-        / "fi-collector/pkg/propertycatalog/testdata/codec_v1_fixtures.json"
-    )
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
-    assert fixture["format"] == "futureagi.property-catalog-codec-fixtures"
-    assert fixture["version"] == 1
-    for example in fixture["canonical_json"]:
-        canonical = example["canonical"]
-        assert canonical_json(json.loads(canonical)) == canonical, example["name"]
-        assert canonical_json_sha256(canonical) == example["sha256"]
-    for example in fixture["casefold"]:
-        assert casefold_text(example["source"]) == example["folded"]

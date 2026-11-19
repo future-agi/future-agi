@@ -118,7 +118,7 @@ export default function ResetPasswordView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -130,7 +130,7 @@ export default function ResetPasswordView() {
   );
 
   const renderForm = (
-    <Stack spacing={3} maxWidth={"440px"}>
+    <Stack spacing={2} maxWidth={"440px"}>
       <Typography
         variant="m3"
         fontWeight={"fontWeightMedium"}
@@ -141,7 +141,7 @@ export default function ResetPasswordView() {
         characters with at least 1 letter and 1 number or special character
       </Typography>
       <FormTextFieldV2
-        size="small"
+        size="medium"
         fullWidth
         control={control}
         placeholder="Enter your password"
@@ -170,7 +170,7 @@ export default function ResetPasswordView() {
       />
       <FormTextFieldV2
         fullWidth
-        size="small"
+        size="medium"
         control={control}
         fieldName="repeatPassword"
         placeholder="Confirm your password"
@@ -198,13 +198,14 @@ export default function ResetPasswordView() {
       />
       {!!errorMsg && (
         <Alert
-          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          icon={
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              color="status.danger.fg"
+            />
+          }
           severity="error"
           sx={{
-            color: "red.500",
-            border: "1px solid",
-            borderColor: "red.200",
-            backgroundColor: "red.o5",
             width: "100%",
           }}
         >
@@ -218,10 +219,6 @@ export default function ResetPasswordView() {
         variant="contained"
         loading={isPending}
         color="primary"
-        sx={{
-          borderRadius: 0.5,
-          height: "42px",
-        }}
       >
         Update Password
       </LoadingButton>
@@ -235,7 +232,7 @@ export default function ResetPasswordView() {
         variant="subtitle2"
         sx={{ alignItems: "center", display: "inline-flex" }}
       >
-        <Iconify icon="eva:arrow-ios-back-fill" width={16} />
+        <Iconify icon="solar:alt-arrow-left-linear" width={16} />
         Return to sign in
       </Link> */}
     </Stack>

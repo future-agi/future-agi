@@ -78,7 +78,7 @@ def _assert_no_legacy(
             continue  # alias position, ignore
         qualified_tail = sql[max(0, match.start() - 32) : match.start()]
         if allow_legacy_eval_cdc and qualified_tail.endswith(
-            ("eval_scan.", "latest_eval.", "raw_eval_logger.")
+            ("eval_scan.", "latest_eval.", "raw_eval_logger.", "candidate_eval.")
         ):
             continue
         start = max(0, match.start() - 50)
@@ -144,8 +144,18 @@ def test_trace_list_v2_content_no_legacy():
     builder = _trace_list_builder()
     sql, _ = builder.build_content_query(
         trace_ids=["t1"],
-        root_identities=[(str(builder.project_id), "t1", "sp1", 1785542400123456,
-                          "span", "fixture", 1785542400000000, 1)],
+        root_identities=[
+            (
+                str(builder.project_id),
+                "t1",
+                "sp1",
+                1785542400123456,
+                "span",
+                "fixture",
+                1785542400000000,
+                1,
+            )
+        ],
     )
     _assert_no_legacy(sql, "TraceList.build_content_query")
 

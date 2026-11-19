@@ -72,7 +72,7 @@ const OptimizingAgentStepsSkeleton = () => {
                 variant="text"
                 width={150}
                 height={20}
-                sx={{ fontSize: "14px" }}
+                sx={{ fontSize: "12px" }}
               />
             </Box>
           </StepLabel>
@@ -93,13 +93,13 @@ const OptimizingAgentStepsSkeleton = () => {
                 variant="text"
                 width="80%"
                 height={16}
-                sx={{ fontSize: "14px" }}
+                sx={{ fontSize: "12px" }}
               />
               <Skeleton
                 variant="text"
                 width={120}
                 height={13}
-                sx={{ fontSize: "13px" }}
+                sx={{ fontSize: "12px" }}
               />
             </Box>
           </StepContent>

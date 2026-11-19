@@ -21,9 +21,9 @@ const VideoContent = ({
         gap: "12px",
         alignItems: "center",
         padding: "12px",
-        backgroundColor: "blue.o5",
+        backgroundColor: "status.info.bg",
         border: "1px solid",
-        borderColor: "blue.200",
+        borderColor: "status.info.border",
         borderRadius: "4px",
       }}
     >

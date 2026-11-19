@@ -100,14 +100,14 @@ export default function UsageChart({
       xaxis: {
         type: "datetime",
         labels: {
-          style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+          style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         },
         axisBorder: { show: false },
         axisTicks: { show: false },
       },
       yaxis: {
         labels: {
-          style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+          style: { colors: theme.palette.text.secondary, fontSize: "12px" },
           formatter: yAxisFormatter,
         },
       },

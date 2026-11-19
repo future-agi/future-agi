@@ -72,7 +72,9 @@ class HarnessSandboxClient:
             timeout=(5, 300),
         )
 
-    def upload_secret_file(self, uploaded: Any, environment_name: str) -> dict[str, Any]:
+    def upload_secret_file(
+        self, uploaded: Any, environment_name: str
+    ) -> dict[str, Any]:
         """Transfer a credential file directly to the execution provider.
 
         The platform does not deserialize, log or place its contents in a JSON payload. The

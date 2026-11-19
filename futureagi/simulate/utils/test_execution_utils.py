@@ -5,18 +5,59 @@ Utility functions for generating dynamic prompts for SimulatorAgent based on age
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
+import structlog
 from django.db import connection, models
+from django.db.models import F
+from django.db.models.functions import Cast
 
 from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
+from simulate.models.hosted_harness import HostedHarnessJob
 from simulate.utils.persona_filtering import (
     UnsupportedPersonaFilter,
     apply_persona_filter,
     is_persona_filter_column,
 )
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
+
+logger = structlog.get_logger(__name__)
+
+
+def is_fix_check_run(test_execution_id: uuid.UUID) -> bool:
+    """Whether a fix started this run to check one of its versions. A check run is graded
+    only once its fix has a winner, and never by the error localizer. A deleted job is still
+    its fix's check run, as accrue_check_run_eval_cost counts it."""
+    return HostedHarnessJob.all_objects.filter(
+        test_execution_id=test_execution_id, fix_run__isnull=False
+    ).exists()
+
+
+def eval_source(test_execution_id: uuid.UUID, default: str = "simulate") -> str:
+    """Where a call's evals are logged from: a fix's check runs have a source of their own."""
+    return FIX_CHECK_RUN_EVAL_SOURCE if is_fix_check_run(test_execution_id) else default
+
+
+def accrue_check_run_eval_cost(test_execution_id, credits) -> None:
+    """Add what one platform eval of a fix's check run billed to that run, in billed US
+    dollars (a credit is $0.01). The eval has billed the organization already, so a failure
+    here is logged and the eval goes on."""
+    usd = (Decimal(str(credits or 0)) * Decimal("0.01")).quantize(Decimal("0.0001"))
+    if usd <= 0:
+        return
+    try:
+        HostedHarnessJob.all_objects.filter(
+            test_execution_id=test_execution_id, fix_run__isnull=False
+        ).update(fix_eval_cost_usd=F("fix_eval_cost_usd") + usd)
+    except Exception:
+        logger.exception(
+            "agent_fix_eval_cost_not_counted",
+            test_execution_id=str(test_execution_id),
+            usd=str(usd),
+        )
 
 
 class TestExecutionUtils:
@@ -771,6 +812,18 @@ class TestExecutionUtils:
             ]
 
         if group_by_fields:
+
+            def nullable_chat_average(key, output_field):
+                lookup = f"conversation_metrics_data__{key}"
+                # PostgreSQL cannot cast a JSON null. AVG skips SQL NULL instead.
+                return models.Avg(
+                    models.Case(
+                        models.When(**{lookup: None}, then=None),
+                        default=Cast(lookup, output_field),
+                        output_field=output_field,
+                    )
+                )
+
             # Apply grouping with annotations for counts and chat metrics
             # Extract chat metrics from conversation_metrics_data JSONField
             call_executions = call_executions.values(*group_by_fields).annotate(
@@ -779,41 +832,33 @@ class TestExecutionUtils:
                 avg_response_time=models.Avg("response_time_ms"),
                 # Chat metrics from conversation_metrics_data JSONField
                 total_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__total_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 input_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__input_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 output_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__output_tokens"),
                         models.IntegerField(),
                     )
                 ),
-                avg_latency_ms=models.Avg(
-                    models.Cast(
-                        models.F("conversation_metrics_data__avg_latency_ms"),
-                        models.IntegerField(),
-                    )
+                avg_latency_ms=nullable_chat_average(
+                    "avg_latency_ms", models.IntegerField()
                 ),
                 turn_count=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__turn_count"),
                         models.IntegerField(),
                     )
                 ),
-                csat_score=models.Avg(
-                    models.Cast(
-                        models.F("conversation_metrics_data__csat_score"),
-                        models.FloatField(),
-                    )
-                ),
+                csat_score=nullable_chat_average("csat_score", models.FloatField()),
             )
 
             # Apply group_keys filtering if provided
@@ -1070,6 +1115,8 @@ class TestExecutionUtils:
         select_clause = ", ".join(select_fields)
         group_by_clause = ", ".join(group_by_fields)
 
+        # TODO: the call_executions queryset is ignored, so this groups every
+        # non-deleted CallExecution in the table, not just the ones passed in.
         # Add group_keys filtering if provided
         where_conditions = ["simulate_call_execution.deleted = false"]
         if group_keys:
@@ -1389,9 +1436,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
         )
         if fb_row_id:
             fb_row = (
-                Row.all_objects.filter(id=fb_row_id)
-                .select_related("dataset")
-                .first()
+                Row.all_objects.filter(id=fb_row_id).select_related("dataset").first()
             )
             if fb_row and fb_row.dataset and fb_row.dataset.column_order:
                 for col_obj in Column.all_objects.filter(
@@ -1404,10 +1449,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     non_scenario_columns = [
         col
         for col in column_order
-        if not (
-            isinstance(col, dict)
-            and col.get("type") == "scenario_dataset_column"
-        )
+        if not (isinstance(col, dict) and col.get("type") == "scenario_dataset_column")
     ]
     if first_scenario_idx is None:
         # No scenario columns yet: place them before the first evaluation
@@ -1426,8 +1468,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
             1
             for col in column_order[:first_scenario_idx]
             if not (
-                isinstance(col, dict)
-                and col.get("type") == "scenario_dataset_column"
+                isinstance(col, dict) and col.get("type") == "scenario_dataset_column"
             )
         )
 
@@ -1454,9 +1495,12 @@ def build_eval_column(eval_config):
 def reconcile_eval_column_order(
     *, column_order, eval_configs, evaluated_eval_ids, harness_eval_outputs=None
 ):
-    """Drop removed evals, refresh surviving names + configs, and append
-    a newly-active eval only when its id is in ``evaluated_eval_ids``
-    (i.e. attempted on at least one call of this execution)."""
+    """Keep the evaluation columns backed by ``eval_configs``, refresh their
+    names + configs, and append a config's own column only when its id is in
+    ``evaluated_eval_ids`` (i.e. attempted on at least one call of this
+    execution). Which configs count is the caller's choice: pass a live-only
+    collection to prune a removed eval's column, or one that also holds
+    soft-deleted rows to keep it."""
     current_eval_by_id = {str(ec.id): ec for ec in eval_configs}
     harness_eval_outputs = {
         str(eval_id): value

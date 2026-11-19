@@ -22,20 +22,15 @@ const CallLogsCard = ({ log }) => {
   const theme = useTheme();
   const { testId } = useParams();
   const [open, setOpen] = useState(false);
-  const simulationCallType =
-    log?.simulation_call_type;
+  const simulationCallType = log?.simulation_call_type;
   const callType = log?.call_type;
-  const agentDefinitionUsedName =
-    log?.agent_definition_used_name;
-  const simulatorAgentName =
-    log?.simulator_agent_name;
-  const overallScore = log?.overall_score ;
+  const agentDefinitionUsedName = log?.agent_definition_used_name;
+  const simulatorAgentName = log?.simulator_agent_name;
+  const overallScore = log?.overall_score;
   const audioUrl = log?.audio_url;
   const filteredTranscript = useMemo(() => {
     const originalTranscript = log?.transcript;
-    return originalTranscript?.filter(
-      (item) => item.speaker_role !== "system",
-    );
+    return originalTranscript?.filter((item) => item.speaker_role !== "system");
   }, [log]);
 
   const audioData = useMemo(() => ({ url: audioUrl }), [audioUrl]);
@@ -192,7 +187,7 @@ const CallLogsCard = ({ log }) => {
           startIcon={
             <Box
               component={Icon}
-              icon="ri:share-line"
+              icon="solar:share-linear"
               width={16}
               height={16}
               sx={{ color: theme.palette.text.primary }}

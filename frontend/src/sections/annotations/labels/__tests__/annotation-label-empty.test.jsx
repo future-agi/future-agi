@@ -13,9 +13,9 @@ describe("AnnotationLabelEmpty", () => {
   it("renders heading and description", () => {
     render(<AnnotationLabelEmpty onCreateClick={() => {}} />);
 
-    expect(screen.getByText("No labels created yet")).toBeInTheDocument();
+    expect(screen.getByText("No labels yet")).toBeInTheDocument();
     expect(
-      screen.getByText(/Labels define what annotators will evaluate/),
+      screen.getByText(/A label is what annotators score/),
     ).toBeInTheDocument();
   });
 

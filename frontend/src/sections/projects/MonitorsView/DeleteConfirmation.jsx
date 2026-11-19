@@ -22,7 +22,8 @@ const DeleteConfirmation = ({ open, onClose, onConfirm }) => {
       onClose={onClose}
       aria-labelledby="delete-dialog"
       fullWidth
-      maxWidth="xs"
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 400 } }}
     >
       <DialogTitle
         id="delete-dialog"
@@ -52,14 +53,14 @@ const DeleteConfirmation = ({ open, onClose, onConfirm }) => {
             <Typography
               variant="m3"
               color={"text.primary"}
-              fontWeight={"fontWeightBold"}
+              fontWeight={"fontWeightSemiBold"}
             >
               Delete Alerts
             </Typography>
           </Box>
           <IconButton onClick={onClose}>
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={24}
               height={24}
               color="text.primary"

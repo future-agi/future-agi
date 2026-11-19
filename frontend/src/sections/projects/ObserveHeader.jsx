@@ -10,9 +10,9 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  ButtonBase,
   Typography,
   useTheme,
-  styled,
   CircularProgress,
   Popover,
   MenuItem,
@@ -38,26 +38,6 @@ import {
   OBSERVE_LIST_REFRESH_EVENT,
   OBSERVE_PAGE_CHANGED_EVENT,
 } from "./observeEvents";
-
-// CustomBackButton removed — replaced with inline Box button
-
-const ProjectDropdownButton = styled(Button)(({ theme }) => ({
-  minWidth: 200,
-  height: 26,
-  justifyContent: "space-between",
-  textTransform: "none",
-  border: `1px solid ${theme.palette.divider}`,
-  borderRadius: "4px",
-  backgroundColor: "transparent",
-  color: theme.palette.text.primary,
-  padding: theme.spacing(0.25, 1.5),
-  fontSize: 14,
-  fontFamily: "'IBM Plex Sans', sans-serif",
-  "&:hover": {
-    backgroundColor: theme.palette.action.hover,
-    borderColor: theme.palette.text.disabled,
-  },
-}));
 
 const ObserveHeader = ({ text, refreshData, resetFilters }) => {
   const [openConfigDialog, setOpenConfigDialog] = useState(false);
@@ -117,7 +97,10 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
         // Keep the current rows painted while their same-query replacement is
         // fetched. Calling the parent refresh callback directly bypasses each
         // grid's preserve-rows path and makes the whole table flash black.
-        // Exact aggregations remain an explicit reload-only operation.
+        // Auto refresh never touches exact aggregations. They recompute on an
+        // explicit Reload, and (for the Observe system-metric charts and the
+        // Agent Graph) in the background when a visit is served an old
+        // snapshot of a still-open window; see read_or_schedule_exact_snapshot.
         window.dispatchEvent(
           new CustomEvent(OBSERVE_LIST_REFRESH_EVENT, {
             detail: { observeId },
@@ -192,6 +175,10 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
         handleAggregationRefreshState,
       );
   }, [observeId]);
+
+  const reloadLabel = isAggregationRefreshing
+    ? "Reload rows (charts are refreshing)"
+    : "Reload data";
 
   const { data: projectList, isLoading: isLoadingProjects } = useProjectList();
 
@@ -295,48 +282,39 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
       >
         {/* ── Left: Back + Project dropdown + Tag icon ── */}
         <Box display="flex" alignItems="center" gap={1.5}>
-          {/* Back button — 26px bordered pill */}
-          <Box
-            component="button"
+          {/* Back button */}
+          <Button
+            variant="outlined"
+            size="small"
             onClick={handleBack}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.5,
-              height: 26,
-              px: 1.5,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "4px",
-              bgcolor: "transparent",
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 500,
-              fontFamily: "'IBM Plex Sans', sans-serif",
-              color: "text.primary",
-              "&:hover": { bgcolor: "action.hover" },
-            }}
+            startIcon={
+              <Iconify icon="solar:alt-arrow-left-linear" width={16} />
+            }
+            /* Never squeezed by the row: the icon and label stay inside its border. */
+            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
           >
-            <Iconify icon="mdi:chevron-left" width={16} />
             Back
-          </Box>
+          </Button>
 
-          {/* Project dropdown — 26px bordered */}
-          <ProjectDropdownButton
+          {/* Project dropdown */}
+          <Button
             ref={projectDropdownRef}
+            variant="outlined"
+            size="small"
+            sx={{ minWidth: 200, justifyContent: "space-between" }}
             onClick={() => setProjectDropdownOpen(true)}
             endIcon={
               isLoadingProjects ? (
                 <CircularProgress size={16} />
               ) : (
-                <Iconify icon="eva:chevron-down-fill" />
+                <Iconify icon="solar:alt-arrow-down-linear" />
               )
             }
           >
             <Typography variant="body2" noWrap>
               {currentProject?.label || "Select a project"}
             </Typography>
-          </ProjectDropdownButton>
+          </Button>
 
           {/* Project Dropdown Popover */}
           <Popover
@@ -452,7 +430,7 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
               }}
             >
               <Iconify
-                icon="mdi:clock-outline"
+                icon="solar:clock-circle-linear"
                 width={14}
                 sx={{ color: "text.secondary" }}
               />
@@ -494,24 +472,26 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
             size="small"
             type="black"
           >
-            <Box
+            <ButtonBase
+              role="switch"
+              aria-checked={autoRefresh}
+              onClick={() => setAutoRefresh(!autoRefresh)}
               sx={{
                 display: "flex",
                 alignItems: "center",
                 gap: 1,
-                height: 26,
+                height: 28,
                 px: 1.5,
                 bgcolor: "background.neutral",
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "4px",
-                cursor: "pointer",
+                borderRadius: "6px",
               }}
-              onClick={() => setAutoRefresh(!autoRefresh)}
             >
               <Typography
+                component="span"
                 sx={{
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: 500,
                   fontFamily: "'IBM Plex Sans', sans-serif",
                   color: "text.primary",
@@ -521,17 +501,18 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                 Auto refresh (10s)
               </Typography>
               <Box
+                component="span"
                 sx={{
                   width: 27,
                   height: 15,
                   borderRadius: "75px",
-                  bgcolor: (theme) =>
-                    autoRefresh ? "#7857fc" : theme.palette.divider,
+                  bgcolor: autoRefresh ? "primary.main" : "divider",
                   position: "relative",
                   transition: "background-color 150ms",
                 }}
               >
                 <Box
+                  component="span"
                   sx={{
                     width: 12,
                     height: 12,
@@ -540,12 +521,11 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                     position: "absolute",
                     top: 1.5,
                     left: autoRefresh ? 13.5 : 1.5,
-                    boxShadow: "0 1.5px 3px rgba(39,39,39,0.1)",
                     transition: "left 150ms",
                   }}
                 />
               </Box>
-            </Box>
+            </ButtonBase>
           </CustomTooltip>
 
           {/* Action buttons — bordered icon squares */}
@@ -553,19 +533,14 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
             {/* Reload */}
             <CustomTooltip
               show
-              title={
-                isAggregationRefreshing ? "Refreshing data" : "Reload data"
-              }
+              title={reloadLabel}
               arrow
               size="small"
               type="black"
             >
               <ObserveIconButton
                 size="small"
-                aria-label={
-                  isAggregationRefreshing ? "Refreshing data" : "Reload data"
-                }
-                disabled={isAggregationRefreshing}
+                aria-label={reloadLabel}
                 onClick={() => {
                   // Use refreshData from LLMTracingView if available
                   refreshData?.({ includeAggregations: false });
@@ -574,18 +549,24 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                   queryClient.invalidateQueries({
                     queryKey: ["observe-projects"],
                   });
-                  // Dispatch a custom event that the grid can listen to
+                  // While an exact aggregation refreshes (often a visit's
+                  // background revalidation), Reload stays available for the
+                  // rows: it sends the list-only event, and the charts keep
+                  // polling the refresh already under way.
                   window.dispatchEvent(
-                    new CustomEvent("observe-refresh", {
-                      detail: { observeId },
-                    }),
+                    new CustomEvent(
+                      isAggregationRefreshing
+                        ? OBSERVE_LIST_REFRESH_EVENT
+                        : "observe-refresh",
+                      { detail: { observeId } },
+                    ),
                   );
                 }}
               >
                 {isAggregationRefreshing ? (
                   <CircularProgress size={14} />
                 ) : (
-                  <Iconify icon="mdi:refresh" width={16} />
+                  <Iconify icon="solar:refresh-linear" width={16} />
                 )}
               </ObserveIconButton>
             </CustomTooltip>
@@ -606,7 +587,10 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                     aria-label="Exact CSV export is temporarily unavailable"
                     disabled
                   >
-                    <Iconify icon="mdi:download-outline" width={16} />
+                    <Iconify
+                      icon="solar:download-minimalistic-linear"
+                      width={16}
+                    />
                   </ObserveIconButton>
                 </span>
               </CustomTooltip>
@@ -626,7 +610,7 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                   window.open(handleDocLink(), "_blank", "noopener,noreferrer")
                 }
               >
-                <Iconify icon="mdi:book-open-page-variant-outline" width={16} />
+                <Iconify icon="solar:document-text-linear" width={16} />
               </ObserveIconButton>
             </CustomTooltip>
 
@@ -649,7 +633,7 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                 size="small"
                 onClick={() => setOpenShareUrl(true)}
               >
-                <Iconify icon="basil:share-outline" width={16} />
+                <Iconify icon="solar:share-linear" width={16} />
               </ObserveIconButton>
             </CustomTooltip>
           </Box>

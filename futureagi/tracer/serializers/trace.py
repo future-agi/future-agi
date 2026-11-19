@@ -15,11 +15,17 @@ from tracer.serializers.cursor_pagination import (
 from tracer.serializers.filters import (
     BOUNDED_PAGE_NUMBER_HELP_TEXT,
     JsonObjectField,
+    ObserveGraphDataRequestSerializer,
     SortParamListQueryParamField,
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
+from tracer.serializers.usage_coverage import (
+    CaptureCoverageSerializer,
+    CostCoverageSerializer,
+)
+from tracer.services.trace_source_navigation import is_span_id
 from tracer.services.user_attribute_contract import unsupported_user_attribute_keys
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
@@ -143,6 +149,8 @@ class TraceSerializer(serializers.ModelSerializer):
 
 
 class CommaSeparatedStringListField(serializers.Field):
+    swagger_empty_input_default = ""
+
     def to_internal_value(self, data):
         if data in (None, ""):
             return []
@@ -208,6 +216,7 @@ class TraceListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListQuerySerializer(StrictInputSerializer):
+    sort_params = SortParamListQueryParamField(required=False, default=list)
     project_id = serializers.UUIDField(required=False)
     project_version_id = serializers.UUIDField(required=False)
     session_id = serializers.UUIDField(required=False)
@@ -264,6 +273,37 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
                 }
             )
         attrs["attribute_keys"] = list(attribute_keys)
+        if attrs.get("sort_params"):
+            from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+            from tracer.services.clickhouse.query_builders.trace_usage import (
+                USAGE_COLUMNS,
+            )
+            from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+                usage_column,
+            )
+
+            if (
+                not attrs.get("project_id")
+                or attrs.get("project_version_id")
+                or attrs.get("session_id")
+                or attrs.get("cursor")
+                or attrs.get("cursor_mode")
+                or len(attrs["sort_params"]) > len(USAGE_COLUMNS)
+                or any(
+                    item["column_id"] not in USAGE_COLUMNS
+                    for item in attrs["sort_params"]
+                )
+                or any(
+                    not BaseQueryBuilder.is_datetime_filter(item)
+                    and not usage_column(item)
+                    for item in attrs["filters"]
+                )
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "sort_params": "Usage sorting requires a project, numbered pages, and only date or usage filters. Clear the sort to use other filters."
+                    }
+                )
         return validate_cursor_exclusivity(self, attrs, page_field="page_number")
 
 
@@ -292,16 +332,19 @@ class TraceObserveListMetadataSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+    # Exactness is published on every successful list page, next to the
+    # completeness it qualifies; see tracer.services.clickhouse.
+    # list_page_contract.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
 
 
 class TraceSessionListMetadataSerializer(TraceObserveListMetadataSerializer):
-    """Session-list page completeness plus non-exact candidate ordering."""
+    """Session-list page contract plus its non-exact candidate ordering source."""
 
-    query_exact = serializers.BooleanField(required=False)
     query_provenance = serializers.ChoiceField(
         choices=("spans_per_session_candidate",), required=False
     )
-    ordering_exact = serializers.BooleanField(required=False)
 
 
 class TraceObserveColumnConfigSerializer(serializers.Serializer):
@@ -322,6 +365,9 @@ class TraceObserveColumnConfigSerializer(serializers.Serializer):
     settings = JsonValueField(required=False, allow_null=True)
     choices_map = JsonValueField(required=False, allow_null=True)
     eval_template_id = serializers.CharField(required=False, allow_null=True)
+    target_type = serializers.ChoiceField(
+        choices=("span", "trace"), required=False, allow_null=True
+    )
     annotators = JsonValueField(required=False, allow_null=True)
     source_field = serializers.CharField(required=False, allow_null=True)
     parent_eval_id = serializers.CharField(required=False, allow_null=True)
@@ -331,10 +377,26 @@ class TraceObserveColumnConfigSerializer(serializers.Serializer):
 
 
 class TraceObserveListResultSerializer(serializers.Serializer):
+    # The dynamic table must retain arbitrary eval/attribute columns. A typed,
+    # page-bounded sidecar gives generators a stable coverage contract without
+    # changing any existing cell type. Both identity coordinates are required:
+    # org-scoped pages can contain the same trace ID in different projects.
+    trace_capture_coverage = serializers.DictField(
+        child=serializers.DictField(child=CaptureCoverageSerializer()),
+        required=False,
+        help_text=(
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. "
+            "Omitted entries retain legacy presentation; never implies complete capture."
+        ),
+    )
     metadata = TraceObserveListMetadataSerializer()
     # allow_null: real rows carry null cells (cost, latency on error traces).
     table = serializers.ListField(
-        child=serializers.DictField(child=JsonValueField(allow_null=True))
+        child=serializers.DictField(child=JsonValueField(allow_null=True)),
+        help_text=(
+            "Observe eval bool and choice cells are counts of completed attempts; "
+            "a detail eval_rollup separately selects the latest completed row per span."
+        ),
     )
     config = TraceObserveColumnConfigSerializer(many=True)
 
@@ -403,6 +465,8 @@ class TraceSessionTableRowSerializer(_ExtraSessionCellsMixin, serializers.Serial
     created_at = serializers.DateTimeField(required=False, allow_null=True)
     duration = serializers.FloatField(required=False, allow_null=True)
     total_cost = serializers.FloatField(required=False, allow_null=True)
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     total_traces_count = serializers.IntegerField(required=False, allow_null=True)
     first_message = JsonValueField(required=False, allow_null=True)
@@ -542,7 +606,15 @@ class TraceVoiceCallListResponseSerializer(serializers.Serializer):
     )
     query_complete = serializers.BooleanField()
     query_status = serializers.ChoiceField(choices=("complete", "degraded"))
+    # Additive fields on an already-published envelope: optional in the
+    # contract so a client generated from this branch still parses a response
+    # from a backend that has not deployed it yet, matching how the same
+    # decision is expressed on the other three list endpoints. The view
+    # publishes all three on every successful page.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
     query_error_code = serializers.CharField(required=False)
+    query_count = serializers.IntegerField(required=False, min_value=0)
     query_applied_filter_version = serializers.ChoiceField(
         choices=("canonical-json-sha256-v1",), required=False
     )
@@ -552,7 +624,61 @@ class TraceVoiceCallListResponseSerializer(serializers.Serializer):
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
 
 
-class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
+_DETAIL_PROJECT_ID_HELP = (
+    "Project the detail was opened from. The same id can exist in several "
+    "projects; when supplied, only that project's copy is read."
+)
+
+
+_RUN_SCOPE_HELP = (
+    "A run the caller can read; opens the hidden simulation project of that "
+    "run's agent."
+)
+
+RUN_SCOPE_KEYS = frozenset({"test_execution_id", "call_execution_id"})
+
+
+class RunScopeQueryMixin(serializers.Serializer):
+    """The two optional run parameters of the by-id reads.
+
+    It subclasses ``Serializer`` because DRF collects declared fields only from
+    bases that carry them; a plain mixin would drop both fields.
+    """
+
+    test_execution_id = serializers.UUIDField(required=False, help_text=_RUN_SCOPE_HELP)
+    call_execution_id = serializers.UUIDField(required=False, help_text=_RUN_SCOPE_HELP)
+
+    @staticmethod
+    def reject_both(attrs):
+        if RUN_SCOPE_KEYS <= attrs.keys():
+            raise serializers.ValidationError(
+                {
+                    "call_execution_id": (
+                        "Send test_execution_id or call_execution_id, not both."
+                    )
+                }
+            )
+
+
+class TraceDetailQuerySerializer(RunScopeQueryMixin):
+    """Optional project pin and run for the trace-detail identity.
+
+    Not strict: trace detail read no query params before the pin, so callers'
+    extra params (DRF's ``?format=json`` included) keep being ignored. The run
+    parameters are declared, so a malformed value or both at once is a 400.
+    """
+
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        self.reject_both(attrs)
+        return attrs
+
+
+class TraceVoiceCallDetailQuerySerializer(RunScopeQueryMixin, StrictInputSerializer):
     """Strict compatibility contract for the voice-call detail identity."""
 
     trace_id = serializers.UUIDField(
@@ -563,9 +689,39 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
         required=False,
         help_text="Legacy alias for trace_id; when both are supplied they must match.",
     )
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
+    )
+
+    expected_span_id = serializers.CharField(
+        required=False,
+        max_length=255,
+        trim_whitespace=False,
+        help_text=(
+            "Optional evaluated span. Requires project_id; the response is "
+            "409 unless this read proves the span belongs to the call's "
+            "single conversation root."
+        ),
+    )
+
+    def validate_expected_span_id(self, value):
+        if not is_span_id(value):
+            raise serializers.ValidationError("Invalid span identifier.")
+        return value
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        self.reject_both(attrs)
+        if "expected_span_id" in attrs and (
+            "project_id" not in attrs
+            or "test_execution_id" in attrs
+            or "call_execution_id" in attrs
+        ):
+            raise serializers.ValidationError(
+                {
+                    "expected_span_id": "Requires an Observe project_id without run scope."
+                }
+            )
         trace_id = attrs.get("trace_id")
         legacy_trace_id = attrs.get("traceId")
         if trace_id is None and legacy_trace_id is None:
@@ -583,6 +739,48 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
         attrs["trace_id"] = trace_id or legacy_trace_id
         attrs.pop("traceId", None)
         return attrs
+
+
+class EvalRollupSpanSerializer(serializers.Serializer):
+    """One selected eval row for a physical span in a detail rollup."""
+
+    span_id = serializers.CharField()
+    span_name = serializers.CharField(required=False, allow_blank=True)
+    value = JsonValueField(required=False, allow_null=True)
+    explanation = serializers.CharField(required=False, allow_null=True)
+    error = serializers.BooleanField(required=False)
+    status = serializers.CharField(required=False, allow_null=True)
+    eval_config_id = serializers.CharField(required=False, allow_blank=True)
+
+
+class EvalRollupEvalSerializer(serializers.Serializer):
+    eval_config_id = serializers.CharField()
+    eval_name = serializers.CharField()
+    output_type = serializers.CharField(required=False, allow_null=True)
+    template_type = serializers.CharField(required=False, allow_null=True)
+    target_type = serializers.ChoiceField(
+        choices=("span", "trace"), required=False, allow_null=True
+    )
+    choices_map = JsonValueField(required=False, allow_null=True)
+    aggregate = JsonValueField()
+    spans = EvalRollupSpanSerializer(many=True)
+    error = serializers.BooleanField(required=False)
+
+
+class EvalRollupSerializer(serializers.Serializer):
+    """Additive detail view shared by trace and voice-call responses."""
+
+    scope = serializers.ChoiceField(choices=("trace", "span"))
+    evals = EvalRollupEvalSerializer(many=True)
+    error = serializers.BooleanField(required=False)
+
+
+class VoiceEvalRollupSerializer(EvalRollupSerializer):
+    # Inline only the wrapper: drf-yasg puts allow_null on the definition, not
+    # the reference. Sharing that nullable definition would also make the
+    # non-null trace rollup nullable depending on schema traversal order.
+    class Meta:
+        ref_name = None
 
 
 class TraceVoiceCallDetailResultSerializer(serializers.Serializer):
@@ -650,6 +848,7 @@ class TraceVoiceCallDetailResultSerializer(serializers.Serializer):
         child=serializers.DictField(child=JsonValueField(allow_null=True))
     )
     eval_outputs = JsonObjectField()
+    eval_rollup = VoiceEvalRollupSerializer(required=False, allow_null=True)
 
     call_execution_id = serializers.CharField(required=False, allow_null=True)
     test_execution_id = serializers.CharField(required=False, allow_null=True)
@@ -689,6 +888,36 @@ class TraceObserveIndexQuerySerializer(StrictInputSerializer):
     filters = filter_list_query_param_field(required=False, default=list)
 
 
+class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
+    observe_type = serializers.ChoiceField(
+        choices=["trace", "voice"],
+        required=False,
+        default="trace",
+        help_text=(
+            "Population the graph counts: every trace, or only voice calls "
+            "(traces whose root span is a conversation), exactly as "
+            "list_voice_calls selects them."
+        ),
+    )
+    remove_simulation_calls = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Voice graphs only: exclude calls placed by a simulator phone, "
+            "exactly as list_voice_calls' remove_simulation_calls does."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        is_voice = attrs.get("observe_type") == "voice"
+        if attrs.get("remove_simulation_calls") and not is_voice:
+            raise serializers.ValidationError(
+                {"remove_simulation_calls": "Requires observe_type 'voice'."}
+            )
+        return attrs
+
+
 class TraceAgentGraphQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
@@ -707,6 +936,7 @@ class TraceAgentGraphNodeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -721,6 +951,7 @@ class TraceAgentGraphEdgeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -766,9 +997,9 @@ class UsersQuerySerializer(StrictInputSerializer):
         required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
     )
     cursor_mode = serializers.BooleanField(required=False, default=False)
+    # Omission retains legacy enrichment; an explicit empty value opts out.
     requested_columns = JSONOrCommaSeparatedStringListField(
         required=False,
-        default=list,
         help_text=(
             "JSON-encoded list of visible Users-table fields. Raw-derived "
             "metrics are hydrated only when explicitly requested."
@@ -852,6 +1083,7 @@ class UsersQuerySerializer(StrictInputSerializer):
 class UsersTableRowSerializer(serializers.Serializer):
     user_id = serializers.CharField(required=False, allow_null=True)
     total_cost = serializers.FloatField()
+    cost_coverage = CostCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     input_tokens = serializers.IntegerField(required=False, allow_null=True)
     output_tokens = serializers.IntegerField(required=False, allow_null=True)
@@ -869,6 +1101,9 @@ class UsersTableRowSerializer(serializers.Serializer):
     bool_eval_pass_rate = serializers.FloatField(required=False, allow_null=True)
     avg_output_float = serializers.FloatField(required=False, allow_null=True)
     project_id = serializers.UUIDField(required=False, allow_null=True)
+    # Each row is one user within one project; ``project_name`` labels that
+    # scope (null when the project is no longer readable).
+    project_name = serializers.CharField(required=False, allow_null=True)
     user_id_type = serializers.CharField(required=False, allow_null=True)
     user_id_hash = serializers.CharField(required=False, allow_null=True)
     end_user_id = serializers.UUIDField(required=False, allow_null=True)
@@ -890,10 +1125,22 @@ class UsersResultSerializer(serializers.Serializer):
     )
     query_exact = serializers.BooleanField(required=False)
     query_provenance = serializers.ChoiceField(
-        choices=("span_user_rollup_end_users_candidate", "physical_latest_users"),
+        choices=(
+            "span_user_rollup_end_users_candidate",
+            "physical_latest_users",
+            "matching_activity_walk",
+        ),
         required=False,
     )
     ordering_exact = serializers.BooleanField(required=False)
+    # Present only on a page the matching-activity walk serves (a span
+    # attribute or native span leaf): rows are ordered by each user's newest
+    # live span whose latest value matches the leaf the walk discovers on,
+    # newest first. With several such leaves the server chooses that leaf.
+    # Unfiltered pages keep their last-activity order and omit it.
+    ordering = serializers.ChoiceField(
+        choices=("latest_matching_activity",), required=False
+    )
     approximate_fields = serializers.ListField(
         child=serializers.ChoiceField(choices=("num_sessions",)),
         required=False,
@@ -910,12 +1157,28 @@ class UserCodeExampleResponseSerializer(serializers.Serializer):
     result = serializers.CharField()
 
 
+class TraceDetailSpanSerializer(serializers.Serializer):
+    """Document the additive eval rollup without changing the span envelope."""
+
+    observation_span = serializers.JSONField()
+    children = serializers.ListField(child=serializers.JSONField(), required=False)
+    eval_scores = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        help_text="Raw eval rows retained for backwards-compatible array consumers.",
+    )
+    eval_rollup = EvalRollupSerializer(required=False)
+    annotations = serializers.ListField(child=serializers.JSONField(), required=False)
+
+
 class TraceDetailResultSerializer(serializers.Serializer):
     """Envelope payload for the trace-detail endpoint (CH-assembled)."""
 
     trace = serializers.JSONField()
-    observation_spans = serializers.ListField(child=serializers.JSONField())
+    observation_spans = TraceDetailSpanSerializer(many=True)
     summary = serializers.JSONField()
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     graph = serializers.JSONField()
 
 

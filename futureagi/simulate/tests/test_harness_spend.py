@@ -2,35 +2,39 @@
 
 from __future__ import annotations
 
+import pytest
+
 from simulate.models import HostedHarnessJob
+from simulate.services.hosted_harness import create_hosted_job
 from simulate.services.hosted_harness_gateway import _record_harness_spend
+from simulate.services.hosted_sandbox import SandboxFileNotFoundError
+from simulate.tests.test_hosted_harness_channels import _payload
 
 
-class _Job(HostedHarnessJob):
-    """A job that records what it would have written instead of writing it."""
-
-    class Meta:
-        proxy = True
-
-    def save(self, *args, **kwargs):  # noqa: D102 - persistence is not what these test
-        self.saved = True
-
-
-def _job(metadata=None):
-    job = _Job(payload={"metadata": metadata or {}})
-    job.saved = False
+def _job(organization, metadata=None):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(metadata=metadata or {}),
+        idempotency_key="harness-spend",
+    )
     return job
 
 
+def _row(job):
+    # The base manager, so a test that patches the named manager's `get` still reads the table.
+    return HostedHarnessJob._base_manager.get(id=job.id)
+
+
 def _spend(job):
-    return ((job.payload or {}).get("metadata") or {}).get("harness_spend")
+    return ((_row(job).payload or {}).get("metadata") or {}).get("harness_spend")
 
 
-def test_the_total_and_its_stages_land_on_the_job():
-    job = _job()
+@pytest.mark.django_db
+def test_the_total_and_its_stages_land_on_the_job(organization):
+    job = _job(organization)
     _record_harness_spend(
         job,
-        {
+        cli={
             "total_usd": 0.8123,
             "unpriced_turns": 2,
             "stages": [{"stage": "understand-agent", "usd": 0.8123, "turns": 9}],
@@ -42,61 +46,79 @@ def test_the_total_and_its_stages_land_on_the_job():
     assert _spend(job)["attempts"]["1"]["stages"] == [
         {"stage": "understand-agent", "usd": 0.8123, "turns": 9}
     ]
-    assert job.saved
+    # The caller's own object sees what was written.
+    assert job.payload == _row(job).payload
 
 
-def test_a_later_read_never_lowers_the_bill():
+@pytest.mark.django_db
+def test_a_later_read_never_lowers_the_bill(organization):
     """A half-written or reset ledger must not erase what a previous poll already saw."""
     job = _job(
+        organization,
         {
             "harness_spend": {
                 "total_usd": 1.5,
                 "unpriced_turns": 0,
-                "attempts": {"1": {"total_usd": 1.5, "unpriced_turns": 0, "stages": []}},
+                "attempts": {
+                    "1": {"total_usd": 1.5, "unpriced_turns": 0, "stages": []}
+                },
             }
-        }
+        },
     )
-    _record_harness_spend(job, {"total_usd": 0.2, "stages": []})
+    before = _row(job)
+    _record_harness_spend(job, cli={"total_usd": 0.2, "stages": []})
 
+    after = _row(job)
     assert _spend(job)["total_usd"] == 1.5
-    assert not job.saved
+    assert (after.payload, after.updated_at) == (before.payload, before.updated_at)
 
 
-def test_a_growing_total_replaces_the_earlier_one():
+@pytest.mark.django_db
+def test_a_growing_total_replaces_the_earlier_one(organization):
     job = _job(
+        organization,
         {
             "harness_spend": {
                 "total_usd": 0.5,
                 "unpriced_turns": 0,
-                "attempts": {"1": {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}},
+                "attempts": {
+                    "1": {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}
+                },
             }
-        }
+        },
     )
-    _record_harness_spend(job, {"total_usd": 0.9, "stages": [{"stage": "x", "usd": 0.9}]})
+    _record_harness_spend(
+        job, cli={"total_usd": 0.9, "stages": [{"stage": "x", "usd": 0.9}]}
+    )
 
     assert _spend(job)["total_usd"] == 0.9
-    assert job.saved
 
 
-def test_nothing_readable_is_left_alone():
+@pytest.mark.django_db
+def test_nothing_readable_is_left_alone(organization):
     """An absent ledger is the ordinary case early in a run, not an error."""
+    job = _job(organization)
+    before = _row(job)
     for unreadable in (None, "", [], {"total_usd": "not a number"}):
-        job = _job()
-        _record_harness_spend(job, unreadable)
+        _record_harness_spend(job, cli=unreadable, builder=unreadable)
+        after = _row(job)
         assert _spend(job) is None
-        assert not job.saved
+        assert (after.payload, after.updated_at) == (before.payload, before.updated_at)
 
 
-def test_a_dying_sandbox_is_read_before_it_is_deleted(monkeypatch):
+@pytest.mark.django_db
+def test_a_dying_sandbox_is_read_before_it_is_deleted(organization, monkeypatch):
     """The pull has to happen while the sandbox still exists, whatever ended the attempt."""
     from simulate.services import hosted_harness_gateway as gateway
 
-    job = _job()
-    read = {}
+    job = _job(organization)
+    read = []
 
     class _Files:
         def download_file(self, path):
-            read["path"] = path
+            read.append(path)
+            if path != "/work/authoring/cost.json":
+                raise SandboxFileNotFoundError(path)
             return b'{"total_usd": 0.42, "unpriced_turns": 0, "stages": []}'
 
     class _Sandbox:
@@ -112,7 +134,8 @@ def test_a_dying_sandbox_is_read_before_it_is_deleted(monkeypatch):
     )
     gateway._read_harness_spend(_Attempt(), _Sandbox())
 
-    assert read["path"] == "/work/authoring/cost.json"
+    # Both ledgers are read: the build CLI's and the builder chat's.
+    assert read == ["/work/authoring/cost.json", "/work/builder-cost.json"]
     assert _spend(job)["total_usd"] == 0.42
 
 
@@ -135,11 +158,16 @@ def test_a_sandbox_that_cannot_be_read_never_blocks_its_own_deletion(monkeypatch
     gateway._read_harness_spend(_Attempt(), _Sandbox())
 
 
-def test_a_retry_adds_to_the_bill_instead_of_replacing_it():
+@pytest.mark.django_db
+def test_a_retry_adds_to_the_bill_instead_of_replacing_it(organization):
     """A retry's ledger starts at zero, so attempts are summed rather than replaced."""
-    job = _job()
-    _record_harness_spend(job, {"total_usd": 1.2, "unpriced_turns": 1, "stages": []}, 1)
-    _record_harness_spend(job, {"total_usd": 0.8, "unpriced_turns": 0, "stages": []}, 2)
+    job = _job(organization)
+    _record_harness_spend(
+        job, 1, cli={"total_usd": 1.2, "unpriced_turns": 1, "stages": []}
+    )
+    _record_harness_spend(
+        job, 2, cli={"total_usd": 0.8, "unpriced_turns": 0, "stages": []}
+    )
 
     spend = _spend(job)
     assert spend["total_usd"] == 2.0
@@ -147,11 +175,12 @@ def test_a_retry_adds_to_the_bill_instead_of_replacing_it():
     assert sorted(spend["attempts"]) == ["1", "2"]
 
 
-def test_one_attempt_growing_does_not_disturb_another():
-    job = _job()
-    _record_harness_spend(job, {"total_usd": 1.0, "stages": []}, 1)
-    _record_harness_spend(job, {"total_usd": 0.3, "stages": []}, 2)
-    _record_harness_spend(job, {"total_usd": 0.9, "stages": []}, 2)
+@pytest.mark.django_db
+def test_one_attempt_growing_does_not_disturb_another(organization):
+    job = _job(organization)
+    _record_harness_spend(job, 1, cli={"total_usd": 1.0, "stages": []})
+    _record_harness_spend(job, 2, cli={"total_usd": 0.3, "stages": []})
+    _record_harness_spend(job, 2, cli={"total_usd": 0.9, "stages": []})
 
     spend = _spend(job)
     assert spend["attempts"]["1"]["total_usd"] == 1.0
@@ -161,19 +190,13 @@ def test_one_attempt_growing_does_not_disturb_another():
 
 def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
     """Pins the ordering, so a reordered or second deletion path fails here."""
-    import sys
-    import types
-
     from simulate.services import hosted_harness_gateway as gateway
-
-    # The method imports daytona at call time, and the SDK is not a test dependency.
-    fake = types.ModuleType("daytona")
-    fake.DaytonaNotFoundError = type("DaytonaNotFoundError", (Exception,), {})
-    monkeypatch.setitem(sys.modules, "daytona", fake)
 
     order = []
 
     class _Client:
+        name = "test-provider"
+
         # **kwargs so a new option on the real call (request_timeout, say) does not read as a
         # broken ordering invariant.
         def get(self, ref, **kwargs):
@@ -196,9 +219,178 @@ def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
         gateway, "_read_harness_spend", lambda *_: order.append("read_spend")
     )
     monkeypatch.setattr(gateway, "record_cleanup", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
 
-    driver = gateway.DaytonaHostedGateway.__new__(gateway.DaytonaHostedGateway)
+    driver = gateway.HostedHarnessGateway.__new__(gateway.HostedHarnessGateway)
     driver.client = _Client()
+    monkeypatch.setattr(driver, "_cleanup_conversation_runtime", lambda job: None)
     driver._delete_and_record(_Attempt())
 
     assert order == ["read_spend", "delete"]
+
+
+_CLI_STAGE = {"stage": "build", "usd": 0.10, "tokens_out": 100, "models": ["m"]}
+_CHAT_STAGE = {"stage": "builder", "usd": 0.05, "tokens_out": 50, "models": ["m"]}
+
+
+def _ledger(total, *stages):
+    return {"total_usd": total, "unpriced_turns": 0, "stages": list(stages)}
+
+
+@pytest.mark.parametrize(
+    "cli_now, want_total",
+    [
+        # The CLI grew past the old combined figure: its growth and the chat's stages both stay.
+        (0.17, 0.22),
+        # The CLI grew, but not past the old combined figure: its growth is still kept.
+        (0.12, 0.17),
+    ],
+)
+@pytest.mark.django_db
+def test_a_failed_read_keeps_that_ledgers_last_snapshot(
+    organization, cli_now, want_total
+):
+    """One ledger read failing must not drop it, nor hold back the other ledger's growth."""
+    job = _job(organization)
+    _record_harness_spend(
+        job, 1, cli=_ledger(0.10, _CLI_STAGE), builder=_ledger(0.05, _CHAT_STAGE)
+    )
+
+    grown = {**_CLI_STAGE, "usd": cli_now}
+    _record_harness_spend(job, 1, cli=_ledger(cli_now, grown), builder=None)
+
+    attempt = _spend(job)["attempts"]["1"]
+    assert attempt["total_usd"] == want_total
+    assert attempt["stages"] == [grown, _CHAT_STAGE]
+    assert attempt["sources"]["builder"]["total_usd"] == 0.05
+    assert _spend(job)["total_usd"] == want_total
+
+
+@pytest.mark.django_db
+def test_a_reset_ledger_never_lowers_its_own_snapshot(organization):
+    """A chat process restarting in the same sandbox starts its ledger at zero."""
+    job = _job(organization)
+    _record_harness_spend(
+        job, 1, cli=_ledger(0.10, _CLI_STAGE), builder=_ledger(0.05, _CHAT_STAGE)
+    )
+    _record_harness_spend(job, 1, builder=_ledger(0.01, {**_CHAT_STAGE, "usd": 0.01}))
+
+    attempt = _spend(job)["attempts"]["1"]
+    assert attempt["sources"]["builder"]["total_usd"] == 0.05
+    assert attempt["total_usd"] == 0.15
+
+
+@pytest.mark.parametrize(
+    "bad_stages",
+    [[None], [1], [{"stage": ["build"]}]],
+    ids=["null stage", "non-dict stage", "unhashable stage name"],
+)
+@pytest.mark.django_db
+def test_a_malformed_ledger_never_replaces_its_last_snapshot(organization, bad_stages):
+    """A read the combine cannot use must neither lower the attempt nor become the snapshot."""
+    job = _job(organization)
+    cli = _ledger(1.0, {"stage": "a", "usd": 1.0})
+    _record_harness_spend(
+        job, 1, cli=cli, builder=_ledger(2.0, {"stage": "b", "usd": 2.0})
+    )
+
+    _record_harness_spend(job, 1, cli=cli, builder=_ledger(3.0, *bad_stages))
+
+    attempt = _spend(job)["attempts"]["1"]
+    assert attempt["total_usd"] == 3.0
+    assert attempt["sources"]["builder"]["total_usd"] == 2.0
+    assert _spend(job)["total_usd"] == 3.0
+
+
+@pytest.mark.django_db
+def test_a_well_formed_later_read_still_replaces_the_snapshot(organization):
+    job = _job(organization)
+    cli = _ledger(1.0, {"stage": "a", "usd": 1.0})
+    _record_harness_spend(
+        job, 1, cli=cli, builder=_ledger(2.0, {"stage": "b", "usd": 2.0})
+    )
+
+    _record_harness_spend(
+        job, 1, cli=cli, builder=_ledger(3.0, {"stage": "b", "usd": 3.0})
+    )
+
+    attempt = _spend(job)["attempts"]["1"]
+    assert attempt["total_usd"] == 4.0
+    assert attempt["sources"]["builder"]["total_usd"] == 3.0
+
+
+def _read_at_cleanup(job, monkeypatch, builder_read):
+    """Run the cleanup read with a good CLI ledger and the builder read given."""
+    from simulate.services import hosted_harness_gateway as gateway
+
+    class _Files:
+        def download_file(self, path):
+            if path == "/work/authoring/cost.json":
+                return b'{"total_usd": 0.42, "unpriced_turns": 0, "stages": []}'
+            return builder_read(path)
+
+    class _Sandbox:
+        fs = _Files()
+
+    class _Attempt:
+        id = "attempt-7"
+        job_id = "job-7"
+        attempt_number = 1
+
+    monkeypatch.setattr(
+        gateway.HostedHarnessJob.no_workspace_objects, "get", lambda **_: job
+    )
+    gateway._read_harness_spend(_Attempt(), _Sandbox())
+
+
+def _missing(path):
+    raise SandboxFileNotFoundError(path)
+
+
+def _sandbox_gone(path):
+    from simulate.services.hosted_sandbox import SandboxNotFoundError
+
+    raise SandboxNotFoundError("gone")
+
+
+@pytest.mark.parametrize("builder_read", [_missing, _sandbox_gone])
+@pytest.mark.django_db
+def test_a_missing_builder_ledger_is_quiet(
+    organization, monkeypatch, caplog, builder_read
+):
+    """An attempt with no builder chat has no builder ledger: that is not an error."""
+    job = _job(organization)
+    with caplog.at_level("DEBUG", logger="simulate.hosted_harness_gateway"):
+        _read_at_cleanup(job, monkeypatch, builder_read)
+
+    assert [r for r in caplog.records if r.levelname in ("ERROR", "CRITICAL")] == []
+    assert _spend(job)["total_usd"] == 0.42
+
+
+def _timed_out(path):
+    raise TimeoutError("read timed out")
+
+
+@pytest.mark.parametrize(
+    "builder_read",
+    [_timed_out, lambda path: b"{not json", lambda path: b"[1, 2]"],
+    ids=["read fails", "not JSON", "not an object"],
+)
+@pytest.mark.django_db
+def test_an_unreadable_builder_ledger_is_logged_with_its_path(
+    organization, monkeypatch, caplog, builder_read
+):
+    """The sandbox is deleted next, so a ledger it fails to give up must leave a trace."""
+    job = _job(organization)
+    with caplog.at_level("ERROR", logger="simulate.hosted_harness_gateway"):
+        _read_at_cleanup(job, monkeypatch, builder_read)
+
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "path=/work/builder-cost.json" in errors[0].getMessage()
+    assert "attempt=attempt-7" in errors[0].getMessage()
+    # The CLI's ledger, read fine, is still recorded.
+    assert _spend(job)["total_usd"] == 0.42

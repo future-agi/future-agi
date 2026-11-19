@@ -184,6 +184,5 @@ class SnoozeAnnotationDigestView(APIView):
         state.save(update_fields=["realtime_snoozed_until", "updated_at"])
         return _unsub_template(
             "Snoozed",
-            f"Realtime emails paused for {days} days. "
-            "Daily digest will continue.",
+            f"Realtime emails paused for {days} days. Daily digest will continue.",
         )

@@ -110,7 +110,9 @@ def digest_project(digest_org, digest_workspace):
 
 
 @pytest.fixture
-def digest_queue(digest_org, digest_workspace, digest_project, digest_user, manager_user):
+def digest_queue(
+    digest_org, digest_workspace, digest_project, digest_user, manager_user
+):
     queue = AnnotationQueue.objects.create(
         name="Digest Queue",
         organization=digest_org,
@@ -154,9 +156,7 @@ class TestRealtimeDigest:
         """No pending items → no email, no state mutation."""
         from model_hub.utils.annotation_digest import _send_realtime_for_user
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_realtime_for_user(digest_user, timezone.now())
 
         assert sent is False
@@ -179,9 +179,7 @@ class TestRealtimeDigest:
             project=digest_project,
         )
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_realtime_for_user(digest_user, timezone.now())
 
         assert sent is True
@@ -212,14 +210,12 @@ class TestRealtimeDigest:
 
         # Pretend we just sent one.
         state, _ = AnnotationNotificationState.objects.get_or_create(user=digest_user)
-        state.last_realtime_digest_at = timezone.now() - REALTIME_THROTTLE + timedelta(
-            minutes=10
+        state.last_realtime_digest_at = (
+            timezone.now() - REALTIME_THROTTLE + timedelta(minutes=10)
         )
         state.save()
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_realtime_for_user(digest_user, timezone.now())
 
         assert sent is False
@@ -241,9 +237,7 @@ class TestRealtimeDigest:
 
         from model_hub.utils.annotation_digest import _send_realtime_for_user
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_realtime_for_user(digest_user, timezone.now())
 
         assert sent is False
@@ -265,9 +259,7 @@ class TestRealtimeDigest:
 
         from model_hub.utils.annotation_digest import _send_realtime_for_user
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_realtime_for_user(digest_user, timezone.now())
 
         assert sent is False
@@ -293,9 +285,7 @@ class TestRealtimeDigest:
 
         from model_hub.utils.annotation_digest import _send_realtime_for_user
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_realtime_for_user(manager_user, timezone.now())
 
         assert sent is True
@@ -362,9 +352,7 @@ class TestDailyDigest:
         digest_user.save()
         now = datetime(2026, 5, 15, 14, 0, tzinfo=dt_timezone.utc)
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now)
 
         assert sent is False
@@ -386,9 +374,7 @@ class TestDailyDigest:
         digest_user.save()
         now = datetime(2026, 5, 15, 9, 0, tzinfo=dt_timezone.utc)
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now)
 
         assert sent is True
@@ -412,9 +398,7 @@ class TestDailyDigest:
 
         # 9am LA in summer (PDT, UTC-7) = 16:00 UTC. Should fire.
         now_summer = datetime(2026, 7, 15, 16, 0, tzinfo=dt_timezone.utc)
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now_summer)
         assert sent is True
 
@@ -424,9 +408,7 @@ class TestDailyDigest:
         state.last_daily_digest_at = None
         state.save()
         now_utc_morning = datetime(2026, 7, 15, 9, 0, tzinfo=dt_timezone.utc)
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now_utc_morning)
         assert sent is False
 
@@ -437,9 +419,7 @@ class TestDailyDigest:
         digest_user.save()
         now = datetime(2026, 5, 15, 9, 0, tzinfo=dt_timezone.utc)
 
-        with patch(
-            "model_hub.utils.annotation_digest.email_helper"
-        ) as mock_send:
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
             sent = _send_daily_for_user(digest_user, now)
 
         assert sent is False

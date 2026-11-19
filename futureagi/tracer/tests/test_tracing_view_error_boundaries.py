@@ -428,8 +428,9 @@ def _graph_call(monkeypatch, view_kind, outcome, *, allow_sampled=False):
         ServerException("private bytes and stack", code=307),
         ServerException("private type and stack", code=386),
         NetworkError("private graph network host"),
+        EOFError("private graph stream closed mid-response"),
     ],
-    ids=["code-159", "code-241", "code-307", "code-386", "network"],
+    ids=["code-159", "code-241", "code-307", "code-386", "network", "eof"],
 )
 def test_graph_boundaries_return_sanitized_503_for_unavailable_reads(
     monkeypatch,
@@ -629,7 +630,7 @@ def _trace_detail_call(monkeypatch, exc):
     request = SimpleNamespace()
     view = TraceView()
     view.request = request
-    return view.retrieve(request, pk="trace-1")
+    return unwrap(TraceView.retrieve)(view, request, pk="trace-1")
 
 
 def _span_detail_call(monkeypatch, exc):
@@ -740,6 +741,8 @@ def _eval_detail_call(monkeypatch, exc):
     from tracer.views import observation_span as span_view
 
     config_manager = MagicMock()
+    # The view reads the config on the primary: .using("default").filter(...)
+    config_manager.using.return_value = config_manager
     config_manager.filter.return_value.values.return_value.first.return_value = {
         "project_id": PROJECT_ID
     }
@@ -907,6 +910,8 @@ def test_eval_detail_uses_direct_write_v2_service(monkeypatch):
     from tracer.views import observation_span as span_view
 
     config_manager = MagicMock()
+    # The view reads the config on the primary: .using("default").filter(...)
+    config_manager.using.return_value = config_manager
     config_manager.filter.return_value.values.return_value.first.return_value = {
         "project_id": PROJECT_ID
     }

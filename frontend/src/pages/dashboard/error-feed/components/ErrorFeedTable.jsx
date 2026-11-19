@@ -1,13 +1,10 @@
 import React, { useCallback, useMemo } from "react";
 import {
+  Alert,
   Box,
+  Button,
   Checkbox,
-  Chip,
   IconButton,
-  MenuItem,
-  Pagination,
-  PaginationItem,
-  Select,
   Stack,
   Table,
   TableBody,
@@ -18,17 +15,20 @@ import {
   Tooltip,
   Typography,
   useTheme,
-  alpha,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
-import { useErrorFeedList } from "src/api/errorFeed/error-feed";
-import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
+import { FEED_PAGE_STATE } from "../feedPageState";
+import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 const fmt = (n) => {
@@ -46,7 +46,7 @@ const humanizeTime = (iso) => {
   }
 };
 
-function ErrorTypeTag({ type, isDark }) {
+function ErrorTypeTag({ type }) {
   const shortType = type
     .replace(/Error$/, "")
     // Only split camelCase boundaries (lowercase→uppercase). The old
@@ -57,69 +57,41 @@ function ErrorTypeTag({ type, isDark }) {
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .trim();
   return (
-    <Chip
-      size="small"
-      icon={
-        <Iconify icon="mdi:bug-outline" width={11} sx={{ ml: "4px", mr: 0 }} />
-      }
-      label={shortType}
-      sx={{
-        height: 18,
-        borderRadius: "3px",
-        fontSize: "10px",
-        fontWeight: "fontWeightMedium",
-        bgcolor: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
-        color: isDark ? "#a1a1aa" : "#605C70",
-        "& .MuiChip-icon": {
-          color: isDark ? "#a1a1aa" : "#605C70",
-        },
-        "& .MuiChip-label": { px: "5px" },
-        maxWidth: 140,
-        overflow: "hidden",
-      }}
-    />
+    <Tooltip arrow title={`Error type: ${shortType}`}>
+      <Typography
+        noWrap
+        sx={{ fontSize: "12px", color: "text.tertiary", maxWidth: 140 }}
+      >
+        {shortType}
+      </Typography>
+    </Tooltip>
   );
 }
 
 ErrorTypeTag.propTypes = {
   type: PropTypes.string,
-  isDark: PropTypes.bool,
 };
 
 // Tells the row apart at a glance: a cluster is either Future AGI's built-in
-// scanner or one of the customer's own eval tasks. One icon for both states
-// — the label carries the difference. Mirrors the backend's own source
-// values (ClusterSource.SCANNER / .EVAL) rather than a separate display name.
-function SourceTag({ source, isDark }) {
+// scanner or one of the customer's own eval tasks. The label carries the
+// difference. Mirrors the backend's own source values
+// (ClusterSource.SCANNER / .EVAL) rather than a separate display name.
+function SourceTag({ source }) {
   const label = source === "eval" ? "Eval" : "Scanner";
   return (
-    <Chip
-      size="small"
-      icon={
-        <Iconify icon="mdi:tag-outline" width={11} sx={{ ml: "4px", mr: 0 }} />
-      }
-      label={label}
-      sx={{
-        height: 18,
-        borderRadius: "3px",
-        fontSize: "10px",
-        fontWeight: "fontWeightMedium",
-        bgcolor: isDark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
-        color: isDark ? "#a1a1aa" : "#605C70",
-        "& .MuiChip-icon": {
-          color: isDark ? "#a1a1aa" : "#605C70",
-        },
-        "& .MuiChip-label": { px: "5px" },
-        maxWidth: 140,
-        overflow: "hidden",
-      }}
-    />
+    <Tooltip arrow title={`Source: ${label}`}>
+      <Typography
+        noWrap
+        sx={{ fontSize: "12px", color: "text.tertiary", maxWidth: 140 }}
+      >
+        {label}
+      </Typography>
+    </Tooltip>
   );
 }
 
 SourceTag.propTypes = {
   source: PropTypes.string,
-  isDark: PropTypes.bool,
 };
 
 // ── Fix layer chip ──────────────────────────────────────────────────────────
@@ -134,35 +106,20 @@ const FIX_LAYER_CONFIG = {
 
 function FixLayerChip({ layer }) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const cfg = FIX_LAYER_CONFIG[layer];
-  if (!cfg) return <span style={{ color: "#71717a", fontSize: 11 }}>—</span>;
+  if (!cfg)
+    return (
+      <span style={{ color: theme.palette.text.disabled, fontSize: 12 }}>
+        —
+      </span>
+    );
   return (
-    <Box
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        px: "8px",
-        py: "3px",
-        borderRadius: "5px",
-        bgcolor: isDark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.55)",
-        border: "1px solid",
-        borderColor: isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.3)",
-        whiteSpace: "nowrap",
-      }}
+    <Typography
+      noWrap
+      sx={{ fontSize: "12px", fontWeight: 500, color: "text.primary" }}
     >
-      <Typography
-        sx={{
-          fontSize: "11px",
-          fontWeight: 600,
-          color: "#fff",
-          lineHeight: 1,
-          letterSpacing: "0.01em",
-        }}
-      >
-        {cfg.label}
-      </Typography>
-    </Box>
+      {cfg.label}
+    </Typography>
   );
 }
 FixLayerChip.propTypes = { layer: PropTypes.string };
@@ -188,15 +145,15 @@ function SortIcon({ active, dir }) {
   if (!active)
     return (
       <Iconify
-        icon="mdi:unfold-more-horizontal"
-        width={13}
+        icon="solar:chevrons-up-down-linear"
+        width={14}
         sx={{ opacity: 0.3, ml: 0.25 }}
       />
     );
   return (
     <Iconify
-      icon={dir === "asc" ? "mdi:arrow-up" : "mdi:arrow-down"}
-      width={13}
+      icon={dir === "asc" ? "solar:arrow-up-linear" : "solar:arrow-down-linear"}
+      width={14}
       sx={{ ml: 0.25, color: "primary.main" }}
     />
   );
@@ -205,10 +162,8 @@ SortIcon.propTypes = { active: PropTypes.bool, dir: PropTypes.string };
 
 // ── skeleton rows ──────────────────────────────────────────────────────────
 function SkeletonRow() {
-  const theme = useTheme();
   const pulse = {
-    bgcolor:
-      theme.palette.mode === "dark" ? alpha("#fff", 0.06) : alpha("#000", 0.06),
+    bgcolor: "action.selected",
     borderRadius: "4px",
     animation: "pulse 1.4s ease-in-out infinite",
     "@keyframes pulse": {
@@ -217,7 +172,7 @@ function SkeletonRow() {
     },
   };
   return (
-    <TableRow sx={{ height: 56 }}>
+    <TableRow sx={{ height: ROW_HEIGHT.twoLine }}>
       <TableCell padding="checkbox">
         <Checkbox disabled size="small" />
       </TableCell>
@@ -240,7 +195,7 @@ function SkeletonRow() {
         <Box sx={{ ...pulse, height: 14, width: 35 }} />
       </TableCell>
       <TableCell>
-        <Box sx={{ ...pulse, height: 20, width: 90, borderRadius: "5px" }} />
+        <Box sx={{ ...pulse, height: 20, width: 90, borderRadius: "4px" }} />
       </TableCell>
       <TableCell>
         <Box sx={{ ...pulse, height: 36, width: "100%" }} />
@@ -270,7 +225,7 @@ function EmptyState({ filtered }) {
             }}
           >
             <Iconify
-              icon="mdi:check-circle-outline"
+              icon="solar:check-circle-linear"
               width={24}
               sx={{ color: "text.disabled" }}
             />
@@ -296,16 +251,113 @@ function EmptyState({ filtered }) {
 }
 EmptyState.propTypes = { filtered: PropTypes.bool };
 
+// ── no Observe projects (TH-8209) ──────────────────────────────────────────
+// Shown only when the Observe catalog is empty AND the feed itself returned
+// nothing for the current scope. Reuses the table's in-table block treatment
+// and the existing Observe route; it is not an error.
+const NO_PROJECTS_TITLE = "No Observe projects in this workspace.";
+const NO_PROJECTS_BODY =
+  "Create an Observe project and connect your application to start collecting traces.";
+
+function NoProjectsState() {
+  return (
+    <TableRow>
+      <TableCell colSpan={10} align="center" sx={{ py: 8 }}>
+        <Stack alignItems="center" gap={1.5} role="status">
+          <Box
+            sx={{
+              width: 48,
+              height: 48,
+              borderRadius: "50%",
+              bgcolor: "action.hover",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Iconify
+              icon="mdi:folder-plus-outline"
+              width={24}
+              sx={{ color: "text.disabled" }}
+            />
+          </Box>
+          <Typography
+            typography="m3"
+            color="text.primary"
+            fontWeight="fontWeightMedium"
+          >
+            {NO_PROJECTS_TITLE}
+          </Typography>
+          <Typography typography="s2" color="text.secondary">
+            {NO_PROJECTS_BODY}
+          </Typography>
+          <Stack direction="row" gap={1} sx={{ mt: 0.5 }}>
+            <Button
+              variant="contained"
+              size="small"
+              component={RouterLink}
+              href={paths.dashboard.observe}
+            >
+              Open Observe
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              component="a"
+              href="https://docs.futureagi.com/docs/error-feed"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Error Feed docs
+            </Button>
+          </Stack>
+        </Stack>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+// ── failed read (TH-8209) ──────────────────────────────────────────────────
+// A failed list or catalog read must never render success copy. Same Alert +
+// Retry pattern as the Observe page's tab error state.
+const FEED_FAILED_TITLE = "Couldn't load the Error Feed";
+
+function FeedErrorState({ onRetry }) {
+  return (
+    <TableRow>
+      <TableCell colSpan={10} sx={{ py: 4, px: 3 }}>
+        <Alert
+          severity="error"
+          role="alert"
+          action={
+            <Button color="inherit" size="small" onClick={onRetry}>
+              Retry
+            </Button>
+          }
+        >
+          {FEED_FAILED_TITLE}
+        </Alert>
+      </TableCell>
+    </TableRow>
+  );
+}
+FeedErrorState.propTypes = { onRetry: PropTypes.func };
+
 // ── main component ─────────────────────────────────────────────────────────
-export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
+export default function ErrorFeedTable({
+  rows: rowsProp,
+  totalCount = 0,
+  isLoading = false,
+  pageState = FEED_PAGE_STATE.FEED,
+  onRetry,
+  selected,
+  onSelect,
+  onSelectAll,
+}) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
   const { sortBy, sortDir, setSortBy, page, pageSize, setPage } =
     useErrorFeedStore();
-
-  const apiParams = useErrorFeedApiParams();
-  const { data, isLoading } = useErrorFeedList(apiParams);
 
   const isFiltered = useErrorFeedStore(
     (s) =>
@@ -319,8 +371,11 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
       ),
   );
 
-  const rows = useMemo(() => data?.data ?? [], [data]);
-  const totalCount = data?.total ?? 0;
+  const rows = useMemo(() => rowsProp ?? [], [rowsProp]);
+  const showError = pageState === FEED_PAGE_STATE.ERROR;
+  const showNoProjects = pageState === FEED_PAGE_STATE.NO_PROJECTS;
+  const showSkeleton =
+    !showError && (isLoading || pageState === FEED_PAGE_STATE.LOADING);
 
   const handleRowClick = useCallback(
     (clusterId) => {
@@ -329,13 +384,9 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
     [navigate],
   );
 
-  const hoverBg = isDark
-    ? alpha(theme.palette.common.white, 0.04)
-    : alpha(theme.palette.grey[500], 0.04);
+  const hoverBg = theme.palette.action.hover;
 
-  const selectedBg = isDark
-    ? alpha(theme.palette.primary.main, 0.12)
-    : alpha(theme.palette.primary.main, 0.05);
+  const selectedBg = theme.palette.action.selected;
 
   return (
     <>
@@ -344,9 +395,6 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
           flex: 1,
           overflowX: "auto",
           overflowY: "auto",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 1,
         }}
       >
         <Table stickyHeader size="small" sx={{ minWidth: 900 }}>
@@ -354,10 +402,15 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
           <TableHead>
             <TableRow
               sx={{
+                /* The product's DataTable header: no fill, a quiet 13px title. */
                 "& .MuiTableCell-head": {
-                  bgcolor: isDark ? "background.neutral" : "background.default",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
+                  bgcolor: "background.paper",
+                  /* The theme paints table heads with a grey gradient — off. */
+                  backgroundImage: "none",
+                  /* A sticky cell's border isn't painted in a collapsed table —
+                     the divider under the header is drawn as a shadow. */
+                  borderBottom: "none",
+                  boxShadow: (t) => `inset 0 -1px 0 ${t.palette.divider}`,
                   py: 1.25,
                   px: 1.5,
                   whiteSpace: "nowrap",
@@ -422,10 +475,14 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
           {/* ── body ── */}
           <TableBody>
-            {isLoading ? (
+            {showError ? (
+              <FeedErrorState onRetry={onRetry} />
+            ) : showSkeleton ? (
               Array.from({ length: pageSize }).map((_, i) => (
                 <SkeletonRow key={i} />
               ))
+            ) : showNoProjects ? (
+              <NoProjectsState />
             ) : rows.length === 0 ? (
               <EmptyState filtered={isFiltered} />
             ) : (
@@ -439,7 +496,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                     onClick={() => handleRowClick(row.cluster_id)}
                     sx={{
                       cursor: "pointer",
-                      height: 56,
+                      height: ROW_HEIGHT.twoLine,
                       "&.MuiTableRow-hover:hover": { bgcolor: hoverBg },
                       "&.Mui-selected": { bgcolor: selectedBg },
                       "&.Mui-selected:hover": { bgcolor: selectedBg },
@@ -493,8 +550,8 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                           </Typography>
                         </Tooltip>
                         <Stack direction="row" alignItems="center" gap={0.75}>
-                          <SourceTag source={row.source} isDark={isDark} />
-                          <ErrorTypeTag type={row.error.type} isDark={isDark} />
+                          <SourceTag source={row.source} />
+                          <ErrorTypeTag type={row.error.type} />
                           {row.eval_score != null && (
                             <Typography
                               typography="s3"
@@ -510,7 +567,12 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
                     {/* Severity */}
                     <TableCell>
-                      <ErrorSeverityBadge severity={row.severity} />
+                      <ErrorSeverityBadge
+                        severity={row.severity}
+                        assessmentStatus={row.severity_assessment_status}
+                        source={row.severity_source}
+                        reason={row.severity_reason}
+                      />
                     </TableCell>
 
                     {/* Status */}
@@ -573,7 +635,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                           }}
                           onClick={() => handleRowClick(row.cluster_id)}
                         >
-                          <Iconify icon="mdi:arrow-right" width={16} />
+                          <Iconify icon="solar:arrow-right-linear" width={16} />
                         </IconButton>
                       </Tooltip>
                     </TableCell>
@@ -586,85 +648,27 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
       </TableContainer>
 
       {/* ── Pagination ── */}
-      {totalCount > 0 && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          sx={{ p: 1, py: 1.5, flexShrink: 0 }}
-        >
-          <Stack gap={1} direction="row" alignItems="center">
-            <Typography
-              typography="s2"
-              color="text.primary"
-              fontWeight="fontWeightRegular"
-            >
-              Results per page
-            </Typography>
-            <Select
-              size="small"
-              value={pageSize}
-              onChange={(e) => {
-                useErrorFeedStore.setState({
-                  pageSize: e.target.value,
-                  page: 0,
-                });
-              }}
-              sx={{ height: 36, bgcolor: "background.paper" }}
-            >
-              {[10, 25, 50].map((size) => (
-                <MenuItem key={size} value={size}>
-                  {size}
-                </MenuItem>
-              ))}
-            </Select>
-          </Stack>
-
-          <Pagination
-            count={Math.ceil(totalCount / pageSize)}
-            variant="outlined"
-            shape="rounded"
-            page={page + 1}
-            color="primary"
-            onChange={(_, value) => setPage(value - 1)}
-            renderItem={(item) => (
-              <PaginationItem
-                {...item}
-                sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
-                slots={{
-                  previous: () => (
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Iconify
-                        icon="octicon:chevron-left-24"
-                        width={18}
-                        height={18}
-                        sx={{ path: { strokeWidth: 1.5 } }}
-                      />
-                      Back
-                    </Box>
-                  ),
-                  next: () => (
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      Next
-                      <Iconify
-                        icon="octicon:chevron-right-24"
-                        width={18}
-                        height={18}
-                        sx={{ path: { strokeWidth: 1.5 } }}
-                      />
-                    </Box>
-                  ),
-                }}
-              />
-            )}
-          />
-        </Stack>
+      {pageState === FEED_PAGE_STATE.FEED && totalCount > 0 && (
+        <DataTablePagination
+          page={page}
+          pageSize={pageSize}
+          total={totalCount}
+          onPageChange={setPage}
+          onPageSizeChange={(size) =>
+            useErrorFeedStore.setState({ pageSize: size, page: 0 })
+          }
+        />
       )}
     </>
   );
 }
 
 ErrorFeedTable.propTypes = {
+  rows: PropTypes.arrayOf(PropTypes.object),
+  totalCount: PropTypes.number,
+  isLoading: PropTypes.bool,
+  pageState: PropTypes.oneOf(Object.values(FEED_PAGE_STATE)),
+  onRetry: PropTypes.func,
   selected: PropTypes.arrayOf(PropTypes.string),
   onSelect: PropTypes.func,
   onSelectAll: PropTypes.func,

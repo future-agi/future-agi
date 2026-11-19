@@ -41,7 +41,7 @@ def _isolate_optional_attribute_seed(monkeypatch):
     )
 
 
-def test_users_rollup_exactness_metadata_is_declared_on_users_response_only():
+def test_users_rollup_candidate_provenance_is_declared_on_rollup_responses_only():
     users_fields = UsersResultSerializer().fields
     trace_fields = TraceObserveListMetadataSerializer().fields
     session_fields = TraceSessionListMetadataSerializer().fields
@@ -70,8 +70,12 @@ def test_users_rollup_exactness_metadata_is_declared_on_users_response_only():
         }
     ).data
     assert rendered["table"][0]["num_sessions_is_approximate"] is True
+    # Exactness is the shared list-page contract on every Observe list; only
+    # the name of the approximate candidate-order source stays specific to the
+    # rollup-backed responses. Twin of the swagger assertion in
+    # test_trace_observe_list_contract.py.
+    assert {"query_exact", "ordering_exact"} <= trace_fields.keys()
     assert "query_provenance" not in trace_fields
-    assert "ordering_exact" not in trace_fields
     assert {
         "query_exact",
         "query_provenance",
@@ -137,7 +141,9 @@ def test_finite_candidate_ids_narrow_identity_before_latest_replay():
     assert "end_user_id IN %(candidate_scan_end_user_ids)s" in sql
     assert params["candidate_scan_end_user_ids"] == tuple(candidate_ids)
     assert "latest_candidate_spans" in sql
-    assert "argMax(is_deleted, _version) AS latest_is_deleted" in sql
+    assert "tupleElement(latest_usage_state, 8) AS latest_is_deleted" in sql
+    assert "argMax(tuple(spans.end_user_id, spans.start_time, spans.end_time," in sql
+    assert "), spans._version) AS latest_usage_state" in sql
     assert "latest_is_deleted = 0" in sql
     compact = " ".join(sql.split())
     assert (
@@ -151,7 +157,7 @@ def test_finite_candidate_ids_narrow_identity_before_latest_replay():
     # immutable identity has been replayed.
     replay = sql.split("latest_candidate_spans AS", 1)[1]
     assert "end_user_id IN" not in replay.split("GROUP BY", 1)[0]
-    assert "argMax(tuple(end_user_id), _version)" in replay
+    assert "tupleElement(latest_usage_state, 1) AS latest_end_user_id" in replay
     curated = sql.split("filtered_end_users_raw AS", 1)[1].split(
         "filtered_end_users AS", 1
     )[0]
@@ -262,9 +268,11 @@ def test_numbered_page_reuses_full_identity_post_collapse_window():
 
     sql, params = builder.build_candidate_page_query()
     assert "FROM spans AS sp FINAL" not in sql
-    assert "candidate_span_identities" in sql
+    # Date-only numbered reads carry no seed, so the identity superset CTE is
+    # replaced by a direct replay of the intersecting immutable hours.
+    assert "candidate_span_identities" not in sql
     assert "count() OVER()" in sql
-    assert_window_replay(sql, params)
+    assert_window_replay(sql, params, unseeded=True)
 
 
 def test_user_attribute_enrichment_projects_requested_direct_write_keys_only():
@@ -625,17 +633,41 @@ def test_attribute_filter_preserves_storage_type_provenance(
     assert not manager._row_matches_filters(row)
 
 
-def test_positive_text_attribute_filter_uses_larger_witness_candidate_batch():
+@pytest.mark.parametrize(
+    ("filter_value", "value_types", "expected"),
+    [
+        ("call-a", None, ("call-a",)),
+        (['{"enabled":true}'], ["string"], None),
+    ],
+    ids=["typed-text", "json-looking-picked-string"],
+)
+def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed(
+    filter_value, value_types, expected
+):
+    """A plain-text attribute filter never reads the whole-window candidate page.
+
+    The seeded 65-row witness batch is the shape that dies on the largest
+    tenants; the page walks witnessed spans newest-first instead and says so
+    in its provenance and ordering. An empty default thirty-day window is
+    proven in three statements: the first empty slice, then the EXPLAIN
+    ESTIMATE that costs one existence statement over the rest of the window
+    (index marks only), then that existence statement, which returns nothing
+    here; the walk never spends its statement budget one day at a time on an
+    empty tail whose cost proof fits the target.
+    """
+    config = {
+        "filter_type": "text",
+        "filter_op": "in" if isinstance(filter_value, list) else "equals",
+        "filter_value": filter_value,
+        "col_type": "SPAN_ATTRIBUTE",
+    }
+    if value_types is not None:
+        config["attribute_value_types"] = value_types
     manager = _manager(
         filters=[
             {
                 "column_id": "call_id",
-                "filter_config": {
-                    "filter_type": "text",
-                    "filter_op": "equals",
-                    "filter_value": "call-a",
-                    "col_type": "SPAN_ATTRIBUTE",
-                },
+                "filter_config": config,
             }
         ]
     )
@@ -645,12 +677,70 @@ def test_positive_text_attribute_filter_uses_larger_witness_candidate_batch():
         captured_limits.append(kwargs["limit"])
         return []
 
-    with patch.object(manager, "_read_dimension_candidates", side_effect=no_candidates):
+    with (
+        patch.object(manager, "_read_dimension_candidates", side_effect=no_candidates),
+        patch(
+            "tracer.services.users_list_manager.V2AnalyticsQueryService"
+        ) as analytics_cls,
+    ):
+
+        def empty_server(
+            query,
+            params=None,
+            timeout_ms=None,
+            settings=None,
+            *,
+            server_execution_cap_ms=None,
+        ):
+            # A slice asks the server to stop it at half of what is left of
+            # the analytics wall, the tail estimate at half the probe wall,
+            # and the tail existence statement at what the estimate left of
+            # it.
+            assert (server_execution_cap_ms is not None) == (
+                "AS raw_end_user_id" in query or "AS witnessed" in query
+            ), query
+            if query.lstrip().startswith("EXPLAIN ESTIMATE"):
+                # The estimate table for a tail the blooms exclude entirely:
+                # ClickHouse 25.3 reports a row of zeros, not an empty result.
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "database": "default",
+                            "table": "spans",
+                            "parts": 0,
+                            "rows": 0,
+                            "marks": 0,
+                        }
+                    ],
+                    columns=["database", "table", "parts", "rows", "marks"],
+                    query_time_ms=1.0,
+                )
+            return SimpleNamespace(data=[], query_time_ms=1.0)
+
+        analytics_cls.return_value.execute_ch_query.side_effect = empty_server
         result = manager.list_cursor_payload(page_size=25)
 
-    assert manager.attribute_exact_text_filters == {"call_id": ("call-a",)}
-    assert captured_limits == [USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE + 1]
+    assert manager.attribute_exact_text_filters == (
+        {"call_id": expected} if expected else {}
+    )
+    assert captured_limits == []
     assert result.payload["table"] == []
+    assert result.payload["query_provenance"] == "matching_activity_walk"
+    assert result.payload["ordering"] == "latest_matching_activity"
+    assert result.payload["has_more"] is False
+    statements = [
+        call.args[0]
+        for call in analytics_cls.return_value.execute_ch_query.call_args_list
+    ]
+    assert len(statements) == 3
+    assert "AS raw_end_user_id" in statements[0]
+    assert statements[1] == "EXPLAIN ESTIMATE\n" + statements[2].lstrip()
+    assert "SELECT start_time AS witnessed" in statements[2]
+    assert "ORDER BY start_time DESC" in statements[2] and "LIMIT 1" in statements[2]
+    for statement in statements:
+        assert "scalar_witness_identities" not in statement
+        assert "end_user_id_remap" not in statement
+    assert USER_LIST_ATTRIBUTE_WITNESS_BATCH_SIZE == 64
 
 
 def test_negative_attribute_filter_never_uses_positive_candidate_pruning():
@@ -681,6 +771,48 @@ def test_mixed_storage_attribute_filter_never_uses_string_candidate_pruning():
                     "filter_op": "in",
                     "filter_value": ["call-a", "42"],
                     "attribute_value_types": ["string", "number"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+    )
+
+    assert manager.attribute_exact_text_filters == {}
+
+
+@pytest.mark.parametrize("selected", ["true", '{"enabled":true}', "[1,2]"])
+def test_string_picker_provenance_never_narrows_canonical_text_as_raw(selected):
+    manager = _manager(
+        filters=[
+            {
+                "column_id": "picked",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": [selected],
+                    "attribute_value_types": ["string"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+    )
+
+    assert manager.attribute_exact_text_filters == {}
+
+
+@pytest.mark.parametrize(
+    ("selected", "selected_type"), [(True, "boolean"), (1, "number")]
+)
+def test_non_string_picker_domains_do_not_use_text_accelerator(selected, selected_type):
+    manager = _manager(
+        filters=[
+            {
+                "column_id": "picked",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": [selected],
+                    "attribute_value_types": [selected_type],
                     "col_type": "SPAN_ATTRIBUTE",
                 },
             }
@@ -1439,8 +1571,9 @@ def test_cursor_page_embeds_requested_session_count_in_exact_usage_replay():
 
     assert builder.embedded_page_metric_fields == frozenset({"num_sessions"})
     assert "AS latest_trace_session_id" in sql
-    assert "uniqExactIf(" in sql
-    assert ") AS num_sessions" in sql
+    assert "uniqExactIfState(" in sql
+    assert ") AS session_count_state" in sql
+    assert "uniqExactIfMerge(session_count_state) AS num_sessions" in sql
     assert "num_sessions,\n            activated_at" in sql
     assert "trace_session_id_remap" not in sql
     assert "ts_survivor_map" not in sql

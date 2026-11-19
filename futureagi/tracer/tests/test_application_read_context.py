@@ -96,3 +96,60 @@ def test_application_admission_stays_bounded_without_statement_timeout(monkeypat
     assert admission.acquire.call_args.kwargs["timeout"] > 0
     native.execute.assert_not_called()
     admission.release.assert_not_called()
+
+
+def test_an_explicit_execution_cap_reaches_the_native_driver(monkeypatch):
+    """A caller's opt-in cap is sent; the next statement is uncapped again.
+
+    The service normalizes the settings, then the native client normalizes
+    them again under the application context; the cap must survive both, and
+    only ``max_execution_time`` may change.
+    """
+    client, native = _client(monkeypatch)
+    service = AnalyticsQueryService(ch_client=client)
+
+    service.execute_ch_query(
+        "SELECT 1",
+        timeout_ms=8_000,
+        settings={"max_rows_to_read": 1, "max_result_rows": 1},
+        server_execution_cap_ms=8_000,
+    )
+    capped = native.execute.call_args.kwargs["settings"]
+    assert capped["max_execution_time"] == 8.0
+    assert capped["timeout_overflow_mode"] == "throw"
+    assert capped["max_rows_to_read"] == capped["max_result_rows"] == 0
+    assert capped["max_memory_usage"] > 0
+    assert not is_application_read()
+
+    service.execute_ch_query("SELECT 1", timeout_ms=8_000)
+    assert native.execute.call_args.kwargs["settings"]["max_execution_time"] == 0
+
+
+def test_a_server_timeout_under_an_explicit_cap_is_the_callers_deadline(monkeypatch):
+    from clickhouse_driver.errors import ErrorCodes, ServerException
+
+    from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+    client, native = _client(monkeypatch)
+    native.execute.side_effect = ServerException(
+        "Timeout exceeded", code=ErrorCodes.TIMEOUT_EXCEEDED
+    )
+    service = AnalyticsQueryService(ch_client=client)
+
+    with pytest.raises(ReadDeadlineExceeded):
+        service.execute_ch_query("SELECT 1", server_execution_cap_ms=250)
+    # Uncapped callers keep the driver's own error, exactly as before.
+    with pytest.raises(ServerException):
+        service.execute_ch_query("SELECT 1")
+    assert client._read_admission.acquire(blocking=False)
+    client._read_admission.release()
+
+
+@pytest.mark.parametrize("cap", [0, -1, 1.5, True])
+def test_an_execution_cap_must_be_a_positive_int(cap):
+    with pytest.raises(ValueError, match="execution cap"):
+        with application_read_context(execution_cap_ms=cap):
+            pass
+    with pytest.raises(ValueError, match="execution cap"):
+        with application_read_context(False, execution_cap_ms=100):
+            pass

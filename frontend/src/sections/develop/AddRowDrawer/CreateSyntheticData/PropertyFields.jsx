@@ -215,7 +215,7 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
                 </React.Fragment>
               )}
               <Iconify
-                icon="line-md:minus"
+                icon="solar:minus-linear"
                 sx={{
                   width: "40px",
                   color: "text.primary",
@@ -251,8 +251,6 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
         variant="outlined"
         type="button"
         sx={{
-          height: "38px",
-          paddingX: "24px",
           width: "209px",
           borderColor: "divider",
           color: "text.secondary",
@@ -261,7 +259,7 @@ const PropertyFields = ({ control, nestIndex, newProps = [], addNProps }) => {
             backgroundColor: "action.hover",
           },
         }}
-        startIcon={<Iconify icon="mynaui:plus" color="text.primary" />}
+        startIcon={<Iconify icon="solar:add-linear" color="text.primary" />}
         onClick={() => handleAddProperty(null)}
       >
         Add more properties
