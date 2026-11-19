@@ -145,7 +145,6 @@ export default function FixHeader({ fix, envId, actions }) {
                 href={issueHref}
                 color="inherit"
                 underline="hover"
-                title={issue.title || undefined}
                 data-testid="epoch-issue-crumb"
               >
                 {issue.cluster_id}

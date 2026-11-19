@@ -1,19 +1,11 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Box,
-  Button,
-  Checkbox,
-  FormControlLabel,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import {
   fixErrorOf,
@@ -21,7 +13,7 @@ import {
   useLaunchFix,
 } from "src/api/simulate-environments/fixRuns";
 
-import LaunchLimits, { ChipsInput, Row } from "./LaunchLimits";
+import LaunchLimits, { ChipsInput, Row, SurfacesRow } from "./LaunchLimits";
 import ScenarioPicker from "./ScenarioPicker";
 import {
   NO_MODELS_NOTE,
@@ -268,43 +260,11 @@ export default function LaunchFixDialog({
               />
             )}
           </Row>
-          <Row k="May change" center>
-            <Stack direction="row" flexWrap="wrap" columnGap={2}>
-              {options.surfaces.map((s) => (
-                <CustomTooltip
-                  key={s.id}
-                  show={!s.allowed && !!s.reason}
-                  title={s.reason || ""}
-                  size="small"
-                  arrow
-                >
-                  <Box component="span">
-                    <FormControlLabel
-                      label={s.label}
-                      disabled={!s.allowed}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={surfaces.includes(s.id)}
-                          onChange={() =>
-                            setSurfaces((cur) =>
-                              cur.includes(s.id)
-                                ? cur.filter((x) => x !== s.id)
-                                : [...cur, s.id],
-                            )
-                          }
-                        />
-                      }
-                      sx={{
-                        mr: 0,
-                        "& .MuiFormControlLabel-label": { typography: "s2" },
-                      }}
-                    />
-                  </Box>
-                </CustomTooltip>
-              ))}
-            </Stack>
-          </Row>
+          <SurfacesRow
+            surfaces={options.surfaces}
+            value={surfaces}
+            onChange={setSurfaces}
+          />
           <Row k="Locked files" center>
             <ChipsInput
               values={locked}

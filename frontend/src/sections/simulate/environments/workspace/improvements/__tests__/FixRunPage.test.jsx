@@ -102,10 +102,9 @@ describe("FixRunPage", () => {
   it("starts the breadcrumb at the Error Feed issue it was run from", async () => {
     const fix = fixOf("fix-search");
     fix.issue = {
+      job_id: "job-1",
       cluster_id: "S-1A2B3C4D",
       project_id: "proj-1",
-      title: "Quotes a fare without the difference",
-      job_id: "job-1",
     };
     hooks.fixRun = { fix, isLoading: false, error: null };
     renderPage("fix-search");

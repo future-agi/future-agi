@@ -12,10 +12,12 @@ import {
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 
 // Before the epoch starts: the builder drafts scenarios from the issue's traces, a
-// person reviews them, and the current version runs on the kept ones.
+// person reviews them, and the current version runs on the kept ones. Blocked:
+// drafting ended and none of them can run.
 export const PRE_LAUNCH = {
   drafting: "Drafting scenarios",
   review: "Drafts ready",
+  blocked: "Nothing to run",
   measuring: "Measuring",
 };
 
@@ -54,20 +56,25 @@ const JOB_ENDINGS = {
     reason: "couldn't start",
     text: "Another epoch is running in this environment. Run Epoch again when it ends.",
   },
-  baseline_failed: {
+  issue_epoch_measuring: {
+    as: "failed",
+    reason: "couldn't start",
+    text: "Another issue's epoch was measuring this environment. Run Epoch again when it ends.",
+  },
+  issue_epoch_dispatch_failed: {
+    as: "failed",
+    reason: "a problem on our side",
+    text: "This epoch could not start because of a problem on our side, not your agent. Nothing changed. Run Epoch again.",
+  },
+  issue_epoch_baseline_failed: {
     as: "failed",
     reason: "couldn't start",
     text: "The run on the current version did not finish, so the epoch could not start. Nothing changed. Run Epoch again.",
   },
-  issue_scenarios_cap: {
-    as: "failed",
-    reason: "something only you can change",
-    text: "This environment already holds the most scenarios from issues it can take. Remove some on its Scenarios tab, then run Epoch again.",
-    action: "scenarios",
-  },
 };
 
-// Failures that are ours, not the agent's (fixRunView's list): the user can only retry.
+// Failures that are ours, not the agent's (fixRunView's list, and the issue job's
+// own dispatch): the user can only retry.
 const OUR_FAILURES = new Set([
   "fix_engine_failed",
   "fix_engine_died",
@@ -76,6 +83,7 @@ const OUR_FAILURES = new Set([
   "fix_dispatch_failed",
   "fix_variations_failed",
   "scheduler_unavailable",
+  "issue_epoch_dispatch_failed",
 ]);
 
 // Failed splits four ways (#77).
@@ -103,7 +111,7 @@ export function epochKey(status) {
 
 export const isEpochLive = (status) => {
   const key = epochKey(status);
-  return !!PRE_LAUNCH[key] || FIX_LIVE_STATES.has(key);
+  return (!!PRE_LAUNCH[key] && key !== "blocked") || FIX_LIVE_STATES.has(key);
 };
 
 function reasonOf(status) {
@@ -225,6 +233,8 @@ const PRE_LAUNCH_TEXT = {
   drafting:
     "Drafting scenarios from the issue's traces. This is one builder turn, billed as authoring credits.",
   review: "The drafted scenarios are ready. Review them, then run the epoch.",
+  blocked:
+    "None of the drafted scenarios can run, and each one says why. Plan again with other traces.",
   measuring:
     "Running the reviewed scenarios on the current version. The epoch starts when that run ends.",
 };
@@ -248,7 +258,6 @@ export function epochSentence(status) {
 //   view     open the epoch page
 //   ship     the epoch page's ship button (Open pull request, Make default)
 //   retry    the epoch page's retry
-//   scenarios the environment's Scenarios tab
 const RUN = { kind: "run", label: "Run Epoch" };
 const AGAIN = { kind: "run", label: "Run Epoch again" };
 const view = (fix) => ({ kind: "view", label: `View ${fixName(fix)}` });
@@ -256,6 +265,7 @@ const view = (fix) => ({ kind: "view", label: `View ${fixName(fix)}` });
 const DRAWER_LABEL = {
   drafting: "View drafts",
   review: "Review drafts",
+  blocked: "View drafts",
   measuring: "View progress",
 };
 
@@ -264,11 +274,7 @@ export function primaryAction(status) {
   if (!key) return RUN;
   if (PRE_LAUNCH[key]) return { kind: "drawer", label: DRAWER_LABEL[key] };
   const fix = status.epoch;
-  if (!fix) {
-    return jobEnding(status.ending).action === "scenarios"
-      ? { kind: "scenarios", label: "Open scenarios" }
-      : AGAIN;
-  }
+  if (!fix) return AGAIN;
   if (FIX_LIVE_STATES.has(key)) return view(fix);
   if (key === "ready") {
     const winner = winnerOf(fix);
@@ -308,6 +314,7 @@ export function secondaryActions(status) {
 const ICONS = {
   drafting: ["solar:magic-stick-3-linear", "info"],
   review: ["solar:magic-stick-3-linear", "warning"],
+  blocked: ["solar:forbidden-circle-linear", "warning"],
   measuring: ["solar:magic-stick-3-linear", "info"],
   queued: ["solar:magic-stick-3-linear", "info"],
   running: ["solar:magic-stick-3-linear", "info"],

@@ -7,12 +7,13 @@ import {
   FIX_POLL_MS,
   useFixRun,
 } from "src/api/simulate-environments/fixRuns";
+import { listHarnessEnvironments } from "src/api/simulate-environments/harnessEnvironments";
 
 // Run Epoch from an Error Feed issue (agent-fix-issues): the plan, the job that
 // drafts the issue's scenarios and measures the current version, and the epoch it
 // launches. One job per attempt; the issue reads its latest.
 
-// Pre-launch phases poll: the builder drafts, then the current version runs.
+// The job's phase, derived by the server: before the epoch, launched, or ended.
 const LIVE_PHASES = new Set(["drafting", "measuring"]);
 
 export const issueEpochPlanKey = (clusterId, environmentId) => [
@@ -21,51 +22,61 @@ export const issueEpochPlanKey = (clusterId, environmentId) => [
   environmentId ?? null,
 ];
 export const issueEpochJobKey = (jobId) => ["agent-fix-issue", jobId];
+const ISSUE_EPOCHS = "agent-fix-issues";
 export const issueEpochsKey = (clusterIds) => [
-  "agent-fix-issues",
+  ISSUE_EPOCHS,
   [...clusterIds].sort(),
 ];
+// A cluster id is unique within its project: the list matches on both.
+export const issueKey = (projectId, clusterId) => `${projectId}:${clusterId}`;
 
-// The job as the issue page reads it (issueEpochView): its phase before launch, the
-// ending when it stopped before an epoch, and the epoch once one started.
+// The job's epoch, as the job read summarises it, in the epoch read's own shape so
+// the issue's view reads both alike.
+const epochOfJob = (epoch) =>
+  epoch
+    ? {
+        id: epoch.id,
+        number: epoch.number,
+        environment_id: epoch.environment_id,
+        state: epoch.state,
+        step: epoch.step,
+        failure: epoch.failure_code ? { code: epoch.failure_code } : null,
+        retryable: epoch.retryable,
+        limited_validation: epoch.limited_validation,
+      }
+    : null;
+
+// The job as the issue page reads it (issueEpochView): its phase, the ending when it
+// stopped before an epoch, and the epoch once one started. The epoch's own read
+// replaces the job's summary of it when the page has it.
 export function issueEpochStatus(job, epoch = null) {
   if (!job) return null;
   return {
     jobId: job.id,
-    environmentId: job.environment_id,
-    importId: job.evidence_import,
     phase: job.phase,
+    environmentId: job.environment?.id ?? null,
     ending: job.ending ?? null,
-    fixRunId: job.fix_run ?? null,
-    epoch,
-  };
-}
-
-// The plan as the drawer reads it: the project's remembered environment, the code-agent
-// environments it can run on (or why none can), the sampled traces with spares to swap
-// in, and the launch form's defaults and limits.
-export function issuePlanOf(plan) {
-  if (!plan) return null;
-  return {
-    environment: plan.environment ?? null,
-    environments: plan.environments ?? [],
-    noFit: plan.blocked ?? null,
-    picks: plan.sample?.picks ?? [],
-    alternates: plan.sample?.alternates ?? [],
-    defaults: plan.defaults ?? null,
-    limits: plan.limits ?? null,
+    evidenceImport: job.evidence_import ?? null,
+    baseline: job.baseline ?? null,
+    defaults: job.defaults ?? null,
+    epoch: epoch ?? epochOfJob(job.epoch),
   };
 }
 
 const isLiveJob = (job) =>
   !!job &&
   (LIVE_PHASES.has(job.phase) ||
-    (job.fix_run && FIX_LIVE_STATES.has(job.fix_run_state)));
+    (!!job.epoch && FIX_LIVE_STATES.has(job.epoch.state)));
 
-export async function getIssueEpochPlan(clusterId, environmentId) {
+export async function getIssueEpochPlan({
+  clusterId,
+  projectId,
+  environmentId,
+}) {
   const res = await axios.get(endpoints.agentFixIssues.plan(), {
     params: {
       cluster_id: clusterId,
+      project_id: projectId,
       ...(environmentId ? { environment_id: environmentId } : {}),
     },
   });
@@ -99,13 +110,16 @@ export async function stopIssueEpoch(jobId) {
   return res.data;
 }
 
-// The plan makes no model call, but it samples the issue's traces: it is read when
-// the person opens Run Epoch, never on page load.
-export function useIssueEpochPlan(clusterId, { environmentId, enabled }) {
+// The plan makes no model call, but it reads the issue's traces to sample them: it
+// is read when the person opens Run Epoch, never on page load, and once.
+export function useIssueEpochPlan(
+  { clusterId, projectId, environmentId },
+  { enabled },
+) {
   return useQuery({
     queryKey: issueEpochPlanKey(clusterId, environmentId),
-    queryFn: () => getIssueEpochPlan(clusterId, environmentId),
-    enabled: enabled && !!clusterId,
+    queryFn: () => getIssueEpochPlan({ clusterId, projectId, environmentId }),
+    enabled: enabled && !!clusterId && !!projectId,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     retry: false,
@@ -113,22 +127,46 @@ export function useIssueEpochPlan(clusterId, { environmentId, enabled }) {
   });
 }
 
-// The latest job of each issue on the page, keyed by cluster id. Asks nothing when
-// the org lacks Epoch, since the API answers 402 there.
+// An epoch runs only on a code agent: one uploaded or from GitHub. The plan refuses
+// any other with its reason; the picker lists only these.
+const CODE_SOURCES = new Set(["github", "archive"]);
+const READY_STATUSES = new Set(["completed", "running"]);
+const PICKER_PAGE = 100;
+
+export function useCodeAgentEnvironments({ enabled }) {
+  return useQuery({
+    queryKey: ["agent-fix-issue-environments"],
+    queryFn: () => listHarnessEnvironments({ page: 1, limit: PICKER_PAGE }),
+    select: (data) =>
+      (data?.results ?? []).filter(
+        (env) =>
+          CODE_SOURCES.has(env.source_kind) && READY_STATUSES.has(env.status),
+      ),
+    enabled,
+    meta: { errorHandled: true },
+  });
+}
+
+// The latest job of each issue on the page, by issueKey, in one read whatever the
+// projects. Asks nothing when the org lacks Epoch, since the API answers 402.
 export function useIssueEpochs(clusterIds) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
-  const ids = clusterIds.filter(Boolean);
+  const ids = [...new Set(clusterIds.filter(Boolean))];
   const { data } = useQuery({
     queryKey: issueEpochsKey(ids),
     queryFn: () => listIssueEpochs(ids),
     enabled: allowed && ids.length > 0,
     refetchInterval: (query) =>
-      Object.values(query.state.data?.results ?? {}).some(isLiveJob)
+      (query.state.data?.results ?? []).some((one) => isLiveJob(one.job))
         ? FIX_POLL_MS
         : false,
     meta: { errorHandled: true },
   });
-  return data?.results ?? {};
+  const jobs = {};
+  for (const one of data?.results ?? []) {
+    jobs[issueKey(one.project_id, one.cluster_id)] = one.job;
+  }
+  return jobs;
 }
 
 export function useIssueEpochJob(jobId) {
@@ -143,21 +181,19 @@ export function useIssueEpochJob(jobId) {
 }
 
 // One issue's epoch, as the issue page shows it: its latest job, and the epoch's
-// own read once the job launched one.
-export function useIssueEpoch(clusterId, { enabled = true } = {}) {
-  const jobs = useIssueEpochs(enabled && clusterId ? [clusterId] : []);
-  const latest = jobs[clusterId] ?? null;
+// own read once the job launched one (Ship and Retry need the whole epoch).
+export function useIssueEpoch({ clusterId, projectId }) {
+  const jobs = useIssueEpochs([clusterId]);
+  const latest = jobs[issueKey(projectId, clusterId)] ?? null;
   const { data: job } = useIssueEpochJob(latest?.id);
   const current = job ?? latest;
-  const { fix } = useFixRun(current?.fix_run ?? null);
+  const { fix } = useFixRun(current?.epoch?.id ?? null);
   return issueEpochStatus(current, fix ?? null);
 }
 
 const refreshIssue = (queryClient, job) => {
-  queryClient.invalidateQueries({ queryKey: ["agent-fix-issues"] });
-  if (job?.id) {
-    queryClient.setQueryData(issueEpochJobKey(job.id), job);
-  }
+  queryClient.invalidateQueries({ queryKey: [ISSUE_EPOCHS] });
+  if (job?.id) queryClient.setQueryData(issueEpochJobKey(job.id), job);
 };
 
 export function useCreateIssueEpoch() {

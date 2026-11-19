@@ -63,6 +63,18 @@ describe("before the epoch starts", () => {
     expect(isEpochLive(status)).toBe(true);
   });
 
+  it("shows a blocked draft as nothing to run, not as running", () => {
+    const status = { phase: "blocked" };
+    expect(epochLabel(status)).toBe("Nothing to run");
+    expect(epochSentence(status)).toMatch(/each one says why/);
+    expect(primaryAction(status)).toEqual({
+      kind: "drawer",
+      label: "View drafts",
+    });
+    expect(isEpochLive(status)).toBe(false);
+    expect(epochIcon(status).role).toBe("warning");
+  });
+
   it("offers Stop only while the current version is measured", () => {
     expect(secondaryActions({ phase: "measuring" })).toEqual([
       { kind: "stop", label: "Stop" },
@@ -85,7 +97,9 @@ describe("a job that ended before its epoch", () => {
     ["evidence_draft_stale", "Failed"],
     ["fix_variations_source_moved", "Failed"],
     ["scenario_unavailable", "Failed"],
-    ["baseline_failed", "Failed"],
+    ["issue_epoch_baseline_failed", "Failed"],
+    ["issue_epoch_measuring", "Failed"],
+    ["fix_run_active", "Failed"],
   ])("%s reads as %s, with Run Epoch again", (code, label) => {
     const status = { phase: "ended", ending: { code, message: "raw" } };
     expect(epochLabel(status)).toBe(label);
@@ -105,14 +119,11 @@ describe("a job that ended before its epoch", () => {
     );
   });
 
-  it("sends a full environment to its Scenarios tab", () => {
-    const status = { ending: { code: "issue_scenarios_cap" } };
-    expect(primaryAction(status)).toEqual({
-      kind: "scenarios",
-      label: "Open scenarios",
-    });
-    expect(epochLabelLong(status)).toBe(
-      "Failed: something only you can change",
+  it("calls a failed dispatch a problem on our side", () => {
+    const status = { ending: { code: "issue_epoch_dispatch_failed" } };
+    expect(epochLabelLong(status)).toBe("Failed: a problem on our side");
+    expect(epochSentence(status)).toMatch(
+      /problem on our side, not your agent/,
     );
   });
 

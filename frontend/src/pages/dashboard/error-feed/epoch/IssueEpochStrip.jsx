@@ -48,9 +48,9 @@ StopJob.propTypes = { jobId: PropTypes.string.isRequired };
 
 // The issue's epoch in one line under the header: its state, what it means, and the
 // other ways on. The header holds the main action.
-export default function IssueEpochStrip({ clusterId, onRunAgain }) {
+export default function IssueEpochStrip({ clusterId, projectId, onRunAgain }) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
-  const status = useIssueEpoch(clusterId);
+  const status = useIssueEpoch({ clusterId, projectId });
   const key = epochKey(status);
   if (!allowed || !key) return null;
   const mark = epochIcon(status);
@@ -114,5 +114,6 @@ export default function IssueEpochStrip({ clusterId, onRunAgain }) {
 
 IssueEpochStrip.propTypes = {
   clusterId: PropTypes.string.isRequired,
+  projectId: PropTypes.string,
   onRunAgain: PropTypes.func.isRequired,
 };

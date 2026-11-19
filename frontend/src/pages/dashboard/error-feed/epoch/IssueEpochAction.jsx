@@ -16,9 +16,13 @@ export const epochHref = (fix) =>
 
 // The issue header's one main action for its epoch: Run Epoch, the drawer's next
 // step, the epoch's page, or what the epoch page itself would do next (ship, retry).
-export default function IssueEpochAction({ clusterId, onOpenDrawer }) {
+export default function IssueEpochAction({
+  clusterId,
+  projectId,
+  onOpenDrawer,
+}) {
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
-  const status = useIssueEpoch(clusterId);
+  const status = useIssueEpoch({ clusterId, projectId });
   if (!allowed) return null;
   const action = primaryAction(status);
   const fix = status?.epoch;
@@ -33,22 +37,6 @@ export default function IssueEpochAction({ clusterId, onOpenDrawer }) {
         component={RouterLink}
         href={epochHref(fix)}
         endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-      >
-        {action.label}
-      </Button>
-    );
-  }
-  if (action.kind === "scenarios") {
-    return (
-      <Button
-        size="small"
-        variant="contained"
-        color="primary"
-        component={RouterLink}
-        href={paths.dashboard.simulate.environments.workspaceTab(
-          status.environmentId,
-          "scenarios",
-        )}
       >
         {action.label}
       </Button>
@@ -70,5 +58,6 @@ export default function IssueEpochAction({ clusterId, onOpenDrawer }) {
 
 IssueEpochAction.propTypes = {
   clusterId: PropTypes.string.isRequired,
+  projectId: PropTypes.string,
   onOpenDrawer: PropTypes.func.isRequired,
 };

@@ -1,13 +1,17 @@
 import PropTypes from "prop-types";
 import {
   Box,
+  Checkbox,
   Chip,
+  FormControlLabel,
   InputBase,
   MenuItem,
   Select,
   Stack,
   Typography,
 } from "@mui/material";
+
+import CustomTooltip from "src/components/tooltip";
 
 import { formatCredits, formatMinutes } from "./fixRunView";
 import { budgetSteps, marginSteps, minuteSteps } from "./launchFormView";
@@ -111,8 +115,60 @@ ChipsInput.propTypes = {
   testId: PropTypes.string,
 };
 
+// The parts of the agent an epoch may change; one the agent can't take says why.
+export function SurfacesRow({ surfaces, value, onChange }) {
+  return (
+    <Row k="May change" center>
+      <Stack direction="row" flexWrap="wrap" columnGap={2}>
+        {surfaces.map((s) => (
+          <CustomTooltip
+            key={s.id}
+            show={!s.allowed && !!s.reason}
+            title={s.reason || ""}
+            size="small"
+            arrow
+          >
+            <Box component="span">
+              <FormControlLabel
+                label={s.label}
+                disabled={!s.allowed}
+                control={
+                  <Checkbox
+                    size="small"
+                    checked={value.includes(s.id)}
+                    onChange={() =>
+                      onChange(
+                        value.includes(s.id)
+                          ? value.filter((x) => x !== s.id)
+                          : [...value, s.id],
+                      )
+                    }
+                  />
+                }
+                sx={{
+                  mr: 0,
+                  "& .MuiFormControlLabel-label": { typography: "s2" },
+                }}
+              />
+            </Box>
+          </CustomTooltip>
+        ))}
+      </Stack>
+    </Row>
+  );
+}
+SurfacesRow.propTypes = {
+  surfaces: PropTypes.array.isRequired,
+  value: PropTypes.array.isRequired,
+  onChange: PropTypes.func.isRequired,
+};
+
+// Without a time limit of its own, the platform sizes one from the suite at launch.
+const SUITE_SIZED = "";
+
 // Models, Reply time, Agent's cost, Budget and Stops at. The caller owns the values;
-// `modelsNote` replaces the model list when the agent's models can't be locked.
+// `modelsNote` replaces the model list when the agent's models can't be locked, and a
+// null `minutes` leaves the time limit to the platform.
 export default function LaunchLimits({
   limits,
   modelsNote,
@@ -128,6 +184,7 @@ export default function LaunchLimits({
   onBudget,
   minutes,
   onMinutes,
+  minutesFromSuite = false,
 }) {
   return (
     <>
@@ -218,11 +275,21 @@ export default function LaunchLimits({
           </Select>
           <Select
             size="small"
-            value={minutes}
-            onChange={(e) => onMinutes(Number(e.target.value))}
+            value={minutes ?? SUITE_SIZED}
+            displayEmpty
+            onChange={(e) =>
+              onMinutes(
+                e.target.value === SUITE_SIZED ? null : Number(e.target.value),
+              )
+            }
             sx={{ ...selectSx, width: 220 }}
             inputProps={{ "aria-label": "Time limit" }}
           >
+            {minutesFromSuite ? (
+              <MenuItem value={SUITE_SIZED} sx={{ typography: "s2" }}>
+                Sized from the suite
+              </MenuItem>
+            ) : null}
             {minuteSteps(minutes, limits).map((n) => (
               <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
                 {formatMinutes(n)}
@@ -233,7 +300,11 @@ export default function LaunchLimits({
       </Row>
       <Row k="Stops at">
         <Typography sx={{ typography: "s2" }}>
-          {`${formatCredits(budget)} or ${formatMinutes(minutes)}, whichever comes first.`}
+          {`${formatCredits(budget)} or ${
+            minutes == null
+              ? "a time limit sized from the suite"
+              : formatMinutes(minutes)
+          }, whichever comes first.`}
         </Typography>
       </Row>
     </>
@@ -253,6 +324,7 @@ LaunchLimits.propTypes = {
   onCostLimit: PropTypes.func.isRequired,
   budget: PropTypes.number.isRequired,
   onBudget: PropTypes.func.isRequired,
-  minutes: PropTypes.number.isRequired,
+  minutes: PropTypes.number,
   onMinutes: PropTypes.func.isRequired,
+  minutesFromSuite: PropTypes.bool,
 };

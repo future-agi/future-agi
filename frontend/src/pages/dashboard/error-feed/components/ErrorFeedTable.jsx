@@ -27,6 +27,7 @@ import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
 import {
   issueEpochStatus,
+  issueKey,
   useIssueEpochs,
 } from "src/api/errorFeed/epochFromIssue";
 import EpochIssueIcon from "../epoch/EpochIssueIcon";
@@ -377,7 +378,7 @@ export default function ErrorFeedTable({
   );
 
   const rows = useMemo(() => rowsProp ?? [], [rowsProp]);
-  // Each visible issue's latest epoch, in one read per page.
+  // Each visible issue's latest epoch, in one read for the page.
   const epochs = useIssueEpochs(rows.map((r) => r.cluster_id));
   const showError = pageState === FEED_PAGE_STATE.ERROR;
   const showNoProjects = pageState === FEED_PAGE_STATE.NO_PROJECTS;
@@ -558,7 +559,9 @@ export default function ErrorFeedTable({
                             </Typography>
                           </Tooltip>
                           <EpochIssueIcon
-                            status={issueEpochStatus(epochs[row.cluster_id])}
+                            status={issueEpochStatus(
+                              epochs[issueKey(row.project_id, row.cluster_id)],
+                            )}
                           />
                         </Stack>
                         <Stack direction="row" alignItems="center" gap={0.75}>

@@ -435,6 +435,7 @@ export default function ErrorFeedDetailView() {
                   </Button>
                   <IssueEpochAction
                     clusterId={currentError.cluster_id}
+                    projectId={currentError.project_id}
                     onOpenDrawer={() => setEpochOpen(true)}
                   />
                 </>
@@ -446,6 +447,7 @@ export default function ErrorFeedDetailView() {
         {!shared && (
           <IssueEpochStrip
             clusterId={currentError.cluster_id}
+            projectId={currentError.project_id}
             onRunAgain={() => setEpochOpen(true)}
           />
         )}
