@@ -77,9 +77,24 @@ export default function DesignBuildView({ build, onLeaveOut, timeout }) {
             {validation ? (
               validation.checks.map((c) => (
                 <PlanLine key={c.label}>
-                  <Stack direction="row" alignItems="center" spacing={1}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    flexWrap="wrap"
+                    useFlexGap
+                    columnGap={1}
+                    rowGap={0.75}
+                    sx={{ py: 0.75 }}
+                  >
                     <StateIcon state={c.ok ? "done" : "failed"} />
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                    {/* Wraps in full; the button drops below when the row is narrow. */}
+                    <Box
+                      sx={{
+                        flex: "1 1 240px",
+                        minWidth: 0,
+                        whiteSpace: "normal",
+                      }}
+                    >
                       {c.label}
                       {c.detail && <Quiet>{c.detail}</Quiet>}
                     </Box>
