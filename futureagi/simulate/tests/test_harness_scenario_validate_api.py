@@ -407,3 +407,67 @@ def test_the_validation_status_says_how_many_cases_are_proved_of_how_many(
         len(REFUND_KEYS),
         len(REFUND_KEYS + LOOKUP_KEYS),
     )
+
+
+def test_an_old_case_proved_the_older_way_is_proved_again_and_keeps_running_until_then(
+    user, workspace, storage
+):
+    from simulate.services.harness_scenario_actions import cases_to_prove
+    from simulate.services.harness_scenario_lifecycle import runnable
+    from simulate.tests.test_harness_affected_scenarios import (
+        LOOKUP_KEYS,
+        PROVED,
+        REFUND_KEYS,
+    )
+    from simulate.tests.test_harness_scenario_lifecycle import _proofs, _views
+
+    environment = _environment(user, workspace, storage, "sv-legacy")
+    _suite(environment, _ten(), proved=False)
+    # An older proof: no format, read as kept as written.
+    _proofs(
+        environment,
+        {
+            **dict.fromkeys(LOOKUP_KEYS, PROVED),
+            **dict.fromkeys(REFUND_KEYS, {"holds": True}),
+        },
+    )
+
+    needed, total = cases_to_prove(
+        environment,
+        environment.agent_version_id,
+        environment.environment_version,
+        environment.suite_version,
+    )
+    views = _views(environment)
+
+    assert (sorted(needed), total) == (
+        sorted(REFUND_KEYS),
+        len(REFUND_KEYS + LOOKUP_KEYS),
+    )
+    assert all(runnable(views[key]) for key in REFUND_KEYS)
+
+
+def test_a_running_validation_counts_its_progress_once_per_interval(
+    auth_client, user, workspace, storage
+):
+    from simulate.services import harness_scenario_actions
+
+    environment = _environment(user, workspace, storage, "sv-progress-cache")
+    _suite(environment, _ten(), proved=False)
+    started = _post(auth_client, environment).json()
+    calls = []
+    real = harness_scenario_actions.cases_to_prove
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    with patch.object(harness_scenario_actions, "cases_to_prove", counting):
+        first = _get(auth_client, environment, started["job_id"]).json()
+        second = _get(auth_client, environment, started["job_id"]).json()
+
+    assert (first["state"], second["total"], len(calls)) == (
+        "validating",
+        first["total"],
+        1,
+    )

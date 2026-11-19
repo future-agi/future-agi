@@ -691,7 +691,7 @@ def _rows_held(
     used: set[Any] = set()
 
     def take(index: int, row: HostedHarnessScenario | None) -> None:
-        if row is not None and row.id not in used:
+        if row is not None and row.id not in used and may_take_back(row, docs[index]):
             held_rows[index] = row
             used.add(row.id)
 
@@ -777,9 +777,18 @@ def restores_own_key(document: Mapping[str, Any]) -> bool:
     )
 
 
+def may_take_back(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document may be written into ``row``: any live row, but a removed or archived one only when the
+    document restores it under its own key or comes back exactly as it was, never a new case that shares its key."""
+    if not row.deleted and row.archived_at is None:
+        return True
+    return restores_own_key(doc) or _comes_back_as_it_was(row, doc)
+
+
 def _comes_back_as_it_was(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
     """Whether a document is the removed scenario ``row`` back exactly as its last saved suite held it, as a rebuild
-    restores one whose capability returned: the same case, so it keeps its row."""
+    restores one whose capability returned: the same case, so it keeps its row. A row no saved suite ever held (an
+    environment from before versions) has nothing to compare with, so it is read as before."""
     from simulate.models import HarnessSuiteMember
     from simulate.services.harness_versioning.versions import _member_content
 
@@ -789,7 +798,7 @@ def _comes_back_as_it_was(row: HostedHarnessScenario, doc: Mapping[str, Any]) ->
         .values_list("content", flat=True)
         .first()
     )
-    return last is not None and last == _member_content(doc)
+    return last is None or last == _member_content(doc)
 
 
 def plan_pairs(
@@ -861,10 +870,8 @@ def plan_pairs(
         if (
             exact
             and held is not None
-            and held.deleted
             and held.id not in owned
-            and not restores_own_key(doc)
-            and not _comes_back_as_it_was(held, doc)
+            and not may_take_back(held, doc)
         ):
             # A new case whose key or name a removed one held: a fresh key and row, never the old one's history.
             held = None

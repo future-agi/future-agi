@@ -226,6 +226,38 @@ def test_the_chat_reads_the_removed_cases_and_a_restore_takes_back_its_key_and_r
     assert retired_keys(environment, [mismatched]) == [key]
 
 
+def test_a_new_case_never_takes_an_archived_or_removed_row_on_either_pairing_path(
+    user, workspace, storage
+):
+    from simulate.services.harness_scenarios import plan_pairs
+
+    environment, _older, row, document = _removed_case(
+        user, workspace, storage, "lc-archived-guard"
+    )
+    archived = HostedHarnessScenario.no_workspace_objects.get(
+        job=environment, scenario_key=REFUND_KEYS[1]
+    )
+    HostedHarnessScenario.all_objects.filter(id=archived.id).update(
+        archived_at=timezone.now()
+    )
+    # Archived and no longer in the saved suite: its key now names nothing that runs.
+    HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version=environment.suite_version, scenario_key=archived.scenario_key
+    ).delete()
+    new_case = {
+        **document,
+        "scenario_key": archived.scenario_key,
+        "tests": "a different case",
+    }
+    removed_again = {**document, "tests": "a different case"}
+
+    [on_archived] = plan_pairs(environment, [new_case], exact=True)
+    [loose] = plan_pairs(environment, [removed_again], exact=False)
+
+    assert on_archived.row is None
+    assert loose.row is None or loose.row.id != row.id
+
+
 def test_a_restore_with_changes_says_so_and_its_older_results_read_changed_test(
     user, workspace, storage
 ):
