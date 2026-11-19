@@ -497,6 +497,7 @@ def _platform_simulator_material() -> dict[str, str]:
         "ALK_PROVE_CONCURRENCY",
         "ALK_PROVE_SUITE_SECONDS",
         "ALK_HELD_CASE_REPAIR_SECONDS",
+        "ALK_HELD_CASE_ROUNDS",
         # The guest waits this long for the build; unset, it falls back to its own default.
         "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
     ):

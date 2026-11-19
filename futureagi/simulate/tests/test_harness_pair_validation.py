@@ -2651,9 +2651,11 @@ def test_the_proving_settings_reach_the_sandbox(monkeypatch):
         ("ALK_PROVE_CONCURRENCY", "6"),
         ("ALK_PROVE_SUITE_SECONDS", "5400"),
         ("ALK_HELD_CASE_REPAIR_SECONDS", "900"),
+        ("ALK_HELD_CASE_ROUNDS", "4"),
     ):
         monkeypatch.setenv(name, value)
     sent = _platform_simulator_material()
+    assert sent["ALK_HELD_CASE_ROUNDS"] == "4"
     assert (
         sent["ALK_PROVE_CONCURRENCY"],
         sent["ALK_PROVE_SUITE_SECONDS"],
