@@ -242,3 +242,25 @@ def test_a_bad_share_stops_startup_only_while_actors_are_on(
         monkeypatch.delenv("HARNESS_ACTORS_SHARE")
         monkeypatch.delenv("HARNESS_ACTORS_ENABLED")
         importlib.reload(module)
+
+
+@pytest.mark.usefixtures("versioning_on")
+@pytest.mark.parametrize(
+    ("enabled", "runnable", "code"),
+    [(False, True, None), (True, False, "production_only")],
+)
+def test_the_run_plan_holds_back_a_production_only_run_only_while_actors_are_on(
+    auth_client, user, workspace, settings, request, enabled, runnable, code
+):
+    plan = picks.TestRunPlanVerdict()
+    environment, suite = plan._blocked(
+        user, workspace, request.getfixturevalue("storage"), f"flag-plan-{enabled}"
+    )
+    settings.HARNESS_ACTORS_ENABLED = enabled
+
+    tools, starts, blocked_code, held = plan._verdict(
+        auth_client, environment, suite, scenario_keys=picks._key(picks.NAMES[0])
+    )
+
+    assert (starts, blocked_code) == (runnable, code)
+    assert (tools, held) == (([], 0) if enabled is False else (tools, 1))

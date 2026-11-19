@@ -182,7 +182,12 @@ def _version_scenarios(
 def blocked_tools(
     environment: HostedHarnessJob, pins: PinnedEnvironment | None = None
 ) -> list[BlockedTool]:
-    """Each production-only tool of the run's environment version, with the scenarios that need it."""
+    """Each production-only tool of the run's environment version, with the scenarios that need it; none while actors
+    are off, so neither the run nor its plan is held back."""
+    from simulate.services.harness_versioning.versions import actors_enabled
+
+    if not actors_enabled():
+        return []
     documents = _version_documents(environment, pins)
     contract = documents.get("contract") or contract_data(environment)
     blocked = production_only(contract)

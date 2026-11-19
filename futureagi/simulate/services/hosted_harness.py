@@ -479,10 +479,8 @@ def create_selected_harness_run(
         if pins is not None and pins.assembles:
             _refuse_ungradable(pins, scenario_keys)
         from simulate.services.harness_tool_reach import refuse_production_only
-        from simulate.services.harness_versioning.versions import actors_enabled
 
-        if actors_enabled():
-            refuse_production_only(environment, pins, scenario_keys)
+        refuse_production_only(environment, pins, scenario_keys)
 
         manifest: list[dict[str, Any]] = []
         for scenario_key in scenario_keys:
