@@ -165,6 +165,38 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     const origin = performance.timeOrigin, now = performance.now.bind(performance);
     return { now: () => origin + now(), click: 0 };
   });
+  // Record both sides of the ordering in Chromium, independent of when the runner resumes.
+  const chip30 = chip(page, '30D');
+  const highlight = await chip30.evaluateHandle(el => {
+    const now = performance.now.bind(performance);
+    const state = { at: NaN };
+    const observer = new MutationObserver(() => {
+      if (el.classList.contains('MuiChip-colorPrimary')) {
+        state.at = now();
+        observer.disconnect();
+      }
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return state;
+  });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Performance.enable');
+  const { metrics } = await cdp.send('Performance.getMetrics');
+  // NavigationStart is performance.timeOrigin on the protocol's monotonic clock (seconds).
+  const navigationStart = metrics.find(m => m.name === 'NavigationStart')!.value;
+  const first30D = new Map<Metric, number>();
+  cdp.on('Network.requestWillBeSent', ({ request, timestamp }) => {
+    const url = new URL(request.url);
+    if (request.method !== 'POST' || url.origin !== new URL(E2E.apiUrl).origin || url.pathname !== QUERY) return;
+    const body = Buffer.concat((request.postDataEntries ?? []).map(e => Buffer.from(e.bytes ?? '', 'base64'))).toString();
+    if (!body) return;
+    const input: QueryInput = JSON.parse(body);
+    const metric = METRICS.find(m => mine(input, m));
+    if (metric && rangeKey(input) === key30 && !first30D.has(metric)) {
+      first30D.set(metric, (timestamp - navigationStart) * 1000);
+    }
+  });
+  await cdp.send('Network.enable', { maxPostDataSize: 65536 });
   await page.clock.setFixedTime(anchor);
   const clickDispatch = async (target: Locator) => {
     await target.evaluate((el, t) => el.addEventListener('click', () => { t.click = t.now(); },
@@ -174,7 +206,6 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   };
   const firstDispatch = (metric: Metric, since: number, key: string) => seen.find(s =>
     s.at >= since && mine(s.input, metric) && rangeKey(s.input) === key)?.req.timing().startTime ?? NaN;
-  const chip30 = chip(page, '30D');
   let burstStart = 0, clicked30 = 0, highlighted30 = 0;
   await test.step('UI: Today, 7D and 30D clicked back to back; 30D highlights before any 30D query', async () => {
     burstStart = Date.now(); // Every query from here on belongs to the burst.
@@ -182,7 +213,8 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     await chip(page, '7D').click();
     clicked30 = await clickDispatch(chip30);
     await expect(chip30).toHaveClass(PRIMARY);
-    highlighted30 = await timing.evaluate(t => t.now());
+    highlighted30 = await highlight.evaluate(state => state.at);
+    expect(highlighted30, 'observed 30D primary transition').toBeGreaterThan(0);
     await expect(chip(page, 'Today')).not.toHaveClass(PRIMARY);
     await expect(chip(page, '7D')).not.toHaveClass(PRIMARY);
   });
@@ -200,7 +232,9 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
       expect(distinctRanges(metric, burstStart), `${metric} burst ranges`).toHaveLength(1);
       expect(distinctRanges(metric, burstStart)).toEqual([key30]);
       const first = firstDispatch(metric, burstStart, key30);
-      expect(first, `${metric} 30D query after the highlight`).toBeGreaterThanOrEqual(highlighted30);
+      const dispatched = first30D.get(metric) ?? NaN;
+      await attach(`ordering-${metric}`, { highlighted30, dispatched });
+      expect(dispatched, `${metric} 30D query after the highlight`).toBeGreaterThan(highlighted30);
       expect(first - clicked30, `${metric} 30D query waits out the debounce`)
         .toBeGreaterThanOrEqual(DEBOUNCE_FLOOR_MS);
     }
@@ -299,7 +333,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
 
   const firstAfter = (metric: Metric, since: number) => queries(metric, since)[0]?.startedAt - since;
   await attach('timings-ms', Object.fromEntries(METRICS.map(metric => [metric, {
-    burstClickToFirst30D: firstDispatch(metric, burstStart, key30) - clicked30, highlightBeforeFirst30D: firstDispatch(metric, burstStart, key30) - highlighted30,
+    burstClickToFirst30D: firstDispatch(metric, burstStart, key30) - clicked30, highlightBeforeFirst30D: first30D.get(metric)! - highlighted30,
     doneToFirstCustom: firstDispatch(metric, doneAt, customKey) - clickedDone, refreshClickToFirst: firstAfter(metric, refreshAt) }])));
   await Promise.all([...http.pending]);
   http.stop();
