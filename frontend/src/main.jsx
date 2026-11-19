@@ -30,9 +30,14 @@ import {
 import logger from "./utils/logger";
 import { GoogleReCaptchaProvider } from "react-google-recaptcha-v3";
 import { initPostHog } from "./utils/PostHog";
-import { initGoogleAds } from "./utils/googleAds";
-import { initReddit } from "./utils/redditAds";
-import { initTwitter } from "./utils/twitterAds";
+import { initGoogleAnalytics } from "./utils/googleAnalytics";
+// Google Ads, Reddit and X (Twitter) pixels are disabled. Google Analytics
+// loads from VITE_GA_ID (googleAnalytics.js) and Google Tag Manager from
+// VITE_GTM_ID (index.html). To restore a pixel, uncomment its import and call
+// below.
+// import { initGoogleAds } from "./utils/googleAds";
+// import { initReddit } from "./utils/redditAds";
+// import { initTwitter } from "./utils/twitterAds";
 import { applyTranslationDomGuard } from "./utils/translationDomGuard";
 
 applyTranslationDomGuard();
@@ -152,14 +157,13 @@ Sentry.init({
 // Initialize PostHog (autocapture, session replay, web vitals)
 initPostHog();
 
-// Initialize Google Ads + GA4 (no-op if env vars are unset)
-initGoogleAds();
+// Google Analytics 4 (no-op unless the build sets VITE_GA_ID).
+initGoogleAnalytics();
 
-// Initialize Reddit pixel (no-op if env vars are unset)
-initReddit();
-
-// Initialize Twitter (X) pixel (no-op if env vars are unset)
-initTwitter();
+// Ad pixels are disabled (see the imports above).
+// initGoogleAds();
+// initReddit();
+// initTwitter();
 
 if (
   CURRENT_ENVIRONMENT === "local" &&
@@ -256,7 +260,9 @@ function AfterFirstPaint() {
             // Recheck after loading: the client may have been disabled or closed.
             if (canStartReplay()) Sentry.addIntegration(createSentryReplay());
           })
-          .catch((error) => logger.warn("Failed to load Sentry Replay:", error));
+          .catch((error) =>
+            logger.warn("Failed to load Sentry Replay:", error),
+          );
       }, 0);
     });
     return () => {

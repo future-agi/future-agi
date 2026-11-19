@@ -526,9 +526,12 @@ class TestCallExecutionLogsViewEmpty:
 class TestCallExecutionDetailView:
     URL_TEMPLATE = "/simulate/call-executions/{}/"
 
-    def test_returns_actual_provider_from_stored_provider_payload(
-        self, auth_client, call_execution
+    @pytest.mark.parametrize("provider", ["vapi", "livekit", None])
+    def test_returns_target_provider_without_relabeling_transport_artifacts(
+        self, auth_client, call_execution, agent_definition, provider
     ):
+        agent_definition.provider = provider
+        agent_definition.save(update_fields=["provider"])
         call_execution.provider_call_data = {
             "livekit": {
                 "room_sid": "RM_test",
@@ -541,7 +544,7 @@ class TestCallExecutionDetailView:
 
         assert response.status_code == status.HTTP_200_OK
         payload = response.json()
-        assert payload["provider"] == "livekit"
+        assert payload["provider"] == (provider or "livekit")
         assert payload["attributes"]["raw_log"]["room_sid"] == "RM_test"
 
     def test_reads_livekit_call_without_recording_or_vapi_key(
@@ -554,7 +557,6 @@ class TestCallExecutionDetailView:
         response = auth_client.get(self.URL_TEMPLATE.format(call_execution.id))
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json()["provider"] == "livekit"
         assert response.json()["recordings"] == {}
 
     def test_reads_stored_vapi_recordings_without_vapi_key(
