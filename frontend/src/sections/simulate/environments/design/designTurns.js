@@ -67,6 +67,9 @@ function buildTurn(build) {
     ]
       .filter(Boolean)
       .join(" "),
+    failed: `Building ${build.failure?.stage.toLowerCase()} failed: ${build.failure?.detail} Nothing was saved and the draft is kept, so you can fix it and approve again.`,
+    cancelled:
+      "The build was cancelled. Nothing was saved and the draft is kept, so you can approve it again.",
   }[build.status === "validating" ? "building" : build.status];
   return { id: "build", role: "builder", steps: [{ kind: "note", text }] };
 }

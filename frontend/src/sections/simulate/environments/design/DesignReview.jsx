@@ -21,6 +21,7 @@ import { focusRing } from "../buildDrawer/drawerStyles";
 import { extOf } from "../buildDrawer/forms/shared/buildFiles";
 import { ROLES } from "../workspace/sources/sources.constants";
 import AddFilesPanel from "./AddFilesPanel";
+import { STOPPED_BUILD } from "src/api/simulate-environments/designBuild";
 import DesignBuildView from "./DesignBuildView";
 import { PlanLine, PlanRow, Quiet } from "./planParts";
 
@@ -34,6 +35,8 @@ const BUILD_LINE = {
   ready: "Built from what you approved, and checked.",
   saved: "Built from what you approved, and checked.",
   needs_repair: "Built from what you approved, but a check failed.",
+  failed: "Building what you approved failed partway.",
+  cancelled: "The build was cancelled before it finished.",
 };
 
 const linkSx = {
@@ -179,8 +182,8 @@ export default function DesignReview({
   const pendingDeps = deps.filter((d) => !d.choice);
   const pending = (part) => (readingParts.includes(part) ? readingNames : "");
   const forAgent = !!draft.agent;
-  // Only a design waiting for approval, or one a check sent back, can change.
-  const editable = !build || build.status === "needs_repair";
+  // Only a design waiting for approval, or one whose build stopped short, can change.
+  const editable = !build || STOPPED_BUILD.includes(build.status);
   const building = !editable && build.status !== "saved";
 
   const rows = [
