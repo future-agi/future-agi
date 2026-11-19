@@ -539,8 +539,12 @@ export const refreshFollowers = (queryClient, envId) => {
 
 // A draft keeps its id as it is edited, so its diff and members are asked
 // again with the drafts.
+// The environment's readiness fix run; its outcome reads the fix's draft.
+export const readinessFixKey = (envId) => ["harness-readiness-fix", envId];
+
 export const refreshDrafts = (queryClient, envId) => {
   queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+  queryClient.invalidateQueries({ queryKey: readinessFixKey(envId) });
   queryClient.invalidateQueries({
     queryKey: [...environmentVersionsKey(envId), "diff"],
   });

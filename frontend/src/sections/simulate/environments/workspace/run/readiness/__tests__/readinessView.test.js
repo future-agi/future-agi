@@ -146,6 +146,8 @@ describe("readinessView", () => {
         fix,
         group: "needs_you",
         progress: null,
+        fixAction: null,
+        fixResult: null,
         waitingOnArea: null,
       },
     ]);
@@ -207,8 +209,9 @@ describe("readinessView", () => {
         ],
         rows: [
           row("start", "blocked", { area: "start_and_message" }),
+          // Fixed rows have nothing left to fix, so the server groups them nowhere.
           row("tool_routing", "supported", {
-            fix_group: "builder",
+            fix_group: null,
             fix_progress: fixed,
           }),
           row("reset", "blocked", {
@@ -254,63 +257,50 @@ it("counts the cases that can't be graded past the 200 it lists", () => {
 });
 
 describe("fixEndCard", () => {
-  it("names what a saved fix left open, or says the pair is clear", () => {
-    const fix = { state: "done", draft: false };
-    const open = report({
-      areas: [{ id: "reset", status: "blocked", rows: ["reset_row"] }],
-      rows: [row("reset_row", "blocked", { affected: { count: 2 } })],
-    });
-    expect(fixEndCard(fix, open)).toEqual({
-      text: "Fixed. 1 still to fix in the run plan: World resets.",
-      action: "Open run plan",
-    });
-    expect(fixEndCard(fix, report())).toEqual({
-      text: "The pair passed its check. Nothing left to fix before the run.",
-      action: "Review and start run",
-    });
+  const ended = (outcome, extra = {}) => ({
+    state: "done",
+    outcome,
+    ...extra,
+  });
+  it("says how the fix came out, in the server's words", () => {
+    expect(fixEndCard({ state: "fixing", outcome: null })).toBeNull();
+    expect(
+      fixEndCard(
+        ended({ kind: "fixed", fixed: 1, total: 1, message: "Fixed" }),
+      ),
+    ).toEqual({ text: "Fixed", action: "Review and start run" });
+    expect(
+      fixEndCard(
+        ended({
+          kind: "partly_fixed",
+          fixed: 1,
+          total: 2,
+          message: "Fixed 1 of 2",
+        }),
+      ),
+    ).toEqual({ text: "Fixed 1 of 2", action: "Open run plan" });
+    expect(
+      fixEndCard(
+        ended({
+          kind: "could_not_fix",
+          fixed: 0,
+          total: 1,
+          message: "The tool has no test route",
+        }),
+      ).text,
+    ).toBe("Couldn't fix. The tool has no test route");
   });
 
-  it("reads the fix's own lines: none fixed, some fixed, or left unsaved", () => {
-    const failed = {
-      state: "could_not_fix",
-      reason: { code: "x", message: "The tool has no test route" },
-    };
-    const line = (state) => (state === "fixed" ? { state } : failed);
-    const run = (states, extra = {}) => ({
-      state: "done",
-      draft: false,
-      lines: states.map(line),
-      ...extra,
-    });
-    expect(fixEndCard(run(["could_not_fix"]), report()).text).toBe(
-      "Couldn't fix. The tool has no test route",
-    );
-    expect(fixEndCard(run(["fixed", "could_not_fix"]), report()).text).toBe(
-      "Fixed 1 of 2. The pair passed its check.",
-    );
-    const unchecked = run(["fixed"]);
-    unchecked.lines.push({
-      state: "could_not_fix",
-      reason: { code: "check_unavailable", message: "x" },
-    });
-    expect(fixEndCard(unchecked, report()).text).toBe(
-      "Fixed 1 of 2. The check didn't finish. Re-check in the run plan.",
+  it("asks to save a fix left in unsaved changes, unless its draft is stale", () => {
+    const unsaved = ended({ kind: "unsaved", fixed: 1, total: 1, message: "" });
+    expect(fixEndCard(unsaved).text).toBe(
+      "The fixes are in unsaved changes. Save them to run them.",
     );
     expect(
-      fixEndCard(run(["fixed"]), report({ validation: "check_unavailable" })),
-    ).toEqual({
-      text: "Fixed. The check didn't finish. Re-check in the run plan.",
-      action: "Open run plan",
-    });
-    const unsaved = run(["fixed"], {
-      draft: true,
-      error: { code: "draft_stale", message: "The environment changed" },
-    });
-    expect(fixEndCard(unsaved, null).text).toBe(
+      fixEndCard({ ...unsaved, error: { code: "draft_stale", message: "x" } })
+        .text,
+    ).toBe(
       "These unsaved changes started from an older version. Discard them on the page, or ask chat to make them again.",
-    );
-    expect(fixEndCard(unsaved, null, true).text).toBe(
-      "The fix's changes are no longer in unsaved changes.",
     );
   });
 });

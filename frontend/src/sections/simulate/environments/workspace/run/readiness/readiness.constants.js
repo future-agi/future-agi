@@ -102,6 +102,14 @@ export const READY_TO_RUN_COPY = {
   fixOne: "Fix just this one",
   addOne: "Add just this one to the fix",
   fixLoadError: "Couldn't read the fix in progress.",
+  // A fix saved from these versions: where its changes went.
+  fixedIn: ({ environment, suite }) =>
+    `Fixed in ${[
+      environment && `environment ${environment.label}`,
+      suite && `scenarios ${suite.label}`,
+    ]
+      .filter(Boolean)
+      .join(" and ")}`,
   fixFinishing:
     "The fix is saving and checking its changes. Add more lines when it finishes.",
   fixesUnsaved:
@@ -164,13 +172,6 @@ export const RUN_PLAN_COPY = {
     `Every selected scenario waits on a fix${label ? `: ${label.toLowerCase()}` : ""}`,
   // The builder chat's card when a fix ends.
   fixEnd: {
-    fixed: (n, total) => (n < total ? `Fixed ${n} of ${total}.` : "Fixed."),
-    open: (labels) =>
-      `${labels.length} still to fix in the run plan: ${labels.join(", ")}.`,
-    clear: "The pair passed its check. Nothing left to fix before the run.",
-    passed: "The pair passed its check.",
-    unconfirmed: "The check didn't finish. Re-check in the run plan.",
-    draftGone: "The fix's changes are no longer in unsaved changes.",
     openPlan: "Open run plan",
     review: "Review and start run",
   },

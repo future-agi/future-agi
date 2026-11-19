@@ -55,13 +55,12 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
 }));
 vi.mock("src/api/simulate-environments/readinessFix", () => ({
   useFixRun: () => ({ data: null }),
-  FIX_ACTIVE_STATES: new Set([
-    "queued",
-    "fixing",
-    "waiting_on_you",
-    "saving",
-    "checking",
-  ]),
+  // Fixtures name a state; the server sends active alongside it.
+  fixIsActive: (run) =>
+    run?.active ??
+    ["queued", "fixing", "waiting_on_you", "saving", "checking"].includes(
+      run?.state,
+    ),
 }));
 // Hands the dialog the view Ready to run would read (`state.view`).
 vi.mock("../readiness/ReadyToRunSection", async () => {

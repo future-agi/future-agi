@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import { useReadiness } from "src/api/simulate-environments/readiness";
 import {
-  FIX_ACTIVE_STATES,
+  fixIsActive,
   useFixRun,
 } from "src/api/simulate-environments/readinessFix";
 import Iconify from "src/components/iconify";
@@ -401,7 +401,7 @@ export default function RunDialog({
     onSubmit?.(picks, runIds, selected);
   };
 
-  const fixActive = FIX_ACTIVE_STATES.has(fixRun?.state);
+  const fixActive = fixIsActive(fixRun);
   // The picked version is older than the one the fix saved.
   const switchTargets = !readiness?.grouped
     ? []

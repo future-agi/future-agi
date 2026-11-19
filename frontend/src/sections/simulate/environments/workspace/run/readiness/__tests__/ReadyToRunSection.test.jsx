@@ -73,13 +73,12 @@ vi.mock(
 );
 
 vi.mock("src/api/simulate-environments/readinessFix", () => ({
-  FIX_ACTIVE_STATES: new Set([
-    "queued",
-    "fixing",
-    "waiting_on_you",
-    "saving",
-    "checking",
-  ]),
+  // Fixtures name a state; the server sends active alongside it.
+  fixIsActive: (run) =>
+    run?.active ??
+    ["queued", "fixing", "waiting_on_you", "saving", "checking"].includes(
+      run?.state,
+    ),
   useFixRun: () => ({ data: fixRun }),
   useFollowFixRun: () => {},
   useStartGroupFix: () => ({
@@ -118,7 +117,7 @@ const blockedReport = (recheckScope) => ({
 
 // A report from a server that supports fixes: a line for the user and one
 // the builder chat can fix.
-const groupedReport = (progress = null) => {
+const groupedReport = (progress = null, held = null) => {
   const grouped = blockedReport("pair");
   grouped.areas.push({
     id: "start_and_message",
@@ -131,6 +130,10 @@ const groupedReport = (progress = null) => {
     status: progress?.state === "fixed" ? "supported" : "blocked",
     fix_group: "builder",
     fix_progress: progress,
+    fix_action: {
+      available: !progress || progress.state === "could_not_fix",
+      held,
+    },
   };
   grouped.rows.push({
     id: "start",
@@ -465,13 +468,26 @@ describe("ReadyToRunSection", () => {
     expect(screen.getByText("Needs you")).toBeVisible();
     expect(screen.getByText("Builder chat can fix")).toBeVisible();
     expect(screen.queryByTestId("fix-chat")).toBeNull();
-    await userEvent.click(
+    await userEvent.dblClick(
       screen.getByRole("button", { name: "Fix with builder chat" }),
     );
+    expect(startFix).toHaveBeenCalledTimes(1);
     expect(startFix).toHaveBeenCalledWith(
       { group: "builder", rows: ["tool_routing"], picks: {} },
       expect.anything(),
     );
+  });
+
+  it("says where a fix saved from these versions put its changes", () => {
+    report = groupedReport();
+    report.rows[0].fix_action = { available: false, held: null };
+    report.rows[0].fix_result = {
+      state: "fixed",
+      environment: { id: "e3", label: "v3" },
+      suite: null,
+    };
+    render(<ReadyToRunSection envId="env-1" picks={{}} />);
+    expect(screen.getByText("Fixed in environment v3")).toBeVisible();
   });
 
   it("sends nothing once every builder line is unticked", async () => {
@@ -555,19 +571,18 @@ describe("ReadyToRunSection", () => {
   it.each([
     [
       "unsaved changes",
-      { any: true },
+      "unsaved_changes",
       {},
       "Save or discard the unsaved changes first, then send fixes to the chat.",
     ],
     [
       "non-default picks",
-      undefined,
+      "fix_needs_defaults",
       picks,
       "Fix works on the default versions. Pick the defaults to fix.",
     ],
-  ])("holds sending fixes with %s, and says why", (_, open, picked, why) => {
-    report = groupedReport();
-    drafts = open;
+  ])("holds sending fixes with %s, and says why", (_, held, picked, why) => {
+    report = groupedReport(null, held);
     render(<ReadyToRunSection envId="env-1" picks={picked} />);
     const send = screen.getByRole("button", {
       name: "Fix with builder chat",

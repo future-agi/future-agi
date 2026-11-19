@@ -63,13 +63,12 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
 }));
 vi.mock("src/api/simulate-environments/readinessFix", () => ({
   useFixRun: () => ({ data: state.fixRun }),
-  FIX_ACTIVE_STATES: new Set([
-    "queued",
-    "fixing",
-    "waiting_on_you",
-    "saving",
-    "checking",
-  ]),
+  // Fixtures name a state; the server sends active alongside it.
+  fixIsActive: (run) =>
+    run?.active ??
+    ["queued", "fixing", "waiting_on_you", "saving", "checking"].includes(
+      run?.state,
+    ),
 }));
 vi.mock("../readiness/ReadyToRunSection", () => ({
   default: function Section({ picks, keys, onView }) {

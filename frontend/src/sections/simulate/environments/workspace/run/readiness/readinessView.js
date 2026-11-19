@@ -55,7 +55,8 @@ const areaLine = (area, rowsById) => {
         status: "supported",
         rowId: fixed.id,
         progress: fixed.fix_progress,
-        group: groupOf(fixed),
+        // Only the builder chat fixes lines, so a fixed one stays in its group.
+        group: "builder",
       };
     }
   }
@@ -72,6 +73,10 @@ const areaLine = (area, rowsById) => {
     fix: worst.fix ?? null,
     group: groupOf(worst),
     progress: worst.fix_progress ?? null,
+    // Whether Fix can run on the row now, and why not, as the server says.
+    fixAction: worst.fix_action ?? null,
+    // What a fix saved from these versions made of the row ("Fixed in v3").
+    fixResult: worst.fix_result ?? null,
     waitingOnArea: rowsById.get(worst.fix_progress?.waiting_on)?.area ?? null,
   };
 };
@@ -144,67 +149,34 @@ export function readinessView(report) {
 }
 
 /**
- * What the builder chat says when a fix ends, and its button: how it ended,
- * line by line, and once saved, what the run plan still has open in `report`.
- * Null while that report loads. `draftsGone`: the drafts list has none left.
+ * What the builder chat says when a fix ends, and its button, from the run's
+ * outcome as the server reads it. Null while the run is active.
  */
-export function fixEndCard(fix, report, draftsGone = false) {
+export function fixEndCard(fix) {
   const copy = RUN_PLAN_COPY.fixEnd;
-  const lines = fix.lines || [];
-  const failed = lines.filter((line) => line.state === "could_not_fix");
-  const couldNotFix = (reason) => ({
-    text: [READY_TO_RUN_COPY.progress.could_not_fix, reason]
-      .filter(Boolean)
-      .join(". "),
-    action: copy.openPlan,
-  });
-  if (lines.length && failed.length === lines.length) {
-    return couldNotFix(failed[0].reason?.message ?? fix.error?.message);
-  }
-  if (fix.state === "done" && fix.draft) {
-    // The draft holding the fix's changes was saved or discarded since.
-    if (draftsGone) return { text: copy.draftGone, action: copy.openPlan };
+  const outcome = fix?.outcome;
+  if (!outcome) return null;
+  const { kind, message } = outcome;
+  if (kind === "unsaved") {
     // A stale draft can't be saved, so it never asks to save it.
     if (fix.error?.code === "draft_stale") {
       return { text: RUN_PLAN_PROMPTS_COPY.draftStale, action: copy.openPlan };
     }
     return {
-      text: [RUN_PLAN_PROMPTS_COPY.draftFix, fix.error?.message]
-        .filter(Boolean)
-        .join(" "),
+      text: [RUN_PLAN_PROMPTS_COPY.draftFix, message].filter(Boolean).join(" "),
       action: copy.openPlan,
     };
   }
-  if (fix.state !== "done") return couldNotFix(fix.error?.message);
-  // A report from before the fix ended still shows what it fixed.
-  const before =
-    fix.finished_at &&
-    report?.computed_at &&
-    new Date(report.computed_at) < new Date(fix.finished_at);
-  if (!report || before) return null;
-  const fixed = copy.fixed(
-    lines.filter((line) => line.state === "fixed").length,
-    lines.length,
-  );
-  const view = readinessView(report);
-  // Blockers only, as the plan's header counts them.
-  const open = view.open.filter((line) => line.status === "blocked");
-  // Passed only when the saved pair's check answered ready. A re-check that
-  // couldn't run leaves its lines with check_unavailable.
-  const unconfirmed =
-    view.state !== "ready" ||
-    failed.some((line) => line.reason?.code === "check_unavailable");
-  if (!open.length && unconfirmed) {
-    return { text: `${fixed} ${copy.unconfirmed}`, action: copy.openPlan };
-  }
-  if (!open.length) {
+  if (kind === "could_not_fix") {
     return {
-      text: failed.length ? `${fixed} ${copy.passed}` : copy.clear,
-      action: copy.review,
+      text: [READY_TO_RUN_COPY.progress.could_not_fix, message]
+        .filter(Boolean)
+        .join(". "),
+      action: copy.openPlan,
     };
   }
-  const labels = open.map(
-    (line) => READY_TO_RUN_COPY.areas[line.area] || line.area,
-  );
-  return { text: `${fixed} ${copy.open(labels)}`, action: copy.openPlan };
+  return {
+    text: message,
+    action: kind === "fixed" ? copy.review : copy.openPlan,
+  };
 }

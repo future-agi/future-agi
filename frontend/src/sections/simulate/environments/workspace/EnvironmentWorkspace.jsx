@@ -22,16 +22,12 @@ import {
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
+import { environmentVersionsKey } from "src/api/simulate-environments/versions";
 import {
-  environmentVersionsKey,
-  useDrafts,
-} from "src/api/simulate-environments/versions";
-import {
-  FIX_ACTIVE_STATES,
+  fixIsActive,
   useFixRun,
   useFollowFixRun,
 } from "src/api/simulate-environments/readinessFix";
-import { useReadiness } from "src/api/simulate-environments/readiness";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -160,7 +156,7 @@ export default function EnvironmentWorkspace() {
       queued: true,
     })),
   ];
-  const activeFixId = FIX_ACTIVE_STATES.has(fixRun?.state) ? fixRun.id : null;
+  const activeFixId = fixIsActive(fixRun) ? fixRun.id : null;
   // The latest fix seen ending here, and the chat turn it ended after, kept
   // after the plan closes so the chat can say how it went. A fix already over
   // when the page loads says nothing.
@@ -172,22 +168,10 @@ export default function EnvironmentWorkspace() {
     const was = lastFix.current;
     lastFix.current = fixRun;
     if (endedFix && endedFix.id !== fixRun.id) setEndedFix(null);
-    if (
-      was?.id === fixRun.id &&
-      FIX_ACTIVE_STATES.has(was.state) &&
-      !FIX_ACTIVE_STATES.has(fixRun.state)
-    ) {
+    if (was?.id === fixRun.id && fixIsActive(was) && !fixIsActive(fixRun)) {
       setEndedFix({ ...fixRun, afterTurn: lastTurnId });
     }
   }, [fixRun, endedFix, lastTurnId]);
-  // The card opens the run plan, so only where runs go through it. A saved
-  // fix became the defaults, so the no-picks report says what is still open.
-  const endedSaved = planned && endedFix?.state === "done" && !endedFix.draft;
-  const endReport = useReadiness(env?.id, {}, { enabled: endedSaved }).data;
-  // A fix left unsaved says so only while its draft is still there.
-  const { data: drafts } = useDrafts(env?.id, {
-    enabled: planned && Boolean(endedFix?.draft),
-  });
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -272,25 +256,12 @@ export default function EnvironmentWorkspace() {
     runDialog
       ? setRunDialog((open) => open && { ...open, collapsed: false })
       : startRun(undefined, 1);
+  // The card opens the run plan, so only where runs go through it. Its
+  // outcome is re-read as the fix's draft is saved or discarded.
   const endCard =
     planned &&
     endedFix &&
-    fixEndCard(
-      endedFix,
-      endReport,
-      // A draft edited after the fix ended is someone else's, as in the run plan.
-      Boolean(
-        drafts &&
-          !(
-            drafts.any &&
-            drafts.pieces?.every(
-              (piece) =>
-                new Date(drafts[piece].updatedAt || 0) <=
-                new Date(endedFix.finished_at),
-            )
-          ),
-      ),
-    );
+    fixEndCard(fixRun?.id === endedFix.id ? fixRun : endedFix);
   if (endCard) {
     // Where the fix ended in the chat, so later turns follow the card.
     const at = chatTurns.findIndex((turn) => turn.id === endedFix.afterTurn);

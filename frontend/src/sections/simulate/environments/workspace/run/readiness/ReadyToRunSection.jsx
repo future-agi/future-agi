@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -25,14 +25,13 @@ import {
   useRereadWhenDone,
 } from "src/api/simulate-environments/readiness";
 import {
-  FIX_ACTIVE_STATES,
+  fixIsActive,
   useFixRun,
   useStartGroupFix,
 } from "src/api/simulate-environments/readinessFix";
 import {
   awaitedCheck,
   isVersioningDisabled,
-  useDrafts,
   useEnvironmentVersions,
   useRetryAgentVersion,
 } from "src/api/simulate-environments/versions";
@@ -90,9 +89,8 @@ const PROGRESS_ROLE = {
   could_not_fix: "danger",
 };
 
-// Lines the chat can still take on: not started, or it gave up.
-const fixable = (line) =>
-  !line.progress || line.progress.state === "could_not_fix";
+// Lines the builder chat can take on, as the server says.
+const fixable = (line) => Boolean(line.fixAction?.available);
 
 const GROUP_ICON = {
   needs_you: "solar:user-linear",
@@ -375,6 +373,17 @@ function FixLine({
             size="sm"
           />
         )}
+        {/* On the versions a fix saved from: where its changes went. */}
+        {!state &&
+          line.fixResult?.state === "fixed" &&
+          (line.fixResult.environment || line.fixResult.suite) && (
+            <StatusBadge
+              status="fixed"
+              role="success"
+              label={COPY.fixedIn(line.fixResult)}
+              size="sm"
+            />
+          )}
         {fix && !checking && offersFix && (
           <IconButton
             size="small"
@@ -619,13 +628,13 @@ export default function ReadyToRunSection({
   useEffect(() => {
     resetStart();
   }, [fixState, resetStart]);
-  const { data: drafts } = useDrafts(envId, { enabled: grouped });
   useRereadWhenDefaultsMove(envId, versions.data?.defaults);
   // While a fix runs, the user follows it and answers in the builder chat.
-  const chatShown = FIX_ACTIVE_STATES.has(fixRun?.state);
+  const chatShown = fixIsActive(fixRun);
   // Ticks the user changed, by row id. Before a fix, every line starts ticked;
   // while one runs, lines start unticked and are added on purpose.
   const [ticks, setTicks] = useState(() => new Map());
+  const sendingFix = useRef(false);
 
   // From the click until the server says it is checking, Run waits too.
   const sending =
@@ -761,11 +770,20 @@ export default function ReadyToRunSection({
   const ticked = (line) => ticks.get(line.rowId) ?? !chatShown;
   const takeable = builder.filter(fixable);
   const chosen = takeable.filter(ticked);
-  const sendRows = (rows) =>
+  const sendRows = (rows) => {
+    // A second click before the first POST lands would send it twice.
+    if (sendingFix.current) return;
+    sendingFix.current = true;
     start.mutate(
       { group: "builder", rows, picks },
-      { onSuccess: () => setTicks(new Map()) },
+      {
+        onSuccess: () => setTicks(new Map()),
+        onSettled: () => {
+          sendingFix.current = false;
+        },
+      },
     );
+  };
   const sendChosen = () => sendRows(chosen.map((line) => line.rowId));
   // A group's select-all box, for the lines it can still take on.
   const selectAll = (lines, name) => {
@@ -789,21 +807,18 @@ export default function ReadyToRunSection({
       />
     );
   };
-  // Fix works on the default versions only (picks hold just the others). The
-  // unsaved changes a running fix makes don't stop adding lines to it.
+  // Why a Fix POST would be refused now, as the server reads the rows.
+  const held = takeable.find((line) => line.fixAction?.held)?.fixAction.held;
   let fixHeld = null;
   if (fixUnknown) {
     fixHeld = COPY.fixLoadError;
-  } else if (Object.values(picks || {}).some(Boolean)) {
-    fixHeld = COPY.fixRefused.fix_needs_defaults;
-  } else if (drafts?.any && !chatShown) {
-    fixHeld = COPY.fixesUnsaved;
-  } else if (
-    chatShown &&
-    !["queued", "fixing", "waiting_on_you"].includes(fixRun.state)
-  ) {
-    // Saving or re-checking: the server takes no more lines until it ends.
+  } else if (held === "fix_running" && chatShown && !fixRun.accepts_rows) {
+    // Saving or re-checking: the run takes no more lines until it ends.
     fixHeld = COPY.fixFinishing;
+  } else if (held === "unsaved_changes") {
+    fixHeld = COPY.fixesUnsaved;
+  } else if (held) {
+    fixHeld = COPY.fixRefused[held] ?? COPY.fixRefused.default;
   }
   const fixRefusal =
     start.isError &&

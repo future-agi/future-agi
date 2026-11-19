@@ -5,6 +5,7 @@ import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
   draftsKey,
+  readinessFixKey,
   refreshDrafts,
   refreshFollowers,
   versionPickFields,
@@ -22,15 +23,10 @@ const fixPath = (envId) =>
     id: envId,
   });
 
-export const FIX_ACTIVE_STATES = new Set([
-  "queued",
-  "fixing",
-  "waiting_on_you",
-  "saving",
-  "checking",
-]);
+// The server says whether a run is still working.
+export const fixIsActive = (run) => Boolean(run?.active);
 
-export const fixRunKey = (envId) => ["harness-readiness-fix", envId];
+const fixRunKey = readinessFixKey;
 
 const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
 const retryServerFailures = (failureCount, error) => {
@@ -63,7 +59,7 @@ export function useFixRun(envId, { enabled = true } = {}) {
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     refetchInterval: (query) =>
-      FIX_ACTIVE_STATES.has(query.state.data?.state) ? POLL_MS : false,
+      fixIsActive(query.state.data) ? POLL_MS : false,
     meta: { errorHandled: true },
   });
 }
