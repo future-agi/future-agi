@@ -215,6 +215,7 @@ export const VERSIONS_COPY = {
     agent_payload: "Settings changed",
     credentials: "Credentials changed",
     provider_sync: "Synced from provider",
+    fix: "Epoch",
   },
   by: (name) => `by ${name}`,
   // Making a version the default; the move itself rebuilds nothing.

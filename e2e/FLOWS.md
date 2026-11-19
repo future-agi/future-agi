@@ -1065,11 +1065,11 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
-### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV and its analysis as Markdown
 
-**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+**Goal:** A developer downloads an issue's traces and its stored analysis from the issue page, and uploads the traces file unchanged as a dataset (detail and overview responses stubbed)
 
-**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:36`
 
 **Tags:** —
 
@@ -1077,8 +1077,12 @@
 
 1. open the issue page
 2. click Export
-3. save the downloaded CSV
-4. upload the downloaded CSV using the Add Dataset form
+3. choose Traces
+4. save the downloaded CSV
+5. click Export
+6. choose Analysis
+7. save the downloaded Markdown
+8. upload the downloaded CSV using the Add Dataset form
 
 **Backend state verified:**
 
@@ -1087,8 +1091,9 @@
 
 **Browser observations:**
 
-- the export requests the issue overview once, with rep_limit=200
+- the traces export requests the issue overview once, with rep_limit=200, and the analysis export once more, with rep_limit=10
 - the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the analysis is named error-feed-<issue>-analysis.md, holds the stubbed likely cause, suggested change and wrong-if under their headings, and samples exactly the two stubbed traces
 - the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
 - the snackbar reports exactly the exported trace count
 - the uploaded dataset's grid shows exactly the exported trace ids
@@ -1107,7 +1112,7 @@
 2. read the issue on Overview
 3. pick another trace in Traces affected
 4. open a trace from the Traces tab
-5. open the Trends and Fix tabs
+5. open the Trends and Root cause tabs
 6. open a restricted share link while signed out
 
 **Browser observations:**
@@ -1116,6 +1121,7 @@
 - the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
 - picking a trace reads the sidebar through the share token for exactly that trace
 - opening a trace reads it through the share token and shows its spans
+- Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
@@ -1719,6 +1725,26 @@
 - Prompt Injection invalid drafts make no policy write; correction preserves exact HIGH sensitivity, supported category, unknown metadata and intended key in API, PostgreSQL, pushed config and reopened JSON, with a safe uncached echo
 - an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON
 - an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL
+
+### GW-E2E-020 — named providers save their native API format
+
+**Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
+
+**Spec:** `flows/gateway/provider-format.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Add Provider and switch from OpenAI to Anthropic, Google and Azure in turn
+2. see the selected native API format, with no incompatible choices
+3. save each provider with a synthetic endpoint, key and unique manually entered model
+4. reopen each saved provider and see the same API format
+5. switch from Anthropic back to OpenAI, then to Custom and choose a format explicitly
+
+**Backend state verified:**
+
+- the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
 
 ## knowledge-base
 
@@ -3019,7 +3045,7 @@
 
 **Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
 
-**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:37`
+**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:43`
 
 **Tags:** —
 
@@ -3038,8 +3064,8 @@
 - the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org
 - from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay
 - simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
-- the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
-- the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay
+- the import's bundle re-reads Observe: each case's transcript holds its minted ask, redaction reports the minted email as an EMAIL_ADDRESS finding, and each case's starting state is missing, with the reason that the draft labels what it assumes synthetic
+- the review shows both cases waiting, the transcript present, the starting state missing, and one Starting state alert saying Observe lacks the seed records (an earlier refund), the draft marks them synthetic and the test is not an exact replay; it never claims an exact replay
 
 ### SIM-E2E-004 — a person pastes a transcript into an environment and sees its personal data replaced and marked as their transcript
 
@@ -3564,31 +3590,32 @@
 - the Cancelled chip counts 1 and the Error chip counts 1
 - the donut legend entry for Cancelled calls opens the calls list on the stopped call alone
 
-### SIM-E2E-036 — a reviewed draft saves only the accepted change, and only through Validate
+### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
 
-**Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule
+**Goal:** A person in an environment-only organisation creates an environment test from Observe and reaches only their own workspace's environments and projects, while another organisation or workspace can neither import into them nor read the import
 
-**Spec:** `flows/simulate/reviewed-change-save.spec.ts:27`
+**Spec:** `flows/simulate/evidence-import-tenant-scope.spec.ts:38`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed a built, versioned Environment and a draft rule the builder chat added in answer to a message (e2e/lib/simulate-seed.ts; no hosted build runs in this harness)
-2. add a Manager actor through the actors route
-3. read the review: the rule cited to the message, the actor to the person
-4. accept the rule and reject the actor
-5. try a plain Save, first with the decisions alone, then with the review digest too
-6. Validate
-7. stand in for the validation job by certifying the candidate pairing (no sandbox in this harness)
-8. read the drafts until validation is ready, then Save the candidates with a name
+1. seed one session in a minted Observe project for each of two organisations' owners, A and B
+2. seed three built, versioned environments: in A's workspace, in A's sibling workspace and in B's (lib/environment-seed.ts)
+3. as A, open the project's Sessions, select the seeded session, choose Actions then Create environment test, and open the environment picker
+4. pick A's environment and import; land on its review
+5. as A, and as A scoped to the sibling workspace, import naming another organisation's or workspace's environment or project
+6. as B, read A's import through A's environment and through B's own
+7. as a viewer of A's workspace, import into A's environment and draft A's import
 
 **Backend state verified:**
 
-- a plain Save of a draft with decisions recorded is refused 409 validation_required, with or without the review digest, and the default does not move
-- Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put
-- after Save the Environment default is the candidate version, active and named, holding the rule and its amendment line and not the actor
-- no draft is left open once saved
+- both seeded sessions are stored for their own project in ClickHouse trace_sessions (FINAL)
+- A's organisation is environment-only, and the environment picker lists exactly A's environment: not the sibling workspace's, not B's
+- the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session
+- the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
+- B reading A's import answers 404, through A's environment and through B's own
+- a viewer of A's workspace is refused the import and the draft with 403 (Write access denied to this workspace): A's organisation keeps its one import, still undrafted, with its case pending
 
 ### SIM-E2E-037 — each scenario shows its lifecycle and only validated cases run
 
@@ -3617,3 +3644,29 @@
 
 - the counts line reads "1 proved · 1 kept as written · 1 not proved"
 - the rows carry Active, Kept as written and Draft badges
+
+### SIM-E2E-038 — a reviewed draft saves only the accepted change, and only through Validate
+
+**Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule
+
+**Spec:** `flows/simulate/reviewed-change-save.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment and a draft rule the builder chat added in answer to a message (e2e/lib/simulate-seed.ts; no hosted build runs in this harness)
+2. add a Manager actor through the actors route
+3. read the review: the rule cited to the message, the actor to the person
+4. accept the rule and reject the actor
+5. try a plain Save, first with the decisions alone, then with the review digest too
+6. Validate
+7. stand in for the validation job by certifying the candidate pairing (no sandbox in this harness)
+8. read the drafts until validation is ready, then Save the candidates with a name
+
+**Backend state verified:**
+
+- a plain Save of a draft with decisions recorded is refused 409 validation_required, with or without the review digest, and the default does not move
+- Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put
+- after Save the Environment default is the candidate version, active and named, holding the rule and its amendment line and not the actor
+- no draft is left open once saved

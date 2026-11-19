@@ -35,6 +35,8 @@ def call(db, organization, workspace):
         run_test=run, status=SimulationExecution.ExecutionStatus.COMPLETED
     )
     scenario = Scenarios.objects.create(
+        # A fixed ID keeps scenario_graphs, and so the response bytes, stable.
+        id=UUID(int=100),
         organization=organization,
         workspace=workspace,
         name="Greeting",
@@ -239,3 +241,93 @@ def test_noncolliding_keys_values_and_null_behavior(bind, kpis):
         "avg_unscored": 0,
         "empty": {"Yes": 0, "No": 0, "choices": ["Yes", "No"]},
     }
+
+
+def _save_payload(name, content):
+    if output_dir := os.environ.get("KPI_CALLER_PAYLOAD_DIR"):
+        (Path(output_dir) / name).write_bytes(content)
+
+
+PROJECTION_CASES = {
+    # Run detail hides tier1 because tier_1 projects to it.
+    "projection": [
+        (1, "Tier 1", ["warm", "warm", "cold"], ("Warm", "Cold")),
+        (2, "Tier1", ["calm", "rough"], ("Calm", "Rough")),
+    ],
+    # The score key avg_1 projects to the choice key avg1.
+    "cross_type": [
+        (1, "1", 0.5, None),
+        (2, "Avg1", "yes", ("Yes", "No")),
+    ],
+    # Exact, system and projection collisions in one response.
+    "mixed": [
+        (1, "Tier 1", ["warm", "warm", "cold"], ("Warm", "Cold")),
+        (2, "tier_1", ["calm", "rough"], ("Calm", "Rough")),
+        (3, "Tier1", ["fine", "fine", "fine", "flat"], ("Fine", "Flat")),
+        (4, "Score", 0.2, None),
+    ],
+    # a__1 hides a_1, which hides a1.
+    "chain": [
+        (1, "A  1", "one", ("One", "Two")),
+        (2, "A 1", "three", ("Three",)),
+        (3, "A1", ["four", "five"], ("Four", "Five")),
+    ],
+}
+
+
+@pytest.mark.parametrize("case", PROJECTION_CASES)
+def test_projection_collisions_keep_every_result_visible(bind, kpis, case):
+    entries = [
+        bind(number, name, "score", output)
+        if choices is None
+        else bind(number, name, "choices", output, choices=choices)
+        for number, name, output, choices in PROJECTION_CASES[case]
+    ]
+    system = kpis()
+    data = kpis(*entries)
+    _save_payload(f"{case}.json", json.dumps(data).encode())
+
+    fixture = Path(__file__).with_name("kpi_alias_payloads.json")
+    payloads = json.loads(fixture.read_text(encoding="utf-8"))
+    assert data == system | payloads["projection"][case]
+    assert kpis(*reversed(entries)) == data
+
+
+def test_responses_without_projection_collisions_are_unchanged(
+    bind, kpis, call, auth_client
+):
+    url = f"/simulate/test-executions/{call.test_execution_id}/kpis/"
+    system = kpis()
+    cases = {
+        # Score keys avg_tier_1 and avg_tier1 both project to avgTier1.
+        "unaffected": (
+            (
+                bind(1, "Tier 1", "score", 0.5),
+                bind(2, "Tier1", "score", 0.25),
+                bind(3, "Mood", "choices", "warm", choices=("Warm", "Cold")),
+            ),
+            {
+                "avg_tier_1": 50,
+                "avg_tier1": 25,
+                "mood": {"Warm": 1, "Cold": 0, "choices": ["Warm", "Cold"]},
+            },
+        ),
+        "exact_only": (
+            (
+                bind(4, "Call Mood", "choices", "warm", choices=("Warm",)),
+                bind(5, "call_mood", "choices", "cool", choices=("Cool",)),
+                bind(6, "Score", "score", 0.2),
+            ),
+            {
+                "call_mood": {"Warm": 1, "choices": ["Warm"]},
+                f"call_mood__{UUID(int=5)}": {"Cool": 1, "choices": ["Cool"]},
+                f"avg_score__{UUID(int=6)}": 20,
+            },
+        ),
+    }
+    for name, (entries, evals) in cases.items():
+        data = kpis(*entries)
+        response = auth_client.get(url)
+        # Compared byte for byte with the same run on the previous revision.
+        _save_payload(f"{name}.bytes", response.content)
+        assert response.json() == data == system | evals

@@ -35,7 +35,11 @@ import {
   ownsArrowKeys,
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
-import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
+import {
+  TRIAL_CHANGES_COPY,
+  TRIAL_UNDER_WAY,
+  hasSharedRecords,
+} from "./trialChanges.constants";
 import { Meta, Cell, Attr, OutcomeReason } from "./chatDrawerCells";
 import { openingTab } from "./participants/stepLink";
 
@@ -158,6 +162,10 @@ export default function ChatCallDrawer({
   );
   const showTraces = artifact === "traces";
   const showChanges = artifact === "world_changes";
+  const trialState = chosen
+    ? chosen.trial_state
+    : callDetail?.trial_state ?? null;
+  const actorsOn = callDetail?.actorsEnabled === true;
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -309,7 +317,9 @@ export default function ChatCallDrawer({
             {showWorkers ? (
               <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
             ) : null}
-            <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            {(actorsOn || hasSharedRecords(trialState)) && (
+              <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            )}
           </CustomTabs>
 
           <Box
@@ -361,10 +371,9 @@ export default function ChatCallDrawer({
               </Typography>
             ) : showChanges ? (
               <TrialChangesPanel
-                trialState={
-                  chosen ? chosen.trial_state : callDetail?.trial_state ?? null
-                }
+                trialState={trialState}
                 underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
+                sharedOnly={!actorsOn}
               />
             ) : showTraces ? (
               <Box

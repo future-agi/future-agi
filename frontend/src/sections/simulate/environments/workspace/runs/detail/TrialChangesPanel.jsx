@@ -1,92 +1,33 @@
 import PropTypes from "prop-types";
 import { Box, Link, Stack, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
+import { Callout, Count, GridTable, Section } from "./trialChangesParts";
+import {
+  MONO,
+  QUIET as quiet,
+  TRIAL_CHANGES_COPY as C,
+} from "./trialChanges.constants";
+
 import TrialDecisions from "./TrialDecisions";
-import { TRIAL_CHANGES_COPY as C } from "./trialChanges.constants";
-
-const quiet = {
-  typography: "s3",
-  color: "text.secondary",
-  wordBreak: "break-word",
-};
-
-const values = (row) =>
-  row
-    ? Object.entries(row)
-        .map(
-          ([key, value]) =>
-            `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`,
-        )
-        .join(", ")
-    : "";
-
-// `outside` replaces "no record changed" when the agent committed changes outside the test world.
-function RecordsSection({ records, outside }) {
-  const changes = records?.changes || [];
-  return (
-    <Box data-testid="records-before-after">
-      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-        {C.recordsHeading}
-      </Typography>
-      {changes.length === 0 && (
-        <Typography
-          sx={outside ? { ...quiet, color: "warning.dark" } : quiet}
-          data-testid={outside ? "changed-outside-world" : undefined}
-        >
-          {outside ? outside.message : C.recordsEmpty}
-        </Typography>
-      )}
-      {changes.map((one, index) => (
-        <Box key={`${one.table}-${index}`} sx={{ mt: 0.75 }}>
-          <Typography sx={{ typography: "s3", fontWeight: 600 }}>
-            {`${one.table} ${JSON.stringify(one.key)} · ${
-              one.kind === "changed"
-                ? C.recordChanged(one.fields || [])
-                : C.recordKinds[one.kind] || one.kind
-            }`}
-          </Typography>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              columnGap: 2,
-            }}
-          >
-            <Typography
-              sx={quiet}
-            >{`${C.before}: ${values(one.before) || "-"}`}</Typography>
-            <Typography
-              sx={quiet}
-            >{`${C.after}: ${values(one.after) || "-"}`}</Typography>
-          </Box>
-        </Box>
-      ))}
-      {(records?.skipped || []).map((one) => (
-        <Typography key={`skipped-${one.table}`} sx={quiet}>
-          {C.notCompared(one.table, one.why)}
-        </Typography>
-      ))}
-      {records?.truncated > 0 && (
-        <Typography sx={quiet}>{C.truncated(records.truncated)}</Typography>
-      )}
-    </Box>
-  );
-}
-
-RecordsSection.propTypes = {
-  outside: PropTypes.shape({
-    code: PropTypes.string,
-    message: PropTypes.string,
-  }),
-  records: PropTypes.shape({
-    changes: PropTypes.arrayOf(PropTypes.object),
-    skipped: PropTypes.arrayOf(PropTypes.object),
-    truncated: PropTypes.number,
-  }),
-};
+import { CallsSection } from "./CallsSection";
+import { PreRunSection } from "./PreRunSection";
+import { RecordsSection } from "./RecordChange";
 
 // A start that differs is reported among the notices instead.
-// Attempted, refused and committed are never summed into one number.
-export default function TrialChangesPanel({ trialState, underWay = false }) {
+// Same insets as the Transcript tab in the drawer.
+const ROOT_SX = { px: 2, pt: 1.25, pb: 2 };
+
+export default function TrialChangesPanel({
+  trialState,
+  underWay = false,
+  sharedOnly = false,
+}) {
+  if (sharedOnly)
+    return (
+      <Stack spacing={2} sx={ROOT_SX}>
+        <SharedRecords trialState={trialState} />
+      </Stack>
+    );
   if (!trialState)
     return (
       <Typography sx={{ ...quiet, p: 2 }}>
@@ -102,67 +43,17 @@ export default function TrialChangesPanel({ trialState, underWay = false }) {
 
 TrialChangesPanel.propTypes = {
   trialState: PropTypes.object,
-  // The call has not ended: no World state yet is not "not recorded".
+  // A call still running: its World state is still being collected.
   underWay: PropTypes.bool,
+  // Actors are off: only the records the call's participants shared.
+  sharedOnly: PropTypes.bool,
 };
 
-function WorldState({ trialState }) {
-  const changes = trialState.state_changes;
-  const decisions = trialState.decisions;
-  const preRun = trialState.pre_run;
-  const approvals = trialState.approvals;
-  const usage = trialState.usage_summary;
-  const duplicates = trialState.duplicates;
-  // How the trial started, as the server says it; none to say for a start that differed (that is a notice).
-  const started = trialState.start?.line;
-  // `changed_outside_world` shows with the records, not with the other notices.
-  const allNotices = trialState.notices;
-  const outside = allNotices.find(
-    (one) => one.code === "changed_outside_world",
-  );
-  const notices = allNotices.filter((one) => one !== outside);
-  const { unreadable } = trialState;
-  const records = !unreadable && trialState.records ? trialState.records : null;
-  const shared = trialState.shared_records || [];
-  const noticeList = notices.length > 0 && (
-    <Box>
-      <Typography
-        sx={{ typography: "s2", fontWeight: 600, color: "warning.dark" }}
-      >
-        {C.noticesHeading}
-      </Typography>
-      {notices.map((one, index) => (
-        <Typography key={`${one.code}-${index}`} sx={quiet}>
-          {one.message}
-        </Typography>
-      ))}
-    </Box>
-  );
-  const headLines = (
-    <>
-      {started && <Typography sx={quiet}>{started}</Typography>}
-      {unreadable && (
-        <Typography sx={{ ...quiet, color: "warning.dark" }}>
-          {C.unreadable}
-        </Typography>
-      )}
-      {trialState.end_state_url && (
-        <Typography sx={quiet}>
-          {C.endStateLead}{" "}
-          <Link
-            href={trialState.end_state_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            download
-          >
-            {C.endState}
-          </Link>
-        </Typography>
-      )}
-    </>
-  );
-  // Records more than one participant called, shown whether or not the trial changed anything.
-  const sharedList = shared.length > 0 && (
+// Records more than one participant called, shown whether or not the trial changed anything.
+function SharedRecords({ trialState }) {
+  const shared = trialState?.shared_records || [];
+  if (!shared.length) return null;
+  return (
     <Box data-testid="shared-records">
       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
         {C.sharedHeading}
@@ -192,122 +83,184 @@ function WorldState({ trialState }) {
       )}
     </Box>
   );
+}
+SharedRecords.propTypes = { trialState: PropTypes.object };
+
+function WorldState({ trialState }) {
+  const changes = trialState.state_changes;
+  const decisions = trialState.decisions;
+  const preRun = trialState.pre_run;
+  const approvals = trialState.approvals;
+  const usage = trialState.usage_summary;
+  const duplicates = trialState.duplicates;
+  // How the trial started, as the server says it; none to say for a start that differed (that is a notice).
+  const started = trialState.start?.line;
+  // `changed_outside_world` shows with the records, not with the other notices.
+  const allNotices = trialState.notices;
+  const outside = allNotices.find(
+    (one) => one.code === "changed_outside_world",
+  );
+  const notices = allNotices.filter((one) => one !== outside);
+  const { unreadable } = trialState;
+  const records = !unreadable && trialState.records ? trialState.records : null;
+
+  const topLine = (started || trialState.end_state_url) && (
+    <Stack
+      direction="row"
+      alignItems="center"
+      justifyContent="space-between"
+      spacing={2}
+      // A one-line caption: it sits closer to what follows than a section does.
+      sx={{ mb: -1 }}
+    >
+      <Typography sx={quiet}>{started || ""}</Typography>
+      {trialState.end_state_url && (
+        <Link
+          href={trialState.end_state_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          download
+          title={C.endStateHint}
+          sx={{
+            typography: "s3",
+            fontWeight: "fontWeightMedium",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            flexShrink: 0,
+          }}
+        >
+          <Iconify icon="solar:download-minimalistic-linear" width={14} />
+          {C.endState}
+        </Link>
+      )}
+    </Stack>
+  );
+  const callouts = (
+    <>
+      {unreadable && <Callout tone="warning" title={C.unreadable} lines={[]} />}
+      {duplicates.length > 0 && (
+        <Callout
+          tone="error"
+          title={duplicates
+            .map((one) => C.committedTwice(one.name || one.action))
+            .join(" · ")}
+          lines={[]}
+        />
+      )}
+      {notices.length > 0 && (
+        <Callout
+          tone="warning"
+          title={C.noticesHeading}
+          lines={notices.map((one) => one.message)}
+        />
+      )}
+    </>
+  );
+
   if (!changes.length && !decisions.length && !preRun.length)
     return (
-      <Stack spacing={1.5} sx={{ p: 2 }}>
-        {headLines}
-        {noticeList}
+      <Stack spacing={2} sx={ROOT_SX}>
+        {topLine}
+        {callouts}
         {!unreadable && <Typography sx={quiet}>{C.empty}</Typography>}
         {records && <RecordsSection records={records} outside={outside} />}
-        {sharedList}
+        <SharedRecords trialState={trialState} />
       </Stack>
     );
   return (
-    <Stack spacing={1.5} sx={{ p: 2 }}>
-      <Box>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {C.heading}
-        </Typography>
-        <Typography sx={quiet}>{C.about}</Typography>
-      </Box>
-      {headLines}
-      {noticeList}
-      {duplicates.map((one, index) => (
-        <Typography
-          key={`duplicate-${index}`}
-          sx={{ typography: "s2", fontWeight: 600, color: "error.main" }}
-        >
-          {C.committedTwice(one.name || one.action)}
-        </Typography>
-      ))}
-      {changes.map((one) => (
-        <Box key={one.who}>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {one.worker_id ? C.worker(one.name) : one.name}
-          </Typography>
-          <Typography sx={quiet}>{C.counts(one)}</Typography>
-          {one.committed_actions?.length > 0 && (
-            <Typography sx={quiet}>
-              {C.committed(one.committed_actions)}
-            </Typography>
-          )}
-          {one.read_actions?.length > 0 && (
-            <Typography sx={quiet}>{C.read(one.read_actions)}</Typography>
-          )}
-          {one.answer_lost_actions?.length > 0 && (
-            <Typography sx={quiet}>
-              {C.answerLost(one.answer_lost_actions)}
-            </Typography>
-          )}
-          {(one.blocked || []).map((call) => (
-            <Typography
-              key={`blocked-${call.host}`}
-              sx={quiet}
-              data-testid="blocked-call"
-            >
-              {C.blocked(call)}
-            </Typography>
-          ))}
-          {one.no_change && !one.committed_actions?.length && (
-            <Typography sx={quiet}>{C.noChange}</Typography>
-          )}
-          {/* An attempted violation stays on the record: what was tried and why the world said no. */}
-          {one.refused_actions?.length > 0 && (
-            <Box data-testid="refused-attempts">
-              <Typography sx={{ ...quiet, fontWeight: 600 }}>
-                {C.refusedHeading}
-              </Typography>
-              {one.refused_actions.map((refused, index) => (
-                <Typography key={`${refused.action}-${index}`} sx={quiet}>
-                  {C.refused(refused)}
-                </Typography>
-              ))}
-            </Box>
-          )}
-        </Box>
-      ))}
+    <Stack spacing={2} sx={ROOT_SX}>
+      {topLine}
+      {callouts}
+      {changes.length > 0 && <CallsSection changes={changes} />}
       {records && <RecordsSection records={records} outside={outside} />}
-      {sharedList}
-      {preRun.length > 0 && (
-        <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {C.preRunHeading}
-          </Typography>
-          <Typography sx={quiet}>{C.preRunAbout}</Typography>
-          {preRun.map((one, index) => (
-            <Typography key={`pre-${index}`} sx={quiet}>
-              {one.line}
-            </Typography>
-          ))}
-        </Box>
-      )}
+      <SharedRecords trialState={trialState} />
       <TrialDecisions approvals={approvals} decisions={decisions} />
+      {preRun.length > 0 && <PreRunSection entries={preRun} />}
       {usage.length > 0 && (
-        <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {C.usageHeading}
-          </Typography>
-          {usage.map((line) => (
-            <Typography key={`${line.actor}-${line.model}`} sx={quiet}>
-              {C.usageBy(
-                line.name,
-                line.model,
-                C.usage(line.calls, line.tokens, line.cost_usd),
-              )}
-            </Typography>
-          ))}
-          {trialState.usage_total && (
-            <Typography sx={quiet}>
-              {C.usageTotal(
-                C.usage(
-                  trialState.usage_total.calls,
-                  trialState.usage_total.tokens,
-                  trialState.usage_total.cost_usd,
+        <Section title={C.usageHeading} caption={C.usageNote}>
+          <GridTable
+            cols="minmax(96px, 1fr) minmax(96px, 1.2fr) repeat(3, minmax(56px, 0.5fr))"
+            head={[
+              C.usageHead.who,
+              C.usageHead.model,
+              { label: C.usageHead.calls, align: "right" },
+              { label: C.usageHead.tokens, align: "right" },
+              { label: C.usageHead.cost, align: "right" },
+            ]}
+            rows={[
+              ...usage.map((line) => ({
+                key: `${line.actor}-${line.model}`,
+                label: C.usageBy(
+                  line.name,
+                  line.model,
+                  C.usage(line.calls, line.tokens, line.cost_usd),
                 ),
-              )}
-            </Typography>
-          )}
-        </Box>
+                cells: [
+                  <Typography
+                    key="w"
+                    sx={{ typography: "s3", fontWeight: "fontWeightMedium" }}
+                  >
+                    {line.name}
+                  </Typography>,
+                  <Typography key="m" sx={{ ...quiet, fontFamily: MONO }}>
+                    {line.model || "—"}
+                  </Typography>,
+                  <Count key="c" value={line.calls} />,
+                  <Count key="t" value={line.tokens} />,
+                  <Typography
+                    key="$"
+                    sx={{
+                      typography: "s2",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {`$${line.cost_usd.toFixed(4)}`}
+                  </Typography>,
+                ],
+              })),
+              ...(trialState.usage_total
+                ? [
+                    {
+                      key: "total",
+                      label: C.usageTotal(
+                        C.usage(
+                          trialState.usage_total.calls,
+                          trialState.usage_total.tokens,
+                          trialState.usage_total.cost_usd,
+                        ),
+                      ),
+                      sx: { bgcolor: "background.neutral" },
+                      cells: [
+                        <Typography
+                          key="w"
+                          sx={{
+                            typography: "s3",
+                            fontWeight: "fontWeightSemiBold",
+                          }}
+                        >
+                          {C.usageTotalLabel}
+                        </Typography>,
+                        <span key="m" />,
+                        <Count key="c" value={trialState.usage_total.calls} />,
+                        <Count key="t" value={trialState.usage_total.tokens} />,
+                        <Typography
+                          key="$"
+                          sx={{
+                            typography: "s2",
+                            fontWeight: "fontWeightSemiBold",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {`$${trialState.usage_total.cost_usd.toFixed(4)}`}
+                        </Typography>,
+                      ],
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        </Section>
       )}
     </Stack>
   );
@@ -347,14 +300,8 @@ WorldState.propTypes = {
     duplicates: PropTypes.arrayOf(
       PropTypes.shape({ action: PropTypes.string, name: PropTypes.string }),
     ),
-    shared_records: PropTypes.arrayOf(PropTypes.object),
-    shared_records_truncated: PropTypes.bool,
     notices: PropTypes.arrayOf(
-      PropTypes.shape({
-        code: PropTypes.string,
-        message: PropTypes.string,
-        workers: PropTypes.arrayOf(PropTypes.string),
-      }),
+      PropTypes.shape({ code: PropTypes.string, message: PropTypes.string }),
     ),
   }),
 };

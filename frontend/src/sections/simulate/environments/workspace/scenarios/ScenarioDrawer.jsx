@@ -132,6 +132,7 @@ export default function ScenarioDrawer({
   onClose,
   onEdit,
   locked = false,
+  testConditions = false,
 }) {
   return (
     <SideDrawer open={!!row} onClose={onClose} width={680}>
@@ -177,7 +178,7 @@ export default function ScenarioDrawer({
             )}
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            <ScenarioSheet row={row} />
+            <ScenarioSheet row={row} testConditions={testConditions} />
             <Stack spacing={3} sx={{ px: 3, pb: 3 }}>
               <LifecycleSections row={row} jobId={env?.id} />
               {env?.id && (row.scenarioKey ?? row._raw?.scenario_key) && (
@@ -200,9 +201,11 @@ ScenarioDrawer.propTypes = {
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
+  // Whether the server takes test conditions; without them a scenario that has none shows no row for them.
+  testConditions: PropTypes.bool,
 };
 
-function ScenarioSheet({ row }) {
+function ScenarioSheet({ row, testConditions = false }) {
   const persona = row.persona?.name ? row.persona : null;
   const goals = normaliseSubTasks(row.subTasks);
   const problem = row.doorProblem;
@@ -321,30 +324,32 @@ function ScenarioSheet({ row }) {
         </Stack>
       </Row>
     ),
-    <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
-      <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
-        {row.faults?.length > 0 ? (
-          row.faults.map((fault, index) => (
-            <Box key={`${fault.action}-${index}`}>
-              <Typography className="sd-val">{fault.line}</Typography>
-              {testConditionRoute(fault) && (
-                <Typography
-                  className="sd-val"
-                  sx={{ typography: "s2", color: "text.subtitle" }}
-                >
-                  {testConditionRoute(fault)}
-                </Typography>
-              )}
-            </Box>
-          ))
-        ) : (
-          <Typography className="sd-val">
-            {TEST_CONDITIONS_COPY.empty}
-          </Typography>
-        )}
-        {problemLine("fault_unreachable")}
-      </Stack>
-    </Row>,
+    (testConditions || row.faults?.length > 0) && (
+      <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
+        <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
+          {row.faults?.length > 0 ? (
+            row.faults.map((fault, index) => (
+              <Box key={`${fault.action}-${index}`}>
+                <Typography className="sd-val">{fault.line}</Typography>
+                {testConditionRoute(fault) && (
+                  <Typography
+                    className="sd-val"
+                    sx={{ typography: "s2", color: "text.subtitle" }}
+                  >
+                    {testConditionRoute(fault)}
+                  </Typography>
+                )}
+              </Box>
+            ))
+          ) : (
+            <Typography className="sd-val">
+              {TEST_CONDITIONS_COPY.empty}
+            </Typography>
+          )}
+          {problemLine("fault_unreachable")}
+        </Stack>
+      </Row>
+    ),
     idealOutcome && (
       <Row key="outcome" label="Ideal outcome">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
@@ -376,6 +381,7 @@ function ScenarioSheet({ row }) {
 
 ScenarioSheet.propTypes = {
   row: SCENARIO_SHAPE,
+  testConditions: PropTypes.bool,
 };
 
 function Row({ label, children }) {

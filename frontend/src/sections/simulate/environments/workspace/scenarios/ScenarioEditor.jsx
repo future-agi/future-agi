@@ -488,20 +488,25 @@ export default function ScenarioEditor({
             }
           />
 
-          <SectionHeader
-            title={TEST_CONDITIONS_COPY.heading}
-            hint={`${canEdit("faults") ? REPROOF_HINT : READ_ONLY_HINT} ${PREVIEW_COPY.privateHint}${
-              privateFields.length ? ` (${privateFields.join(", ")})` : ""
-            }`}
-          />
-          <TestConditionsEditor
-            faults={draft.faults || []}
-            onChange={(next) => set("faults")(next)}
-            env={env}
-            disabled={!canEdit("faults")}
-            error={saveError}
-            problems={faultProblems}
-          />
+          {/* Hidden where the server takes no test conditions and the scenario has none. */}
+          {(canEdit("faults") || draft.faults?.length > 0) && (
+            <>
+              <SectionHeader
+                title={TEST_CONDITIONS_COPY.heading}
+                hint={`${canEdit("faults") ? REPROOF_HINT : READ_ONLY_HINT} ${PREVIEW_COPY.privateHint}${
+                  privateFields.length ? ` (${privateFields.join(", ")})` : ""
+                }`}
+              />
+              <TestConditionsEditor
+                faults={draft.faults || []}
+                onChange={(next) => set("faults")(next)}
+                env={env}
+                disabled={!canEdit("faults")}
+                error={saveError}
+                problems={faultProblems}
+              />
+            </>
+          )}
           {env?.id && (
             <StartingRecords envId={env.id} scenarioKey={row.scenarioKey} />
           )}

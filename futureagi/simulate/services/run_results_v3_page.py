@@ -19,6 +19,7 @@ from django.core.cache import cache
 from django.db.models import Func, JSONField, QuerySet
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.services.call_provider import call_agent_provider_expression
 from simulate.services.harness_scenarios import level_label
 from simulate.services.run_results_v3 import (
     CALL_ROW_FIELDS,
@@ -415,6 +416,7 @@ def page_calls(page: dict[str, Any], execution: TestExecution) -> list[CallExecu
     # per joined row), so a page reads only what build_call_rows uses.
     queryset = (
         CallExecution.objects.filter(id__in=page["page_ids"])
+        .annotate(result_provider=call_agent_provider_expression())
         .select_related("scenario")
         .only(
             *CALL_ROW_FIELDS,

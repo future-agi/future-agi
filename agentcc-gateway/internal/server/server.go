@@ -71,6 +71,7 @@ type Server struct {
 	videoExporter       otel.SpanExporter
 	videoInitErr        error
 	shadowFlusher       *routing.ShadowFlusher
+	closeMCP            func()
 	router              *Router
 	internalInspections []RouteInspection
 	ready               atomic.Bool
@@ -131,6 +132,12 @@ func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
 
 // New creates a new gateway server.
 func New(cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
+	return NewWithStartupContext(context.Background(), cfg, configPath, registry, engine, keyStore, guardrailEngine, policyStore, metricsRegistry, modelDBPtr, tenantStore, onOrgConfigChange, redisClients...)
+}
+
+// NewWithStartupContext lets shutdown interrupt an in-progress MCP handshake.
+// Accepted sessions are owned by the server, not by the handshake context.
+func NewWithStartupContext(startup context.Context, cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
 	var redisClient *redisstate.Client
 	if len(redisClients) > 0 {
 		redisClient = redisClients[0]
@@ -761,6 +768,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			Separator:       cfg.MCP.Separator,
 		})
 
+		s.closeMCP = sync.OnceFunc(mcpServer.Close)
+
 		// Attach per-key tool filtering if auth is configured.
 		if authEnabled && authKeyStore != nil {
 			mcpServer.SetKeyAuth(&mcpKeyAuth{keyStore: authKeyStore})
@@ -817,7 +826,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				},
 				ToolsCacheTTL: serverCfg.ToolsCacheTTL,
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if startup.Err() != nil {
+				break
+			}
+			ctx, cancel := context.WithTimeout(startup, 30*time.Second)
 			if err := client.Connect(ctx); err != nil {
 				slog.Error("failed to connect to MCP server", "server", id, "error", err)
 				cancel()
@@ -1127,7 +1139,14 @@ func (s *Server) listen() ([]gatewayListener, error) {
 }
 
 // Start begins listening for HTTP requests. Blocks until the server stops.
-func (s *Server) Start() error {
+func (s *Server) Start() (err error) {
+	// New may already have connected MCP children. On a failed Start the
+	// caller can exit immediately, without ever entering Shutdown.
+	defer func() {
+		if err != nil && s.closeMCP != nil {
+			s.closeMCP()
+		}
+	}()
 	if s.videoInitErr != nil {
 		return fmt.Errorf("video initialization failed: %w", s.videoInitErr)
 	}
@@ -1188,6 +1207,10 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("shutting down gateway...")
 	s.ready.Store(false)
+	// Let active requests drain, but also reap children on an early return.
+	if s.closeMCP != nil {
+		defer s.closeMCP()
+	}
 
 	// Drain and deregister cluster node.
 	if s.clusterMgr != nil {

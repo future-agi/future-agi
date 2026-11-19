@@ -1214,6 +1214,40 @@ HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = os.getenv(
 HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
     "HARNESS_BUNDLE_CERTIFY_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Actors and test conditions (faults): the cast editor, actor endpoints and fault edits. Off until the sandbox
+# template carries an agent-learning-kit release that plays actors and applies faults.
+HARNESS_ACTORS_ENABLED = os.getenv("HARNESS_ACTORS_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _actors_share(text: str) -> tuple[float, float]:
+    """`HARNESS_ACTORS_SHARE` as `(min, max)`: "<min>-<max>", each a share from 0 to 1, min not above max."""
+    from django.core.exceptions import ImproperlyConfigured
+
+    low, _, high = text.strip().partition("-")
+    try:
+        share = (float(low), float(high))
+    except ValueError as exc:
+        raise ImproperlyConfigured(
+            f"HARNESS_ACTORS_SHARE must read <min>-<max>, such as 0.15-0.25; got {text!r}"
+        ) from exc
+    if not 0 <= share[0] <= share[1] <= 1:
+        raise ImproperlyConfigured(
+            f"HARNESS_ACTORS_SHARE needs 0 <= min <= max <= 1; got {text!r}"
+        )
+    return share
+
+
+# The default share of scenarios that include an actor, sent to the harness while actors are on; read and checked only
+# then, so a bad value never stops a deployment that has actors off.
+HARNESS_ACTORS_SHARE = (
+    _actors_share(os.getenv("HARNESS_ACTORS_SHARE", "0.15-0.25"))
+    if HARNESS_ACTORS_ENABLED
+    else (0.15, 0.25)
+)
 # Raising agent-change nudges; only takes effect while versioning is enabled.
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
@@ -1312,10 +1346,32 @@ BASE_URL = os.getenv(
     ),
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
+
+
+def _sdk_api_url(environ, base_url):
+    """The API URL an SDK outside the stack calls (its FI_BASE_URL): BASE_URL
+    when the operator set it (the API's public URL), else the URL the UI calls
+    (VITE_HOST_API), else the published BACKEND_PORT on localhost, else
+    ``base_url``. BASE_URL's own default stays http://localhost:8000 because
+    in-container callers use it, while ./bin/install moves the published port
+    when 8000 is taken."""
+    port = (environ.get("BACKEND_PORT") or "").strip()
+    url = (
+        (environ.get("BASE_URL") or "").strip()
+        or (environ.get("VITE_HOST_API") or "").strip()
+        or (f"http://localhost:{port}" if port else "")
+        or base_url
+    )
+    return url.rstrip("/")
+
+
+# The in-app SDK snippet hands this out as FI_BASE_URL on a self-hosted install.
+FI_API_PUBLIC_URL = _sdk_api_url(os.environ, BASE_URL)
 # fi-collector's OTLP/HTTP endpoint as an SDK outside the stack reaches it. The
-# SDKs default FI_BASE_URL to Future AGI Cloud, so the in-app SDK snippet and
-# the setup screen hand this out on a self-hosted install. Compose and the Helm
-# chart set it; the default is the port both compose files publish.
+# SDKs default to Future AGI Cloud, so on a self-hosted install the in-app SDK
+# snippet and the setup screen hand this out as FI_TRACES_URL, next to
+# FI_API_PUBLIC_URL as FI_BASE_URL. Compose and the Helm chart set it; the
+# default is the port both compose files publish.
 FI_COLLECTOR_PUBLIC_URL = (
     os.getenv("FI_COLLECTOR_PUBLIC_URL", "").strip() or "http://localhost:4318"
 ).rstrip("/")

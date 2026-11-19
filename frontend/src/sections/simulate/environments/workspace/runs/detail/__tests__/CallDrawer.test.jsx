@@ -859,6 +859,7 @@ describe("CallDrawer — the call's traces", () => {
   const ROWS = [{ traceId: "trace-1", name: "book_ride" }];
 
   afterEach(() => {
+    useHasWorkers.mockReturnValue(true);
     useCallTraces.mockReturnValue({
       projectId: null,
       traces: [],
@@ -866,9 +867,89 @@ describe("CallDrawer — the call's traces", () => {
     });
   });
 
-  it("gives a voice call a Traces tab beside the transcript, read for that call", () => {
+  it("gives a voice call no World state tab while actors are off", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: false },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+  });
+
+  it("gives a voice call with shared records a World state tab while actors are off", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-1",
+        transcript: [],
+        actors_enabled: false,
+        trial_state: {
+          shared_records: [
+            {
+              key: "order_id=1042",
+              argument: "order_id",
+              value: "1042",
+              actions: [],
+            },
+          ],
+        },
+      },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces,World state",
+    );
+  });
+
+  it("gives a voice call no World state tab until the server says actors are on", () => {
+    useHasWorkers.mockReturnValue(false);
     useCallExecutionV3Detail.mockReturnValue({
       data: { id: "voice-1", transcript: [] },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+  });
+
+  it("gives a voice call a Traces tab beside the transcript, read for that call", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
       isPending: false,
     });
     useCallTraces.mockReturnValue({
@@ -895,7 +976,7 @@ describe("CallDrawer — the call's traces", () => {
 
   it("keeps the tab when the read fails, so the panel can say so", () => {
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [] },
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
       isPending: false,
     });
     useCallTraces.mockReturnValue({
@@ -921,7 +1002,7 @@ describe("CallDrawer — the call's traces", () => {
 
   it("gives a voice call a Traces tab even when the run has nothing to read", () => {
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [] },
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
       isPending: false,
     });
 
@@ -986,11 +1067,11 @@ describe("CallDrawer — the call's traces", () => {
   it("has no Participants tab for a call that handed no work to other agents", () => {
     useHasWorkers.mockReturnValue(false);
     useCallExecutionV3Detail.mockReturnValue({
-      data: { id: "voice-1", transcript: [] },
+      data: { id: "voice-1", transcript: [], actors_enabled: true },
       isPending: false,
     });
     useCallDetail.mockReturnValue({
-      callDetail: CHAT_DETAIL,
+      callDetail: { ...CHAT_DETAIL, actorsEnabled: true },
       isLoading: false,
     });
 
@@ -1069,7 +1150,7 @@ describe("CallDrawer — the call's traces", () => {
     it("in voice, keeps the choice through the next call's loading, until the record is known absent", async () => {
       const user = userEvent.setup();
       useCallExecutionV3Detail.mockReturnValue({
-        data: { id: "a", transcript: [] },
+        data: { id: "a", transcript: [], actors_enabled: true },
         isPending: false,
       });
       const drawer = (id) => (
@@ -1091,7 +1172,7 @@ describe("CallDrawer — the call's traces", () => {
       expect(screen.queryByTestId("voice-drawer")).toBeNull();
 
       useCallExecutionV3Detail.mockReturnValue({
-        data: { id: "b", transcript: [] },
+        data: { id: "b", transcript: [], actors_enabled: true },
         isPending: false,
       });
       rerender(drawer("b"));
@@ -1106,7 +1187,7 @@ describe("CallDrawer — the call's traces", () => {
     it("in voice, shows no tab for an unread record unless it was chosen", () => {
       useHasWorkers.mockReturnValue(undefined);
       useCallExecutionV3Detail.mockReturnValue({
-        data: { id: "a", transcript: [] },
+        data: { id: "a", transcript: [], actors_enabled: true },
         isPending: false,
       });
       render(
@@ -1124,7 +1205,7 @@ describe("CallDrawer — the call's traces", () => {
       const stepped = vi.fn();
       document.addEventListener("keydown", stepped);
       useCallExecutionV3Detail.mockReturnValue({
-        data: { id: "a", transcript: [] },
+        data: { id: "a", transcript: [], actors_enabled: true },
         isPending: false,
       });
       render(

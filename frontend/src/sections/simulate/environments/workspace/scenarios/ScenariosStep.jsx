@@ -757,6 +757,9 @@ export default function ScenariosStep({
           setEditing(row);
         }}
         locked={locked}
+        testConditions={
+          !!pageData.scenarioEditing?.editable_fields?.includes("faults")
+        }
       />
       <ScenarioEditor
         open={!!editing}
