@@ -7,6 +7,13 @@ export const uiOnlyToast = (what) =>
     variant: "info",
   });
 
+/** The personal data choice for dropped files, as [value, label]. */
+export const PERSONAL_DATA = [
+  ["replace", "Replace with stand-ins"],
+  ["keep", "Keep as is"],
+  ["none", "There's none"],
+];
+
 const CODE_SOURCES = new Set(["github", "archive"]);
 
 /** A connected agent's mark: code for a repository or upload, else a cloud. */

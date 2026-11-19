@@ -16,18 +16,13 @@ import { T12 } from "../drawerStyles";
 import { paths } from "src/routes/paths";
 import { useDesignDraftStore } from "../../design/useDesignDraftStore";
 import DescribeFlowCard from "./DescribeFlowCard";
+import { PERSONAL_DATA } from "./startUtils";
 
 const CHIPS = [
   "The agent gets triggered when…",
   "It reaches for these tools…",
   "It's done when…",
   "It escalates if…",
-];
-
-const PERSONAL_DATA = [
-  ["replace", "Replace with stand-ins"],
-  ["keep", "Keep as is"],
-  ["none", "There's none"],
 ];
 
 /**
