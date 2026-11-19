@@ -232,7 +232,7 @@ describe("PanelHostedPlatform", () => {
     expect(JSON.stringify(useEnvironmentsStore.getState())).not.toContain("lk-secret");
   });
 
-  it("LiveKit on Phone requires only the prompt and number, and keeps Inbound Calls a choice", () => {
+  it("LiveKit on Phone requires only the prompt and number, with Inbound Calls locked on", () => {
     render(<PanelHostedPlatform />);
     fireEvent.click(screen.getByText("LiveKit"));
     fireEvent.click(screen.getByText("Phone"));
@@ -241,7 +241,7 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByText("Check the number reaches your agent (optional)")).toBeInTheDocument();
     const inbound = screen.getByRole("checkbox", { name: "Inbound Calls" });
     expect(inbound).toBeChecked();
-    expect(inbound).toBeEnabled();
+    expect(inbound).toBeDisabled();
 
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("You are a friendly returns agent for Acme…"), {
@@ -254,7 +254,7 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();
   });
 
-  it("LiveKit on Phone sends the number, prompt and chosen direction with no LiveKit name, URL or credentials", async () => {
+  it("LiveKit on Phone sends the number and prompt, always inbound, with no LiveKit name, URL or credentials", async () => {
     preflightHarnessJob.mockResolvedValue(PASS);
     createHarnessJob.mockResolvedValue({ job: { job_id: "job-lk-phone" } });
     render(<PanelHostedPlatform />);
@@ -266,7 +266,6 @@ describe("PanelHostedPlatform", () => {
     fireEvent.change(screen.getByPlaceholderText("Number to call for the simulation"), {
       target: { value: "4155551234" },
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Inbound Calls" }));
     runPreflight();
 
     await waitFor(() =>
@@ -278,11 +277,11 @@ describe("PanelHostedPlatform", () => {
             config: {
               phone_number: "+14155551234",
               target_system_prompt: "You handle returns.",
-              inbound: false,
+              inbound: true,
               target_speaks_first: false,
             },
             secret_refs: {},
-            call_direction: "outbound",
+            call_direction: "inbound",
           },
         }),
       ),

@@ -144,9 +144,9 @@ export default function PanelHostedPlatform() {
     ...(agentType === AGENT_TYPES.VOICE
       ? (() => {
           const contactMode = isOther ? "phone" : simMode;
-          const inbound = isOther || inboundCalls;
+          const inbound = isOther || livekitPhone || inboundCalls;
           return {
-            // Others is always inbound; its toggle is locked on.
+            // Others and LiveKit on Phone are always inbound; their toggle is locked on.
             callDirection: inbound ? "inbound" : "outbound",
             contact: {
               mode: contactMode,
@@ -323,6 +323,7 @@ export default function PanelHostedPlatform() {
               inboundCalls={inboundCalls} onInboundCalls={set("inboundCalls")}
               agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={set("agentSpeaksFirst")}
               phoneOnly={isOther}
+              inboundOnly={isLiveKit}
             />
           )}
           <Field

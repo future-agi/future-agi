@@ -103,7 +103,11 @@ class LiveKitUnreadable(ValueError):
 
 
 def _livekit_base_url(url: str) -> str:
-    parsed = urlparse(str(url or "").strip())
+    try:
+        parsed = urlparse(str(url or "").strip())
+        port = parsed.port
+    except ValueError as exc:
+        raise SsrfBlocked(f"LIVEKIT_URL is not a valid URL ({exc})") from None
     if (
         parsed.scheme not in ("https", "wss")
         or not parsed.hostname
@@ -114,7 +118,7 @@ def _livekit_base_url(url: str) -> str:
             "LIVEKIT_URL must be an https:// or wss:// address with a host"
         )
     host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-    base = f"https://{host}" + (f":{parsed.port}" if parsed.port else "")
+    base = f"https://{host}" + (f":{port}" if port else "")
     assert_url_host_public(base)
     return base
 

@@ -685,7 +685,7 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
             results.append(target)
     if connector == "phone" and mode == "connect_only":
         routing = probe_livekit_phone_routing(
-            config.get("phone_number"),
+            str(config.get("phone_number") or ""),
             secret_values,
             platform_phone_telephony().get("SIP_OUTBOUND_FROM_NUMBER", ""),
         )

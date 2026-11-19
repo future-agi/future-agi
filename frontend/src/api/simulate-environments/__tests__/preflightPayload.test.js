@@ -193,7 +193,7 @@ describe("draftToPreflightPayload — platform", () => {
     });
   });
 
-  it("maps livekit in phone mode to the number, prompt and the chosen direction only", () => {
+  it("maps livekit in phone mode to the number and prompt only, always inbound", () => {
     const { payload } = draftToPreflightPayload(
       platformDraft({
         provider: "livekit",
@@ -216,11 +216,11 @@ describe("draftToPreflightPayload — platform", () => {
       config: {
         phone_number: "+14155550100",
         target_system_prompt: "You handle returns.",
-        inbound: false,
+        inbound: true,
         target_speaks_first: true,
       },
       secret_refs: {},
-      call_direction: "outbound",
+      call_direction: "inbound",
     });
     expect(payload.metadata.name).toBe("phone-agent");
   });
