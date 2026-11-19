@@ -631,7 +631,7 @@ export default function EnvironmentWorkspace() {
               turns={chatFiles.turns}
               running={chat.running}
               onSend={chatFiles.send}
-              canAttach
+              canAttach={!locked}
               onStop={chat.stop}
               canStop={chat.canStop}
               working={chat.working}

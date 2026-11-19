@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
 import { addSampleEdits, draftReviewKey, sampleFileEdits } from "./draftReview";
@@ -5,6 +6,7 @@ import { ALL_SCENARIOS } from "./_fixtures/draftReview";
 import {
   KNOWLEDGE_BASES,
   draftOfSources,
+  kbRefreshed,
   proposalItemsOf,
   readSource,
   sampleCapabilities,
@@ -303,17 +305,21 @@ export const appendAcceptedEdits = (
     const sourceId = item.cite?.sourceId || item.pick?.sourceId;
     return readFrom(sourceId, nameOf(sourceId), item.cite);
   };
+  const review = queryClient.getQueryData(draftReviewKey(envId));
+  const prior = sampleFileEdits(review).changes;
   // Rules are numbered in the order they're added; one added again keeps its number.
-  const ruleIds = sampleFileEdits(
-    queryClient.getQueryData(draftReviewKey(envId)),
-  )
-    .changes.filter((change) => change.kind === "rule")
+  const ruleIds = prior
+    .filter((change) => change.kind === "rule")
     .map((change) => change.id);
   const numberOf = (id) => {
     if (!ruleIds.includes(id)) ruleIds.push(id);
     return ruleIds.indexOf(id) + 1;
   };
-  let tables = 0;
+  // The first table added moves the world off generated data, once per
+  // environment: the change that carries it keeps it when added again.
+  let movesWorld = prior.find((change) =>
+    change.patch.some((op) => op.path === "/world_data"),
+  )?.id;
   const changeOf = (item) => {
     const kind = CHANGE_KINDS[item.kind] || "source";
     const base = { kind, key: item.id, from: fromItem(item) };
@@ -329,14 +335,13 @@ export const appendAcceptedEdits = (
     if (item.kind === "table") {
       const source = sources.get(item.cite?.sourceId);
       const parsed = source?.ui?.parsed || {};
-      tables += 1;
+      movesWorld = movesWorld || `${kind}:${item.id}`;
       return fileChange({
         ...base,
         summary: `New table ${parsed.table} · ${(parsed.accepted ?? 0).toLocaleString()} rows from ${source?.name}`,
         patch: [
           added(parsed.table, "/tables"),
-          // The first table moves the world off generated data.
-          ...(tables === 1
+          ...(movesWorld === `${kind}:${item.id}`
             ? [
                 { op: "test", path: "/world_data", value: "generated" },
                 {
@@ -363,6 +368,18 @@ export const appendAcceptedEdits = (
       patch: [added(value)],
     });
   };
+  // A failed row clears once what it waited on is added: the table it
+  // needed, or the same item added after all.
+  const supplied = new Set(
+    accepted
+      .filter((item) => item.kind === "table")
+      .map((item) => sources.get(item.cite?.sourceId)?.ui?.parsed?.table)
+      .filter(Boolean),
+  );
+  const addedIds = new Set(accepted.map((item) => `failed:${item.id}`));
+  const cleared = (review?.failed || [])
+    .filter((row) => supplied.has(row.ui?.needs) || addedIds.has(row.id))
+    .map((row) => row.id);
   // Every proposed scenario from one add is one change, as the design has it.
   const scenarios = accepted.filter((item) => item.kind === "scenario");
   const proposed = scenarios.flatMap((item) => item.scenario || []);
@@ -398,8 +415,10 @@ export const appendAcceptedEdits = (
           source_name: nameOf(sourceId),
           fix: item.kind === "missing" ? "supply" : "attach",
         }),
+        ...(item.needs && { ui: { needs: item.needs } }),
       };
     }),
+    cleared,
   });
 };
 
@@ -437,8 +456,9 @@ const savedStatusOf = (source) => {
 };
 
 // mutate({ import_ref, expected_environment_version_id, expected_draft,
-// expected_draft_digest, review: buildSourceReview(...), ui?: { accepted, failed } }).
-// `ui` carries the proposal items the person added and the blocked ones left out.
+// expected_draft_digest, review: buildSourceReview(...), ui?: { accepted, failed, privacy } }).
+// `ui` carries the proposal items the person added, the blocked ones left out,
+// and each custom file's column map (the API takes one mode per file).
 export const useAcceptSource = (envId) => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -499,4 +519,114 @@ export const useAcceptSource = (envId) => {
         );
     },
   });
+};
+
+// Edits to the environment's files. Each writes the summary cache until the
+// sources API takes them; swap the bodies, not the callers.
+const updateSources = (queryClient, envId, change) =>
+  queryClient.setQueryData(sourceSummaryKey(envId), (current) =>
+    current ? { ...current, sources: change(current.sources) } : current,
+  );
+
+const editSource = (queryClient, envId, sourceId, change) => {
+  let before;
+  let after;
+  updateSources(queryClient, envId, (sources) =>
+    sources.map((one) => {
+      if (one.source_id !== sourceId) return one;
+      before = one;
+      after = change(one);
+      return after;
+    }),
+  );
+  // A saved file's one personal-data row in Review changes follows its choice.
+  if (after && after.ui?.personal_choice !== before.ui?.personal_choice)
+    upsertPersonalDataEdit(queryClient, envId, after);
+};
+
+// (sourceId, change): `change` maps the file to its edited copy.
+export const useUpdateSource = (envId) => {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (sourceId, change) => editSource(queryClient, envId, sourceId, change),
+    [queryClient, envId],
+  );
+};
+
+// (source): a saved file goes to Removed; one not saved yet is discarded.
+export const useRemoveSource = (envId) => {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (source) => {
+      if (["ready", "rows_rejected"].includes(source.status))
+        editSource(queryClient, envId, source.source_id, (one) => ({
+          ...one,
+          ui: { ...one.ui, removed: true },
+        }));
+      else
+        updateSources(queryClient, envId, (sources) =>
+          sources.filter((one) => one.source_id !== source.source_id),
+        );
+    },
+    [queryClient, envId],
+  );
+};
+
+// (sourceId): a removed file comes back.
+export const useRestoreSource = (envId) => {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (sourceId) =>
+      editSource(queryClient, envId, sourceId, (one) => ({
+        ...one,
+        ui: { ...one.ui, removed: false },
+      })),
+    [queryClient, envId],
+  );
+};
+
+// (sourceId, accepted): the Knowledge base copy takes the accepted changes.
+export const useRefreshSource = (envId) => {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (sourceId, accepted) =>
+      editSource(queryClient, envId, sourceId, (one) =>
+        kbRefreshed(one, accepted),
+      ),
+    [queryClient, envId],
+  );
+};
+
+// (sourceId, { choice, privacy }): the file's personal-data choice and column map.
+export const useSetPersonalData = (envId) => {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (sourceId, { choice, privacy }) =>
+      editSource(queryClient, envId, sourceId, (one) => ({
+        ...one,
+        ui: { ...one.ui, personal_choice: choice, privacy },
+      })),
+    [queryClient, envId],
+  );
+};
+
+// The open Review proposed changes, kept per environment outside the tab so
+// leaving World & tools doesn't drop it. UI state, never sent.
+const pendingReviewKey = (envId) => ["harness-env-sources-review", envId];
+
+export const usePendingSourceReview = (envId) => {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: pendingReviewKey(envId),
+    queryFn: () => queryClient.getQueryData(pendingReviewKey(envId)) ?? null,
+    enabled: Boolean(envId),
+    staleTime: Infinity,
+    // Nothing watches it while the tab is away.
+    gcTime: Infinity,
+  });
+  const setReview = useCallback(
+    (update) => queryClient.setQueryData(pendingReviewKey(envId), update),
+    [queryClient, envId],
+  );
+  return [data ?? null, setReview];
 };

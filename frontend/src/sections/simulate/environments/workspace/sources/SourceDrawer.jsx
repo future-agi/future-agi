@@ -1,13 +1,13 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { Box, Button, Stack, Tab, Typography } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
-  sourceSummaryKey,
   useEnvironmentSources,
+  useRemoveSource,
+  useUpdateSource,
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
 import MappingTab from "./MappingTab";
@@ -279,28 +279,20 @@ export default function SourceDrawer({
   onClose,
   onReviewRefresh,
 }) {
-  const queryClient = useQueryClient();
   const { data: summary } = useEnvironmentSources(envId);
+  const updateSource = useUpdateSource(envId);
+  const removeSource = useRemoveSource(envId);
   const [usageOpen, setUsageOpen] = useState(false);
   const [picked, setPicked] = useState(at ? "preview" : tab || "preview");
 
   const source = summary?.sources.find((one) => one.source_id === sourceId);
   if (!source || source.ui?.removed) return null;
 
-  const update = (change) =>
-    queryClient.setQueryData(sourceSummaryKey(envId), (current) =>
-      current ? { ...current, sources: change(current.sources) } : current,
-    );
-  const onEdit = (change) =>
-    update((sources) =>
-      sources.map((one) => (one.source_id === sourceId ? change(one) : one)),
-    );
+  const onEdit = (change) => updateSource(sourceId, change);
   const saved = isSaved(source);
   // A saved file goes to Removed; one not saved yet is just dropped.
   const onRemove = () => {
-    if (saved) onEdit((one) => ({ ...one, ui: { ...one.ui, removed: true } }));
-    else
-      update((sources) => sources.filter((one) => one.source_id !== sourceId));
+    removeSource(source);
     onClose();
   };
 

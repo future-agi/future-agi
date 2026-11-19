@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { DraftReviewSchema } from "../draftReview.contract";
-import { draftReviewKey, freshSampleReview } from "../draftReview";
+import {
+  draftReviewKey,
+  freshSampleReview,
+  sampleFileEdits,
+} from "../draftReview";
 import {
   appendAcceptedEdits,
   sourceSummaryKey,
@@ -98,31 +102,31 @@ describe("edits added from files", () => {
       ],
     });
     const review = reviewIn(queryClient);
+    const files = sampleFileEdits(review);
     expect(DraftReviewSchema.safeParse(review).error?.issues).toBe(undefined);
-    expect(review.counts).toEqual({
-      total: 4,
-      accepted: 4,
-      rejected: 0,
-      undecided: 0,
-    });
-    expect(review.changes.map((one) => one.kind)).toEqual([
+    // They join the sample, so its counts don't jump once it loads.
+    expect(review.counts.total).toBe(sampleDraftReview().counts.total + 4);
+    expect(files.changes.map((one) => one.kind)).toEqual([
       "rule",
       "rule",
       "world_state",
       "scenario",
     ]);
+    expect(files.changes.every((one) => one.decision === "accepted")).toBe(
+      true,
+    );
     // Rules and records recheck every sample scenario; new scenarios add theirs.
-    expect(new Set(review.changes.flatMap((one) => one.revalidate)).size).toBe(
+    expect(new Set(files.changes.flatMap((one) => one.revalidate)).size).toBe(
       ALL_SCENARIOS.length + 2,
     );
-    expect(review.failed.map((one) => one.fix)).toEqual(["supply", "attach"]);
+    expect(files.failed.map((one) => one.fix)).toEqual(["supply", "attach"]);
     // A refetch (chat nudge, save) keeps what files added.
     const refetched = freshSampleReview(review);
     expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 4);
     expect(refetched.failed).toHaveLength(
       sampleDraftReview().failed.length + 2,
     );
-    expect(review.changes[0].sources[0].used[0]).toMatchObject({
+    expect(files.changes[0].sources[0].used[0]).toMatchObject({
       source_id: "src_1",
       name: "policy.pdf",
       locator: "p2",
@@ -138,14 +142,59 @@ describe("edits added from files", () => {
     };
     const queryClient = clientWith([orders]);
     upsertPersonalDataEdit(queryClient, envId, orders);
-    const first = reviewIn(queryClient).changes[0].summary;
+    const first = sampleFileEdits(reviewIn(queryClient)).changes[0].summary;
     upsertPersonalDataEdit(queryClient, envId, {
       ...orders,
       ui: { personal_choice: "keep" },
     });
-    const { changes } = reviewIn(queryClient);
+    const { changes } = sampleFileEdits(reviewIn(queryClient));
     expect(changes).toHaveLength(1);
     expect(changes[0].summary).not.toBe(first);
     expect(changes[0].decision).toBe("accepted");
+  });
+
+  it("clears a failed row once its table is added, and moves the world off generated data once", () => {
+    const queryClient = clientWith([
+      {
+        source_id: "src_2",
+        name: "orders.csv",
+        ui: { parsed: { table: "orders" } },
+      },
+      {
+        source_id: "src_4",
+        name: "customers.csv",
+        ui: { parsed: { table: "customers" } },
+      },
+    ]);
+    const table = (sourceId) => ({
+      id: `table-${sourceId}`,
+      kind: "table",
+      title: "New table",
+      cite: { sourceId, ref: "file" },
+    });
+    appendAcceptedEdits(queryClient, envId, {
+      accepted: [table("src_2")],
+      failed: [
+        {
+          id: "missing-src_2-customer_id",
+          kind: "missing",
+          title: "Missing table: customers",
+          sourceId: "src_2",
+          needs: "customers",
+          blocking: true,
+        },
+      ],
+    });
+    appendAcceptedEdits(queryClient, envId, { accepted: [table("src_4")] });
+    appendAcceptedEdits(queryClient, envId, { accepted: [table("src_2")] });
+
+    const review = reviewIn(queryClient);
+    // The sample's own Missing table: customers clears too.
+    expect(review.failed).toEqual([]);
+    expect(
+      review.changes
+        .filter((one) => one.patch.some((op) => op.path === "/world_data"))
+        .map((one) => one.id),
+    ).toEqual(["world_state:table-src_2"]);
   });
 });

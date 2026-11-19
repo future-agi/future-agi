@@ -1,3 +1,4 @@
+import { choiceOf, columnsOf } from "./personalData";
 import { isSaved } from "./sources.constants";
 
 // A records file's mapping into the world's tables. Edits write onto the
@@ -122,6 +123,11 @@ export const approveIdMapping = (source, name, { replace }) => {
     stableId: true,
     proposal: { ...column.proposal, approved: true },
   });
+  // The whole column map with this one replaced, as the Personal data tab writes it.
+  const columns = columnsOf(source).map((one) =>
+    one.name === name ? { ...one, mode: "replace" } : one,
+  );
+  const choice = source.ui.personal_choice || null;
   return {
     ...next,
     // A file not saved yet gets its status when it's accepted.
@@ -133,9 +139,16 @@ export const approveIdMapping = (source, name, { replace }) => {
     ui: {
       ...next.ui,
       id_mapping: { column: name, to: column.proposal.to, replace },
-      privacy: replace
-        ? { ...next.ui.privacy, [name]: "replace" }
-        : next.ui.privacy,
+      // Not chosen yet stays not chosen, so the file still asks.
+      ...(replace &&
+        (choice
+          ? {
+              privacy: Object.fromEntries(
+                columns.map((one) => [one.name, one.mode]),
+              ),
+              personal_choice: choiceOf(columns, choice),
+            }
+          : { privacy: { ...next.ui.privacy, [name]: "replace" } })),
       parsed: {
         ...next.ui.parsed,
         rejected: mismatches,

@@ -71,6 +71,18 @@ describe("reviewDecisions", () => {
       [customers.source_id]: "synthetic_replace",
     });
   });
+
+  it("sends a custom choice as synthetic values once any column is replaced or masked", () => {
+    const sources = read("customers.csv");
+    const [{ source_id: id }] = sources;
+    const draft = draftOfSources(sources, "sha256:test");
+    const modeOf = (privacy) =>
+      reviewDecisions(draft, [], { [id]: "custom" }, { [id]: privacy })
+        .personalDataModes[id];
+
+    expect(modeOf({ email: "retain", name: "mask" })).toBe("synthetic_replace");
+    expect(modeOf({ email: "retain", name: "omit" })).toBe("none");
+  });
 });
 
 describe("readProgress", () => {
@@ -112,6 +124,18 @@ describe("readProgress", () => {
     expect(ids(reopened.items)).toEqual(ids(before.items));
     expect(new Set(ids(after.items)).size).toBe(after.items.length);
     expect(ids(after.items)).toEqual(expect.arrayContaining(ids(before.items)));
+  });
+
+  it("drops a file removed mid-read, with its items, so the rest can be added", () => {
+    const left = live(first).filter(
+      (source) => source.source_id !== second.source_id,
+    );
+    const progress = readProgress(prepared, left);
+
+    expect(progress.reading).toEqual([]);
+    expect(ids(progress.items)).toEqual(
+      ids(readProgress(prepared, live(first)).items),
+    );
   });
 });
 

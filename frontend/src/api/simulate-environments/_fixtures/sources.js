@@ -788,6 +788,7 @@ export const proposalItemsOf = (sources) => {
           sourceId: source.source_id,
           field: column.name,
           present,
+          ...(!present && { needs: to }),
           affects: [],
           blocking: true,
         });
@@ -835,6 +836,7 @@ export const proposalItemsOf = (sources) => {
         : "Needs a refunds table. Attach one to unblock it.",
       cite: cite(retry.source, retry.passage),
       blocking: !hasRefunds,
+      ...(!hasRefunds && { needs: "refunds" }),
       scenario: [
         {
           t: "Duplicate refund retry",

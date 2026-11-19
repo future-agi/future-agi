@@ -1,11 +1,11 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import {
   Box,
   Button,
+  ButtonBase,
   CircularProgress,
   IconButton,
   Stack,
@@ -15,10 +15,12 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
-  sourceSummaryKey,
   useEnvironmentSources,
+  usePendingSourceReview,
   usePrepareKbSource,
   usePrepareUploadSource,
+  useRemoveSource,
+  useRestoreSource,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
 import SectionCard from "../../components/SectionCard";
@@ -52,13 +54,13 @@ const stateOf = (source, formats) => {
 
 /**
  * World & tools → Sources: every file this world is built from, what it's
- * used as, who reads it in a run, its state and version. A row opens the file
- * (`?source=<id>`, plus `sourceTab` for one of its tabs). Removed files are
+ * used as, who reads it in a run, its state and version. A file's name opens
+ * it (`?source=<id>`, plus `sourceTab` for one of its tabs). Removed files are
  * flagged in the summary cache as `ui.removed`, so readers of it skip them.
  *
  * `onPrepared` gets each prepare response (upload or Knowledge base) as it
- * lands. One with proposals opens Review proposed changes; closing that keeps
- * the review until it's rejected or added.
+ * lands. One with proposals opens Review proposed changes; closing that, or
+ * leaving the tab, keeps the review until it's rejected or added.
  */
 export default function SourcesSection({
   envId,
@@ -67,17 +69,18 @@ export default function SourcesSection({
   onReviewRefresh,
   onReviewChanges,
 }) {
-  const queryClient = useQueryClient();
   const { data: summary } = useEnvironmentSources(envId);
   const { data: capabilities } = useSourceCapabilities(envId);
   const prepare = usePrepareUploadSource(envId);
   const prepareKb = usePrepareKbSource(envId);
+  const remove = useRemoveSource(envId);
+  const restore = useRestoreSource(envId);
   const [anchor, setAnchor] = useState(null);
   const [kbOpen, setKbOpen] = useState(false);
   const [removing, setRemoving] = useState(null);
   // Held apart from the mutations' data: re-picking files already here returns an
   // empty response, which mustn't wipe the review.
-  const [review, setReview] = useState(null);
+  const [review, setReview] = usePendingSourceReview(envId);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const addRef = useRef(null);
@@ -121,26 +124,6 @@ export default function SourcesSection({
       },
       { replace: true },
     );
-
-  const updateSources = (change) =>
-    queryClient.setQueryData(sourceSummaryKey(envId), (current) =>
-      current ? { ...current, sources: change(current.sources) } : current,
-    );
-  const setRemoved = (id, value) =>
-    updateSources((list) =>
-      list.map((source) =>
-        source.source_id === id
-          ? { ...source, ui: { ...source.ui, removed: value } }
-          : source,
-      ),
-    );
-  // A saved file goes to Removed; one not saved yet is discarded.
-  const remove = (source) =>
-    isSaved(source)
-      ? setRemoved(source.source_id, true)
-      : updateSources((list) =>
-          list.filter((one) => one.source_id !== source.source_id),
-        );
 
   const onPrepare = {
     onSuccess: (response) => {
@@ -320,7 +303,7 @@ export default function SourcesSection({
                   size="small"
                   variant="outlined"
                   onClick={() => {
-                    setRemoved(source.source_id, false);
+                    restore(source.source_id);
                     enqueueSnackbar(COPY.restored(source.name), {
                       variant: "success",
                     });
@@ -423,15 +406,7 @@ function SourceRow({
 
   return (
     <Box
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpen(source.source_id)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" && event.target === event.currentTarget)
-          onOpen(source.source_id);
-      }}
       sx={{
-        cursor: "pointer",
         "&:hover": { bgcolor: "action.hover" },
         "& + &": { borderTop: "1px solid", borderColor: "divider" },
       }}
@@ -446,9 +421,24 @@ function SourceRow({
           py: 0.875,
         }}
       >
-        <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>
-          {source.name}
-        </Typography>
+        <ButtonBase
+          onClick={() => onOpen(source.source_id)}
+          sx={{
+            minWidth: 0,
+            justifyContent: "flex-start",
+            borderRadius: 0.5,
+            "&:hover": { textDecoration: "underline" },
+            "&.Mui-focusVisible": {
+              outline: "2px solid",
+              outlineColor: "primary.main",
+              outlineOffset: "2px",
+            },
+          }}
+        >
+          <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>
+            {source.name}
+          </Typography>
+        </ButtonBase>
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           {source.ext.toUpperCase()}
         </Typography>
@@ -520,10 +510,7 @@ function SourceRow({
             <IconButton
               size="small"
               aria-label={COPY.remove(source.name)}
-              onClick={(event) => {
-                event.stopPropagation();
-                onRemove();
-              }}
+              onClick={onRemove}
               sx={{ p: 0.25, color: "text.tertiary" }}
             >
               <Iconify icon="solar:trash-bin-minimalistic-linear" width={16} />
@@ -532,11 +519,7 @@ function SourceRow({
         )}
       </Box>
       {(personal || changed) && (
-        <Stack
-          spacing={0.5}
-          sx={{ px: 1.5, pb: 1 }}
-          onClick={(event) => event.stopPropagation()}
-        >
+        <Stack spacing={0.5} sx={{ px: 1.5, pb: 1 }}>
           {changed && (
             <RowLine
               text={COPY.changedUpstream}
