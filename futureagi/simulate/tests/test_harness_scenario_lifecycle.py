@@ -1056,6 +1056,30 @@ def test_every_reason_a_proof_gives_renders_with_nothing_left_blank(
     assert bare.endswith("own goal.") and not GAP.search(bare)
 
 
+def test_a_wrong_way_that_makes_a_call_no_check_reads_names_that_call():
+    from simulate.services.harness_scenario_lifecycle import reason_text
+
+    control = {
+        "name": "refunds_anyway",
+        "why": "refunds an order past 30 days",
+        "held": ["order_looked_up"],
+    }
+    control.update(failed=False, ran=True)
+    said = reason_text(
+        "negative_control_passed",
+        {"controls": [{**control, "unmatched": ["issue_refund"]}]},
+    )
+    assert said == (
+        "The checks pass a wrong way of handling it: refunds_anyway (refunds an order past 30 days). It calls "
+        "issue_refund, which no check reads: add a check that fails when that happens."
+    )
+    # A proof saved before controls named their calls reads as it always did.
+    assert reason_text("negative_control_passed", {"controls": [control]}) == (
+        "The checks pass a wrong way of handling it: refunds_anyway (refunds an order past 30 days). "
+        "Tighten order_looked_up."
+    )
+
+
 def _label(environment):
     from simulate.services.harness_versioning.read import _label as label
 
