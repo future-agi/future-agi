@@ -63,6 +63,17 @@ def ensure_org_membership(user, organization, *, invited_by=None, level=None):
     else:
         role = Level.to_org_string(level)
 
+    # A pair whose only rows were removed (soft-deleted, as a cancelled
+    # invitation leaves them) gets no new row either. The unique constraint
+    # covers only rows with deleted=False, so get_or_create alone would create
+    # one next to them; the base manager also reads removed rows.
+    pair = {"user": user, "organization": organization}
+    if (
+        not OrganizationMembership.no_workspace_objects.filter(**pair).exists()
+        and OrganizationMembership._base_manager.filter(**pair).exists()
+    ):
+        return None
+
     # The (user, organization) unique constraint (WHERE deleted=False) guarantees
     # at most one non-deleted row, so get_or_create resolves to exactly that row.
     # get_or_create also closes the race where two concurrent invite flows both
