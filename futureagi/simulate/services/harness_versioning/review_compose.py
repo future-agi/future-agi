@@ -122,11 +122,20 @@ def compose_accepted(
         if one["kind"] in ("file", "world_state") and one["key"] in WHOLE_CANDIDATES
     }
     current = item_index(default, whole)
+
+    def read_as(change: ReviewChange) -> str:
+        # A rename was read from the scenario under its saved key.
+        return (
+            f"scenario:{change['renamed_from']}"
+            if change.get("renamed_from")
+            else change["id"]
+        )
+
     moved = [
         one["id"]
         for one in changes
         if decisions[one["id"]] == "accepted"
-        and (current[one["id"]].digest if one["id"] in current else None)
+        and (current[read_as(one)].digest if read_as(one) in current else None)
         != one["base_digest"]
     ]
     if moved:
@@ -140,7 +149,10 @@ def compose_accepted(
         try:
             if change["kind"] == "scenario":
                 prefix = change["document"].rsplit("/", 1)[0] + "/"
-                for path in [one for one in files if one.startswith(prefix)]:
+                # A rename leaves its saved folder behind as well.
+                saved = current.get(read_as(change))
+                was = saved.document.rsplit("/", 1)[0] + "/" if saved else prefix
+                for path in [one for one in files if one.startswith((prefix, was))]:
                     del files[path]
                 files.update(
                     {
