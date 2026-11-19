@@ -615,6 +615,74 @@ describe("AddProviderDialog validation", () => {
     expect(save.disabled).toBe(false);
   });
 
+  it.each(["Add", "Edit"])(
+    "%s commits typed text on blur instead of a hovered model",
+    async (mode) => {
+      if (mode === "Add") {
+        renderCreateDialog();
+        await userEvent.type(screen.getByLabelText(/API Key/i), "sk-good");
+      } else {
+        renderEditDialog({ models: ["gpt-4o-mini"] });
+      }
+      const input = await screen.findByPlaceholderText(/Select models/i);
+      await userEvent.type(input, "gpt");
+      await userEvent.hover(screen.getByRole("option", { name: "gpt-4o" }));
+      await userEvent.click(screen.getByLabelText(/Timeout/));
+
+      expect(input).toHaveValue("");
+      expect(screen.getByText("gpt")).toBeTruthy();
+      expect(screen.queryByText("gpt-4o")).toBeNull();
+      await userEvent.click(
+        screen.getByRole("button", {
+          name: mode === "Add" ? "Add Provider" : "Save Changes",
+        }),
+      );
+      expect(updateMutate.mock.calls[0][0].config.models).toEqual(
+        mode === "Add" ? ["gpt"] : ["gpt-4o-mini", "gpt"],
+      );
+    },
+  );
+
+  it("keeps an already-selected model when hovered before blur", async () => {
+    renderEditDialog({ models: ["gpt-4o", "gpt-4o-mini"] });
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.click(input);
+    await userEvent.hover(screen.getByRole("option", { name: "gpt-4o" }));
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "gpt-4o-mini",
+    ]);
+  });
+
+  it("trims typed model IDs and does not duplicate a selected model on blur", async () => {
+    renderEditDialog({ models: ["gpt-4o"] });
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.type(input, "  local-model  ");
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+    await userEvent.type(input, "gpt-4o");
+    await userEvent.click(screen.getByLabelText(/Timeout/));
+    await userEvent.type(input, "   ");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(input).toHaveValue("");
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "local-model",
+    ]);
+  });
+
+  it("includes a typed custom model when clicking Save directly", async () => {
+    renderEditDialog({ models: ["gpt-4o"] });
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.type(input, "local-model");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "local-model",
+    ]);
+  });
+
   it("does not select a merely-hovered option when the field loses focus", async () => {
     // `autoSelect` resolves blur against whichever option the mouse last
     // passed over, not what was checked — so scrolling/hovering past a third
