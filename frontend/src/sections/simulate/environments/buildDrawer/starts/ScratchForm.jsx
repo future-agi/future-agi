@@ -8,11 +8,12 @@ import {
   Typography,
 } from "@mui/material";
 import { Field, HintLine } from "../forms/formBits";
+import { BUILD_FILES_ACCEPT, BUILD_TEST_MIN } from "../forms/shared/buildFiles";
 import {
-  BUILD_FILES_ACCEPT,
-  BUILD_TEST_MIN,
-  mergeBuildFiles,
-} from "../forms/shared/buildFiles";
+  draftFilesOf,
+  uploadsLabel,
+  useFileUploads,
+} from "../forms/shared/useFileUploads";
 import { T12 } from "../drawerStyles";
 import { paths } from "src/routes/paths";
 import { useDesignDraftStore } from "../../design/useDesignDraftStore";
@@ -36,14 +37,14 @@ export default function ScratchForm() {
   const createDesignDraft = useDesignDraftStore((s) => s.createDesignDraft);
   const [name, setName] = useState("");
   const [flowText, setFlowText] = useState("");
-  const [attachments, setAttachments] = useState([]);
+  const uploads = useFileUploads();
   // Asked up front and starting on the safest choice, never a silent default.
   const [personalData, setPersonalData] = useState("replace");
+  const busy = uploads.uploading.length > 0;
+  // Failed files are left out, so they don't count towards building.
   const canGo =
-    flowText.trim().length >= BUILD_TEST_MIN || attachments.length > 0;
-
-  const addFiles = (list) =>
-    setAttachments((prev) => mergeBuildFiles(prev, list));
+    !busy &&
+    (flowText.trim().length >= BUILD_TEST_MIN || uploads.done.length > 0);
 
   return (
     <Stack spacing={2} sx={{ p: 2.5 }}>
@@ -73,25 +74,26 @@ export default function ScratchForm() {
         accept={BUILD_FILES_ACCEPT}
         value={flowText}
         onChange={setFlowText}
-        files={attachments}
-        onAdd={addFiles}
-        onRemove={(id) =>
-          setAttachments((prev) => prev.filter((a) => a.id !== id))
-        }
+        files={uploads.files}
+        onAdd={uploads.add}
+        onRetry={uploads.retry}
+        onRemove={uploads.remove}
         onNext={() =>
           navigate(
             paths.dashboard.simulate.environments.design(
               createDesignDraft({
                 name,
                 description: flowText,
-                files: attachments,
+                files: draftFilesOf(uploads.done),
                 personalChoice: personalData,
               }),
             ),
           )
         }
         canSubmit={canGo}
-        submitLabel="Build environment"
+        submitLabel={
+          ((busy || canGo) && uploadsLabel(uploads)) || "Build environment"
+        }
         filesFooter={
           <Stack
             direction="row"
@@ -106,7 +108,7 @@ export default function ScratchForm() {
               sx={{ ...T12, color: "text.secondary" }}
             >
               <HintLine
-                text={`Personal data in ${attachments.length === 1 ? "this file" : "these files"}`}
+                text={`Personal data in ${uploads.files.length === 1 ? "this file" : "these files"}`}
                 hint="Files are read in a cloud sandbox, not on your machine. Replace swaps names, emails and numbers for stand-ins. The same value always gets the same stand-in."
               />
             </Typography>

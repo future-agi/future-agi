@@ -16,7 +16,8 @@ export const useDesignDraftStore = create(
       (set, get, store) => ({
         drafts: {},
 
-        // files: [{ id, name, size, type }]. Each file keeps the personal data
+        // files: [{ id, name, size, type, documentId }], only ones that
+        // uploaded (documentId from the upload). Each file keeps the personal data
         // choice it was added under. Returns the new draft's id.
         createDesignDraft: ({
           name,

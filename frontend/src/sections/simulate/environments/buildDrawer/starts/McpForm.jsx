@@ -13,6 +13,7 @@ import {
 import BuildFilesField from "../forms/shared/BuildFilesField";
 import { BUILD_TEST_MIN } from "../forms/shared/buildFiles";
 import BuildTestField from "../forms/shared/BuildTestField";
+import { uploadsLabel, useFileUploads } from "../forms/shared/useFileUploads";
 import AgentPicker, { useWorldAgents } from "./AgentPicker";
 import { StartFooter, TagChip } from "./startBits";
 import { uiOnlyToast } from "./startUtils";
@@ -53,7 +54,7 @@ export default function McpForm() {
   const [token, setToken] = useState("");
   const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
   const [testRequest, setTestRequest] = useState("");
-  const [files, setFiles] = useState([]);
+  const uploads = useFileUploads();
   const countOk = isValidScenarioCount(scenarioCount);
   const testOk = testRequest.trim().length >= BUILD_TEST_MIN;
   const canGo =
@@ -154,10 +155,11 @@ export default function McpForm() {
           onChange={setTestRequest}
         />
         <ScenarioRow value={scenarioCount} onChange={setScenarioCount} />
-        <BuildFilesField files={files} onChange={setFiles} />
+        <BuildFilesField uploads={uploads} />
       </Stack>
       <StartFooter
-        disabled={!canGo}
+        disabled={!canGo || uploads.uploading.length > 0}
+        label={uploadsLabel(uploads) || "Build environment"}
         hint={
           !agent
             ? "Pick the agent this environment is for"
@@ -167,7 +169,9 @@ export default function McpForm() {
                 ? "Pick a server from your Gateway"
                 : source === "url" && !target.trim()
                   ? "Add the server"
-                  : "Scenarios to generate: 1 to 1,000"
+                  : !countOk
+                    ? "Scenarios to generate: 1 to 1,000"
+                    : null
         }
         onClick={() => uiOnlyToast("building from an MCP server")}
       />

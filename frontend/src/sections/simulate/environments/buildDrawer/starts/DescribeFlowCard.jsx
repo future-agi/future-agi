@@ -4,28 +4,21 @@ import {
   Box,
   Button,
   ButtonBase,
+  Collapse,
   IconButton,
   InputBase,
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
-import { formatFileSize } from "src/utils/utils";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { BTN_SX, T12, T13, focusRing } from "../drawerStyles";
+import UploadingFiles from "../forms/shared/UploadingFiles";
 import { uiOnlyToast } from "./startUtils";
-
-function iconForFile(name) {
-  const ext = String(name).split(".").pop()?.toLowerCase();
-  if (["csv", "tsv"].includes(ext)) return "solar:document-text-linear";
-  if (["json"].includes(ext)) return "solar:code-square-linear";
-  if (["md", "txt"].includes(ext)) return "solar:document-linear";
-  if (["pdf"].includes(ext)) return "solar:document-medicine-linear";
-  return "solar:paperclip-linear";
-}
 
 const toolSx = { p: 0.5, color: "text.secondary" };
 
@@ -136,6 +129,7 @@ export default function DescribeFlowCard({
   onChange,
   files,
   onAdd,
+  onRetry,
   onRemove,
   onNext,
   canSubmit,
@@ -146,6 +140,7 @@ export default function DescribeFlowCard({
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 
   const onFiles = (list) => {
     // Copied now: the input is cleared right after, which empties a live FileList.
@@ -235,78 +230,15 @@ export default function DescribeFlowCard({
                 sx: { ...T13, lineHeight: 1.6, px: 0.5, py: 0.25 },
               }}
             />
-            {files.length > 0 && (
-              <Stack
-                component="ul"
-                aria-label="Attached files"
-                direction="row"
-                flexWrap="wrap"
-                gap={0.75}
-                sx={{
-                  listStyle: "none",
-                  m: 0,
-                  p: 0,
-                  mt: 1,
-                  maxHeight: 180,
-                  overflowY: "auto",
-                }}
-              >
-                {files.map((f) => (
-                  <Stack
-                    component="li"
-                    key={f.id}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={{
-                      pl: 1,
-                      pr: 0.5,
-                      py: 0.75,
-                      minWidth: 220,
-                      maxWidth: "100%",
-                      borderRadius: "6px",
-                      border: "1px solid",
-                      borderColor: "divider",
-                      bgcolor: "background.paper",
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: "6px",
-                        bgcolor: "action.hover",
-                        display: "grid",
-                        placeItems: "center",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Iconify
-                        icon={iconForFile(f.name)}
-                        width={16}
-                        sx={{ color: "text.secondary" }}
-                      />
-                    </Box>
-                    <Box flex={1} minWidth={0}>
-                      <Typography noWrap sx={{ ...T13, fontWeight: 500 }}>
-                        {f.name}
-                      </Typography>
-                      <Typography sx={{ ...T12, color: "text.disabled" }}>
-                        {formatFileSize(f.size, { wholeKb: true })}
-                      </Typography>
-                    </Box>
-                    <IconButton
-                      size="small"
-                      aria-label={`Remove ${f.name}`}
-                      onClick={() => onRemove(f.id)}
-                      sx={{ p: 0.5, color: "text.secondary" }}
-                    >
-                      <Iconify icon="solar:close-linear" width={14} />
-                    </IconButton>
-                  </Stack>
-                ))}
-              </Stack>
-            )}
+            <UploadingFiles
+              chips
+              label="Attached files"
+              files={files}
+              accept={accept}
+              onRetry={onRetry}
+              onRemove={onRemove}
+              sx={{ mt: 1 }}
+            />
             <Stack
               direction="row"
               alignItems="center"
@@ -373,7 +305,11 @@ export default function DescribeFlowCard({
           </Box>
         </Box>
 
-        {files.length > 0 && filesFooter}
+        {filesFooter && (
+          <Collapse in={files.length > 0} timeout={reduceMotion ? 0 : "auto"}>
+            {filesFooter}
+          </Collapse>
+        )}
 
         {chips?.length > 0 && (
           <Stack
@@ -451,9 +387,11 @@ DescribeFlowCard.propTypes = {
   chips: PropTypes.arrayOf(PropTypes.string),
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
+  // Rows from useFileUploads.
   files: PropTypes.array.isRequired,
   // Called with the picked or dropped files, as an array.
   onAdd: PropTypes.func.isRequired,
+  onRetry: PropTypes.func,
   onRemove: PropTypes.func.isRequired,
   onNext: PropTypes.func.isRequired,
   canSubmit: PropTypes.bool,
