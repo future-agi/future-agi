@@ -316,9 +316,7 @@ def test_sentry_scrubs_outbound_telemetry_request_breadcrumb_body():
 
     telemetry_crumb, other_crumb = scrubbed["breadcrumbs"]["values"]
     assert "body" not in telemetry_crumb["data"]
-    assert telemetry_crumb["data"]["url"].endswith("/telemetry/register/")
-    # Unrelated breadcrumb bodies must survive — we only scrub /telemetry/.
-    assert other_crumb["data"]["body"] == '{"keep":"me"}'
+    assert telemetry_crumb["data"] == other_crumb["data"] == {"method": "POST"}
 
 
 def test_minimal_disabled_registration_payload_drops_user_data():

@@ -181,7 +181,7 @@ def vertex_capture(monkeypatch):
         isolated.clear_breadcrumbs()
         try:
             assert sentry.init_sentry(component="temporal")
-            assert sentry_sdk.get_client().options["include_local_variables"]
+            assert not sentry_sdk.get_client().options["include_local_variables"]
             yield VertexBase(), transport.events
         finally:
             if scope.client is not previous:
@@ -392,7 +392,7 @@ def test_before_send_scrubs_request_and_extra():
     assert out["request"]["headers"]["Accept"] == "json"
     assert out["request"]["query_string"] == _REDACTED
     assert out["request"]["cookies"] == _REDACTED  # cookies redacted wholesale
-    assert out["extra"]["api_key"] == _REDACTED
+    assert "api_key" not in out["extra"]
     assert out["extra"]["count"] == 5
 
 
@@ -452,7 +452,6 @@ def test_transaction_scrubber_accepts_list_breadcrumbs():
 
     assert out is event
     assert out["breadcrumbs"][0]["data"] == {
-        "url": "https://example.test/telemetry/registration/",
         "method": "POST",
     }
 
@@ -473,6 +472,4 @@ def test_transaction_scrubber_keeps_mapping_breadcrumb_contract():
 
     out = _scrub_deployment_telemetry_event(event)
 
-    assert out["breadcrumbs"]["values"][0]["data"] == {
-        "url": "https://example.test/telemetry/heartbeat/"
-    }
+    assert out["breadcrumbs"]["values"][0]["data"] == {}

@@ -96,40 +96,50 @@ def _licensed(fn):
 
 NOT_IN_BUILD = "Insights isn't available in this build."
 PIPELINE_IMPORT_FAILED = "Insights couldn't load in this build."
-# The modules whose absence means the build ships no Insights pipeline at all.
+# Missing-path errors are quiet only on builds that intentionally omit Insights.
 _PIPELINE_MODULES = frozenset(
     {"ee", "ee.agenthub", "ee.agenthub.insights", "ee.agenthub.insights.pipeline"}
 )
 
 
 def _pipeline(name: str):
-    """A stage of ``ee.agenthub.insights.pipeline``. A build without it (the
-    open tree) fails the stage for good instead of retrying an import.
+    """Only a confirmed OSS build without the optional package is a refusal.
 
-    Only a missing pipeline module is that expected refusal. When the build
-    has the pipeline but importing it raises (a broken module or one of its
-    own dependencies missing), the stage still fails for good, under a type
-    that is reported as a fault, with the original error chained.
+    A missing stage in an installed package, or a missing package on an
+    image that promises Insights, is a fault. The interceptor reports it.
     """
+    from tfc.capabilities import service
+    from tfc.capabilities.registry import FEATURE_INSIGHTS
+    from tfc.ee_loader import has_ee, is_cloud_env
+    from tfc.licensing.types import DeploymentFlavor
+
     try:
-        from ee.agenthub.insights import pipeline
-    except ModuleNotFoundError as exc:
-        if exc.name not in _PIPELINE_MODULES:
-            raise ApplicationError(
-                PIPELINE_IMPORT_FAILED,
-                type="InsightsPipelineImportError",
-                non_retryable=True,
-            ) from exc
-        raise ApplicationError(
-            NOT_IN_BUILD, type="CapabilityDenied", non_retryable=True
-        ) from None
-    except Exception as exc:  # noqa: BLE001 - any import failure is a fault
+        import ee.agenthub.insights.pipeline as pipeline
+
+        return getattr(pipeline, name)
+    except Exception as exc:  # noqa: BLE001 - any other import failure is a fault
+        if (
+            isinstance(exc, ModuleNotFoundError)
+            and exc.name in _PIPELINE_MODULES
+            and service.is_configured()
+            and service.get_deployment_flavor() == DeploymentFlavor.OSS
+            and not is_cloud_env()
+            and FEATURE_INSIGHTS.oss_locked
+        ):
+            try:
+                # Bootstrap can fall back to OSS when the EE usage import fails.
+                absent = not has_ee("ee.usage") and not has_ee("ee.agenthub.insights")
+            except Exception:  # A broken package probe cannot establish absence.
+                absent = False
+            if absent:
+                raise ApplicationError(
+                    NOT_IN_BUILD, type="CapabilityDenied", non_retryable=True
+                ) from None
         raise ApplicationError(
             PIPELINE_IMPORT_FAILED,
             type="InsightsPipelineImportError",
             non_retryable=True,
         ) from exc
-    return getattr(pipeline, name)
 
 
 def _model_error_class():

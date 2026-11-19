@@ -15,6 +15,9 @@ from sentry_sdk.integrations.dedupe import DedupeIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from temporalio.exceptions import ApplicationError
 
+from tfc import ee_loader
+from tfc.capabilities import service
+from tfc.licensing.types import DeploymentFlavor
 from tfc.temporal.common import sentry_interceptor
 from tfc.temporal.insights import activities
 from tfc.tests.sentry_capture import sentry_capture
@@ -64,6 +67,10 @@ async def _run_stage():
 async def test_a_build_without_the_pipeline_is_a_quiet_refusal(
     transport, monkeypatch, missing
 ):
+    monkeypatch.setattr(service, "is_configured", lambda: True)
+    monkeypatch.setattr(service, "get_deployment_flavor", lambda: DeploymentFlavor.OSS)
+    monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
+    monkeypatch.setattr(ee_loader, "has_ee", lambda module: False)
     _import_raising(
         monkeypatch, ModuleNotFoundError(f"No module named {missing!r}", name=missing)
     )
@@ -107,3 +114,23 @@ async def test_a_broken_pipeline_import_is_reported_once(transport, monkeypatch,
     ]
     assert exceptions[0]["value"] == str(cause)
     assert activities.PIPELINE_IMPORT_FAILED in json.dumps(exceptions[-1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("flavor", "package"), [
+    (DeploymentFlavor.CLOUD, False), (DeploymentFlavor.SELF_HOSTED_EE, False),
+    (DeploymentFlavor.OSS, True),
+])
+async def test_missing_stage_in_expected_install_is_reported(transport, monkeypatch, flavor, package):
+    monkeypatch.setattr(service, "is_configured", lambda: True)
+    monkeypatch.setattr(service, "get_deployment_flavor", lambda: flavor)
+    monkeypatch.setattr(ee_loader, "has_ee", lambda module: package)
+    cause = ModuleNotFoundError("synthetic missing stage", name="ee.agenthub.insights.pipeline")
+    _import_raising(monkeypatch, cause)
+    error = await _run_stage()
+    assert error.type == "InsightsPipelineImportError"
+    assert error.__cause__ is cause
+    [event] = transport.events
+    assert [v["type"] for v in event["exception"]["values"]] == [
+        "ModuleNotFoundError", "ApplicationError",
+    ]

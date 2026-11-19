@@ -663,6 +663,9 @@ def test_an_insights_stage_without_ee_fails_for_good_not_on_import(monkeypatch):
             raise ModuleNotFoundError(f"No module named {name!r}", name=name)
         return real_import(name, *args, **kwargs)
 
+    oss()
+    monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
+    monkeypatch.setattr("tfc.ee_loader.has_ee", lambda module: False)
     monkeypatch.setattr(builtins, "__import__", no_ee)
     with pytest.raises(ApplicationError) as refused:
         activities._pipeline("prepare")

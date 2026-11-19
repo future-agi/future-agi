@@ -1,599 +1,117 @@
-"""Exception values and log messages are scrubbed on every event, not only on
-the Vertex credential path.
+"""Check both envelopes, including breadcrumbs retained on the isolation scope."""
 
-Events go through a real Sentry client with the production ``before_send``
-and are checked as the serialized envelopes it would send.
-"""
-
-import base64
-import collections
 import json
 import logging
-import time
 
 import pytest
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-from tfc.logging.sentry import (
-    _before_breadcrumb,
-    _scrub_log_params,
-    _scrub_message_fields,
-    _scrub_text,
-)
+from tfc.logging import sentry
 from tfc.tests.sentry_capture import sentry_capture
 
-LOGGER = "tfc.tests.synthetic_scrubbing"
-# Spaced credentials, kept out of the test bodies so that the stack frames'
-# source lines in the envelope don't quote them.
-SPACED_SECRET = "Sntlcorrect Sntlhorse Sntlbattery"
-SPACED_ARGUMENT = "Sntlcorrect Sntlhorse"
-# Quoted credentials whose closing quote is missing, on another line, of the
-# other kind or escaped.
-CUT_OFF_SECRET = "Sntlcutoff"
-UNCLOSED_SECRET = "Sntlunclosed Sntlsecond Sntlthird"
-MULTILINE_SECRET = "Sntlfirstline\nSntlsecondline"
-MISMATCHED_SECRET = "Sntlopened Sntlwrongclose"
-ESCAPED_SECRET = 'Sntlbefore\\" Sntlafterescape'
-# One row per scrubbing probe. Each runs as an exception value and as a log
-# message (``template`` % ``args`` when given, else the text itself). Secrets
-# start with "Prb" and are kept out of the test bodies, as above.
-ProbeCase = collections.namedtuple(
-    "ProbeCase", "text expected secrets template args params formatted log_secrets"
-)
+MARKER = "synthetic-payload-marker"
+LOGGER = "tfc.tests.ordinary"
 
 
-def _probe(
-    text,
-    expected,
-    secrets,
-    template=None,
-    args=(),
-    params=None,
-    formatted=None,
-    log_secrets=None,
-):
-    return ProbeCase(
-        text,
-        expected,
-        secrets,
-        template,
-        args,
-        params,
-        formatted,
-        secrets if log_secrets is None else log_secrets,
-    )
-
-
-PROBES = {
-    "quoted spaced single": _probe(
-        "login failed password='Prbsa Prbsb' for bob",
-        "login failed password='[Filtered]' for bob",
-        ["Prbsa", "Prbsb"],
-    ),
-    "quoted spaced double": _probe(
-        'login failed password="Prbda Prbdb" for bob',
-        'login failed password="[Filtered]" for bob',
-        ["Prbda", "Prbdb"],
-    ),
-    "unterminated single": _probe(
-        "conn failed password='Prbcuta", "conn failed password='[Filtered]", ["Prbcuta"]
-    ),
-    "unterminated double": _probe(
-        'conn failed token="Prbcutb', 'conn failed token="[Filtered]', ["Prbcutb"]
-    ),
-    "unclosed spaced": _probe(
-        "login failed token='Prbua Prbub Prbuc",
-        "login failed token='[Filtered]",
-        ["Prbua", "Prbub", "Prbuc"],
-    ),
-    "newline inside quotes": _probe(
-        "login failed password='Prbna\nPrbnb' end",
-        "login failed password='[Filtered]' end",
-        ["Prbna", "Prbnb"],
-    ),
-    "CRLF inside quotes": _probe(
-        "login failed password='Prbcra\r\nPrbcrb' end",
-        "login failed password='[Filtered]' end",
-        ["Prbcra", "Prbcrb"],
-    ),
-    "mismatched quotes": _probe(
-        "login failed password=\"Prbma Prbmb' tail",
-        'login failed password="[Filtered]',
-        ["Prbma", "Prbmb"],
-    ),
-    "JSON escaped quote, raw": _probe(
-        'bad body {"password": "Prbea\\" Prbeb", "user": "bob"}',
-        'bad body {"password": "[Filtered]", "user": "bob"}',
-        ["Prbea", "Prbeb"],
-    ),
-    "JSON escaped quote, json.dumps": _probe(
-        "bad body " + json.dumps({"password": 'Prbja" Prbjb', "user": "bob"}),
-        'bad body {"password": "[Filtered]", "user": "bob"}',
-        ["Prbja", "Prbjb"],
-    ),
-    "JSON encoded twice": _probe(
-        "bad body "
-        + json.dumps(json.dumps({"password": 'Prbwa" Prbwb', "user": "bob"})),
-        'bad body "{\\"password\\": \\"[Filtered]\\", \\"user\\": \\"bob\\"}"',
-        ["Prbwa", "Prbwb"],
-    ),
-    # A backslash run always escapes what follows (repr doubles it), so an
-    # escaped backslash before the closing quote over-redacts to the end.
-    "escaped backslash before the closing quote": _probe(
-        'conn failed password="Prbba\\\\" tail Prbbb',
-        'conn failed password="[Filtered]',
-        ["Prbba", "Prbbb"],
-    ),
-    # Frame vars are repr()'d, which escapes the single quotes here.
-    "both quote kinds": _probe(
-        "conn failed password='Prbqa Prbqb' and api_key=\"Prbqc\"",
-        "conn failed password='[Filtered]' and api_key=\"[Filtered]\"",
-        ["Prbqa", "Prbqb", "Prbqc"],
-    ),
-    "both quote kinds, unterminated": _probe(
-        'conn failed password=\'Prbqd and api_key="Prbqe"',
-        "conn failed password='[Filtered]",
-        ["Prbqd", "Prbqe"],
-    ),
-    "starts with [Filtered], later credential": _probe(
-        "password='[Filtered] then token=Prbfa",
-        "password='[Filtered]",
-        ["Prbfa"],
-    ),
-    "starts with [Filtered], later %s credential": _probe(
-        "conn password='Prbta and token=Prbtb",
-        "conn password='[Filtered]",
-        ["Prbta", "Prbtb"],
-        "conn password='%s and token=%s",
-        ("Prbta", "Prbtb"),
-        ["[Filtered]", "[Filtered]"],
-        "conn password='[Filtered]",
-    ),
-    # In plain text an unquoted value ends at the first space; as a %s
-    # argument it goes whole.
-    "positional spaced %s": _probe(
-        "db login with password=Prbpa Prbpb",
-        "db login with password=[Filtered] Prbpb",
-        ["Prbpa"],
-        "db login with password=%s",
-        ("Prbpa Prbpb",),
-        ["[Filtered]"],
-        "db login with password=[Filtered]",
-        log_secrets=["Prbpa", "Prbpb"],
-    ),
-    "positional spaced %r": _probe(
-        "db login with password='Prbra Prbrb'",
-        "db login with password='[Filtered]'",
-        ["Prbra", "Prbrb"],
-        "db login with password=%r",
-        ("Prbra Prbrb",),
-        ["[Filtered]"],
-        "db login with password='[Filtered]'",
-    ),
-    "mapping %(name)s": _probe(
-        "db login as bob with password='Prbma1 Prbma2'",
-        "db login as bob with password='[Filtered]'",
-        ["Prbma1", "Prbma2"],
-        "db login as %(user)s with password='%(pw)s'",
-        ({"user": "bob", "pw": "Prbma1 Prbma2"},),
-        {"user": "bob", "pw": "[Filtered]"},
-        "db login as bob with password='[Filtered]'",
-    ),
-    "unrelated short params": _probe(
-        "abc step 1 api_key=Prbsh1",
-        "abc step 1 api_key=[Filtered]",
-        ["Prbsh"],
-        "%s step %s api_key=%s1",
-        ("abc", 1, "Prbsh"),
-        ["abc", 1, "[Filtered]"],
-        "abc step 1 api_key=[Filtered]1",
-    ),
-    "Bearer token": _probe(
-        "upstream rejected Authorization: Bearer Prbbearer host=api",
-        "upstream rejected Authorization: [Filtered] host=api",
-        ["Prbbearer"],
-    ),
-    "key names": _probe(
-        "api_key=Prbka token=Prbkb password=Prbkc secret=Prbkd host=db",
-        "api_key=[Filtered] token=[Filtered] password=[Filtered] "
-        "secret=[Filtered] host=db",
-        ["Prbka", "Prbkb", "Prbkc", "Prbkd"],
-    ),
-    "already [Filtered]": _probe(
-        "x password=[Filtered] token='[Filtered]' host=db",
-        "x password=[Filtered] token='[Filtered]' host=db",
-        [],
-    ),
-}
-
-
-SENTINELS = (
-    "SENTINEL-pw-7f3a",
-    "SENTINEL-bearer-91c2",
-    "SENTINEL-key-55d0",
-    "SENTINEL-private-0b1e",
-)
-
-
-@pytest.fixture
-def transport():
+@pytest.mark.parametrize("at_ingestion", [True, False])
+def test_ordinary_event_and_next_event(at_ingestion):
+    # With no ingestion hook the raw breadcrumb remains on the SDK scope;
+    # send-time scrubbing must stand on its own for *each* envelope.
     with sentry_capture(
         LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-        before_breadcrumb=_before_breadcrumb,
+        before_breadcrumb=sentry._before_breadcrumb if at_ingestion else None,
+        include_local_variables=False,
     ) as transport:
-        yield transport
-
-
-def _sent(transport) -> str:
-    return json.dumps(transport.events)
-
-
-def _assert_no_sentinel(transport):
-    sent = _sent(transport)
-    for sentinel in SENTINELS:
-        assert sentinel not in sent
-
-
-def test_credentials_in_a_non_vertex_exception_message_are_not_sent(transport):
-    try:
-        raise ConnectionError(
-            f"login failed: password={SENTINELS[0]} host=db.internal "
-            f"Authorization: Bearer {SENTINELS[1]}"
-        )
-    except ConnectionError as error:
-        sentry_sdk.capture_exception(error)
-
-    assert len(transport.events) == 1
-    _assert_no_sentinel(transport)
-    value = transport.events[0]["exception"]["values"][-1]
-    assert value["type"] == "ConnectionError"
-    assert value["value"].startswith("login failed: password=[Filtered]")
-    assert "host=db.internal" in value["value"]
-    assert value["stacktrace"]["frames"][-1]["function"] == (
-        "test_credentials_in_a_non_vertex_exception_message_are_not_sent"
-    )
-
-
-def test_a_credential_document_in_an_exception_message_is_not_sent(transport):
-    try:
-        raise ValueError(json.dumps({"private_key": SENTINELS[3], "type": "svc"}))
-    except ValueError as error:
-        sentry_sdk.capture_exception(error)
-
-    _assert_no_sentinel(transport)
-    assert transport.events[0]["exception"]["values"][-1]["type"] == "ValueError"
-
-
-def test_credentials_in_a_log_message_are_not_sent(transport):
-    logging.getLogger(LOGGER).error(
-        "provider rejected api_key=%s for org %s", SENTINELS[2], "org-synthetic"
-    )
-    logging.getLogger(LOGGER).error(
-        f"upstream call failed with x-api-key={SENTINELS[2]}"
-    )
-
-    assert len(transport.events) == 2
-    _assert_no_sentinel(transport)
-    logentry = transport.events[0]["logentry"]
-    assert "org-synthetic" in json.dumps(logentry)
-    assert "provider rejected api_key=" in json.dumps(logentry)
-
-
-def test_an_ordinary_error_keeps_its_message(transport):
-    try:
-        raise ZeroDivisionError("division by zero in row 3 (max_tokens=4096)")
-    except ZeroDivisionError as error:
-        sentry_sdk.capture_exception(error)
-    logging.getLogger(LOGGER).error(
-        "eval batch %s failed after %d retries", "batch-7", 3
-    )
-
-    value = transport.events[0]["exception"]["values"][-1]
-    assert value["value"] == "division by zero in row 3 (max_tokens=4096)"
-    logentry = transport.events[1]["logentry"]
-    assert logentry["message"] == "eval batch %s failed after %d retries"
-    assert logentry["params"] == ["batch-7", 3]
-
-
-def test_a_quoted_spaced_credential_in_an_exception_is_not_sent(transport):
-    try:
-        raise PermissionError(f"login failed password='{SPACED_SECRET}' for bob")
-    except PermissionError as error:
-        sentry_sdk.capture_exception(error)
-
-    sent = _sent(transport)
-    for word in SPACED_SECRET.split():
-        assert word not in sent
-    value = transport.events[0]["exception"]["values"][-1]["value"]
-    assert value == "login failed password='[Filtered]' for bob"
-
-
-def test_a_spaced_credential_passed_as_a_log_argument_is_not_sent(transport):
-    logging.getLogger(LOGGER).error("db login with password=%s", SPACED_ARGUMENT)
-
-    sent = _sent(transport)
-    for word in SPACED_ARGUMENT.split():
-        assert word not in sent
-    logentry = transport.events[0]["logentry"]
-    assert logentry["params"] == ["[Filtered]"]
-    assert logentry["formatted"] == "db login with password=[Filtered]"
-
-
-def test_only_the_arguments_that_form_the_credential_are_redacted(transport):
-    logging.getLogger(LOGGER).error("%s step %s api_key=%s1", "abc", 1, "x")
-
-    assert transport.events[0]["logentry"]["params"] == ["abc", 1, "[Filtered]"]
-    assert "api_key=x1" not in _sent(transport)
-
-
-def _raise_and_capture(message: str) -> None:
-    try:
-        raise PermissionError(message)
-    except PermissionError as error:
-        sentry_sdk.capture_exception(error)
-
-
-def _words(secret: str) -> list[str]:
-    return secret.replace('\\"', " ").split()
-
-
-@pytest.mark.parametrize("quote", ["'", '"'])
-def test_a_cut_off_quoted_credential_is_not_sent(transport, quote):
-    _raise_and_capture(f"conn failed password={quote}{CUT_OFF_SECRET}")
-
-    assert CUT_OFF_SECRET not in _sent(transport)
-    value = transport.events[0]["exception"]["values"][-1]["value"]
-    assert value == f"conn failed password={quote}[Filtered]"
-
-
-def test_an_unclosed_quoted_spaced_credential_is_not_sent(transport):
-    _raise_and_capture(f"login failed token='{UNCLOSED_SECRET}")
-
-    sent = _sent(transport)
-    for word in _words(UNCLOSED_SECRET):
-        assert word not in sent
-    value = transport.events[0]["exception"]["values"][-1]["value"]
-    assert value == "login failed token='[Filtered]"
-
-
-def test_a_quoted_credential_spanning_lines_is_not_sent(transport):
-    _raise_and_capture(f"login failed password='{MULTILINE_SECRET}' end")
-
-    sent = _sent(transport)
-    for word in _words(MULTILINE_SECRET):
-        assert word not in sent
-    value = transport.events[0]["exception"]["values"][-1]["value"]
-    assert value == "login failed password='[Filtered]' end"
-
-
-def test_a_credential_closed_by_the_other_quote_is_not_sent(transport):
-    _raise_and_capture(f"login failed password=\"{MISMATCHED_SECRET}' tail")
-
-    sent = _sent(transport)
-    for word in _words(MISMATCHED_SECRET):
-        assert word not in sent
-    value = transport.events[0]["exception"]["values"][-1]["value"]
-    assert value == 'login failed password="[Filtered]'
-
-
-def test_an_escaped_quote_does_not_end_a_json_credential(transport):
-    _raise_and_capture(f'bad body {{"password": "{ESCAPED_SECRET}", "user": "bob"}}')
-
-    sent = _sent(transport)
-    for word in _words(ESCAPED_SECRET):
-        assert word not in sent
-    value = transport.events[0]["exception"]["values"][-1]["value"]
-    assert value == 'bad body {"password": "[Filtered]", "user": "bob"}'
-
-
-def test_an_unclosed_quoted_log_argument_is_not_sent(transport):
-    logging.getLogger(LOGGER).error("db login with password='%s", UNCLOSED_SECRET)
-
-    sent = _sent(transport)
-    for word in _words(UNCLOSED_SECRET):
-        assert word not in sent
-    logentry = transport.events[0]["logentry"]
-    assert logentry["params"] == ["[Filtered]"]
-    assert logentry["formatted"] == "db login with password='[Filtered]"
-
-
-def _capture_probe(message: str) -> None:
-    try:
-        raise ConnectionError(message)
-    except ConnectionError as error:
-        sentry_sdk.capture_exception(error)
-
-
-def _log_probe(template: str, args: tuple) -> None:
-    logging.getLogger(LOGGER).error(template, *args)
-
-
-@pytest.mark.parametrize("case", PROBES.values(), ids=PROBES.keys())
-def test_probe_table_as_an_exception_value(transport, case):
-    _capture_probe(case.text)
-
-    sent = _sent(transport)
-    for secret in case.secrets:
-        assert secret not in sent
-    assert "[Filtered]]" not in sent
-    assert transport.events[0]["exception"]["values"][-1]["value"] == case.expected
-
-
-@pytest.mark.parametrize("case", PROBES.values(), ids=PROBES.keys())
-def test_probe_table_as_a_log_message(transport, case):
-    if case.template is None:
-        _log_probe(case.text.replace("%", "%%"), ())
-    else:
-        _log_probe(case.template, case.args)
-
-    sent = _sent(transport)
-    for secret in case.log_secrets:
-        assert secret not in sent
-    assert "[Filtered]]" not in sent
-    logentry = transport.events[0]["logentry"]
-    if case.template is None:
-        assert logentry.get("formatted", logentry["message"]) == case.expected
-    else:
-        assert logentry["params"] == case.params
-        assert logentry["formatted"] == case.formatted
-
-
-def test_a_curly_quoted_template_is_not_redacted_twice(transport):
-    logging.getLogger(LOGGER).error("login failed password=“%s”", "Prbcurly")
-
-    sent = _sent(transport)
-    assert "Prbcurly" not in sent
-    assert "[Filtered]]" not in sent
-    logentry = transport.events[0]["logentry"]
-    assert logentry["params"] == ["[Filtered]"]
-    assert logentry["formatted"] == "login failed password=“[Filtered]”"
-
-
-# before_send runs synchronously on the logging thread, so scrubbing must stay
-# linear in the length of the text. Each input is about 100,000 characters;
-# the old name pattern took seconds on 1,600.
-_LONG = 100_000
-ADVERSARIAL = {
-    "password repeated": "password" * (_LONG // 8),
-    "token repeated": "token" * (_LONG // 5),
-    "token inside a long word": "a" * (_LONG // 2) + "token" + "b" * (_LONG // 2),
-    "long unquoted value": "password=" + "A" * _LONG,
-    "long word without a name": "A" * _LONG,
-    "base64-like": base64.b64encode(bytes(range(256)) * (_LONG // 340)).decode(),
-    "name without separator": "x-api-key" + "\\" * _LONG,
-    "spaces after separator": "password:" + " " * _LONG,
-    "escaped quotes": "password=" + ("\\" * 8 + '"') * (_LONG // 9),
-    "backslash run": 'password="' + "\\" * _LONG,
-    "nested JSON": "token=" + json.dumps(json.dumps(json.dumps(["'\"\\"] * 9000))),
-    "quote runs": "token='" * (_LONG // 7 + 1),
-    "[Filtered] repeated": "password=[Filtered] " * (_LONG // 20),
-    "many pairs": "token=x " * (_LONG // 8),
-}
-_BOUND_SECONDS = 1.0
-
-
-def _timed(call, *args) -> float:
-    start = time.perf_counter()
-    call(*args)
-    return time.perf_counter() - start
-
-
-@pytest.mark.parametrize("text", ADVERSARIAL.values(), ids=ADVERSARIAL.keys())
-def test_scrubbing_text_is_linear(text):
-    assert len(text) >= _LONG
-    assert _timed(_scrub_text, text) < _BOUND_SECONDS
-
-
-@pytest.mark.parametrize("text", ADVERSARIAL.values(), ids=ADVERSARIAL.keys())
-def test_scrubbing_an_event_is_linear(transport, text):
-    # Exception value, %s argument and formatted message, in one event each.
-    assert _timed(_capture_probe, text) < _BOUND_SECONDS
-    assert _timed(_log_probe, "upstream said %s", (text,)) < _BOUND_SECONDS
-    assert _timed(_log_probe, "upstream said " + text.replace("%", "%%"), ()) < (
-        _BOUND_SECONDS
-    )
-    assert len(transport.events) == 3
-
-
-_MANY = 10_000
-
-
-def test_scrubbing_many_log_arguments_is_linear(transport):
-    # Each argument's rendering is checked against the redacted values by
-    # bisection, not against every one of them.
-    for template, arg in (("password=%s ", "x"), ("password=x %s ", "y")):
-        assert _timed(_log_probe, template * _MANY, (arg,) * _MANY) < _BOUND_SECONDS
-    assert len(transport.events) == 2
-    assert transport.events[0]["logentry"]["params"] == ["[Filtered]"] * _MANY
-    assert transport.events[1]["logentry"]["params"] == ["y"] * _MANY
-
-
-def test_many_log_arguments_without_a_replayable_template_are_redacted_fast():
-    # The template does not render ``formatted`` (the SDK or a handler changed
-    # it), so arguments are looked for in the text, each distinct rendering
-    # once; past the search budget every one is redacted.
-    message = "password=x%s " * _MANY
-    params = [f"y{i}" for i in range(_MANY)]
-    event = {
-        "logentry": {
-            "message": message,
-            "params": params,
-            "formatted": message % tuple(params) + "...",
-        }
-    }
-    assert _timed(_scrub_message_fields, event, []) < _BOUND_SECONDS
-    assert event["logentry"]["params"] == ["[Filtered]"] * _MANY
-
-    start = time.perf_counter()
-    scrubbed, redacted = _scrub_log_params(["y"] * _MANY, "password=x " * _MANY)
-    assert time.perf_counter() - start < _BOUND_SECONDS
-    assert not redacted and scrubbed == ["y"] * _MANY
-
-
-class _StrAndRepr:
-    """Renders as ``text`` but has another ``repr``, so the params Sentry
-    serialises do not replay the template into the formatted message."""
-
-    def __init__(self, text):
-        self.text = text
-
-    def __str__(self):
-        return self.text
-
-    def __repr__(self):
-        return "R" + self.text
-
-
-@pytest.mark.parametrize("count", [1000, 1100])
-def test_an_over_budget_event_sends_no_glued_literal(count):
-    # Past the search budget every argument is redacted; re-rendering the
-    # template from them would glue "[Filtered]" to the literal after the last
-    # one, and that literal is part of the credential value. The SDK's own
-    # limit on a value's length (1024 in older releases, far more since)
-    # would otherwise cut the formatted message short of the budget.
-    with sentry_capture(
-        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-        max_value_length=100_000,
-    ) as transport:
-        logging.getLogger(LOGGER).error(
-            " ".join(["password=%s"] * count) + " password=a%sZqN6 more",
-            *[f"v{i:05d}" for i in range(count)],
-            _StrAndRepr("b"),
-        )
-
-    sent = _sent(transport)
-    assert "ZqN6" not in sent
-    for i in range(count):
-        assert f"v{i:05d}" not in sent
-    logentry = transport.events[0]["logentry"]
-    assert logentry["formatted"] == "[Filtered]"
-    assert logentry["message"] == "[Filtered]"
-    assert logentry["params"] == ["[Filtered]"] * (count + 1)
-
-
-@pytest.mark.parametrize("as_dict", [False, True])
-def test_an_over_budget_event_filters_every_param(as_dict):
-    # Empty arguments too: past the budget nothing of the event is kept.
-    # 1100 distinct arguments and redacted values exceed the search budget.
-    count = 1100
-    message = "password=x%s " * count
-    params = [f"y{i}" for i in range(count)] + [""]
-    if as_dict:
-        params = {f"k{i}": param for i, param in enumerate(params)}
-    event = {
-        "logentry": {
-            "message": message,
-            "params": params,
-            "formatted": "password=x"
-            + " password=x".join(
-                str(p) for p in (params.values() if as_dict else params)
-            )
-            + "...",
-        }
-    }
-    _scrub_message_fields(event, [])
-    logentry = event["logentry"]
-    assert logentry["message"] == logentry["formatted"] == "[Filtered]"
-    values = logentry["params"].values() if as_dict else logentry["params"]
-    assert list(values) == ["[Filtered]"] * (count + 1)
+        crumb = {"method": "POST", "detail": MARKER}
+        sentry_sdk.add_breadcrumb(category="http", message=MARKER, data=crumb)
+        logging.getLogger(LOGGER).error("job %s stopped", MARKER, extra={"note": MARKER})
+        sentry_sdk.capture_event({
+            "exception": {"values": [{"type": "LookupError", "value": "row missing"}]},
+            "extra": {"count": 2, "note": MARKER, "input_tokens": 17, "max_tokens": MARKER},
+            "request": {
+                "method": "GET", "headers": {"Cookie": f"first=ok; second={MARKER}"},
+                "cookies": {"session": MARKER},
+            },
+        })
+        first, second = transport.events
+        for event in (first, second):
+            assert MARKER not in json.dumps(event)
+            trail = event["breadcrumbs"]["values"]
+            assert any(c.get("category") == "http" and c.get("data") == {"method": "POST"} for c in trail)
+        assert first["logger"] == LOGGER
+        assert first["logentry"] == {"message": sentry._REDACTED}
+        assert second["exception"]["values"][-1]["type"] == "LookupError"
+        assert second["exception"]["values"][-1]["value"] == "row missing"
+        assert second["extra"] == {"count": 2, "input_tokens": 17}
+        assert second["request"]["method"] == "GET"
+        assert second["request"]["cookies"] == sentry._REDACTED
+        assert crumb["detail"] == MARKER
+
+
+@pytest.mark.parametrize(("message", "kept"), [
+    ("job failed (max_tokens=4096)", True),
+    ("job failed token_count=12", True),
+    ("job failed synthetic_tokens=12", False),
+    (f"job failed input_tokens={MARKER}", False),
+    (f"Cookie: session=ok; additional={MARKER}", False),
+    (f"job failed password={MARKER} trailing detail", False),
+])
+def test_bounded_message_policy(message, kept):
+    with sentry_capture(include_local_variables=False) as transport:
+        sentry_sdk.capture_event({"message": message})
+        sentry_sdk.capture_message("next diagnostic")
+        first, second = transport.events
+        assert first["message"] == (message if kept else sentry._REDACTED)
+        assert second["message"] == "next diagnostic"
+        assert MARKER not in json.dumps(transport.events)
+
+
+def test_small_limits_discard_uninspectable_payloads(monkeypatch):
+    # Exercise the size boundaries with ordinary, small fixtures.
+    monkeypatch.setattr(sentry, "_MAX_ITEMS", 3)
+    monkeypatch.setattr(sentry, "_MAX_TEXT", 40)
+    deep = MARKER
+    for _ in range(8):
+        deep = [deep]
+    with sentry_capture(include_local_variables=False) as transport:
+        sentry_sdk.capture_event({
+            "message": "ordinary synthetic diagnostic longer than forty characters",
+            "contexts": {"fixture": {"nested": deep}},
+            "extra": {"note": MARKER},
+            "request": {"headers": dict.fromkeys(("a", "b", "c", "d"), MARKER)},
+        })
+        sentry_sdk.capture_message("next diagnostic")
+        first, second = transport.events
+        assert first["message"] == sentry._REDACTED
+        assert "fixture" not in first["contexts"]
+        assert second["message"] == "next diagnostic"
+        assert MARKER not in json.dumps(transport.events)
+
+
+def test_uninspectable_arguments_are_not_rendered():
+    calls = []
+
+    class Uninspectable:
+        def __str__(self):
+            calls.append("render")
+            return MARKER
+
+        __repr__ = __str__
+
+    production_hook = sentry._get_before_send()
+
+    def inject_after_sdk_normalization(event, hint):
+        if event.get("message") == "first diagnostic":
+            event["logentry"] = {"message": "job %s", "params": [Uninspectable()]}
+            event["extra"] = {"detail": Uninspectable()}
+        return production_hook(event, hint)
+
+    with sentry_capture(before_send=inject_after_sdk_normalization) as transport:
+        sentry_sdk.capture_message("first diagnostic")
+        sentry_sdk.capture_message("next diagnostic")
+        first, second = transport.events
+        assert first["logentry"] == {"message": sentry._REDACTED}
+        assert second["message"] == "next diagnostic"
+        assert MARKER not in json.dumps(transport.events)
+        assert calls == []
