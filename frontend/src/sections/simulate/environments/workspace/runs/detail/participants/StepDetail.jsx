@@ -80,7 +80,12 @@ function Message({ text, shown, bad }) {
       }}
     >
       {/* Worker text isn't ours: ChatMarkdown shows raw HTML as text and never loads an image. */}
-      <ChatMarkdown text={asMarkdown(shown)} dim sx={{ typography: "s2" }} />
+      <ChatMarkdown
+        text={asMarkdown(shown)}
+        dim
+        basicHtml
+        sx={{ typography: "s2" }}
+      />
     </Box>
   );
 }
