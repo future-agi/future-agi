@@ -271,6 +271,17 @@ export const VERSIONS_COPY = {
     name: "Name",
     useCase: "Use case",
   },
+  // The History tab: every version as one timeline, newest first.
+  history: {
+    days: { today: "Today", yesterday: "Yesterday", earlier: "Earlier" },
+    badges: {
+      inUse: "runs use this",
+      tested: "being tested",
+      latest: "latest",
+      draft: "draft",
+      discarded: "discarded",
+    },
+  },
 };
 
 // The environment's agent versions and their credentials (Overview → Manage
