@@ -6164,6 +6164,7 @@ def test_a_build_yield_is_served_with_the_stage_outputs_from_the_build_and_its_a
             "asked": 20,
             "written": 10,
             "line": "this agent supports about 10 distinct scenarios; wrote 10 of 20",
+            "why": "its plan has one order state and two refund paths",
         },
     }
     body = io.BytesIO()
@@ -6187,6 +6188,7 @@ def test_a_build_yield_is_served_with_the_stage_outputs_from_the_build_and_its_a
     assert served == archived
     assert (served["summary"], served["data"]) == (
         "8 of 10 runnable; held: 2 because its expected handling does not pass its checks; "
-        "this agent supports about 10 distinct scenarios; wrote 10 of 20",
+        "this agent supports about 10 distinct scenarios; wrote 10 of 20. "
+        "its plan has one order state and two refund paths",
         build_yield,
     )

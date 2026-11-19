@@ -6091,21 +6091,24 @@ def authoring_stage_outputs(
         )
     if isinstance(build_yield, dict):
         # ALK's `generic-harness/yield.json`: what the build was asked for, what runs, what is held and why,
-        # and how many distinct cases the agent supports when that is fewer than were asked for.
+        # and, when that is fewer than were asked for, how many distinct cases the agent supports and why.
         supports = build_yield.get("supports")
+        supports = supports if isinstance(supports, dict) else {}
+        summary = "; ".join(
+            str(line)
+            for line in (build_yield.get("line"), supports.get("line"))
+            if line
+        )
+        if supports.get("why"):
+            summary = (
+                f"{summary}. {supports['why']}" if summary else str(supports["why"])
+            )
         outputs.append(
             {
                 "id": "00000000-0000-0000-0000-000000000008",
                 "kind": "yield",
                 "title": "Runnable cases",
-                "summary": "; ".join(
-                    str(line)
-                    for line in (
-                        build_yield.get("line"),
-                        supports.get("line") if isinstance(supports, dict) else None,
-                    )
-                    if line
-                ),
+                "summary": summary,
                 "data": _secret_safe(
                     {
                         field: build_yield.get(field)
