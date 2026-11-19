@@ -90,15 +90,46 @@ function startTracker(id) {
   let lastReportedLocation;
   let wasBlocked = false;
   let jsQueued = false;
-  let script = document.createElement("script");
-  script.async = true;
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${id}`;
+  let script;
+  let failed = false;
 
-  function gtag() {
-    window.dataLayer.push(arguments);
+  // A queue can throw after consuming a command. Never retry in this document,
+  // even if a React effect rebinds the tracker or a history hook is still live.
+  function disable() {
+    failed = true;
+    try {
+      window[disableKey] = true;
+    } catch {
+      // The opt-out property itself may be unwritable; our dispatch stays off.
+    }
   }
 
-  function onNavigation() {
+  function safely(action) {
+    if (failed) return;
+    try {
+      action();
+    } catch {
+      disable();
+    }
+  }
+
+  function currentQueue() {
+    const queue = window.dataLayer;
+    if (!Array.isArray(queue) || typeof queue.push !== "function") {
+      throw new TypeError("Invalid analytics queue");
+    }
+    return queue;
+  }
+
+  function gtag() {
+    safely(() => {
+      currentQueue().push(arguments);
+      currentQueue(); // A synchronous consumer may have replaced the queue.
+    });
+  }
+
+  function reportNavigation() {
+    currentQueue(); // Check even on a same-path rebind, before clearing opt-out.
     const allowed = allowedNow();
     window[disableKey] = !allowed || !routes;
     if (!allowed) {
@@ -122,7 +153,10 @@ function startTracker(id) {
     // An existing GTM container can process a dataLayer push synchronously.
     // Do not finish dispatching a view if a push navigated away or vetoed it.
     const stillCurrent = () =>
-      routes && window.location.pathname === pathname && allowedNow();
+      !failed &&
+      routes &&
+      window.location.pathname === pathname &&
+      allowedNow();
     if (!jsQueued) {
       jsQueued = true;
       gtag("js", new Date());
@@ -144,22 +178,33 @@ function startTracker(id) {
     }
   }
 
+  function onNavigation() {
+    safely(reportNavigation);
+  }
+
   // The load-time veto is sticky; the address may also have changed while
   // the app was loading. Check both before exposing the queue or adding hooks.
   if (!allowedNow()) return undefined;
-  window.dataLayer = window.dataLayer || [];
-  window.gtag = gtag;
-  const { history } = window;
-  ["pushState", "replaceState"].forEach((method) => {
-    const original = history[method];
-    history[method] = function analyticsUrlPolicy(...args) {
-      const result = Reflect.apply(original, this, args);
-      onNavigation();
-      return result;
-    };
+  safely(() => {
+    if (window.dataLayer === undefined) window.dataLayer = [];
+    currentQueue();
+    script = document.createElement("script");
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${id}`;
+    script.onerror = disable;
+    window.gtag = gtag;
+    const { history } = window;
+    ["pushState", "replaceState"].forEach((method) => {
+      const original = history[method];
+      history[method] = function analyticsUrlPolicy(...args) {
+        const result = Reflect.apply(original, this, args);
+        onNavigation();
+        return result;
+      };
+    });
+    window.addEventListener("popstate", onNavigation, true);
+    window.addEventListener("hashchange", onNavigation, true);
   });
-  window.addEventListener("popstate", onNavigation, true);
-  window.addEventListener("hashchange", onNavigation, true);
 
   return (committedRoutes) => {
     routes = committedRoutes;
@@ -167,7 +212,9 @@ function startTracker(id) {
     return () => {
       if (routes === committedRoutes) {
         routes = undefined;
-        window[disableKey] = true;
+        safely(() => {
+          window[disableKey] = true;
+        });
       }
     };
   };

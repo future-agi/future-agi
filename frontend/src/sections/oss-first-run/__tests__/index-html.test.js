@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { cwd } from "node:process";
 import { runInNewContext } from "node:vm";
 import { JSDOM } from "jsdom";
+import { createElement } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // The page every self-hosted user loads first, before any React code runs.
@@ -41,6 +44,9 @@ function googleUrls(env, url) {
 
 const origin = "https://app.example.test";
 const taggedBuild = { VITE_GTM_ID: "GTM-TEST" };
+const consent = "/mcp/authorize?request_id=example";
+const loginReturningTo = (path) =>
+  `/auth/jwt/login?${new URLSearchParams({ returnTo: path })}`;
 const googleUrlsIn = (document) =>
   urlsIn(document).filter((url) => GOOGLE_HOST.test(url));
 
@@ -130,8 +136,10 @@ describe("index.html third-party requests", () => {
       "registration return",
       "/auth/jwt/login?returnTo=%2Fauth%2Fjwt%2Fregister%3Fonboarding_token%3Dexample",
     ],
-    ["authorization consent", "/mcp/authorize?request_id=example"],
+    ["authorization consent", consent],
     ["legacy authorization consent", "/mcp/authorize?client_id=example"],
+    ["consent return", loginReturningTo(consent)],
+    ["encoded consent return", loginReturningTo(encodeURIComponent(consent))],
   ])("leaves tags off for %s", (_name, path) => {
     const { window, document } = runHead(path);
     expect(window.__analyticsAllowedAtLoad).toBe(false);
@@ -193,6 +201,61 @@ describe("index.html third-party requests", () => {
     },
   );
 
+  it("opens the root router's stored post-login destination in a fresh document", () => {
+    const { dom, window } = runHead("/");
+    dom.window.localStorage.setItem("redirectUrl", consent);
+    const view = render(
+      createElement(
+        BrowserRouter,
+        { window: dom.window },
+        createElement(
+          Routes,
+          null,
+          createElement(Route, {
+            path: "/",
+            element: createElement(Navigate, {
+              to: dom.window.localStorage.getItem("redirectUrl"),
+              replace: true,
+            }),
+          }),
+          createElement(Route, {
+            path: "/mcp/authorize",
+            element: "Consent fixture",
+          }),
+        ),
+      ),
+    );
+    expect(window.location.replace).toHaveBeenCalledWith(origin + consent);
+    expect(window.location.href).toBe(`${origin}/`);
+    expect(view.queryByText("Consent fixture")).toBeNull();
+  });
+
+  it.each([
+    ["pushState", "assign", consent],
+    ["pushState", "assign", loginReturningTo(consent)],
+    ["replaceState", "replace", loginReturningTo(encodeURIComponent(consent))],
+    ["replaceState", "replace", loginReturningTo("%2Fexample%")],
+  ])("keeps %s to %s tag-free for %s", (method, navigation, target) => {
+    const { window } = runHead("/dashboard");
+    window.history[method]({ step: 1 }, "", target);
+    expect(window.location[navigation]).toHaveBeenCalledWith(origin + target);
+    expect(window.location.href).toBe(`${origin}/dashboard`);
+    const arrival = runHead(window.location[navigation].mock.calls[0][0]);
+    expect(arrival.window.__analyticsAllowedAtLoad).toBe(false);
+    expect(googleUrlsIn(arrival.document)).toEqual([]);
+  });
+
+  it("does not apply a guarded history update if document replacement fails", () => {
+    const { window } = runHead("/");
+    window.location.replace.mockImplementationOnce(() => {
+      throw new Error("Navigation unavailable");
+    });
+    expect(() => window.history.replaceState(null, "", consent)).toThrow(
+      "Navigation unavailable",
+    );
+    expect(window.location.href).toBe(`${origin}/`);
+  });
+
   it("starts a fresh document on traversal into guarded registration", () => {
     const { window, dom } = runHead("/dashboard");
     dom.reconfigure({
@@ -202,12 +265,57 @@ describe("index.html third-party requests", () => {
     expect(window.location.reload).toHaveBeenCalledOnce();
   });
 
-  it("preserves in-app registration without marketplace parameters", () => {
+  it.each([consent, loginReturningTo(encodeURIComponent(consent))])(
+    "starts fresh before routing back or forward to %s",
+    async (target) => {
+      // Create the entries before tags start, then traverse with tags active.
+      const { window, dom } = runHead("/first", ({ history }) => {
+        history.pushState({ step: 1 }, "", target);
+        history.pushState({ step: 2 }, "", "/last");
+      });
+      const laterListener = vi.fn();
+      dom.window.addEventListener("popstate", laterListener);
+      window.history.back();
+      await vi.waitFor(() =>
+        expect(window.location.reload).toHaveBeenCalledTimes(1),
+      );
+      expect(window.location.href).toBe(origin + target);
+      expect(laterListener).not.toHaveBeenCalled();
+
+      window.history.back();
+      await vi.waitFor(() => expect(laterListener).toHaveBeenCalledTimes(1));
+      expect(window.location.href).toBe(`${origin}/first`);
+
+      window.history.forward();
+      await vi.waitFor(() =>
+        expect(window.location.reload).toHaveBeenCalledTimes(2),
+      );
+      expect(window.location.href).toBe(origin + target);
+      expect(laterListener).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ["/", {}],
+    [loginReturningTo(consent), taggedBuild],
+  ])("keeps consent in-app when no tag started on %s", (start, env) => {
+    const { window } = runHead(start, undefined, env);
+    window.history.replaceState({ step: 1 }, "", consent);
+    expect(window.location.href).toBe(origin + consent);
+    expect(window.history.state).toEqual({ step: 1 });
+    expect(window.location.replace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["pushState", "/auth/jwt/register"],
+    ["replaceState", loginReturningTo("/mcp/authorize-help")],
+  ])("preserves ordinary %s navigation to %s", (method, target) => {
     const { window } = runHead("/auth/jwt/login");
-    window.history.pushState({ step: 1 }, "", "/auth/jwt/register");
-    expect(window.location.href).toBe(`${origin}/auth/jwt/register`);
+    window.history[method]({ step: 1 }, "", target);
+    expect(window.location.href).toBe(origin + target);
     expect(window.history.state).toEqual({ step: 1 });
     expect(window.location.assign).not.toHaveBeenCalled();
+    expect(window.location.replace).not.toHaveBeenCalled();
   });
 
   it("keeps marketplace routing in-app in a document that never started tags", () => {
