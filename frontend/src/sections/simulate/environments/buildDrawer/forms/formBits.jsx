@@ -36,6 +36,7 @@ import {
 import BuildFilesField from "./shared/BuildFilesField";
 import BuildTestField from "./shared/BuildTestField";
 import { BUILD_TEST_MIN } from "./shared/buildFiles";
+import { uploadsLabel, useFileUploads } from "./shared/useFileUploads";
 
 /*
   The pieces every setup form in the Build environment drawer is made of,
@@ -852,7 +853,7 @@ export function FormCard({
   const shown = connect ? sample : build;
   // Held here only: no build payload carries them yet.
   const [testRequest, setTestRequest] = useState("");
-  const [files, setFiles] = useState([]);
+  const uploads = useFileUploads();
   useEffect(() => {
     onBusyChange?.(shown.committing);
   }, [shown.committing, onBusyChange]);
@@ -908,11 +909,7 @@ export function FormCard({
               />
               <ScenarioRow value={scenarioCount} onChange={onScenarioCount} />
               <ParallelRow build={build} />
-              <BuildFilesField
-                flagged={!uiOnly}
-                files={files}
-                onChange={setFiles}
-              />
+              <BuildFilesField flagged={!uiOnly} uploads={uploads} />
             </>
           )}
           <PreflightRow
@@ -967,7 +964,9 @@ export function FormCard({
           size="medium"
           variant="contained"
           color="primary"
-          disabled={disabled || shown.committing}
+          disabled={
+            disabled || shown.committing || uploads.uploading.length > 0
+          }
           onClick={
             connect
               ? () =>
@@ -979,7 +978,10 @@ export function FormCard({
           startIcon={<Iconify icon="solar:link-circle-linear" width={14} />}
           sx={{ ...BTN_SX, flexShrink: 0 }}
         >
-          {connect ? "Connect agent" : "Connect and build environment"}
+          {connect
+            ? "Connect agent"
+            : uploadsLabel(uploads, "Connect and build") ||
+              "Connect and build environment"}
         </Button>
       </Stack>
     </Box>

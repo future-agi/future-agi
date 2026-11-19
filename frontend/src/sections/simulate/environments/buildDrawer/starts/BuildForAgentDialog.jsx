@@ -19,6 +19,11 @@ import { MONO, PreflightRow, useUiOnlyBuild } from "../forms/formBits";
 import BuildFilesField from "../forms/shared/BuildFilesField";
 import BuildTestField from "../forms/shared/BuildTestField";
 import { BUILD_TEST_MIN } from "../forms/shared/buildFiles";
+import {
+  draftFilesOf,
+  uploadsLabel,
+  useFileUploads,
+} from "../forms/shared/useFileUploads";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { useDesignDraftStore } from "../../design/useDesignDraftStore";
 import { BTN_SX, INPUT_SX, T12, T13, T14, focusRing } from "../drawerStyles";
@@ -92,7 +97,7 @@ function DialogBody({ agent, onClose, subtitle }) {
   const createDesignDraft = useDesignDraftStore((s) => s.createDesignDraft);
   const [name, setName] = useState(() => envNameFor(agent));
   const [testRequest, setTestRequest] = useState("");
-  const [files, setFiles] = useState([]);
+  const uploads = useFileUploads();
   const version = agent.latestLabel || "Latest";
   // Held as typed, so a half-typed number isn't snapped mid-edit.
   const [countText, setCountText] = useState("10");
@@ -237,7 +242,7 @@ function DialogBody({ agent, onClose, subtitle }) {
           The environment tests this version first. You can add scenarios and
           switch versions afterwards.
         </Typography>
-        <BuildFilesField files={files} onChange={setFiles} />
+        <BuildFilesField uploads={uploads} />
         <PreflightRow
           build={build}
           canRun={!!name.trim() && countOk}
@@ -291,14 +296,14 @@ function DialogBody({ agent, onClose, subtitle }) {
           size="small"
           variant="contained"
           color="primary"
-          disabled={!!blocked}
+          disabled={!!blocked || uploads.uploading.length > 0}
           onClick={() =>
             navigate(
               paths.dashboard.simulate.environments.design(
                 createDesignDraft({
                   name,
                   description: testRequest,
-                  files,
+                  files: draftFilesOf(uploads.done),
                   agent: {
                     id: agent.id,
                     name: agent.name,
@@ -312,7 +317,7 @@ function DialogBody({ agent, onClose, subtitle }) {
           }
           sx={BTN_SX}
         >
-          Build environment
+          {uploadsLabel(uploads) || "Build environment"}
         </Button>
       </Stack>
     </>

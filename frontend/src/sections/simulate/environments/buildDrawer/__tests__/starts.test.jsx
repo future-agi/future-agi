@@ -66,6 +66,17 @@ vi.mock(
       ) : null,
   }),
 );
+// Uploads finish at once here; the stub's own timing is tested with its hook.
+vi.mock("src/api/simulate-environments/designDocuments", () => {
+  const upload = async (file) => ({
+    id: `doc-${file.name}`,
+    name: file.name,
+    content_type: file.type,
+    sha256: "0",
+    size: file.size,
+  });
+  return { useUploadDesignDocument: () => upload };
+});
 
 vi.mock("notistack", async () => {
   const actual = await vi.importActual("notistack");
@@ -76,6 +87,9 @@ const { createHarnessJob, preflightHarnessJob } = await import(
   "src/api/harness/harness"
 );
 const { enqueueSnackbar } = await import("notistack");
+const { useDesignDraftStore } = await import(
+  "../../design/useDesignDraftStore"
+);
 const { default: BuildEnvironmentDrawer } = await import(
   "../BuildEnvironmentDrawer"
 );
@@ -156,7 +170,7 @@ describe("Build from scratch", () => {
     expectDesignPage();
   });
 
-  it("builds from an attached file alone, listed and removable", () => {
+  it("builds from an uploaded file alone, listed and removable", async () => {
     render();
     click(/Build from scratch/);
     const file = new File(["a,b"], "calls.csv", { type: "text/csv" });
@@ -165,13 +179,15 @@ describe("Build from scratch", () => {
     });
     const list = screen.getByRole("list", { name: "Attached files" });
     expect(within(list).getByText("calls.csv")).toBeInTheDocument();
-    expect(button("Build environment")).toBeEnabled();
+    await waitFor(() => expect(button("Build environment")).toBeEnabled());
     click("Remove calls.csv");
-    expect(screen.queryByRole("list", { name: "Attached files" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole("list", { name: "Attached files" })).toBeNull(),
+    );
     expect(button("Build environment")).toBeDisabled();
   });
 
-  it("replaces a file's row when a file with the same name is picked again", () => {
+  it("refuses a second file with the same name and builds without it", async () => {
     render();
     click(/Build from scratch/);
     const pick = (body) =>
@@ -181,8 +197,24 @@ describe("Build from scratch", () => {
     pick("a,b");
     pick("a,b\n".repeat(600));
     const list = screen.getByRole("list", { name: "Attached files" });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-    expect(within(list).getByText("2 KB")).toBeInTheDocument();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByRole("alert")).toHaveTextContent(
+      "Another file here has this name.",
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Build without 1 failed file",
+      }),
+    );
+    expectDesignPage();
+    const draftId = navigate.mock.calls[0][0].split("/").pop();
+    expect(useDesignDraftStore.getState().drafts[draftId].files).toEqual([
+      expect.objectContaining({
+        name: "orders.csv",
+        documentId: "doc-orders.csv",
+        size: 3,
+      }),
+    ]);
   });
 
   it("shows the Falcon AI bar and says drafting isn't wired, without drafting", () => {
