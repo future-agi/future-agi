@@ -5,11 +5,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { buildSourceReview } from "src/sections/simulate/environments/workspace/sources/sourceReview";
 import { usageOf } from "src/sections/simulate/environments/workspace/sources/sources.constants";
 import axios from "src/utils/axios";
+import { editColumn } from "src/sections/simulate/environments/workspace/sources/mapping";
+import { draftReviewKey } from "../draftReview";
 import {
   sourceSummaryKey,
   useAcceptSource,
   usePrepareKbSource,
   usePrepareUploadSource,
+  useRevertFileEdits,
+  useUpdateSource,
 } from "../sources";
 import { kbChangesOf, kbRefreshed, readSource } from "../_fixtures/sources";
 
@@ -29,6 +33,24 @@ const statusesOf = () =>
   client
     .getQueryData(sourceSummaryKey("env-1"))
     .sources.map((source) => source.status);
+
+const accept = async (prepared) => {
+  const { result } = renderHook(() => useAcceptSource("env-1"), { wrapper });
+  await act(() =>
+    result.current.mutateAsync({
+      import_ref: prepared.import_ref,
+      expected_environment_version_id:
+        prepared.capabilities.environment_version_id,
+      expected_draft: prepared.capabilities.draft,
+      expected_draft_digest: prepared.draft_digest,
+      review: buildSourceReview(prepared.draft),
+      ui: {
+        accepted: prepared.ui.items.filter((item) => !item.blocking),
+        failed: [],
+      },
+    }),
+  );
+};
 
 const prepare = async (files) => {
   const { result } = renderHook(() => usePrepareUploadSource("env-1"), {
@@ -91,25 +113,50 @@ describe("environment sources stub", () => {
     await act(async () => vi.advanceTimersByTime(5000));
     expect(statusesOf()).toEqual(["not_saved"]);
 
-    const { result } = renderHook(() => useAcceptSource("env-1"), { wrapper });
-    await act(() =>
-      result.current.mutateAsync({
-        import_ref: prepared.import_ref,
-        expected_environment_version_id:
-          prepared.capabilities.environment_version_id,
-        expected_draft: prepared.capabilities.draft,
-        expected_draft_digest: prepared.draft_digest,
-        review: buildSourceReview(prepared.draft),
-        ui: {
-          accepted: prepared.ui.items.filter((item) => !item.blocking),
-          failed: [],
-        },
-      }),
-    );
+    await accept(prepared);
     expect(statusesOf()).toEqual(["ready"]);
     // 3 rules and the two day-boundary scenarios citing it, as the prototype counts.
     const [saved] = client.getQueryData(sourceSummaryKey("env-1")).sources;
     expect(usageOf(saved).count).toBe(5);
+  });
+
+  it("a mapping edit on a saved file is one draft row until it matches the saved file again", async () => {
+    await accept(await prepare([fileOf("orders.csv")]));
+    const { result } = renderHook(
+      () => ({
+        update: useUpdateSource("env-1"),
+        revert: useRevertFileEdits("env-1"),
+      }),
+      { wrapper },
+    );
+    const [{ source_id: id }] = client.getQueryData(
+      sourceSummaryKey("env-1"),
+    ).sources;
+    const pointAt = (ref) =>
+      act(() =>
+        result.current.update(id, (one) =>
+          editColumn(one, "customer_id", { ref }),
+        ),
+      );
+    const row = () =>
+      client
+        .getQueryData(draftReviewKey("env-1"))
+        .changes.find((one) => one.id === `world_state:mapping-${id}`);
+    const refNow = () =>
+      client
+        .getQueryData(sourceSummaryKey("env-1"))
+        .sources[0].ui.parsed.columns.find((one) => one.name === "customer_id")
+        .ref;
+
+    pointAt("users.id");
+    expect(row().summary).toBe("orders.csv: customer_id points at users.id");
+    pointAt("customers.customer_id");
+    expect(row()).toBeUndefined();
+
+    pointAt("users.id");
+    act(() => result.current.revert([row()]));
+    expect(row()).toBeUndefined();
+    expect(refNow()).toBe("customers.customer_id");
   });
 
   it("a Knowledge base copy changes from what it read, and a refresh takes the changes", () => {
