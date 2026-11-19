@@ -49,7 +49,6 @@ import { useSimStore, useEnvState, useConnectedAgents } from "../store";
 import {
   envAgentKey,
   agentIdOf,
-  needsFoundCheck,
   needsToolSafety,
   sourceKindOf,
 } from "../_mock/agentRegistry";
@@ -1750,17 +1749,10 @@ export default function EnvironmentWorkspace() {
     /* Built from scratch: Review and save above is the next step — an agent
        is connected after the release is saved (builder.md §5). */
     if (env.builtFrom?.releaseStep && !env.releaseSavedAt) return null;
-    /* Sealed runs go ahead on what we read; the review is still worth doing. */
-    if (runEnabled)
-      return needsFoundCheck(envState.agent)
-        ? {
-            tone: "info",
-            title: "Runs use what we read from the agent's code.",
-            line: `Optional — review ${agentName}'s tools, prompts and credentials to correct anything.`,
-            actionLabel: "Review what we found",
-            onAction: () => setFoundOpen(true),
-          }
-        : null;
+    /* Sealed runs go ahead on what we read. Checking it is optional and
+       about the agent, so it lives in the agent's Finish setting up list,
+       not as a banner here (the plan has it on the connect side only). */
+    if (runEnabled) return null;
     if (!readiness.ready) {
       /* Live needs one answer; the rest of the review is optional. Sealed
          needs none, so it's offered as the way out. */
