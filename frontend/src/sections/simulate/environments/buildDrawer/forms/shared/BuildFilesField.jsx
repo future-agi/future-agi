@@ -1,24 +1,22 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
-import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { formatFileSize } from "src/utils/utils";
 import UiOnlyFlag from "../../../components/UiOnlyFlag";
-import { OUTLINED_BTN_SX, ROW_BOX_SX, T12, T13 } from "../../drawerStyles";
-import {
-  BUILD_FILES_ACCEPT,
-  extOf,
-  mergeBuildFiles,
-  readAsOf,
-} from "./buildFiles";
+import { OUTLINED_BTN_SX, T12 } from "../../drawerStyles";
+import { BUILD_FILES_ACCEPT, mergeBuildFiles } from "./buildFiles";
+import UploadingFiles from "./UploadingFiles";
 
 /**
  * Files for the environment a form builds: a policy becomes rules, a CSV the
- * world's records. Files stay in the form for now; nothing sends them yet.
+ * world's records. With `uploads` (useFileUploads) each file uploads as it's
+ * picked and shows its progress or why it failed; without, picked files go
+ * to `onChange` as plain rows.
  */
 export default function BuildFilesField({
-  files,
+  uploads,
+  files = [],
   onChange,
   accept = BUILD_FILES_ACCEPT,
   flagged = false,
@@ -26,7 +24,9 @@ export default function BuildFilesField({
   const input = useRef(null);
   const [over, setOver] = useState(false);
   const add = (list) => {
-    if (list?.length) onChange(mergeBuildFiles(files, list));
+    if (!list?.length) return;
+    if (uploads) uploads.add(list);
+    else onChange(mergeBuildFiles(files, list));
   };
   return (
     <Box>
@@ -109,92 +109,28 @@ export default function BuildFilesField({
           Choose files
         </Button>
       </Box>
-      {files.length > 0 && (
-        <Box
-          component="ul"
-          aria-label="Files and data"
-          sx={{
-            ...ROW_BOX_SX,
-            listStyle: "none",
-            m: 0,
-            p: 0,
-            mt: 1,
-            "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
-          }}
-        >
-          {files.map((f) => {
-            const role = readAsOf(f.name, accept);
-            return (
-              <Stack
-                component="li"
-                key={f.id}
-                direction="row"
-                alignItems="center"
-                spacing={1.25}
-                sx={{ px: 1.5, minHeight: 40 }}
-              >
-                <Box
-                  sx={{
-                    px: 0.75,
-                    height: 20,
-                    display: "grid",
-                    placeItems: "center",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "4px",
-                    ...T12,
-                    fontWeight: 600,
-                    color: "text.secondary",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, monospace",
-                    flexShrink: 0,
-                  }}
-                >
-                  {extOf(f.name).toUpperCase()}
-                </Box>
-                <Typography
-                  noWrap
-                  sx={{ ...T13, fontWeight: 500, minWidth: 0 }}
-                >
-                  {f.name}
-                </Typography>
-                <Typography
-                  noWrap
-                  sx={{ ...T12, color: "text.tertiary", flex: 1, minWidth: 0 }}
-                >
-                  {role ? `Likely read as ${role}` : "Can't be read"}
-                </Typography>
-                <Typography
-                  sx={{
-                    ...T12,
-                    color: "text.disabled",
-                    fontVariantNumeric: "tabular-nums",
-                    flexShrink: 0,
-                  }}
-                >
-                  {formatFileSize(f.size, { wholeKb: true })}
-                </Typography>
-                <IconButton
-                  size="small"
-                  aria-label={`Remove ${f.name}`}
-                  onClick={() => onChange(files.filter((x) => x.id !== f.id))}
-                  sx={{ color: "text.secondary", p: 0.25, flexShrink: 0 }}
-                >
-                  <Iconify icon="solar:close-circle-linear" width={16} />
-                </IconButton>
-              </Stack>
-            );
-          })}
-        </Box>
-      )}
+      <UploadingFiles
+        label="Files and data"
+        files={uploads ? uploads.files : files}
+        accept={accept}
+        onRetry={uploads?.retry}
+        onRemove={
+          uploads
+            ? uploads.remove
+            : (id) => onChange(files.filter((x) => x.id !== id))
+        }
+        sx={{ mt: 1 }}
+      />
     </Box>
   );
 }
 BuildFilesField.propTypes = {
   // A "UI only" pill, for a form whose build is wired but ignores this.
   flagged: PropTypes.bool,
+  // What useFileUploads returns; used instead of files and onChange.
+  uploads: PropTypes.object,
   // [{ id, name, size, type }]: plain rows, so they can travel with a draft.
-  files: PropTypes.arrayOf(PropTypes.object).isRequired,
-  onChange: PropTypes.func.isRequired,
+  files: PropTypes.arrayOf(PropTypes.object),
+  onChange: PropTypes.func,
   accept: PropTypes.string,
 };

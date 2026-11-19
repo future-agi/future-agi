@@ -125,6 +125,11 @@ export const UI_ONLY_FEATURES = Object.freeze({
     ask: "a design job endpoint (see #3612) that reads the description and attached files, returns the proposed records, tools, rules, people and scenarios with their sources and open questions, saves the draft, and starts the build on approval",
     note: "UI only: the design is proposed in this browser from sample rules. Nothing is sent, and approving builds nothing.",
   },
+  designDocuments: {
+    label: "File uploads",
+    ask: "the design documents upload (see #3612) wired here: one request per file with its progress, answered with the stored document's id, and refused as too large, unsupported or a repeated name",
+    note: "UI only: uploads are simulated in this browser. Nothing is sent.",
+  },
   environmentFiles: {
     label: "Files and what to test on build forms",
     ask: "build requests that accept attached files (with a personal-data choice) and a line saying what the environment should test, read into the design before the build",
