@@ -18513,7 +18513,7 @@ export interface EvidenceImportCaseApi {
    * @minimum 0
    */
   also_from: number;
-  duplicate_of: EvidenceDuplicateOfApi;
+  duplicate_of: EvidenceDuplicateOfApi | null;
   trace_ids: string[];
   started_at: string | null;
   ended_at: string | null;

@@ -1276,6 +1276,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       ["EvidenceImportCaseApi", "changed_since_import"],
       ["EvidenceImportCaseApi", "started_at"],
       ["EvidenceImportCaseApi", "ended_at"],
+      // Only a case already imported elsewhere repeats one.
+      ["EvidenceImportCaseApi", "duplicate_of"],
       ["EvidenceImportApi", "project_id"],
       ["EvidenceImportApi", "dataset_id"],
       ["EvidenceImportApi", "agent_version_id"],
@@ -1821,6 +1823,7 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         [/("changed_since_import": zod\.boolean\(\))/, "changed_since_import"],
         [/("started_at": zod\.string\(\)\.datetime\([^)]*\))/, "started_at"],
         [/("ended_at": zod\.string\(\)\.datetime\([^)]*\))/, "ended_at"],
+        [/("duplicate_of": zod\.object\(\{[^{}]*\}\))/, "duplicate_of"],
         [/("at": zod\.string\(\)\.datetime\([^)]*\))/, "turn at"],
       ]) {
         zod = assertReplaceRegexInNamedBlock(
