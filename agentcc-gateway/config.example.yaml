@@ -261,6 +261,11 @@ providers:
   #   models:
   #     - qwen/qwen3.5-flash
   #     - deepseek-ai/deepseek-v4-pro
+  #   # Pricing: the bundled model database has no Atlas Cloud entries, and
+  #   # lookup strips the vendor prefix, so these ids would be priced at another
+  #   # provider's list price (deepseek-v4-pro) or at $0 (qwen3.5-flash). Set the
+  #   # prices you are actually billed under model_database.overrides (see the
+  #   # "Override model metadata" block below) before relying on budgets/credits.
 
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
