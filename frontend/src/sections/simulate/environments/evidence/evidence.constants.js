@@ -16,7 +16,7 @@ export const IMPORT_PARAM = "import";
 export const EVIDENCE_ACTION_ID = "create-environment-test";
 
 // The kinds Observe keeps; a transcript or a dataset row comes from outside it.
-export const OBSERVE_KINDS = new Set(["session", "call"]);
+export const OBSERVE_KINDS = new Set(["session", "call", "trace"]);
 
 // A transcript or dataset import nobody marked as production: the mark is
 // fixed at import, so changing it means importing again.

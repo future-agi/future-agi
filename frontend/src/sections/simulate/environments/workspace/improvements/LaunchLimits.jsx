@@ -19,7 +19,7 @@ import { budgetSteps, marginSteps, minuteSteps } from "./launchFormView";
 // The launch form's rows, shared by Run Epoch from a run and from an Error Feed
 // issue: one label column, one value column, hairline between rows.
 
-export const selectSx = {
+const selectSx = {
   height: 34,
   typography: "s2",
   "& .MuiSelect-select": { typography: "s2", py: 0.75 },

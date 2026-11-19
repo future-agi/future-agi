@@ -3,16 +3,12 @@ import { Button } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
-import { paths } from "src/routes/paths";
 import { useIssueEpoch } from "src/api/errorFeed/epochFromIssue";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import RetryButton from "src/sections/simulate/environments/workspace/improvements/RetryButton";
 import ShipButton from "src/sections/simulate/environments/workspace/improvements/ShipButton";
 
-import { primaryAction } from "./issueEpochView";
-
-export const epochHref = (fix) =>
-  paths.dashboard.simulate.environments.improvement(fix.environment_id, fix.id);
+import { epochHref, primaryAction } from "./issueEpochView";
 
 // The issue header's one main action for its epoch: Run Epoch, the drawer's next
 // step, the epoch's page, or what the epoch page itself would do next (ship, retry).

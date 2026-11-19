@@ -10,6 +10,11 @@ import {
   winnerOf,
 } from "src/sections/simulate/environments/workspace/improvements/fixRunView";
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
+import { paths } from "src/routes/paths";
+
+// The epoch's page, from the epoch's own environment.
+export const epochHref = (fix) =>
+  paths.dashboard.simulate.environments.improvement(fix.environment_id, fix.id);
 
 // Before the epoch starts: the builder drafts scenarios from the issue's traces, a
 // person reviews them, and the current version runs on the kept ones. Blocked:

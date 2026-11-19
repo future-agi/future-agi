@@ -62,10 +62,10 @@ const reachedStep = (data, cases) => {
 };
 
 // Where Observe shows a case's source: a session's traces around when it ran, or
-// the call's trace. None for evidence from outside Observe.
+// the call's or trace's own trace. None for evidence from outside Observe.
 const observeHref = (projectId, kind, one) => {
   if (!OBSERVE_KINDS.has(kind) || !projectId || !one.source_id) return null;
-  return kind === "call"
+  return kind !== "session"
     ? `/dashboard/observe/${projectId}/trace/${encodeURIComponent(one.source_id)}`
     : sessionTracesLink(projectId, one.source_id, one.started_at);
 };

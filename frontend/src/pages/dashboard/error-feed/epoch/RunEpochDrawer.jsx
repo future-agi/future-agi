@@ -39,8 +39,7 @@ import LaunchLimits, {
 import { fixName } from "src/sections/simulate/environments/workspace/improvements/fixRunView";
 import { costLimitOf } from "src/sections/simulate/environments/workspace/improvements/launchFormView";
 
-import { epochHref } from "./IssueEpochAction";
-import { PRE_LAUNCH, epochKey, isEpochLive } from "./issueEpochView";
+import { PRE_LAUNCH, epochHref, epochKey, isEpochLive } from "./issueEpochView";
 
 const AGENT_SOURCE = { github: "GitHub", archive: "Uploaded" };
 const AGENT_TYPE = { voice: "Voice", chat: "Chat" };
@@ -446,11 +445,13 @@ function useLaunchForm(defaults) {
   const [costLimit, setCostLimit] = useState("");
   const [budget, setBudget] = useState(defaults?.budget_credits ?? 0);
   const [minutes, setMinutes] = useState(null);
+  const limit = costLimitOf(costLimit);
   const error = !surfaces.length
     ? "Pick at least one part it may change."
-    : Number.isNaN(costLimitOf(costLimit))
+    : Number.isNaN(limit)
       ? "The cost limit must be a number of dollars above 0."
       : null;
+  // Left out, the time limit is sized from the suite and the cost has no limit.
   return {
     error,
     body: {
@@ -460,7 +461,7 @@ function useLaunchForm(defaults) {
       ...(minutes == null ? {} : { max_minutes: minutes }),
       reply_latency_margin_pct: latencyMargin,
       cost_margin_pct: costMargin,
-      cost_limit_usd: costLimitOf(costLimit),
+      ...(limit == null ? {} : { cost_limit_usd: limit }),
     },
     rows: (
       <>
@@ -593,6 +594,10 @@ function JobSteps({ status, onReplan }) {
                   kind={evidence?.source_kind}
                   simulated={Boolean(evidence?.simulated)}
                   production={Boolean(evidence?.production)}
+                  observeHref={pickHref(evidence?.project_id, {
+                    ...one,
+                    unit: evidence?.source_kind,
+                  })}
                 />
               </Box>
             </Stack>

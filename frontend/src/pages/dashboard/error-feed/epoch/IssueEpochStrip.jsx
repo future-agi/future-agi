@@ -11,8 +11,8 @@ import {
 import { fixErrorOf } from "src/api/simulate-environments/fixRuns";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 
-import { epochHref } from "./IssueEpochAction";
 import {
+  epochHref,
   epochIcon,
   epochKey,
   epochLabel,
