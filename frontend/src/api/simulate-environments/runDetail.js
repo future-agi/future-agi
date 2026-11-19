@@ -649,6 +649,8 @@ export function mapCallDetail(raw) {
     // The attempts a rerun kept, latest first, and which attempt this call is: both counted by the server.
     earlierAttempts: raw.earlier_attempts,
     attemptNumber: raw.attempt_number,
+    // The World state view shows only when the call detail says actors are on.
+    actorsEnabled: raw.actors_enabled,
     // Who took part in the call, as the server says, and whether a customer did.
     participants: raw.participants,
     hasCustomer: raw.has_customer,

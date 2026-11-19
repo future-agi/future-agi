@@ -4,12 +4,14 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from clickhouse_driver.errors import ServerException
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 from django.utils import timezone
 
 from tracer.models.sql_query import SQLExecution
 from tracer.sql_workbench import runner, service, tasks
+from tracer.sql_workbench.compiler import UnsafeQuery
 from tracer.sql_workbench.tests.test_permissions import api_request, create_job
 from tracer.sql_workbench.tests.test_permissions import tenants as _tenants
 from tracer.views.sql_query import SQLQueryViewSet
@@ -79,7 +81,21 @@ def test_invalid_queue_fails_before_admission(tenants):
         (runner.QueryTimedOut(), "failed", "30-second"),
         (runner.QueryDeadlineExpired(), "failed", "deadline"),
         (runner.QueryControlLost(), "failed", "control connection"),
-        (runner.QueryBusy(), "failed", "busy"),
+        (runner.QueryBusy(), "failed", "Try again shortly"),
+        # A catalog change between admission and the worker's compile.
+        (UnsafeQuery("Unknown dataset: gone."), "failed", "Unknown dataset: gone."),
+        (
+            ServerException("Column `model` is not under aggregate", code=215),
+            "failed",
+            # job.sql is "SELECT * FROM spans": `model` is not the user's word.
+            "Every selected column must be in GROUP BY",
+        ),
+        (
+            ServerException("Memory limit (total) exceeded", code=241),
+            "failed",
+            "memory limit. Narrow the window or simplify the query.",
+        ),
+        (ServerException("internal", code=49), "failed", "Query failed. Check"),
     ],
 )
 def test_worker_persists_distinct_safe_outcomes(tenants, failure, state, message):

@@ -57420,6 +57420,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "trial_state",
         "earlier_attempts",
         "attempt_number",
+        "actors_enabled",
         "comparable",
         "not_comparable_reason",
         "scoring_status",
@@ -57936,6 +57937,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "Which attempt this call is, counted from 1: one more than its earlier attempts.",
           type: "integer",
+        },
+        actors_enabled: {
+          title: "Actors enabled",
+          description:
+            "Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view.",
+          type: "boolean",
         },
         comparable: {
           title: "Comparable",
@@ -105786,7 +105793,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     FeedDetailCore: {
-      required: ["row", "description", "success_trace", "representative_trace"],
+      required: [
+        "row",
+        "description",
+        "fix_hypothesis",
+        "falsifier",
+        "success_trace",
+        "representative_trace",
+      ],
       type: "object",
       properties: {
         row: {
@@ -105794,6 +105808,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         description: {
           title: "Description",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        fix_hypothesis: {
+          title: "Fix hypothesis",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        falsifier: {
+          title: "Falsifier",
           type: "string",
           minLength: 1,
           "x-nullable": true,

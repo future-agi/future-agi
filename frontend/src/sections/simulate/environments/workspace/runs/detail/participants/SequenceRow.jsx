@@ -11,7 +11,7 @@ import {
   kindOf,
   took,
 } from "./sequenceLayout";
-import HoverCard from "./SequenceHoverCard";
+import HoverCard, { HoverWords } from "./SequenceHoverCard";
 
 const onEnter = (act) => (e) => {
   if (e.key === "Enter" || e.key === " ") {
@@ -106,7 +106,7 @@ export function TurnRow({ row: r, seq, byN, svgW, c, open, onToggle }) {
       : merged > 1
         ? C.turnsRange(g.turn, g.turn + merged - 1)
         : C.turn(g.turn);
-  const words = `${name} · ${g.label ? `“${cut(g.text || g.label, 46)}”` : C.followsUp(seq.nameOf(seq.lanes[1]?.id))} · ${C.stepCount(g.steps.length)}${who.length ? ` · ${who.join(", ")}` : ""}`;
+  const words = `${name} · ${g.label ? `“${cut(g.label, 46)}”` : C.followsUp(seq.nameOf(seq.lanes[1]?.id))} · ${C.stepCount(g.steps.length)}${who.length ? ` · ${who.join(", ")}` : ""}`;
   return (
     <Tooltip
       followCursor
@@ -119,11 +119,7 @@ export function TurnRow({ row: r, seq, byN, svgW, c, open, onToggle }) {
           >
             {`${name} · ${C.stepCount(g.steps.length)}`}
           </Typography>
-          {g.text && (
-            <Typography sx={{ typography: "s3", color: "inherit", mt: 0.5 }}>
-              {`“${g.text}”`}
-            </Typography>
-          )}
+          {g.text && <HoverWords text={g.text} shown={g.textShown} quoted />}
           <Typography
             sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}
           >

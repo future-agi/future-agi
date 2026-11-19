@@ -10,5 +10,9 @@ gatewayApi:
   llmGateway:
     enabled: true
     host: llm.futureagi.example.com
+# Exercise a saved override: the client-facing Service port must stay 9464.
+fiCollector:
+  extraEnv:
+    FI_ADMIN_ADDR: ":9500"
 networkPolicy:
   enabled: true

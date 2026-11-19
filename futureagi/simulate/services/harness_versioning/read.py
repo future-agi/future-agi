@@ -30,6 +30,7 @@ from simulate.models import (
 from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import diffs
 from simulate.services.harness_versioning.versions import (
+    actors_enabled,
     versioning_enabled,
     with_actor_digests,
 )
@@ -76,6 +77,15 @@ def require_versioning() -> None:
         raise HostedHarnessError(
             "versioning_disabled",
             "environment versioning is not enabled",
+            status_code=404,
+        )
+
+
+def require_actors() -> None:
+    if not actors_enabled():
+        raise HostedHarnessError(
+            "actors_disabled",
+            "actors are not enabled",
             status_code=404,
         )
 

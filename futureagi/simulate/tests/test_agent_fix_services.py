@@ -449,6 +449,8 @@ def test_fewer_cases_than_the_verified_minimum_can_never_hold_back_four():
         # Four held-back cases from two cases of the run: not enough to verify.
         (["a", "a-v1", "a-v2", "b"], {"a-v1": "a", "a-v2": "a"}, True),
         (["a", "b", "c", "d-v1"], {"d-v1": "d"}, False),
+        # Nothing held back: proven on the targets only, not limited validation.
+        ([], {}, False),
     ],
 )
 def test_verified_needs_held_back_cases_from_four_different_cases(
@@ -695,6 +697,33 @@ class TestRetry:
         assert not is_retryable(failed)
         assert _refusal(retry_fix_run, failed, user=user) == ("fix_not_retryable", 409)
 
+    def test_a_retry_that_fails_is_not_retried_again(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        # Once is per epoch, not per row: each retry would spend again.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_deadline", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(failed, user=user)
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.FAILED, failure={"code": "fix_deadline", "message": "m"}
+        )
+        retried.refresh_from_db()
+
+        assert not is_retryable(retried)
+        with pytest.raises(HostedHarnessError) as caught:
+            retry_fix_run(retried, user=user)
+        assert (caught.value.code, caught.value.status_code, caught.value.message) == (
+            "fix_not_retryable",
+            409,
+            "This epoch was retried once already."
+            " Run a new epoch from the run's Debug failures.",
+        )
+        assert not retried.retries.exists()
+
     @pytest.mark.parametrize(
         "state",
         [
@@ -709,7 +738,13 @@ class TestRetry:
         fix_run = _fix_run(source_run, state=state)
 
         assert not is_retryable(fix_run)
-        assert _refusal(retry_fix_run, fix_run, user=user) == ("fix_not_retryable", 409)
+        with pytest.raises(HostedHarnessError) as caught:
+            retry_fix_run(fix_run, user=user)
+        assert (caught.value.code, caught.value.status_code, caught.value.message) == (
+            "fix_not_retryable",
+            409,
+            "Only a failed epoch can be retried.",
+        )
 
     def test_a_retry_reads_what_the_failed_fix_finished_instead_of_paying_again(
         self, source_run, user, temporal, django_capture_on_commit_callbacks
@@ -3510,7 +3545,7 @@ class TestPullRequestDescription:
         assert len(re.findall(r"(?<!\\)\|", target)) == 4
         assert "| ``a`b\\|c.py`` | +1 | −1 |" in body
 
-    def test_a_verified_fix_reads_each_check_as_the_fix_page_says_it(self, source_run):
+    def test_a_normal_result_reads_each_check_as_the_fix_page_says_it(self, source_run):
         candidate, title, body = self._described(
             source_run,
             diagnosis={"causes": _CAUSES},
@@ -3520,13 +3555,14 @@ class TestPullRequestDescription:
 
         assert title == "Epoch: fix 2 diagnosed causes in 3 files"
         # The fix page's headline: the pass rates and the must-pass cases it broke.
+        # A normal result carries no strength label.
         assert (
-            "Verified by Epoch: held-back pass rate 25% → 75%, target pass rate"
-            " 0% → 63%, broke none\n\n### Verdict" in body
+            "Checked by Epoch: held-back pass rate 25% → 75%, target pass rate"
+            " 0% → 63%, broke none\n\n### Verdict\n\n| Check |" in body
         )
+        assert "Verified" not in title and "Verified" not in body
         # The engine's own reason is not product text: the checks say it in words.
         assert "passed every tier" not in body
-        assert "### Verdict: Verified" in body
         # The fix page's words for each check, from the verdict's own numbers.
         table, decided = body.split("<details><summary>How it was decided</summary>")
         for row in (
@@ -3615,6 +3651,14 @@ class TestPullRequestDescription:
                 "limited validation, known regression",
                 "Epoch (limited validation, known regression): fix 2 causes in 3 files",
                 id="both-marks",
+            ),
+            # The longer mark leaves no room for the causes.
+            pytest.param(
+                2,
+                ["agent.py", "config.yaml", "prompts/booking.md"],
+                "proven on the targets only, known regression",
+                "Epoch (proven on the targets only, known regression): change 3 files",
+                id="both-marks-targets-only",
             ),
         ],
     )
