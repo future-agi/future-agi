@@ -243,12 +243,12 @@ def eligible_projects(now: datetime):
             )
         )
         .filter(project__deleted=False)
-        # A project paused as too large runs only privacy work: an expiry pass
-        # once per expiry interval (and its cleanup debts, if any). The floor's
+        # Paused and hidden projects run only privacy work: an expiry pass
+        # once per expiry interval (and any cleanup debt). The floor's
         # own stamp is written a little after a pass starts, so wait a further
         # PAUSED_EXPIRY_SLACK: the next pass then finds the interval elapsed.
         .filter(
-            Q(paused_reason="")
+            Q(paused_reason="", simulation_agent_id__isnull=True)
             | Q(pending_expiry=True)
             | Q(cleanup_id__isnull=False)
             | Q(last_started_at__isnull=True)
@@ -268,6 +268,7 @@ def eligible_projects(now: datetime):
         .filter(
             Q(incremental_last_success_at__isnull=True)
             | Q(incremental_due__lte=now)
+            | Q(simulation_agent_id__isnull=False, head_manifest_id__isnull=False)
             | Q(refresh_requested_at__isnull=False)
             # A publication may succeed before its cleanup fails. The durable
             # failure itself must keep that remainder eligible after backoff.
@@ -374,7 +375,9 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
                     and (state.pending_repair or state.routine_repair_due)
                 )
             )
-            privacy_only = not metrics_enabled(project=state.project_id)
+            privacy_only = state.simulation_agent_id is not None or not metrics_enabled(
+                project=state.project_id
+            )
             if state.paused_reason or privacy_only or state.pending_expiry:
                 purpose = "expiry"
             expiry_id = state.cleanup_id

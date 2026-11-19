@@ -130,9 +130,19 @@ def test_durable_expiry_continues_after_visible_to_hidden(expiry, monkeypatch):
     state = MetricProjectRefresh.objects.get(project_id=expiry.project.pk)
     assert state.head_manifest_id == expiry.head.id and state.lease_token is None
     assert not state.pending_expiry
-    assert (
-        admission.reserve_projects(clock=lambda: timezone.now() + timedelta(days=1))
-        == []
+    # A settled cleanup is not recurring work on every dispatch. At the next
+    # retention interval, however, the hidden head still needs deletion-only expiry.
+    due = (
+        state.last_started_at + retention.expiry_interval() + admission.PAUSED_EXPIRY_SLACK
+    )
+    assert admission.reserve_projects(clock=lambda: due - timedelta(seconds=1)) == []
+    (next_expiry,) = admission.reserve_projects(clock=lambda: due)
+    assert next_expiry.purpose == "expiry" and next_expiry.expiry_id is None
+    def deletion_only(lease, purpose):
+        assert purpose == "expiry" and lease.expiry_source_allowed is False
+
+    assert admission.execute_reservation(
+        next_expiry.payload(), clock=lambda: due, runner=deletion_only
     )
 
 
