@@ -37,18 +37,25 @@ const card = {
   minWidth: 0,
 };
 
-function Tile({ id, label, value, sub }) {
+function Tile({ id, label, value, sub, mono = true }) {
   return (
     <Box
       data-testid={`history-tile-${id}`}
       sx={{ px: 2, py: 1.5, minWidth: 0 }}
     >
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+      <Typography
+        sx={{ typography: "s3", color: "text.subtitle", fontWeight: 500 }}
+      >
         {label}
       </Typography>
       <Typography
         noWrap
-        sx={{ typography: "m3", fontWeight: 600, fontFamily: MONO, mt: 0.5 }}
+        sx={{
+          typography: "m1",
+          fontWeight: 600,
+          fontFamily: mono ? MONO : undefined,
+          mt: 0.5,
+        }}
       >
         {value}
       </Typography>
@@ -66,6 +73,8 @@ Tile.propTypes = {
   label: PropTypes.string.isRequired,
   value: PropTypes.node,
   sub: PropTypes.node,
+  // Version labels read in mono; counts don't.
+  mono: PropTypes.bool,
 };
 
 function NowRow({ label, value }) {
@@ -73,13 +82,20 @@ function NowRow({ label, value }) {
     <Stack
       direction="row"
       spacing={2}
-      sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}
+      alignItems="baseline"
+      sx={{
+        px: 2.5,
+        py: 0.875,
+        borderTop: "1px solid",
+        borderColor: "divider",
+      }}
     >
       <Typography
         sx={{
-          typography: "s2",
+          typography: "s3",
           color: "text.subtitle",
-          width: 120,
+          // Our longest label is "Environment"; the rest goes to the value.
+          width: 104,
           flexShrink: 0,
         }}
       >
@@ -104,7 +120,7 @@ function RunsUseNow({ data, env }) {
   const evaluations = env?.counts?.evaluations;
   return (
     <Box data-testid="history-now" sx={{ ...card, alignSelf: "start" }}>
-      <Typography sx={{ typography: "s1", fontWeight: 600, px: 2, py: 1.5 }}>
+      <Typography sx={{ typography: "s1", fontWeight: 600, px: 2.5, py: 1.5 }}>
         {now.title}
       </Typography>
       <NowRow
@@ -130,8 +146,8 @@ function RunsUseNow({ data, env }) {
         sx={{
           typography: "s3",
           color: "text.subtitle",
-          px: 2,
-          py: 1.5,
+          px: 2.5,
+          py: 1.25,
           borderTop: "1px solid",
           borderColor: "divider",
         }}
@@ -280,6 +296,7 @@ export default function VersionsPanel({ env }) {
         />
         <Tile
           id="versions"
+          mono={false}
           label={tiles.versions}
           value={entries.length}
           sub={tiles.counts(

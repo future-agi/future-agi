@@ -19,7 +19,9 @@ const Strong = ({ children }) => (
 Strong.propTypes = { children: PropTypes.node };
 
 const Dot = () => (
-  <Typography sx={{ typography: "s3", color: "text.disabled" }}>·</Typography>
+  <Typography sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}>
+    ·
+  </Typography>
 );
 
 // What is being tested, against what. A run is a pairing — this environment
@@ -59,10 +61,10 @@ export default function VersionBar({ env, envState }) {
     : env?.counts?.scenarios ?? envState?.scenarios?.length ?? 0;
 
   return (
+    // No gap of its own: the dots between the parts carry the spacing.
     <Stack
       direction="row"
       alignItems="center"
-      spacing={1}
       sx={{
         px: 2,
         py: 0.875,
@@ -89,27 +91,29 @@ export default function VersionBar({ env, envState }) {
                 : versionBar.noVersionsTooltip
             }
           >
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{ cursor: "default", minWidth: 0 }}
+            <Typography
+              noWrap
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                cursor: "default",
+                minWidth: 0,
+              }}
             >
               <Iconify
                 icon="solar:box-linear"
                 width={14}
-                sx={{ color: "text.subtitle" }}
+                sx={{ color: "text.subtitle", verticalAlign: "-2px", mr: 0.75 }}
               />
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.agentPrefix} <Strong>{agentLabel}</Strong>
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+              {versionBar.agentPrefix} <Strong>{agentLabel}</Strong>
+              <Box
+                component="span"
+                sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
+              >
                 ×
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.envPrefix} <Strong>{envLabel}</Strong>
-              </Typography>
-            </Stack>
+              </Box>
+              {versionBar.envPrefix} <Strong>{envLabel}</Strong>
+            </Typography>
           </Tooltip>
           {suiteV && (
             <>
