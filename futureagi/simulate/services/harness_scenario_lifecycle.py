@@ -90,11 +90,16 @@ ENDING_REASONS = {
     "unavailable": "validation_ended_on_our_side",
 }
 WARNING_TEXTS = {
-    "solution_assumed": "Kept as written: {k} of {n} steps of the expected handling never ran, because {tools} {have} nothing to call here.",
+    "solution_assumed": (
+        "Kept as written: {k} of {n} steps of the expected handling could not be run here ({tools}), so they were "
+        "not checked."
+    ),
     "proof_deferred": (
         "Kept as written: this agent keeps its own data; the expected handling can only be checked against it live."
     ),
-    "control_not_run": "Kept as written: the wrong-way example {name} could not run, because {tools} {have} nothing to call here.",
+    "control_not_run": (
+        "Kept as written: the wrong-way example {name} could not be run here ({tools}), so it was not checked."
+    ),
     "judged_only": (
         "Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer."
     ),
@@ -284,7 +289,6 @@ def warning_text(
             {tool for one in controls for tool in one.get("assumed") or []}
         )
         values["tools"] = ", ".join(assumed)
-    values["have"] = "has" if len(assumed) == 1 else "have"
     template = WARNING_TEXTS.get(code)
     return template.format_map(values) if template is not None else UNKNOWN_WARNING_TEXT
 
@@ -487,7 +491,7 @@ def scenario_lifecycle(
     made with another agent version reads Draft until the case is validated with this one."""
     from simulate.services.harness_scenario_sources import resolve
     from simulate.services.harness_versioning import validation
-    from simulate.services.harness_versioning.versions import suite_cases
+    from simulate.services.harness_versioning.versions import OTHER_AGENTS, suite_cases
 
     if suite_version is None or environment_version is None:
         return {}
@@ -586,6 +590,10 @@ def scenario_lifecycle(
         row: Mapping[str, Any] = rows.get(key) or {}
         entry = proofs.get(key) if isinstance(proofs, Mapping) else None
         entry = entry if isinstance(entry, Mapping) else None
+        if entry is not None and other_agent(entry):
+            # Proved since with another agent version: this one's own proof, when it made one, still stands.
+            own = (entry.get(OTHER_AGENTS) or {}).get(str(agent))
+            entry = own if isinstance(own, Mapping) else entry
         if row.get("archived_at") is not None:
             view = _view(
                 "archived",
@@ -602,7 +610,10 @@ def scenario_lifecycle(
             and entry.get("blocked_reason") != "validation_incomplete"
         ):
             blocked = entry.get("blocked_reason")
-            if entry.get("proved") is True and other_agent(entry):
+            if other_agent(entry) and (
+                entry.get("proved") is True or blocked == "tool_not_on_agent"
+            ):
+                # Found by another agent version: its tools say nothing about this one's.
                 view = _view("draft", reason="proved_on_other_agent", entry=entry)
             elif entry.get("proved") is True:
                 view = _view(good, entry=entry)

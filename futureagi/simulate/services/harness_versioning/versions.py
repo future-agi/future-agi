@@ -779,6 +779,31 @@ def _legacy_validated(entry: object, certified: bool) -> bool:
     return legacy_verdict(entry, certified) in ("entry", "certified")
 
 
+# On a proof entry: each other agent version's latest entry of the case, by agent version id.
+OTHER_AGENTS = "other_agents"
+
+
+def other_agents(
+    previous: object, made_with: Mapping[str, str]
+) -> dict[str, dict[str, Any]]:
+    """The case's entries made with other agent versions, the one being replaced included, so moving the default
+    back to a version that proved the case reads that version's own proof."""
+    if not isinstance(previous, dict) or not made_with:
+        return {}
+    agent = made_with["agent_version_id"]
+    kept = {
+        key: one
+        for key, one in (previous.get(OTHER_AGENTS) or {}).items()
+        if key != agent and isinstance(one, dict)
+    }
+    earlier = previous.get("agent_version_id")
+    if earlier and str(earlier) != agent:
+        kept[str(earlier)] = {
+            key: one for key, one in previous.items() if key != OTHER_AGENTS
+        }
+    return {OTHER_AGENTS: kept} if kept else {}
+
+
 def record_proofs(
     suite_version: HarnessSuiteVersion,
     environment_version: HarnessEnvironmentVersion,
@@ -840,8 +865,8 @@ def record_proofs(
             if entry.get("blocked_reason") == "validation_incomplete" and key in merged:
                 continue
             # Each entry keeps the agent version it was proved with: a partial validation by
-            # another agent version replaces only its own keys.
-            entry = {**entry, **made_with}
+            # another agent version replaces only its own keys, and keeps the entry it replaces.
+            entry = {**entry, **made_with, **other_agents(merged.get(key), made_with)}
             if (
                 suite_version.lifecycle_legacy
                 and entry.get("blocked_reason") == "validation_incomplete"

@@ -409,7 +409,7 @@ def test_assumed_solution_reads_kept_as_written_not_active(user, workspace, stor
         "kept_as_written",
         "solution_assumed",
     )
-    assert "never ran" in views[REFUND_KEYS[0]]["warning_text"]
+    assert "could not be run here" in views[REFUND_KEYS[0]]["warning_text"]
     assert views[REFUND_KEYS[1]]["state"] == "active"
 
 

@@ -124,8 +124,8 @@ def _job_for(environment, agent):
 def test_a_partial_validation_keeps_each_case_s_own_agent(
     user, workspace, storage, monkeypatch
 ):
-    """B3: every case proved with A1, then one case validated with A2. Only that case counts for A2; the rest still
-    count for A1."""
+    """B3: every case proved with A1, then one case validated with A2. Only that case counts for A2; every case still
+    counts for A1, that one by the proof A1 made."""
     from simulate.services import agent_setup
 
     # A2's tools were read: every tool the cases call.
@@ -163,14 +163,20 @@ def test_a_partial_validation_keeps_each_case_s_own_agent(
             environment, suite_version=suite, environment_version=version
         ).items()
     }
-    assert proofs[KEYS[0]]["agent_version_id"] == str(a2.id)
+    on_a2_proof = scenario_lifecycle(
+        environment,
+        suite_version=suite,
+        environment_version=version,
+        agent_version_id=a2.id,
+    )[KEYS[0]]["proof"]
+    assert on_a2_proof["agent_version_id"] == str(a2.id)
+    assert proofs[KEYS[0]]["agent_version_id"] == str(a1.id)
     assert proofs[KEYS[1]]["agent_version_id"] == str(a1.id)
     assert proofs[KEYS[1]]["environment_version_id"] == str(version.id)
     assert proofs[KEYS[1]]["suite_version_id"] == str(suite.id)
     assert on_a2[KEYS[0]] == "active"
     assert all(on_a2[key] == "draft" for key in KEYS[1:])
-    assert on_a1[KEYS[0]] == "draft"
-    assert all(on_a1[key] == "active" for key in KEYS[1:])
+    assert all(on_a1[key] == "active" for key in KEYS)
 
 
 LEAK = {

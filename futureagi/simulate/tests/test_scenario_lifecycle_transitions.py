@@ -236,6 +236,54 @@ def test_a_proof_from_another_agent_version_reads_draft_until_validated_with_thi
     assert _state(environment, agent=other) == ("draft", "proved_on_other_agent", False)
 
 
+def test_moving_the_default_back_reads_that_agent_versions_own_proofs(
+    user, workspace, storage
+):
+    """v13 proves every case, v14 (without a tool one case needs) is validated on the same pair, then the default
+    moves back to v13 with no new check: v13's proofs still stand, and no reason names v14."""
+    from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+    from simulate.services.harness_versioning.versions import record_proofs
+
+    environment = _base(user, workspace, storage, "lt-agent-back")
+    v13, v14 = environment.agent_version_id, uuid.uuid4()
+    record_proofs(
+        environment.suite_version,
+        environment.environment_version,
+        dict.fromkeys(KEYS, PROVED),
+        environment,
+    )
+    environment.agent_version_id = v14
+    record_proofs(
+        environment.suite_version,
+        environment.environment_version,
+        {
+            **dict.fromkeys(KEYS, PROVED),
+            CASE: {**NO_CONTROL, "blocked_reason": "tool_not_on_agent"},
+        },
+        environment,
+    )
+    environment.refresh_from_db()
+
+    def read(agent):
+        return {
+            key: (view["state"], view["reason"])
+            for key, view in scenario_lifecycle(
+                environment,
+                suite_version=environment.suite_version,
+                environment_version=environment.environment_version,
+                agent_version_id=agent,
+            ).items()
+        }
+
+    assert read(v14)[CASE] == ("draft", "tool_not_on_agent")
+    assert read(v13) == dict.fromkeys(KEYS, ("active", None))
+    assert _state(environment, agent=uuid.uuid4()) == (
+        "draft",
+        "proved_on_other_agent",
+        False,
+    )
+
+
 def test_a_proof_whose_agent_was_not_recorded_keeps_its_state(
     user, workspace, storage, monkeypatch
 ):
@@ -427,7 +475,8 @@ def test_kept_as_written_runs_labelled_as_not_proved(user, workspace, storage):
         (
             {**KEPT, "assumed": ["issue_refund"], "solution_steps": 1},
             "kept_as_written",
-            "Kept as written: 1 of 1 steps of the expected handling never ran, because issue_refund has nothing to call here.",
+            "Kept as written: 1 of 1 steps of the expected handling could not be run here (issue_refund), so they were "
+            "not checked.",
         ),
     ],
 )
