@@ -2,7 +2,11 @@ import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import StatusBadge from "src/components/status-badge/StatusBadge";
-import { BUILD_STATUS, ENV_STATUS, STATUS_META } from "../myEnvironments.constants";
+import {
+  BUILD_STATUS,
+  ENV_STATUS,
+  STATUS_META,
+} from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
 // The status chip beside an environment's name, drawn by the shared
@@ -18,9 +22,14 @@ export default function LivePill({ env, building }) {
   const isCancelling = env?.status === ENV_STATUS.CANCELLING;
   const isCancelled = env?.status === ENV_STATUS.CANCELLED;
   const isFinalizing = env?.status === ENV_STATUS.FINALIZING;
-  const isBuilding = building ?? env?.buildStatus === BUILD_STATUS.BUILDING;
+  // A design's first build streams into the workspace without being a job
+  // build, so it names itself ("Building v1").
+  const isBuilding =
+    building ??
+    (env?.buildStatus === BUILD_STATUS.BUILDING || !!env?.buildingLabel);
   const isFailed = !isBuilding && env?.buildStatus === BUILD_STATUS.FAILED;
-  const isRunning = !isBuilding && !isFailed && env?.status === ENV_STATUS.RUNNING;
+  const isRunning =
+    !isBuilding && !isFailed && env?.status === ENV_STATUS.RUNNING;
   const key = isCancelled
     ? ENV_STATUS.CANCELLED
     : isCancelling
@@ -43,7 +52,7 @@ export default function LivePill({ env, building }) {
         : isFinalizing
           ? WORKSPACE_COPY.finalizingLabel
           : isBuilding
-            ? WORKSPACE_COPY.buildingLabel
+            ? env?.buildingLabel || WORKSPACE_COPY.buildingLabel
             : isRunning
               ? STATUS_META.running.label
               : WORKSPACE_COPY.live;
@@ -78,6 +87,10 @@ export default function LivePill({ env, building }) {
 }
 
 LivePill.propTypes = {
-  env: PropTypes.shape({ buildStatus: PropTypes.string, status: PropTypes.string }),
+  env: PropTypes.shape({
+    buildStatus: PropTypes.string,
+    status: PropTypes.string,
+    buildingLabel: PropTypes.string,
+  }),
   building: PropTypes.bool,
 };
