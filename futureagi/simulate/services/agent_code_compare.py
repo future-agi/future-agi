@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import io
 import tarfile
+import time
 from collections.abc import Iterable
 from typing import Any
 
@@ -34,9 +35,11 @@ MAX_COMPARE_FILES = 300
 MAX_PATCH_BATCH = 25
 AUTO_LOAD_LINES = 400
 AUTO_LOAD_BYTES = 20 * 1024
-MAX_DIFF_LINES = 20_000
+MAX_DIFF_LINES = 5_000
 MAX_DIFF_BYTES = 500 * 1024
+DIFF_BUDGET_SECONDS = 5.0
 CONTEXT_LINES = 3
+TOO_LARGE: dict[str, Any] = {"too_large": True}
 
 ADDED = "added"
 REMOVED = "removed"
@@ -97,6 +100,19 @@ def _patch(before: str, after: str) -> dict[str, Any]:
             }
         )
     return {"hunks": hunks, "additions": additions, "deletions": deletions}
+
+
+def _line_count(text: str) -> int:
+    return text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+
+
+def _counted(hunks: list[dict[str, Any]]) -> dict[str, Any]:
+    lines = [line for hunk in hunks for line in hunk["lines"]]
+    return {
+        "hunks": hunks,
+        "additions": sum(1 for line in lines if line.startswith("+")),
+        "deletions": sum(1 for line in lines if line.startswith("-")),
+    }
 
 
 def _patch_key(before: Entry | None, after: Entry | None) -> str:
@@ -201,23 +217,41 @@ def _computed(
     code: VersionCode,
     base: VersionCode,
     pairs: list[tuple[str, str | None, str, Entry | None, Entry | None]],
-) -> dict[str, dict[str, Any]]:
-    wanted = [pair for pair in pairs if _kind_of(pair[3], pair[4]) == KIND_TEXT]
+    *,
+    deadline: float,
+) -> dict[str, dict[str, Any] | None]:
+    computed: dict[str, dict[str, Any] | None] = {}
+    missing = []
+    for pair in pairs:
+        if _kind_of(pair[3], pair[4]) != KIND_TEXT:
+            continue
+        hunks = cache.get(_patch_key(pair[3], pair[4]))
+        if hunks is None:
+            missing.append(pair)
+        else:
+            computed[pair[0]] = _counted(hunks)
     texts_before = _texts(
         base,
-        [old_path or path for path, old_path, _s, old, _n in wanted if old is not None],
+        [
+            old_path or path
+            for path, old_path, _s, old, _n in missing
+            if old is not None
+        ],
     )
     texts_after = _texts(
-        code, [path for path, _o, _s, _old, new in wanted if new is not None]
+        code, [path for path, _o, _s, _old, new in missing if new is not None]
     )
-    computed = {}
-    for path, old_path, _status, old, new in wanted:
-        patch = _patch(
-            texts_before.get(old_path or path, "") if old is not None else "",
-            texts_after.get(path, "") if new is not None else "",
-        )
-        if patch["additions"] + patch["deletions"] <= MAX_DIFF_LINES:
-            cache.set(_patch_key(old, new), patch["hunks"], _CACHE_SECONDS)
+    for index, (path, old_path, _status, old, new) in enumerate(missing):
+        if index and time.monotonic() > deadline:
+            computed[path] = None
+            continue
+        before = texts_before.get(old_path or path, "") if old is not None else ""
+        after = texts_after.get(path, "") if new is not None else ""
+        if max(_line_count(before), _line_count(after)) > MAX_DIFF_LINES:
+            computed[path] = TOO_LARGE
+            continue
+        patch = _patch(before, after)
+        cache.set(_patch_key(old, new), patch["hunks"], _CACHE_SECONDS)
         computed[path] = patch
     return computed
 
@@ -238,9 +272,12 @@ def compare(version: AgentVersion, against: AgentVersion | None) -> dict[str, An
         return {"against": str(against.id), **flags, **cached}
     pairs = _pairs(before, after)
     shown = pairs[:MAX_COMPARE_FILES]
-    computed = _computed(code, base, shown)
+    computed = _computed(
+        code, base, shown, deadline=time.monotonic() + DIFF_BUDGET_SECONDS
+    )
     files = []
     additions = deletions = 0
+    deferred = False
     for path, old_path, status, old, new in shown:
         row: dict[str, Any] = {
             "path": path,
@@ -251,18 +288,23 @@ def compare(version: AgentVersion, against: AgentVersion | None) -> dict[str, An
             "deletions": None,
             "collapsed": False,
         }
-        patch = computed.get(path)
-        if patch is not None:
+        if path not in computed:
+            files.append(row)
+            continue
+        patch = computed[path]
+        if patch is None:
+            row["collapsed"] = True
+            deferred = True
+        elif patch is TOO_LARGE:
+            row["kind"] = KIND_TOO_LARGE
+        else:
             changed = patch["additions"] + patch["deletions"]
             size = sum(
                 len(line) + 1 for hunk in patch["hunks"] for line in hunk["lines"]
             )
             row["additions"] = patch["additions"]
             row["deletions"] = patch["deletions"]
-            if changed > MAX_DIFF_LINES:
-                row["kind"] = KIND_TOO_LARGE
-            else:
-                row["collapsed"] = changed > AUTO_LOAD_LINES or size > AUTO_LOAD_BYTES
+            row["collapsed"] = changed > AUTO_LOAD_LINES or size > AUTO_LOAD_BYTES
             additions += patch["additions"]
             deletions += patch["deletions"]
         files.append(row)
@@ -273,7 +315,8 @@ def compare(version: AgentVersion, against: AgentVersion | None) -> dict[str, An
         "deletions": deletions,
         "truncated": len(pairs) > len(shown),
     }
-    cache.set(key, summary, _CACHE_SECONDS)
+    if not deferred:
+        cache.set(key, summary, _CACHE_SECONDS)
     return {"against": str(against.id), **flags, **summary}
 
 
@@ -315,12 +358,17 @@ def patches(
             misses.append(pair)
             continue
         found[path] = {"path": path, "kind": kind, "unchanged": False, "hunks": hunks}
-    for path, patch in (_computed(code, base, misses) if misses else {}).items():
-        too_large = patch["additions"] + patch["deletions"] > MAX_DIFF_LINES
+    computed = (
+        _computed(code, base, misses, deadline=time.monotonic() + DIFF_BUDGET_SECONDS)
+        if misses
+        else {}
+    )
+    for path, patch in computed.items():
+        shown = patch is not None and patch is not TOO_LARGE
         found[path] = {
             "path": path,
-            "kind": KIND_TOO_LARGE if too_large else KIND_TEXT,
+            "kind": KIND_TEXT if shown else KIND_TOO_LARGE,
             "unchanged": False,
-            "hunks": [] if too_large else patch["hunks"],
+            "hunks": patch["hunks"] if shown else [],
         }
     return {"against": str(against.id), "files": [found[path] for path in paths]}
