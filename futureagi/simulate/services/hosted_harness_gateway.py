@@ -1580,10 +1580,18 @@ def _simulation_mark(
 def _with_simulation_mark(
     payload: Mapping[str, Any], mark: Mapping[str, str]
 ) -> dict[str, Any]:
-    """A copy of the document that carries the mark, replacing any value already there."""
+    """A copy of the document that carries the mark and the actors switch, replacing any value already there."""
+    from simulate.services.harness_versioning.versions import actors_enabled
+
     document = dict(payload)
     metadata = dict(document.get("metadata") or {})
     metadata["customer_code_environment"] = dict(mark)
+    # Every job document says whether the harness may author, play and apply actors and test conditions.
+    on = actors_enabled()
+    metadata["actors"] = {
+        "enabled": on,
+        "share": list(settings.HARNESS_ACTORS_SHARE) if on else [0.0, 0.0],
+    }
     document["metadata"] = metadata
     return document
 

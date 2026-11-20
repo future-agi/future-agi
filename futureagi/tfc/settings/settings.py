@@ -1207,6 +1207,40 @@ HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower()
 HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
     "HARNESS_BUNDLE_CERTIFY_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Actors and test conditions (faults): the cast editor, actor endpoints and fault edits. Off until the sandbox
+# template carries an agent-learning-kit release that plays actors and applies faults.
+HARNESS_ACTORS_ENABLED = os.getenv("HARNESS_ACTORS_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _actors_share(text: str) -> tuple[float, float]:
+    """`HARNESS_ACTORS_SHARE` as `(min, max)`: "<min>-<max>", each a share from 0 to 1, min not above max."""
+    from django.core.exceptions import ImproperlyConfigured
+
+    low, _, high = text.strip().partition("-")
+    try:
+        share = (float(low), float(high))
+    except ValueError as exc:
+        raise ImproperlyConfigured(
+            f"HARNESS_ACTORS_SHARE must read <min>-<max>, such as 0.15-0.25; got {text!r}"
+        ) from exc
+    if not 0 <= share[0] <= share[1] <= 1:
+        raise ImproperlyConfigured(
+            f"HARNESS_ACTORS_SHARE needs 0 <= min <= max <= 1; got {text!r}"
+        )
+    return share
+
+
+# The default share of scenarios that include an actor, sent to the harness while actors are on; read and checked only
+# then, so a bad value never stops a deployment that has actors off.
+HARNESS_ACTORS_SHARE = (
+    _actors_share(os.getenv("HARNESS_ACTORS_SHARE", "0.15-0.25"))
+    if HARNESS_ACTORS_ENABLED
+    else (0.15, 0.25)
+)
 # Raising agent-change nudges; only takes effect while versioning is enabled.
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
