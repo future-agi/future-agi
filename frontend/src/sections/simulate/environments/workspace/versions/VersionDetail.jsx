@@ -113,6 +113,8 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
     data,
     isLoading,
     isError: refreshFailed,
+    // The last comparison, kept while another one loads.
+    isPlaceholderData: stale,
   } = useVersionDiff(envId, piece, version.id, against || undefined, {
     enabled: !first,
   });
@@ -125,6 +127,17 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
     !isLoading &&
     !isError &&
     isEmptyDiff(piece, data?.diff);
+
+  // The last comparison is dimmed while the next loads, not swapped for a
+  // skeleton, so the area doesn't flash.
+  const dim = {
+    opacity: stale && !first ? 0.5 : 1,
+    transition: (theme) =>
+      theme.transitions.create("opacity", {
+        duration: theme.transitions.duration.shorter,
+      }),
+    "@media (prefers-reduced-motion: reduce)": { transition: "none" },
+  };
 
   const note = (text) => (
     <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -183,7 +196,7 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
         )}
       </Stack>
       {data?.summary && !first && !empty && (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        <Typography sx={{ typography: "s2", color: "text.secondary", ...dim }}>
           {data.summary}
         </Typography>
       )}
@@ -195,7 +208,9 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
       {piece === "agent" && (
         <PreflightReport report={version.preflightReport} />
       )}
-      {body()}
+      <Box aria-busy={stale} sx={dim}>
+        {body()}
+      </Box>
       {piece === "suite" && <SuiteMembers envId={envId} version={version} />}
     </Stack>
   );

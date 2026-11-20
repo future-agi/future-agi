@@ -86,6 +86,9 @@ export default function HistoryEntry({
         <ButtonBase
           onClick={onToggle}
           aria-expanded={expanded}
+          // The ripple swept grey across the whole row on every click; the
+          // hover shade and focus outline are enough.
+          disableRipple
           sx={{
             flex: 1,
             minWidth: 0,

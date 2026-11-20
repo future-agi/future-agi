@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { camelCase } from "lodash";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
@@ -452,6 +457,9 @@ export function useVersionDiff(
     queryKey: versionDiffKey(envId, piece, versionId, against),
     queryFn: () => getVersionDiff(envId, piece, versionId, against),
     enabled: Boolean(envId && piece && versionId) && enabled,
+    // Picking another version to compare with keeps the last answer on screen
+    // (isPlaceholderData) until the new one lands, instead of a blank flash.
+    placeholderData: keepPreviousData,
     retry: retryUnlessNotFound,
     meta: { errorHandled: true },
   });
