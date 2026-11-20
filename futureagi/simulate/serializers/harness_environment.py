@@ -49,6 +49,16 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
     agent_definition_id = serializers.UUIDField(required=False)
+    search = serializers.CharField(
+        required=False, allow_blank=True, trim_whitespace=True, max_length=255
+    )
+    status = serializers.ChoiceField(
+        required=False,
+        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED),
+    )
+    agent_type = serializers.ChoiceField(
+        required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
+    )
 
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
@@ -103,6 +113,7 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     # The agent version this environment tests by default; null before
     # versioning recorded one.
     agent_version = AgentVersionRefSerializer(allow_null=True)
+    environment_version = EnvironmentVersionRefSerializer(allow_null=True)
     # Whether the environment follows its agent's production version or stays
     # pinned to the one above.
     agent_policy = serializers.ChoiceField(choices=("follow", "pinned"))
@@ -161,8 +172,21 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
     completed_at = serializers.DateTimeField(allow_null=True)
 
 
+class HarnessEnvironmentAgentRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True)
+
+
 class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
+    agent = HarnessEnvironmentAgentRefSerializer(allow_null=True)
     last_run = HarnessRunSummarySerializer(allow_null=True)
+
+
+class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):
+    building = serializers.IntegerField()
+    running = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    failed = serializers.IntegerField()
 
 
 class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
@@ -172,6 +196,7 @@ class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
     current_page = serializers.IntegerField()
     results = HarnessEnvironmentSerializer(many=True)
+    status_counts = HarnessEnvironmentStatusCountsSerializer()
 
 
 class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):

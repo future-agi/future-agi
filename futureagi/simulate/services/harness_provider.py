@@ -172,6 +172,30 @@ def _connected_build_source(runtime: Any, payload: dict[str, Any]) -> dict[str, 
     return {**(payload.get("source") or {}), **version_source(runtime)}
 
 
+def _environment_build_runtime(
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
+) -> Any:
+    from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.harness_agent_versions import environment_owned
+
+    metadata = payload.get("metadata") or {}
+    try:
+        definition_id = uuid.UUID(str(metadata.get("agent_definition_id") or ""))
+        version_id = uuid.UUID(str(metadata.get("agent_version_id") or ""))
+    except ValueError:
+        return None
+    if not environment_owned(definition_id):
+        return None
+    return HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_definition_id=definition_id,
+        agent_version_id=version_id,
+        agent_version__deleted=False,
+        agent_definition__organization_id=organization_id,
+        agent_definition__workspace_id=workspace_id,
+        agent_definition__deleted=False,
+    ).first()
+
+
 def get_harness_provider():
     """Return the configured public harness backend."""
     name = str(getattr(settings, "HARNESS_PROVIDER", "hosted") or "hosted").lower()
@@ -576,6 +600,7 @@ def _connector_credential_readiness(
     detected_connectors=(),
     scanned_files=0,
     required_credential_files=(),
+    source_api_keys=(),
 ):
     """Readiness report the create form renders: which target aliases are still missing.
 
@@ -600,6 +625,25 @@ def _connector_credential_readiness(
     present = present_provider_aliases(agent)
     required_files = set() if remote else set(required_credential_files)
     missing.extend(sorted(required_files - present))
+    provided = present | {
+        str(name).upper()
+        for name in (payload["source"].get("environment_values") or {})
+    }
+    from simulate.services.harness_credential_probes import PROVIDER_PROBES
+
+    family_aliases = {
+        alias for aliases in CONNECTOR_ALIASES.values() for alias in aliases
+    }
+    verifiable = {
+        alias
+        for probe in PROVIDER_PROBES.values()
+        for alias in probe.aliases
+        if alias.endswith("_API_KEY")
+    } - family_aliases
+    api_keys = (
+        [] if remote else sorted((set(source_api_keys) & verifiable) - required_files)
+    )
+    api_missing = [name for name in api_keys if name not in provided]
     if connector == "auto":
         families = dict(CONNECTOR_ALIASES)
         # A complete family of any kind satisfies the run (see missing_provider_credentials),
@@ -639,6 +683,15 @@ def _connector_credential_readiness(
         }
         for alias in sorted(required_files)
     )
+    requirements.extend(
+        {
+            "environment_name": name,
+            "purpose": "API key the agent's code reads",
+            "required": True,
+            "status": "missing" if name in api_missing else "configured",
+        }
+        for name in api_keys
+    )
     choices = []
     if connector == "auto" and len(required) > 1:
         choices.append(
@@ -654,7 +707,7 @@ def _connector_credential_readiness(
             }
         )
     return {
-        "missing": missing,
+        "missing": [*missing, *api_missing],
         "report": {
             "scanned_files": scanned_files,
             "detected_connectors": detected if connector == "auto" else [connector],
@@ -669,6 +722,7 @@ def _preflight_source_connectors(organization, payload, workspace_id=None):
     credential family the agent actually uses instead of every family."""
     from simulate.services.hosted_harness_gateway import (
         HostedSourceAcquirer,
+        detect_source_api_keys,
         detect_source_credentials,
     )
 
@@ -676,17 +730,30 @@ def _preflight_source_connectors(organization, payload, workspace_id=None):
     # is checked through its authenticated target lookup below, not by invoking
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
-        return [], [], 0
+        return [], [], 0, []
     probe = HostedHarnessJob(
         organization=organization, workspace_id=workspace_id, payload=payload
     )
     archive, _commit = HostedSourceAcquirer().acquire(probe)
+    subfolder = payload["source"].get("subfolder")
     detected, required_files, scanned = detect_source_credentials(
-        archive, subfolder=payload["source"].get("subfolder")
+        archive, subfolder=subfolder
     )
+    api_keys = detect_source_api_keys(archive, subfolder=subfolder)
     if payload["agent"]["connector"] != "auto":
         detected = []
-    return detected, required_files, scanned
+    return detected, required_files, scanned, api_keys
+
+
+def scan_parts(analysis) -> tuple[list[str], list[str], int, list[str]]:
+    if len(analysis) == 2:
+        detected, scanned = analysis
+        return list(detected), [], scanned, []
+    if len(analysis) == 3:
+        detected, required_files, scanned = analysis
+        return list(detected), list(required_files), scanned, []
+    detected, required_files, scanned, api_keys = analysis
+    return list(detected), list(required_files), scanned, list(api_keys)
 
 
 def _validate_required_credential_files(
@@ -697,7 +764,7 @@ def _validate_required_credential_files(
     from simulate.services.hosted_harness import HostedHarnessError
 
     analysis = _preflight_source_connectors(organization, payload, workspace_id)
-    required_files = analysis[1] if len(analysis) == 3 else []
+    required_files = scan_parts(analysis)[1]
     present = {
         str(alias).upper()
         for alias in (*(payload["agent"].get("secret_refs") or {}), *available_names)
@@ -1027,16 +1094,10 @@ def run_preflight_checks(
             )
         except HostedHarnessError as exc:
             source_error = exc
-            analysis = ([], [], 0)
-    # Keep two-item patched return values compatible with tests and custom
-    # providers written before credential-file discovery was added.
-    if len(analysis) == 2:
-        detected, scanned = analysis
-        required_files = []
-    else:
-        detected, required_files, scanned = analysis
+            analysis = ([], [], 0, [])
+    detected, required_files, scanned, api_keys = scan_parts(analysis)
     secret_readiness = _connector_credential_readiness(
-        secret_payload, detected, scanned, required_files
+        secret_payload, detected, scanned, required_files, api_keys
     )
     secret_probe = _preflight_credential_probe(secret_payload)
     secret_readiness["report"]["probe"] = secret_probe
@@ -1054,7 +1115,7 @@ def run_preflight_checks(
         secret_readiness,
         secret_probe,
         source_error,
-        (detected, required_files, scanned),
+        (detected, required_files, scanned, api_keys),
     )
 
 
@@ -1379,6 +1440,7 @@ def _environment_agent_maker(
     user,
     repository_id=None,
     workspace=None,
+    version_bound=False,
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
     version inside the job's transaction."""
@@ -1388,13 +1450,19 @@ def _environment_agent_maker(
         ensure_environment_agent,
         submitted_credentials,
     )
+    from simulate.services.harness_credentials import is_names_only_ref
 
-    secret_submitted = submitted_credentials(
-        organization, payload["agent"]["secret_refs"], secret_values
-    )
+    secret_refs = payload["agent"]["secret_refs"]
+    if version_bound:
+        secret_refs = {
+            alias: ref
+            for alias, ref in secret_refs.items()
+            if not is_names_only_ref(ref)
+        }
+    secret_submitted = submitted_credentials(organization, secret_refs, secret_values)
     check = (
         CreationCheck(report={}, required_variable_names=[])
-        if _builds_connected_agent(organization, workspace, payload)
+        if version_bound or _builds_connected_agent(organization, workspace, payload)
         else check_creation_credentials(
             organization, payload, secret_submitted, analysis
         )
@@ -1461,6 +1529,7 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
+        from simulate.serializers.harness_job import names_agent_version
         from simulate.services.harness_agent_versions import advisory_xact_lock
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
@@ -1494,15 +1563,39 @@ class HostedHarnessProvider:
         # This uses only references/configuration and deployment env presence.
         # Definitive launch validation runs again after vault resolution.
         workspace = request_workspace(request)
+        version_bound = False
         try:
             connected_runtime = _connected_build_runtime(
                 organization.id, getattr(workspace, "id", None), payload
             )
             if connected_runtime is not None:
                 payload["source"] = _connected_build_source(connected_runtime, payload)
+            else:
+                connected_runtime = _environment_build_runtime(
+                    organization.id, getattr(workspace, "id", None), payload
+                )
+                if connected_runtime is not None:
+                    from simulate.services.harness_agent_versions import (
+                        apply_agent_version,
+                    )
+
+                    apply_agent_version(payload, connected_runtime)
+                    version_bound = True
         except (ValueError, ValidationError):
             connected_runtime = None
+            version_bound = False
         connected_build = connected_runtime is not None
+        if (
+            not connected_build
+            and (payload.get("source") or {}).get("kind") == "provider"
+            and names_agent_version(payload["agent"], payload.get("metadata"))
+        ):
+            refusal = HostedHarnessError(
+                "version_not_buildable",
+                "This agent version can't be built from here",
+                status_code=409,
+            )
+            return Response(refusal.as_dict(), status=refusal.status_code)
         available_names: list[str] = []
         if connected_build:
             from simulate.services.harness_agent_versions import (
@@ -1606,6 +1699,7 @@ class HostedHarnessProvider:
                         request.user,
                         repository_id,
                         workspace=workspace,
+                        version_bound=version_bound,
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)

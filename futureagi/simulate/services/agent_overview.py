@@ -7,6 +7,7 @@ from django.db.models import (
     Count,
     F,
     OuterRef,
+    Q,
     QuerySet,
     Subquery,
     When,
@@ -111,6 +112,10 @@ def annotate_agent_rows(
                     HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
                 ],
                 then=F("_version_source_kind"),
+            ),
+            When(
+                Q(provider__isnull=True) | Q(provider=""),
+                then=F("_build_source_kind"),
             ),
             default=F("provider"),
             output_field=CharField(),
