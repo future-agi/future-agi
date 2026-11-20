@@ -411,6 +411,7 @@ test('SKILLS-E2E-108: F8 native verification emits no customer loads',meta(8,'Ke
   ['Both native cells ran to completion without adding a skill link to the customer project']),async ({scenario:s,probe,nativeNamespace}) => {
   test.setTimeout(480000);
   const {seedApplication,neighborCase,modelRules} = await import('../../lib/skills-r3/j2-fixture');
+  const {measuredConfiguration} = await import('../../lib/skills-native-fixtures');
   const {SkillsFixtures} = await import('../../lib/skills-fixtures');
   const control = s.emit('python',[s.agent('support',[s.refund],false)])!;
   const lookup = () => probe.ch<{project_id:string}>('SELECT project_id FROM skill_trace_links FINAL WHERE trace_id={t:String}',{t:control});
@@ -426,8 +427,8 @@ test('SKILLS-E2E-108: F8 native verification emits no customer loads',meta(8,'Ke
   // A conflict is a setup failure, never a reason to delete another run's rules.
   await fixtures.register(modelRules(seeded.skills));
   try {
+    const configuration = await measuredConfiguration(s.call,seeded.contextId);
     const target = await s.call('POST',`${root}native/targets/`,{version:4});
-    const {configuration} = await s.call('GET',`${root}native/runtime-configuration/`);
     const qualified = await s.call('PUT',`${root}native/targets/${target.binding_id}/`,{revision:target.revision,configuration});
     const plan = {binding_id:target.binding_id,binding_revision:qualified.revision,candidate_version:6,baselines:{reference:4},case_ids:[cases.cases[0].id],repetitions:1,historical_case_ids:[]};
     const preview = await s.call('POST',`${root}native/preview/`,plan);

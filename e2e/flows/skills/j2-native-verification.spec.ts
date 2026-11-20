@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { test, expect } from '../../lib/skills-native-fixtures';
+import { test, expect, measuredConfiguration } from '../../lib/skills-native-fixtures';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { sendTrace } from '../../lib/otlp';
@@ -118,6 +118,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     const suite = await req('PUT', `contexts/${contextId}/tests/`, { revision: 0, cases: [neighborCase('chargeback', skills), neighborCase('shipping', skills)] });
     const prepareOut = process.env.J2_PREPARE_OUT;
     if (prepareOut) return prepare(contextId);
+    await measuredConfiguration(req, contextId);
     const v7 = await publishRoot(req, contextId, 4, ROOT.repaired, 'Repair refund limit from recorded v4');
     const v8 = await publishRoot(req, contextId, 4, ROOT.wordingOnly, 'Control: wording-only repair');
     const v9 = await publishRoot(req, contextId, 4, ROOT.overbroad, 'Control: overbroad routing repair');

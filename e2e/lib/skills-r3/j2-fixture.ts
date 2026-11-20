@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { FixtureRule } from '../skills-fixtures';
 
 /** Synthetic support-desk application used by J2. Every behavioral difference between
@@ -6,17 +7,19 @@ import type { FixtureRule } from '../skills-fixtures';
  * catalog), read by the deterministic model fixture. Evidence class: synthetic fixture. */
 export type Req = (method: string, path: string, data?: unknown) => Promise<any>;
 
-export const REQUESTS = {
-  refund: 'My ceramic mug arrived cracked. Please refund this damaged order.',
-  chargeback: 'I do not recognize this charge on my card statement. Dispute the charge.',
-  shipping: 'Where is my package? Please track the shipment.',
-} as const;
-export type CaseKey = keyof typeof REQUESTS;
-export const STATE: Record<CaseKey, object> = {
-  refund: { age_days: 10, amount: 25, disputed: false },
-  chargeback: { age_days: 10, amount: 25, disputed: true },
-  shipping: { age_days: 5, amount: 25, disputed: false },
+// The incident and neighbor tasks use the same synthetic inputs copied into the
+// measured runtime. Keep Hub expectations below independent of retained CI's oracle.
+export type CaseKey = 'refund' | 'chargeback' | 'shipping';
+type CaseInput = { name: CaseKey; request: string; state: { age_days: number; amount: number; disputed: boolean } };
+const inputs: CaseInput[] = JSON.parse(readFileSync(new URL('../../stack/native-runtime/ci_dataset.json', import.meta.url), 'utf8')).cases;
+const byName = (name: CaseKey) => {
+  const row = inputs.find(input => input.name === name);
+  if (!row) throw new Error(`Missing synthetic support case: ${name}`);
+  return row;
 };
+const refund = byName('refund'), chargeback = byName('chargeback'), shipping = byName('shipping');
+export const REQUESTS = { refund: refund.request, chargeback: chargeback.request, shipping: shipping.request };
+export const STATE = { refund: refund.state, chargeback: chargeback.state, shipping: shipping.state };
 export const ACTION: Record<CaseKey, string> = { refund: 'issue_refund', chargeback: 'open_chargeback', shipping: 'track_shipment' };
 export const CONTAINS: Record<CaseKey, string> = { refund: 'receipt', chargeback: 'chargeback', shipping: 'package' };
 
