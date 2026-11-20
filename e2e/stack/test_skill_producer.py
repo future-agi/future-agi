@@ -50,25 +50,33 @@ class ContractTests(unittest.TestCase):
                       'surfaces': {'sdk': {}, 'mcp': {'name': 'list_skills'}}}
 
     def check(self):
-        check_slice(self.api, self.swagger, self.catalog, {'operations': [self.entry]})
+        return check_slice(self.api, self.swagger, self.catalog, {'operations': [self.entry]})
 
-    def test_exact_slice_not_just_subset(self):
-        self.check()
+    def test_unwrapped_backend_operations_are_reported_not_fatal(self):
+        self.assertEqual(self.check()['skills_operations']['not_wrapped'], [])
         self.api['paths'][self.path]['post'] = {}
-        with self.assertRaisesRegex(ValueError, 'missing Skills operations'):
+        self.assertEqual(self.check()['skills_operations']['not_wrapped'], [f'POST {self.path}'])
+
+    def test_shipped_operation_must_exist_unchanged_in_backend(self):
+        del self.api['paths'][self.path]['get']
+        with self.assertRaisesRegex(ValueError, 'does not expose'):
             self.check()
-        del self.api['paths'][self.path]['post']
+        self.api['paths'][self.path]['get'] = {'$ref': '#/definitions/Page'}
+        self.swagger['paths'][self.path]['get'] = {'$ref': '#/definitions/Skill'}
+        with self.assertRaisesRegex(ValueError, 'operation differs'):
+            self.check()
+        self.swagger['paths'][self.path]['get'] = {'$ref': '#/definitions/Page'}
         self.swagger['definitions']['Skill']['type'] = 'integer'
         with self.assertRaisesRegex(ValueError, 'models differ'):
             self.check()
 
     def test_snapshot_alone_is_not_a_shipped_surface(self):
         self.entry['surfaces']['sdk'] = False
-        with self.assertRaisesRegex(ValueError, 'does not ship'):
+        with self.assertRaisesRegex(ValueError, 'ships no Skills operations'):
             self.check()
         self.entry['surfaces']['sdk'] = {}
         self.catalog['tools'][0]['request']['method'] = 'POST'
-        with self.assertRaisesRegex(ValueError, 'HTTP bindings differ'):
+        with self.assertRaisesRegex(ValueError, 'bound differently'):
             self.check()
 
     def test_regeneration_rejects_handwritten_changes_and_new_scaffolds(self):
