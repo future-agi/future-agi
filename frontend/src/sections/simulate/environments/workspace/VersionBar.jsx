@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Tooltip } from "@mui/material";
+import { Box, ButtonBase, Stack, Typography, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
   isVersioningDisabled,
@@ -34,7 +34,7 @@ const Dot = () => (
 // shows, after the agent under test when one is connected. Until runs are pinned
 // to versions, the agent shown is the environment's default agent version, not
 // a claim about which one a run used.
-export default function VersionBar({ env, envState }) {
+export default function VersionBar({ env, envState, onHistory }) {
   const subject = env?.testSubject;
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
@@ -56,6 +56,13 @@ export default function VersionBar({ env, envState }) {
   const envLabel = envV ? named(envV) : versionBar.beforeVersioning;
   const agentLabel = agentV ? named(agentV) : versionBar.noAgent;
   const fromSuite = showPairing && suiteV?.scenarioCount != null;
+  // The environment version opens the History tab, as in the design.
+  const envLink = Boolean(onHistory && envV);
+  const envPart = (
+    <>
+      {versionBar.envPrefix} <Strong>{envLabel}</Strong>
+    </>
+  );
   const scenarioCount = fromSuite
     ? suiteV.scenarioCount
     : env?.counts?.scenarios ?? envState?.scenarios?.length ?? 0;
@@ -83,11 +90,16 @@ export default function VersionBar({ env, envState }) {
             arrow
             title={
               versioned
-                ? versionBar.pairingTooltip(
-                    envV ? envLabel : null,
-                    envV?.summary,
-                    agentV ? agentLabel : null,
-                  )
+                ? [
+                    versionBar.pairingTooltip(
+                      envV ? envLabel : null,
+                      envV?.summary,
+                      agentV ? agentLabel : null,
+                    ),
+                    envLink && versionBar.historyHint,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
                 : versionBar.noVersionsTooltip
             }
           >
@@ -112,7 +124,33 @@ export default function VersionBar({ env, envState }) {
               >
                 ×
               </Box>
-              {versionBar.envPrefix} <Strong>{envLabel}</Strong>
+              {envLink ? (
+                <ButtonBase
+                  component="span"
+                  onClick={onHistory}
+                  sx={{
+                    // Inline, not the default inline-flex, so the space before
+                    // the label stays.
+                    display: "inline",
+                    font: "inherit",
+                    color: "inherit",
+                    verticalAlign: "baseline",
+                    textDecoration: "underline dotted",
+                    textUnderlineOffset: "3px",
+                    borderRadius: "2px",
+                    "&:hover": { color: "text.primary" },
+                    "&.Mui-focusVisible": {
+                      outline: "2px solid",
+                      outlineColor: "primary.main",
+                      outlineOffset: 2,
+                    },
+                  }}
+                >
+                  {envPart}
+                </ButtonBase>
+              ) : (
+                envPart
+              )}
             </Typography>
           </Tooltip>
           {suiteV && (
@@ -209,6 +247,8 @@ VersionBar.propTypes = {
     }),
     counts: PropTypes.shape({ scenarios: PropTypes.number }),
   }),
+  // Opens the History tab; the environment version stays plain text without it.
+  onHistory: PropTypes.func,
   envState: PropTypes.shape({
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }),

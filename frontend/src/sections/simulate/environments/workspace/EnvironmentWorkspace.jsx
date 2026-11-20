@@ -597,7 +597,11 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <VersionBar
+          env={env}
+          envState={envState}
+          onHistory={() => setTab("versions")}
+        />
       )}
       <DraftBar
         env={env}

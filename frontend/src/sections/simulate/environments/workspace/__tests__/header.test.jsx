@@ -725,6 +725,21 @@ describe("VersionBar", () => {
     expect(screen.getByText("12 scenarios")).toBeInTheDocument();
   });
 
+  it("opens the history from the environment version", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    const onHistory = vi.fn();
+    render(
+      <VersionBar
+        env={VERSIONED_ENV}
+        envState={{ scenarios: [1] }}
+        onHistory={onHistory}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "environment v2" }));
+    expect(onHistory).toHaveBeenCalled();
+  });
+
   it("says before versioning when the environment has no versions yet", () => {
     versionsResponse.current = { agent: [], environment: [], suite: [] };
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
