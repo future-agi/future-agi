@@ -426,8 +426,37 @@ class AttachmentProviderFileSerializer(serializers.Serializer):
         swagger_schema_fields = {"additionalProperties": False}
 
 
+_SWAGGER2_ALTERNATIVES = {"oneOf": "x-oneOf", "anyOf": "x-anyOf"}
+
+
+def _swagger2(value):
+    """Spell JSON Schema alternatives in a form Swagger 2 accepts.
+
+    Swagger 2 has no oneOf, anyOf or const. Keep alternatives as the vendor
+    extensions the rest of this contract already uses and write const as a
+    one-value enum, which accepts exactly the same documents.
+    """
+    if isinstance(value, list):
+        return [_swagger2(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    converted = {}
+    for key, item in value.items():
+        if key == "const":
+            if "enum" in value:
+                raise ValueError("attachment schema has both const and enum")
+            converted["enum"] = [item]
+        else:
+            converted[_SWAGGER2_ALTERNATIVES.get(key, key)] = _swagger2(item)
+    return converted
+
+
 def _control_f01_schema(name):
-    """Inline only local vendored refs; never fetch a schema URL."""
+    """Inline only local vendored refs; never fetch a schema URL.
+
+    The result documents Swagger 2 only; request validation uses the vendored
+    JSON Schema itself.
+    """
 
     def expand(value):
         if isinstance(value, list):
@@ -441,14 +470,14 @@ def _control_f01_schema(name):
             return {key: expand(item) for key, item in value.items()}
         return value
 
-    return expand(_CONTROL_F01[name])
+    return _swagger2(expand(_CONTROL_F01[name]))
 
 
 class AttachmentControlImportSourceField(serializers.JSONField):
     class Meta:
         swagger_schema_fields = {
             "type": "object",
-            "x-oneOf": _control_f01_schema("ImportSource")["oneOf"],
+            "x-oneOf": _control_f01_schema("ImportSource")["x-oneOf"],
         }
 
 
@@ -483,7 +512,7 @@ class AttachmentImportRequestSerializer(serializers.Serializer):
     class Meta:
         swagger_schema_fields = {
             "additionalProperties": False,
-            "x-oneOf": _control_f01_schema("ImportRequest")["oneOf"],
+            "x-oneOf": _control_f01_schema("ImportRequest")["x-oneOf"],
         }
 
 
@@ -497,7 +526,7 @@ class AttachmentImportResponseSerializer(serializers.Serializer):
     class Meta:
         swagger_schema_fields = {
             "additionalProperties": False,
-            "x-oneOf": _control_f01_schema("ImportResponse")["oneOf"],
+            "x-oneOf": _control_f01_schema("ImportResponse")["x-oneOf"],
         }
 
 
@@ -540,20 +569,22 @@ class AttachmentProviderRegistrationResponseSerializer(serializers.Serializer):
     class Meta:
         swagger_schema_fields = {
             "additionalProperties": False,
-            "x-allOf": [
-                {
-                    "if": {"properties": {"state": {"const": "complete"}}},
-                    "then": {"required": ["import_request"]},
-                    "else": {
-                        "not": {
-                            "anyOf": [
-                                {"required": ["import_request"]},
-                                {"required": ["job_id"]},
-                            ]
-                        }
-                    },
-                }
-            ],
+            "x-allOf": _swagger2(
+                [
+                    {
+                        "if": {"properties": {"state": {"const": "complete"}}},
+                        "then": {"required": ["import_request"]},
+                        "else": {
+                            "not": {
+                                "anyOf": [
+                                    {"required": ["import_request"]},
+                                    {"required": ["job_id"]},
+                                ]
+                            }
+                        },
+                    }
+                ]
+            ),
         }
 
 
