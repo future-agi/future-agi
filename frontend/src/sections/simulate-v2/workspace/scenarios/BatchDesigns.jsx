@@ -157,6 +157,7 @@ function BatchContainer({
   tableProps,
   renderList,
   flash,
+  summary = null,
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -232,6 +233,15 @@ function BatchContainer({
               </Typography>
             </Stack>
           </Tooltip>
+          {/* After a build, the yield and why the rest are held (handover:
+              Not proved right after building shouldn't read as a failure). */}
+          {summary && (
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {summary}
+            </Typography>
+          )}
         </Box>
         <Stack
           direction="row"
@@ -308,6 +318,7 @@ function BatchContainer({
   );
 }
 BatchContainer.propTypes = {
+  summary: PropTypes.string,
   batch: PropTypes.object,
   version: PropTypes.string,
   latest: PropTypes.bool,
@@ -325,6 +336,7 @@ export function BatchContainers({
   flashId,
   latestId,
   versionOf,
+  summaryOf,
 }) {
   return (
     <Stack spacing={2}>
@@ -342,12 +354,14 @@ export function BatchContainers({
           tableProps={tableProps}
           renderList={renderList}
           flash={flashId === b.meta.batchId}
+          summary={summaryOf ? summaryOf(b) : null}
         />
       ))}
     </Stack>
   );
 }
 BatchContainers.propTypes = {
+  summaryOf: PropTypes.func,
   batches: PropTypes.array,
   view: PropTypes.string,
   tableProps: PropTypes.object,

@@ -287,6 +287,7 @@ export default function ScenarioEditor({
           <SectionHeader
             title="Directly editable"
             hint="These don't affect verification, so they save directly — as a new version."
+            seen="grading"
           />
 
           <TextField
@@ -354,6 +355,7 @@ export default function ScenarioEditor({
           <SectionHeader
             title="Sub-goals"
             hint={`${SUBGOAL_MIN}–${SUBGOAL_MAX} per scenario. It passes when every critical one holds; supporting ones are only reported.`}
+            seen="grading"
           />
           <SubGoalsEditor
             draft={draft}
@@ -377,6 +379,7 @@ export default function ScenarioEditor({
           <SectionHeader
             title="Persona"
             hint="Who's on the other end of the run. Shapes tone, pacing and any traits the caller carries into the conversation."
+            seen="people"
           />
           {/* Where this caller came from, and the way to and from the workspace
               persona library (Environments → Personas). Callers only — a
@@ -612,6 +615,7 @@ export default function ScenarioEditor({
               <SectionHeader
                 title="Call constraints"
                 hint="Voice-agent specific. Every generated scenario carries defaults; overriding them here is safe."
+                seen="people"
               />
               {callSettingsLine(draft.persona?.callSettings, {
                 voice: true,
@@ -720,6 +724,7 @@ export default function ScenarioEditor({
               <SectionHeader
                 title="Starting state override"
                 hint="Optional. This scenario's own starting state; blank uses the environment's default."
+                seen="world"
               />
               <TextField
                 size="small"
@@ -1291,9 +1296,43 @@ SubGoalsEditor.propTypes = {
   envState: PropTypes.object,
 };
 
-function SectionHeader({ title, hint }) {
+/* Who sees each group of fields (handover: the editor says it, so grading
+   material reads as private, never as part of what the agent is told). */
+const SEEN = {
+  agent: {
+    icon: "solar:chat-round-line-linear",
+    text: "What the agent receives",
+  },
+  people: {
+    icon: "solar:users-group-rounded-linear",
+    text: "What the simulated people are told — the agent never sees it",
+  },
+  grading: {
+    icon: "solar:lock-keyhole-linear",
+    text: "Private to grading — never shown to the agent or the simulated people",
+  },
+  world: {
+    icon: "solar:database-linear",
+    text: "The world's records — the agent reads them only through its tools",
+  },
+};
+
+function SectionHeader({ title, hint, seen = null }) {
   return (
     <Box>
+      {seen && SEEN[seen] && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.5}
+          sx={{ mb: 0.25, color: "text.tertiary" }}
+        >
+          <Iconify icon={SEEN[seen].icon} width={12} />
+          <Typography sx={{ typography: "s3", color: "inherit" }}>
+            {SEEN[seen].text}
+          </Typography>
+        </Stack>
+      )}
       <Typography
         sx={{
           typography: "s3",
@@ -1312,7 +1351,11 @@ function SectionHeader({ title, hint }) {
     </Box>
   );
 }
-SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
+SectionHeader.propTypes = {
+  title: PropTypes.string,
+  hint: PropTypes.string,
+  seen: PropTypes.oneOf(["agent", "people", "grading", "world"]),
+};
 
 /**
  * A "locked" field the user can't edit inline: shows the current value

@@ -2272,6 +2272,32 @@ export default function ScenariosStep({
               const containers = (
                 <BatchContainers
                   batches={batches}
+                  summaryOf={(b) => {
+                    /* The build's yield: what can run and why the rest
+                       is held, in the same states as the rows. */
+                    if (b.meta.source !== "derived") return null;
+                    const live = b.rows.filter(
+                      (r) => !r.proposed && stateOf(r).id !== "archived",
+                    );
+                    if (!live.length) return null;
+                    const held = live.filter(
+                      (r) =>
+                        !["valid", "active", "kept"].includes(stateOf(r).id),
+                    );
+                    if (!held.length) return `All ${live.length} can run.`;
+                    const why = Object.entries(
+                      held.reduce((m, r) => {
+                        const w = String(
+                          stateOf(r).why || stateOf(r).note || "",
+                        )
+                          .split(/(?<=\.)\s/)[0]
+                          .replace(/\.$/, "");
+                        if (w) m[w] = (m[w] || 0) + 1;
+                        return m;
+                      }, {}),
+                    ).sort((x, y) => y[1] - x[1])[0];
+                    return `${live.length - held.length} of ${live.length} can run · ${held.length} not proved${why ? ` — most because: ${why[0].charAt(0).toLowerCase()}${why[0].slice(1)}` : ""}. Open one to see why, or ask the builder to fix them.`;
+                  }}
                   flashId={flashId}
                   latestId={history[0]?.batchId}
                   versionOf={(b) =>
