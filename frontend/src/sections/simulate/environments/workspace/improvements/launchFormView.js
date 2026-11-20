@@ -107,8 +107,10 @@ export const marginSteps = (value) => [
 ];
 
 // The models the run's spans show the agent called: the lock a fix starts from.
-export const seesModels = (options) =>
-  options.defaults.allowed_models.length > 0;
+// A run whose options don't list them reads as one that saw none.
+export const seenModelsOf = (options) =>
+  options?.defaults?.allowed_models ?? [];
+export const seesModels = (options) => seenModelsOf(options).length > 0;
 
 // Whether the run exported the agent's model calls at all, named or not.
 export const isTraced = (options) =>

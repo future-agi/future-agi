@@ -12,6 +12,7 @@ import {
   costLimitOf,
   isTraced,
   seesModels,
+  seenModelsOf,
   tracesUnreadable,
   marginSteps,
 } from "../launchFormView";
@@ -225,5 +226,14 @@ describe("constraints", () => {
     expect(isTraced(options(["m1"], false))).toBe(true);
     expect(seesModels(options([], true))).toBe(false);
     expect(seesModels(options(["m1"], false))).toBe(true);
+  });
+
+  it("reads options that don't list the models as a run that saw none, without throwing", () => {
+    expect(seesModels({ defaults: {} })).toBe(false);
+    expect(seesModels({})).toBe(false);
+    expect(seenModelsOf({ defaults: {} })).toEqual([]);
+    expect(seenModelsOf({ defaults: { allowed_models: ["m1"] } })).toEqual([
+      "m1",
+    ]);
   });
 });

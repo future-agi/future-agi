@@ -39,6 +39,7 @@ import {
   isTraced,
   callsUnmeasured,
   seesModels,
+  seenModelsOf,
   tracesUnreadable,
   launchError,
   marginSteps,
@@ -194,7 +195,7 @@ export default function LaunchFixDialog({
     setLocked([]);
     setBudget(options.defaults.budget_credits);
     setMinutes(options.defaults.max_minutes);
-    setModels(options.defaults.allowed_models);
+    setModels(seenModelsOf(options));
     setLatencyMargin(options.defaults.reply_latency_margin_pct);
     setCostMargin(options.defaults.cost_margin_pct);
     setCostLimit("");
@@ -238,7 +239,7 @@ export default function LaunchFixDialog({
     surfaces,
     limits,
     models,
-    seenModels: options.defaults.allowed_models,
+    seenModels: seenModelsOf(options),
     costLimit,
   });
   const blockedReason = blockedReasonOf(options, targets.length);
