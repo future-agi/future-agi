@@ -297,6 +297,22 @@ jobs:
       - name: Install ffmpeg, ffprobe and xmlsec1 from bounded Ubuntu cache
         run: bash .ci/install-test-packages.sh /tmp/futureagi-backend-ci-apt
 
+      - name: Allow the attachment decoder sandbox to create user namespaces
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+        # Grant them to /usr/bin/bwrap only (the same per-application allowance
+        # production media workers need); the global restriction stays on and
+        # the product's bubblewrap/prlimit confinement is unchanged.
+        run: |
+          sudo tee /etc/apparmor.d/bwrap-attachment-sandbox >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap-attachment-sandbox /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-attachment-sandbox
+          bwrap --ro-bind / / --unshare-all --die-with-parent true
+
       - name: Fetch this run's pinned Temporal archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -731,22 +747,16 @@ jobs:
       - name: Install decoder sandbox and its per-app user namespace policy
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bubblewrap apparmor apparmor-utils
-          sudo tee /etc/apparmor.d/usr.bin.bwrap >/dev/null <<'EOF'
-          #include <tunables/global>
-          /usr/bin/bwrap flags=(attach_disconnected) {
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo tee /etc/apparmor.d/bwrap-attachment-sandbox >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap-attachment-sandbox /usr/bin/bwrap flags=(unconfined) {
             userns,
-            /usr/bin/bwrap mr,
-            /usr/bin/prlimit rix,
-            /usr/bin/python3 rix,
-            /usr/** r,
-            /lib/** r,
-            /lib64/** r,
-            /proc/** r,
-            /tmp/** rw,
           }
-          EOF
-          sudo apparmor_parser -r /etc/apparmor.d/usr.bin.bwrap
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-attachment-sandbox
+          bwrap --ro-bind / / --unshare-all --die-with-parent true
       - name: Install backend dependencies
         run: uv sync --frozen --all-extras
       - name: Run isolated schema review module
