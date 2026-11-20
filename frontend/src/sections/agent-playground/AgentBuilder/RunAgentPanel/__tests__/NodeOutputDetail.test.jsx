@@ -42,7 +42,9 @@ describe("NodeOutputDetail - Node execution duration", () => {
 
   it("renders 'Select a node to view details' when nodeExecutionId is missing", () => {
     render(<NodeOutputDetail executionId="exec-1" nodeExecutionId={null} />);
-    expect(screen.getByText("Select a node to view details")).toBeInTheDocument();
+    expect(
+      screen.getByText("Select a node to view details"),
+    ).toBeInTheDocument();
   });
 
   it("displays formatted duration for a successfully completed node", () => {
@@ -65,6 +67,35 @@ describe("NodeOutputDetail - Node execution duration", () => {
     const durationElement = screen.getByTestId("node-execution-duration");
     expect(durationElement).toBeInTheDocument();
     expect(screen.getByText("5s")).toBeInTheDocument();
+  });
+
+  it("distinguishes fast runs from a measured zero and a missing measurement", () => {
+    const detail = (
+      <NodeOutputDetail executionId="exec-1" nodeExecutionId="node-1" />
+    );
+    const measure = (seconds) =>
+      useGetNodeExecutionDetail.mockReturnValue({
+        data: { status: "success", duration_seconds: seconds },
+      });
+
+    measure(null);
+    const { rerender } = render(detail);
+    expect(
+      screen.queryByTestId("node-execution-duration"),
+    ).not.toBeInTheDocument();
+
+    for (const [seconds, label] of [
+      [0, "0s"],
+      [0.001, "<0.1s"],
+      [0.099, "<0.1s"],
+      [0.1, "0.1s"],
+    ]) {
+      measure(seconds);
+      rerender(React.cloneElement(detail));
+      expect(screen.getByTestId("node-execution-duration")).toHaveTextContent(
+        label,
+      );
+    }
   });
 
   it("displays formatted minutes and seconds for longer executions", () => {

@@ -244,23 +244,20 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   const hasErrorMessage = !!errorMessage && outputs.length === 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
 
-  const rawDuration =
-    nodeDetail?.duration_seconds ?? nodeDetail?.duration;
-  const isNodeFinished =
-    !isNodeRunning &&
-    nodeStatus !== "skipped" &&
-    nodeStatus !== "idle" &&
-    rawDuration != null &&
-    Number.isFinite(Number(rawDuration)) &&
-    Number(rawDuration) >= 0;
-
-  const formattedDuration = isNodeFinished
-    ? formatDuration(
-        Number(rawDuration) >= 1
-          ? Math.round(Number(rawDuration))
-          : Math.round(Number(rawDuration) * 10) / 10,
-      )
-    : null;
+  const seconds = nodeDetail?.duration_seconds;
+  let formattedDuration = null;
+  if (
+    (nodeStatus === "success" || nodeStatus === "failed") &&
+    Number.isFinite(seconds) &&
+    seconds >= 0
+  ) {
+    formattedDuration =
+      seconds > 0 && seconds < 0.1
+        ? "<0.1s"
+        : formatDuration(
+            seconds < 1 ? Math.round(seconds * 10) / 10 : Math.round(seconds),
+          );
+  }
 
   // Map API response to AG Grid row data
   const rowData = useMemo(() => {
