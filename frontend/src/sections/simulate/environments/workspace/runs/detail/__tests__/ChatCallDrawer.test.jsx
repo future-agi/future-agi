@@ -161,6 +161,22 @@ describe("ChatCallDrawer tabs", () => {
   });
 });
 
+describe("ChatCallDrawer, a call whose transcript was not kept", () => {
+  it("says why in the transcript pane and beside the evals, keeping the call's own verdict", () => {
+    const reason = "Call transcript is unavailable, so processing was skipped.";
+    mocks.callDetail = { processingSkipReason: reason, trial_state: null };
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-skipped", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    // Once above the transcript, once beside the evals.
+    expect(screen.getAllByText(reason)).toHaveLength(2);
+    mocks.callDetail = null;
+  });
+});
+
 describe("ChatCallDrawer World state", () => {
   it("shows no World state tab while actors are off", () => {
     mocks.callDetail = { actorsEnabled: false, trial_state: null };
