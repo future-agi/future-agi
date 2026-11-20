@@ -409,6 +409,7 @@ export default function ChatCallDrawer({
                 participants={callDetail?.participants || []}
                 hasCustomer={callDetail?.hasCustomer}
                 focusTurn={focusTurn}
+                emptyReason={callDetail?.processingSkipReason}
               />
             )}
           </Box>
@@ -430,6 +431,8 @@ export default function ChatCallDrawer({
           </Box>
 
           <OutcomeReason reason={task.outcomeReason} />
+          {/* The scenario's own verdict stands; only the platform's evals and CSAT did not run. */}
+          <OutcomeReason reason={callDetail?.processingSkipReason} />
 
           {failed.length > 0 && (
             <Stack

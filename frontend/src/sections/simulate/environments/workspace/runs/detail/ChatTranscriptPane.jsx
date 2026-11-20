@@ -89,6 +89,7 @@ export default function ChatTranscriptPane({
   participants,
   hasCustomer,
   focusTurn = null,
+  emptyReason = null,
 }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -257,7 +258,7 @@ export default function ChatTranscriptPane({
             sx={{ px: 1.75, py: 2, typography: "s2", color: "text.subtitle" }}
           >
             {turns.length === 0
-              ? "No messages captured for this conversation."
+              ? emptyReason || "No messages captured for this conversation."
               : "No turns match that filter."}
           </Typography>
         )}
@@ -266,6 +267,8 @@ export default function ChatTranscriptPane({
   );
 }
 ChatTranscriptPane.propTypes = {
+  // The server's reason no transcript was kept, said in place of an empty pane.
+  emptyReason: PropTypes.string,
   customerName: PropTypes.string,
   // A turn to bring into view and mark: `{ turn }`, a new object each time it is asked for.
   focusTurn: PropTypes.shape({ turn: PropTypes.number }),
