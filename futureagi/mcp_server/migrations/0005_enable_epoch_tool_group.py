@@ -1,6 +1,24 @@
 from django.db import migrations, models
 from django.db.models.expressions import RawSQL
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": ["postgres:mcp_server_mcptoolgroupconfig"],
+    "mitigation": (
+        "Appends 'epoch' to enabled_groups only on tool group configs that already "
+        "enable 'simulation', in id-ordered batches of 500 with atomic=False, so each "
+        "batch commits with short row locks on a one-row-per-connection table. The "
+        "append runs in SQL on the current value, so a concurrent edit survives, and "
+        "rows that already have 'epoch' are skipped, so a re-run is a no-op. "
+        "Soft-deleted rows are included so a restored connection keeps its selection. "
+        "The reverse is a noop, so a rollback never removes a group a user chose since."
+    ),
+    "reviewer": "KarthikAvinashFI",
+    "review": "https://github.com/future-agi/future-agi/pull/4266#discussion_r4631092288",
+    "large_volume_rehearsal": True,
+}
+
 
 def enable_epoch_tool_group(apps, schema_editor):
     config = apps.get_model("mcp_server", "MCPToolGroupConfig")
