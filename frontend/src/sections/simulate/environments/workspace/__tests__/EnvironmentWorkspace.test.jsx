@@ -999,15 +999,14 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the draft in the Versions tab from the bar", async () => {
+  it("opens the review of the draft's changes from the bar, staying on the tab", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
       await screen.findByRole("button", { name: "View changes" }),
     );
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/dashboard/simulate/environments/job-done?tab=versions&version=environment%3Aed",
-    );
+    expect(await screen.findByText("Review changes")).toBeInTheDocument();
+    expect(screen.getByTestId("location")).not.toHaveTextContent("tab=versions");
   });
 
   it("shows no bar without drafts", async () => {

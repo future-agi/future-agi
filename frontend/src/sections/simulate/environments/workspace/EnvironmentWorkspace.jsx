@@ -687,6 +687,7 @@ export default function EnvironmentWorkspace() {
         onViewChanges={(piece, id) =>
           setTab("versions", { version: `${piece}:${id}` })
         }
+        onOpenTab={(tab) => setTab(tab)}
       />
 
       {/* A template-seeded env is read-only until forked — the banner states the

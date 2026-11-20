@@ -21,6 +21,7 @@ import { DRAFTS_COPY as COPY } from "../workspace.constants";
 import { changeCount } from "./changeCount";
 import { SCENARIOS_COPY } from "../scenarios/scenarios.constants";
 import { draftSaveRequests } from "./draftSave";
+import ReviewChangesDrawer from "./ReviewChangesDrawer";
 import {
   useDraftsValidation,
   validationStateNote,
@@ -62,6 +63,7 @@ export default function DraftBar({
   busy = false,
   rebuilding = false,
   onViewChanges,
+  onOpenTab,
 }) {
   const enabled = Boolean(env?.versioning?.enabled);
   const {
@@ -78,6 +80,8 @@ export default function DraftBar({
   const save = useSaveDrafts(env?.id);
   const { enqueueSnackbar } = useSnackbar();
   const discard = useDiscardDraft(env?.id);
+  // View changes opens the review: accept or reject each change, Validate, then Save.
+  const [reviewing, setReviewing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   // A validated save makes a new version, and the server asks for its name.
   const [versionName, setVersionName] = useState("");
@@ -257,7 +261,7 @@ export default function DraftBar({
         <Button
           size="small"
           color="inherit"
-          onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
+          onClick={() => setReviewing(true)}
         >
           {COPY.viewChanges}
         </Button>
@@ -359,6 +363,13 @@ export default function DraftBar({
           </Button>
         }
       />
+      <ReviewChangesDrawer
+        open={reviewing}
+        env={env}
+        canEdit={!busy && !rebuilding}
+        onClose={() => setReviewing(false)}
+        onOpenTab={onOpenTab}
+      />
     </Box>
   );
 }
@@ -374,4 +385,6 @@ DraftBar.propTypes = {
   rebuilding: PropTypes.bool,
   // (piece, draft version id): show that draft in the Versions tab.
   onViewChanges: PropTypes.func,
+  // (tab): a review row's link to the tab that holds what it changed.
+  onOpenTab: PropTypes.func,
 };

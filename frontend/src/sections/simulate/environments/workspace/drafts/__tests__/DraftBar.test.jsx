@@ -17,6 +17,9 @@ const saveMutate = vi.fn();
 const discardMutate = vi.fn();
 const saveReset = vi.fn();
 const discardReset = vi.fn();
+// The review drawer has its own tests; the bar only opens it.
+const reviewDrawer = vi.hoisted(() => vi.fn(() => null));
+vi.mock("../ReviewChangesDrawer", () => ({ default: reviewDrawer }));
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
     "src/api/simulate-environments/versions",
@@ -456,13 +459,15 @@ describe("DraftBar", () => {
     expect(discardMutate).not.toHaveBeenCalled();
   });
 
-  it("opens the first open draft's changes", async () => {
+  it("opens the review of the changes, not the Versions tab", async () => {
     const onViewChanges = vi.fn();
     state.drafts = { environment: null, suite: SUITE_DRAFT, set_aside: [] };
     render(<DraftBar env={ENV} onViewChanges={onViewChanges} />);
+    expect(reviewDrawer.mock.lastCall[0].open).toBe(false);
     await userEvent.click(
       screen.getByRole("button", { name: DRAFTS_COPY.viewChanges }),
     );
-    expect(onViewChanges).toHaveBeenCalledWith("suite", "sd");
+    expect(reviewDrawer.mock.lastCall[0].open).toBe(true);
+    expect(onViewChanges).not.toHaveBeenCalled();
   });
 });
