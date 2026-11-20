@@ -432,7 +432,7 @@ export const checkRunning = (version) =>
   !isStuck(version);
 // A check this environment waits on: one still running, or one that passed
 // and whose move of the default is not recorded yet.
-const awaitedCheck = (version) =>
+export const awaitedCheck = (version) =>
   checkRunning(version) ||
   (version.preflightStatus === "passed" &&
     version.requestedHere &&
@@ -539,8 +539,12 @@ export const refreshFollowers = (queryClient, envId) => {
 
 // A draft keeps its id as it is edited, so its diff and members are asked
 // again with the drafts.
+// The environment's readiness fix run; its outcome reads the fix's draft.
+export const readinessFixKey = (envId) => ["harness-readiness-fix", envId];
+
 export const refreshDrafts = (queryClient, envId) => {
   queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+  queryClient.invalidateQueries({ queryKey: readinessFixKey(envId) });
   queryClient.invalidateQueries({
     queryKey: [...environmentVersionsKey(envId), "diff"],
   });
@@ -804,6 +808,8 @@ export const toDrafts = (data = {}) => {
     pieces,
     any: pieces.length > 0,
     stale: pieces.some((piece) => drafts[piece].stale),
+    // A plain Save would be refused: the changes go through Validate first.
+    validationRequired: Boolean(data?.validation_required),
     // Where the validation of the reviewed changes stands, and what it built.
     validation: data?.validation
       ? {

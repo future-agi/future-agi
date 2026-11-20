@@ -126,6 +126,23 @@ describe("ChatSplitPane", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("expands when openKey changes to a new value", () => {
+    const split = (openKey) => (
+      <ChatSplitPane
+        chat={({ collapse }) => <FakeChat onCollapse={collapse} />}
+        openKey={openKey}
+      >
+        <div>right pane</div>
+      </ChatSplitPane>
+    );
+    const { rerender } = render(split(null));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chat" }));
+    rerender(split(null));
+    expect(chatPane()).not.toBeVisible();
+    rerender(split("fix-1"));
+    expect(chatPane()).toBeVisible();
+  });
+
   it("passes the open state to the chat render prop", () => {
     const chat = vi.fn(({ collapse }) => <FakeChat onCollapse={collapse} />);
     render(

@@ -187,6 +187,26 @@ def require_no_rebuild(
         raise rebuild_running(piece)
 
 
+def require_no_fix_waiting(environment: HostedHarnessJob) -> None:
+    """Refuse a manual Save while a run readiness fix waits on the person's answer."""
+    from simulate.services.harness_readiness import fix_runs
+
+    fix_runs.require_no_fix_waiting(environment)
+
+
+def require_no_fix_saving(environment: HostedHarnessJob) -> None:
+    """Refuse the person's own draft edit while a run readiness fix may still save
+    the drafts: autosave saves the whole draft, so the edit would be saved as the
+    fix's."""
+    from simulate.services.harness_readiness import fix_runs
+
+    fix_runs.require_no_active_fix(
+        environment,
+        states=fix_runs.UNSAVED,
+        message="A fix is running; edit when it finishes",
+    )
+
+
 def rebuild_running(piece: str | None) -> HostedHarnessError:
     return version_error(
         "rebuild_running",
@@ -720,6 +740,8 @@ def record_draft(
         )
         if not drafts_apply(locked):
             return None
+        if origin == "manual":
+            require_no_fix_saving(locked)
         if expected is not None:
             current = draft_refs(locked)
             for piece in DRAFT_PIECES:
@@ -1411,7 +1433,9 @@ def save_drafts(
         replayed = replayed_save(locked, idempotency_key, pieces)
         if replayed is not None:
             return replayed
-        require_idle(locked, next(piece for piece in DRAFT_PIECES if piece in pieces))
+        first = next(piece for piece in DRAFT_PIECES if piece in pieces)
+        require_idle(locked, first)
+        require_no_fix_waiting(locked)
         expected_review_digest = next(
             (
                 one.expected_review_digest

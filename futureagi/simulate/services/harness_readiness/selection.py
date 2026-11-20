@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 from uuid import UUID
 
 from simulate.models import (
@@ -23,11 +23,13 @@ from simulate.models import (
 )
 from simulate.selectors.runs import validation_jobs
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_readiness import fix_groups
 from simulate.services.harness_readiness.catalogue import (
     CATALOGUE,
     GATE_OPEN,
     AnswerView,
     AreaView,
+    FixGroupsView,
     Pairing,
     PairingView,
     RowView,
@@ -174,6 +176,10 @@ class Affected(TypedDict):
 class SelectionRowView(RowView):
     needed_by: int
     affected: Affected
+    # Laid on by ``fix_runs.with_progress`` on live reads only.
+    fix_progress: NotRequired[dict[str, Any]]
+    fix_result: NotRequired[dict[str, Any]]
+    fix_action: NotRequired[dict[str, Any]]
 
 
 class SelectionReport(TypedDict):
@@ -188,6 +194,7 @@ class SelectionReport(TypedDict):
     catalog_version: str
     rules_version: str
     computed_at: str
+    fix_groups: NotRequired[FixGroupsView]
     selection: SelectionView
 
 
@@ -268,7 +275,7 @@ def selection_report(
             }
         )
     held_by = _held_by(rows, report["workers"], placed)
-    return {
+    selected: SelectionReport = {
         **report,
         "answer": _selected_answer(
             report["answer"],
@@ -304,6 +311,12 @@ def selection_report(
             "requirements_recorded": placement.recorded,
         },
     }
+    # Live reads only: a run's snapshot never keeps it.
+    if fix_groups.enabled():
+        selected["fix_groups"] = fix_groups.fix_groups(report["rows"])
+    from simulate.services.harness_readiness.fix_runs import with_progress
+
+    return cast(SelectionReport, with_progress(pairing, selected))
 
 
 def _worker_reasons(

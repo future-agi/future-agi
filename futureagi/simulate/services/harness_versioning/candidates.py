@@ -39,6 +39,7 @@ from simulate.services.harness_versioning.draft_pieces import (
 )
 from simulate.services.harness_versioning.drafts import (
     open_drafts,
+    require_no_fix_waiting,
     require_revisions,
     require_saveable,
 )
@@ -191,6 +192,7 @@ def validate_drafts(
         locked = lock_environment(environment)
         opened = open_drafts(locked)
         require_saveable(locked, opened, expected_revisions={})
+        require_no_fix_waiting(locked)
         review.heal_suite_index(locked)
         # Read again: a healed suite draft has a new archive.
         opened = open_drafts(locked)

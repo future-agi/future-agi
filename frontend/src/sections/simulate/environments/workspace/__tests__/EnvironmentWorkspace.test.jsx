@@ -711,7 +711,7 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.queryByText(/verify_identity/)).toBeNull();
   });
 
-  it("keeps checked scenarios available after cancelling the run dialog", async () => {
+  it("keeps checked scenarios available after cancelling the run plan", async () => {
     const rows = SAMPLE_ROWS.slice(0, 3);
     getHarnessJob.mockResolvedValue({
       ...COMPLETED_JOB,
@@ -749,8 +749,10 @@ describe("EnvironmentWorkspace route shell", () => {
       screen.getByText("Run simulation (2)", { selector: "button" });
     await user.click(runSelection());
 
+    const plan = () =>
+      screen.queryByRole("complementary", { name: "Run plan" });
     const dialog = within(
-      await screen.findByRole("dialog", { name: "Run simulation" }),
+      await screen.findByRole("complementary", { name: "Run plan" }),
     );
     expect(await dialog.findByText("Runs 2 selected scenarios.")).toBeVisible();
     await user.click(dialog.getByRole("button", { name: "Edit" }));
@@ -761,7 +763,8 @@ describe("EnvironmentWorkspace route shell", () => {
     });
     await user.click(dialog.getByRole("button", { name: "Cancel" }));
 
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // The run plan slides away before it closes.
+    await waitFor(() => expect(plan()).not.toBeInTheDocument());
     expect(first).toBeChecked();
     expect(second).toBeChecked();
     expect(runSelection()).toBeEnabled();

@@ -418,6 +418,32 @@ describe("EnvironmentWorkspace run start", () => {
     );
   });
 
+  it("reads Ready to run again when a run meets a check of its versions", async () => {
+    getHarnessJob.mockResolvedValue(VERSIONED_JOB);
+    axios.post.mockRejectedValueOnce({
+      statusCode: 409,
+      error: "pair_validating",
+      message: "These versions are being checked together.",
+    });
+    const client = newClient();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const user = userEvent.setup();
+    renderWorkspace(undefined, client);
+
+    await user.click(
+      await screen.findByRole("button", { name: "run selection" }),
+    );
+    await user.click(screen.getByRole("button", { name: "submit picks" }));
+    expect(
+      await screen.findByText("error:pair_validating"),
+    ).toBeInTheDocument();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+    // The report then reads the check, holds Run and polls until it ends.
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["harness-readiness", "job-done"],
+    });
+  });
+
   it("asks with a new key when the same picks resolve to moved defaults", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED_JOB);
     axios.post

@@ -62,6 +62,7 @@ def test_agent_change_detection_runs_on_the_default_queue():
 def test_nudge_activities_run_on_the_default_queue():
     from simulate.tasks.harness_nudges import (
         check_harness_nudges,
+        check_harness_readiness_fix,
         finish_harness_nudge_turn,
         raise_harness_environment_nudge,
         reconcile_harness_environment_nudges,
@@ -80,6 +81,7 @@ def test_nudge_activities_run_on_the_default_queue():
         reconcile_harness_environment_nudges,
         tick_harness_nudges,
         check_harness_nudges,
+        check_harness_readiness_fix,
         finish_harness_nudge_turn,
         stop_harness_nudge_sandbox,
     ):

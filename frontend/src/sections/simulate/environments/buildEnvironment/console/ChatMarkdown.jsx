@@ -23,7 +23,7 @@ const htmlAsText =
 
 /** Markdown prose in the builder chat: builder notes and question prompts.
  *  `basicHtml` also renders bare formatting tags like <b>; any other HTML stays text. */
-export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
+export default function ChatMarkdown({ text, dim, small, sx, basicHtml }) {
   // Every keystroke in the composer redraws the chat; parse only when text changes.
   const body = useMemo(
     () => (
@@ -46,7 +46,8 @@ export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
   return (
     <Box
       sx={{
-        typography: "m3",
+        // Small for compact spots like the run plan and the chat's cards.
+        typography: small ? "s3" : "m3",
         color: dim ? "text.secondary" : "text.primary",
         "& p": { m: 0, mb: 1 },
         "& p:last-of-type": { mb: 0 },
@@ -58,7 +59,7 @@ export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
           mb: 0.5,
         },
         "& ul, & ol": { m: 0, mb: 1, pl: 3 },
-        "& code": { typography: "s1", fontFamily: MONO },
+        "& code": { typography: small ? "s3" : "s1", fontFamily: MONO },
         "& a": { color: "text.primary", textDecoration: "underline" },
         // Code keeps its lines and tables keep whole words, so both scroll
         // sideways inside their own box rather than widening the chat.
@@ -97,6 +98,7 @@ export default function ChatMarkdown({ text, dim, sx, basicHtml }) {
 ChatMarkdown.propTypes = {
   text: PropTypes.string,
   dim: PropTypes.bool,
+  small: PropTypes.bool,
   sx: PropTypes.object,
   basicHtml: PropTypes.bool,
 };

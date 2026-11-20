@@ -384,6 +384,19 @@ def recorded_revisions(version: Any) -> list[str]:
     ]
 
 
+def _note_pair(pair: Any, *versions: Any) -> None:
+    """A pair composed from these versions stands for them too. A version recording
+    none is left alone: its first revision names the build that certified it. A
+    label the backfill found unverified is not recorded either."""
+    from simulate.services.harness_versioning.backfill import unverified_revisions
+
+    for version in versions:
+        if recorded_revisions(version) and pair.revision not in {
+            label for label, _key in unverified_revisions(version)
+        }:
+            note_revision(version, pair.revision)
+
+
 def note_revision(version: Any, revision: str) -> None:
     """Remember that a reused version also stands for this authoring revision."""
     if not revision or revision in recorded_revisions(version):
@@ -1325,6 +1338,7 @@ def move_agent(
             pair,
             agent_version_id=version.id,
         )
+        _note_pair(pair, environment_version, suite_version)
         payload["metadata"] = metadata
         locked.payload = payload
         update_fields.append("payload")
@@ -1583,6 +1597,7 @@ def move_default(
     The pair's runnable archive is found before anything moves, and the whole move is
     one transaction.
     """
+    from simulate.services.harness_readiness import fix_runs
     from simulate.services.harness_versioning.drafts import require_no_rebuild
     from simulate.services.hosted_harness import not_pickable
 
@@ -1595,6 +1610,8 @@ def move_default(
         locked = lock_environment(environment)
         require_not_busy(locked, piece)
         require_no_rebuild(locked, piece=piece)
+        # Autosave moves defaults through set_defaults, not here.
+        fix_runs.require_no_active_fix(locked)
         versions = model.no_workspace_objects.filter(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
         )
@@ -1643,6 +1660,7 @@ def move_default(
             pieces={piece},
             outgoing_agent_version_id=locked.agent_version_id,
         )
+        _note_pair(pair, environment_version, suite_version)
         if current is not None and current.includes_draft_edits:
             _offer_reapply(locked, piece, current)
     logger.info(

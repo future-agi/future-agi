@@ -88,6 +88,8 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeAnswerSerializer,
     HarnessNudgeListQuerySerializer,
     HarnessNudgeSerializer,
+    HarnessReadinessFixResponseSerializer,
+    HarnessReadinessFixStartSerializer,
     HarnessReviewDecisionsSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
@@ -1308,6 +1310,54 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         pairing = resolve_pairing(job, **request.validated_data)
         return Response(
             {"validation": recheck(pairing)}, status=status.HTTP_202_ACCEPTED
+        )
+
+    @validated_request(
+        responses={200: HarnessReadinessFixResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["get"], url_path="capabilities/fix")
+    def capability_fix(self, request, pk=None):
+        """The environment's latest run readiness fix, or null. No writes."""
+        from simulate.services.harness_readiness import fix_runs
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        from simulate.services.harness_readiness.fix_groups import enabled
+
+        # Off, as the readiness rows show no fix either.
+        run = fix_runs.latest(job.id) if enabled() else None
+        return Response({"fix": fix_runs.serialize(run, job) if run else None})
+
+    @validated_request(
+        request_serializer=HarnessReadinessFixStartSerializer,
+        responses={202: HarnessReadinessFixResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @capability_fix.mapping.post
+    def start_capability_fix(self, request, pk=None):
+        """Fix a group's rows in the builder chat on the current versions, or add
+        them to the running fix; a repeated idempotency key returns its run."""
+        from simulate.services.harness_readiness import fix_runs
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = dict(request.validated_data)
+        run = fix_runs.start_or_append(
+            job,
+            group=body.pop("group"),
+            rows=body.pop("rows", None),
+            idempotency_key=body.pop("idempotency_key"),
+            picks=body,
+            user=request.user,
+        )
+        return Response(
+            {"fix": fix_runs.serialize(run, job)},
+            status=status.HTTP_202_ACCEPTED,
         )
 
     @validated_request(

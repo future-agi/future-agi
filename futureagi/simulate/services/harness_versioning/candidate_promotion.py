@@ -44,6 +44,7 @@ from simulate.services.harness_versioning.drafts import (
     remember_save,
     replayed_save,
     require_idle,
+    require_no_fix_waiting,
     retire_chat_runtime,
     saved_body,
 )
@@ -136,6 +137,7 @@ def promote_candidates(
         if replayed is not None:
             return replayed
         require_idle(locked, "environment")
+        require_no_fix_waiting(locked)
         entry = live_set(locked)
         if entry is None or any(
             str(candidates.get(f"{piece}_version_id") or "")

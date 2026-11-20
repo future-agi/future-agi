@@ -2235,6 +2235,15 @@ def delete_environment(job: HostedHarnessJob) -> None:
         )
 
         close_environment_nudges(locked, code="environment_deleted")
+        from simulate.services.harness_readiness import fix_runs
+
+        fix_runs.close_active(
+            locked,
+            state="stopped",
+            code="environment_deleted",
+            message="The environment was deleted",
+        )
+
         # Its evidence imports go with it, and a transcript's stored text with them.
         # One still drafting keeps its drafting chat until that is forgotten too.
         from simulate.services.evidence_drafts import forget_later

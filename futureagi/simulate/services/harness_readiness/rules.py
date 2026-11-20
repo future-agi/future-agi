@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from simulate.models import HarnessAgentVersionRuntime, HarnessAssembledBundle
-from simulate.services.harness_readiness import release
+from simulate.services.harness_readiness import fix_groups, release
 from simulate.services.harness_readiness.catalogue import (
     CATALOGUE,
     GATE_OPEN,
@@ -85,6 +85,7 @@ def _row(
         "evidence": list(reading.evidence) if reading is not None else [],
         "checked_at": checked_at if reading is not None else None,
         "fix": None,
+        "fix_group": None,
         "consequence": "",
     }
 
@@ -235,7 +236,9 @@ def rows(
                     checked_at=evidence.checked_at,
                 )
             elif stale is not None:
-                code, reason = _stale_reason(stale, pairing, evidence)
+                code, reason = _stale_reason(
+                    cast(StaleBecause, stale), pairing, evidence
+                )
                 row = _row(
                     capability,
                     "stale",
@@ -272,6 +275,7 @@ def rows(
         )
         row["consequence"] = consequence(row, connection(pairing.runtime))
         rows.append(row)
+    fix_groups.annotate(rows)
     return rows
 
 
@@ -513,8 +517,8 @@ _FIXES: dict[str, tuple[str, str]] = {
 # The agent version's tools against the environment version's.
 _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
     "tool_not_in_world": (
-        "Add {target} to this environment in the builder, or test this agent version"
-        " in an environment that has it",
+        "Rebuild this environment from this agent version so the test world has"
+        " {target}, or test this agent version in an environment that has it",
         "{target} is simulated in the test world and its check passes",
     ),
     "tool_not_in_agent": (
@@ -525,6 +529,21 @@ _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
         "Rebuild this environment from this agent version so {target} takes the"
         " arguments the agent sends, or test it in an environment built for them",
         "{target} takes the agent's arguments in the test world and its check passes",
+    ),
+}
+
+# World failures a sealed environment's chat cannot change: the row's step instead.
+_REBUILD_ACTIONS: dict[str, str] = {
+    "action_failed": (
+        "Rebuild this environment so the test world's probe passes for {target}"
+    ),
+    "tool_unreachable": (
+        "Rebuild this environment with a reachable implementation of {target} in the"
+        " test world"
+    ),
+    "reset_failed": (
+        "Rebuild this environment so the world returns to its seeded state between"
+        " cases"
     ),
 }
 
@@ -791,6 +810,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
         }
     target = row["targets"][0]["name"] if row["targets"] else None
     action, would = _FIXES[row["id"]]
+    action = _REBUILD_ACTIONS.get(code or "", action)
     subject = target or ("the tools" if code == "not_run" else "the failing tools")
     return {
         "type": row["id"],

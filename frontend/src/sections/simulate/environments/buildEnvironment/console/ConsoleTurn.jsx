@@ -1,8 +1,9 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { Box, Stack, Typography, Collapse } from "@mui/material";
+import { Box, Button, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
+import { CONSOLE_COPY } from "../build.constants";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
@@ -52,7 +53,7 @@ export function Turn({ turn }) {
 
   if (turn.role === "user") {
     return (
-      <Stack alignItems="flex-end">
+      <Stack alignItems="flex-end" spacing={0.25}>
         <Box
           sx={{
             maxWidth: "82%",
@@ -60,6 +61,8 @@ export function Turn({ turn }) {
             py: 1,
             borderRadius: "8px",
             bgcolor: "action.selected",
+            // Waiting in the server's queue; the builder hasn't picked it up yet.
+            opacity: turn.queued ? 0.6 : 1,
           }}
         >
           {/* pre-wrap keeps the line breaks the user typed. */}
@@ -73,6 +76,11 @@ export function Turn({ turn }) {
             {turn.text}
           </Typography>
         </Box>
+        {turn.queued && (
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {CONSOLE_COPY.queued}
+          </Typography>
+        )}
       </Stack>
     );
   }
@@ -98,6 +106,28 @@ export function Turn({ turn }) {
           <Step step={step} />
         </div>
       ))}
+      {turn.card && (
+        <Box
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            px: 1.5,
+            py: 1.25,
+          }}
+        >
+          {/* The fix's outcome can carry the builder's own markdown. */}
+          <ChatMarkdown text={turn.card.text} small />
+          <Button
+            size="small"
+            variant="contained"
+            onClick={turn.card.onAction}
+            sx={{ mt: 1 }}
+          >
+            {turn.card.action}
+          </Button>
+        </Box>
+      )}
     </Stack>
   );
 }
@@ -108,6 +138,14 @@ Turn.propTypes = {
     title: PropTypes.string,
     text: PropTypes.string,
     steps: PropTypes.arrayOf(STEP_SHAPE),
+    // A user line still waiting for the builder.
+    queued: PropTypes.bool,
+    // A short note with one button, e.g. how a fix ended.
+    card: PropTypes.shape({
+      text: PropTypes.string,
+      action: PropTypes.string,
+      onAction: PropTypes.func,
+    }),
   }),
 };
 

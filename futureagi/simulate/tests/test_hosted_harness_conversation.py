@@ -28,6 +28,7 @@ from simulate.services.hosted_harness import (
 )
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
+    ingest_conversation_events,
     issue_conversation_capability,
     serialize_conversation,
 )
@@ -356,6 +357,109 @@ def test_an_answered_question_stops_blocking_at_once(organization):
     conversation.refresh_from_db()
     assert conversation.state == "warm_idle"
     assert conversation.blocking_input is None
+
+
+def _asked_in_a_turn(organization, key):
+    """A chat whose running turn asked a question nobody has answered."""
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    conversation, command, _ = enqueue_message(
+        job, content="Add a rider", client_request_id="ask"
+    )
+    issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    question = str(uuid.uuid4())
+    _ingest(
+        conversation,
+        ("turn_started", {"command_message_id": str(command.id)}, None),
+        ("question_requested", {"prompt": "Confirm this change"}, question),
+    )
+    conversation.refresh_from_db()
+    assert conversation.state == "waiting_for_user"
+    return job, conversation, command, question
+
+
+def _ingest(conversation, *events):
+    conversation.refresh_from_db()
+    signed = []
+    for sequence, (kind, payload, message_id) in enumerate(
+        events, conversation.event_acked_through + 1
+    ):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-{conversation.id}-{sequence}",
+            "conversation_id": str(conversation.id),
+            "sequence": sequence,
+            "kind": kind,
+            "message_id": message_id,
+            "stage": "authoring",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": payload,
+        }
+        event["digest"] = canonical_digest(event)
+        signed.append(event)
+    ingest_conversation_events(conversation, acknowledged_through=1, events=signed)
+
+
+@pytest.mark.django_db
+def test_a_question_its_turn_ended_without_closes(organization):
+    from simulate.services.harness_versioning import rebuild
+
+    job, conversation, command, question = _asked_in_a_turn(
+        organization, "conversation-abandoned"
+    )
+
+    _ingest(
+        conversation,
+        (
+            "turn_completed",
+            {"command_message_id": str(command.id), "outcome": "success"},
+            None,
+        ),
+    )
+
+    conversation.refresh_from_db()
+    assert (conversation.state, conversation.blocking_input) == ("warm_idle", None)
+    assert serialize_conversation(conversation)["blocking_input"] is None
+    assert rebuild._chat_idle(conversation)
+    with pytest.raises(HostedHarnessError) as late:
+        enqueue_message(
+            job,
+            content="Yes",
+            client_request_id="late",
+            kind="user_response",
+            reply_to=uuid.UUID(question),
+        )
+    assert late.value.code == "conversation_reply_target_invalid"
+
+
+@pytest.mark.django_db
+def test_an_ignored_turn_end_keeps_the_question_open(organization):
+    _job, conversation, _command, question = _asked_in_a_turn(
+        organization, "conversation-ignored-end"
+    )
+
+    _ingest(
+        conversation,
+        (
+            "turn_completed",
+            {
+                "command_message_id": str(uuid.uuid4()),
+                "ignored": "no matching suspended question",
+            },
+            None,
+        ),
+    )
+
+    conversation.refresh_from_db()
+    assert conversation.state == "waiting_for_user"
+    assert conversation.blocking_input["message_id"] == question
 
 
 def _deliver(conversation, capability, sequence: int, kind: str, payload: dict) -> None:

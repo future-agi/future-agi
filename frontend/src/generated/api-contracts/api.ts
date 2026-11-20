@@ -675,6 +675,8 @@ import type {
   HarnessNudgeApi,
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
+  HarnessReadinessFixResponseApi,
+  HarnessReadinessFixStartApi,
   HarnessResultReceiptApi,
   HarnessReviewDecisionsApi,
   HarnessRunCreateApi,
@@ -60781,6 +60783,101 @@ export const simulateApiHarnessEnvironmentsCapabilityCases = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse200 = {
+  data: HarnessReadinessFixResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse =
+  | simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesFixReadUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/capabilities/fix/`;
+};
+
+/**
+ * The environment's latest run readiness fix, or null. No writes.
+ */
+export const simulateApiHarnessEnvironmentsCapabilitiesFixRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesFixReadResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilitiesFixReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse202 = {
+  data: HarnessReadinessFixResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse =
+  | simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesFixCreateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/capabilities/fix/`;
+};
+
+/**
+ * Fix a group's rows in the builder chat on the current versions, or add
+them to the running fix; a repeated idempotency key returns its run.
+ */
+export const simulateApiHarnessEnvironmentsCapabilitiesFixCreate = async (
+  id: string,
+  harnessReadinessFixStartApi: HarnessReadinessFixStartApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesFixCreateResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilitiesFixCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessReadinessFixStartApi),
     },
   );
 };

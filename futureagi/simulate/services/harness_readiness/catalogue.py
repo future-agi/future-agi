@@ -24,7 +24,7 @@ the pairing without a run; ``GET capabilities/history/`` lists certified pairing
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from simulate.models import (
     AgentVersion,
@@ -35,13 +35,15 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "13"
+RULES_VERSION = "14"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
 Finding = Literal["passed", "failed", "limited", "not_applicable", "not_run"]
 # The four kinds of repair a blocker sends the user to.
 FixCategory = Literal["startup", "message_mapping", "tool_routing", "evidence"]
+# Who fixes a row: the builder chat, the user, or a re-check alone.
+FixGroup = Literal["needs_you", "builder", "recheck"]
 # An area, and the answer, read as their worst row.
 WORST_FIRST: tuple[Status, ...] = (
     "blocked",
@@ -151,6 +153,8 @@ class Fix(TypedDict):
     would: str
     # None when checking this pairing again cannot change the row.
     recheck: FixRecheck | None
+    # What a builder fix sends to the builder chat; None for other groups.
+    message: NotRequired[str | None]
 
 
 class WorkerToolView(TypedDict):
@@ -201,8 +205,19 @@ class RowView(TypedDict):
     evidence: list[EvidenceCheck]
     checked_at: str | None
     fix: Fix | None
+    fix_group: FixGroup | None
     # What the status means for the cases, their spend and their independence.
     consequence: str
+
+
+class FixGroupRows(TypedDict):
+    rows: list[str]
+
+
+class FixGroupsView(TypedDict):
+    builder: FixGroupRows
+    needs_you: FixGroupRows
+    recheck: FixGroupRows
 
 
 @dataclass(frozen=True)
