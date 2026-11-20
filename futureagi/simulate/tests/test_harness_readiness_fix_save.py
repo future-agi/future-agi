@@ -547,7 +547,7 @@ class TestRecheck:
         _certify_set(environment, storage)
         with patch.object(validation, "needs_reading", return_value=True):
             _check(environment)
-        _age(run, "since", fix_save.CHECK_GIVE_UP + timedelta(minutes=1))
+        _age(run, "since", validation.check_window() + timedelta(minutes=1))
 
         _check(environment)
 
@@ -1011,7 +1011,7 @@ class TestNotSaved:
         environment, run = _validating(
             user, workspace, storage, django_capture_on_commit_callbacks, "fs-slow"
         )
-        _age(run, "since", fix_save.CHECK_GIVE_UP + timedelta(minutes=1))
+        _age(run, "since", validation.check_window() + timedelta(minutes=1))
 
         _check(environment)
 

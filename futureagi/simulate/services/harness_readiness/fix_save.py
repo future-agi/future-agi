@@ -44,7 +44,6 @@ Message = HostedHarnessConversationMessage
 State = ReadinessFixRun.State
 SAVE_WAIT_GIVE_UP = timedelta(minutes=15)
 VALIDATE_TRIES = 2
-CHECK_GIVE_UP = validation.CHECK_DEADLINE
 # Steps one check may take: enter saving, validate, promote, check, verdict.
 _STEPS = 6
 NAME_MAX = 80
@@ -345,7 +344,7 @@ def _validating(run: ReadinessFixRun) -> bool:
     match state["state"]:
         case "validating":
             since = _since(run)
-            if since is not None and timezone.now() - since > CHECK_GIVE_UP:
+            if since is not None and timezone.now() - since > validation.check_window():
                 return _end(run, "validation_timed_out")
             return False
         case "retry":
@@ -585,7 +584,7 @@ def _checking(run: ReadinessFixRun) -> bool:
     timed_out = recheck == "unavailable"
     if recheck == "started":
         since = _since(run)
-        late = since is not None and timezone.now() - since >= CHECK_GIVE_UP
+        late = since is not None and timezone.now() - since >= validation.check_window()
         # A job reading the agent's tools leaves a certified bundle reading ready.
         running = _live_check(pairing)
         if running and not late:
