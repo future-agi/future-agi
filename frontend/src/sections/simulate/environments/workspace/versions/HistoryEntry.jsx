@@ -8,11 +8,12 @@ import {
   Menu,
   MenuItem,
   Stack,
+  Tooltip,
   Typography,
   useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { relativeTime } from "src/utils/format-time";
+import { fDateTime, relativeTime } from "src/utils/format-time";
 import { canMakeDefault } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY } from "../workspace.constants";
 import { PreflightBadge } from "../agents/PreflightStatus";
@@ -50,10 +51,7 @@ export default function HistoryEntry({
   const meta = [
     originLine,
     version.createdBy && VERSIONS_COPY.by(version.createdBy),
-    version.createdAt && relativeTime(version.createdAt),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter(Boolean);
   const movable = canMakeDefault(piece, version);
   // A refused move shows under this row's title; the row stays as it was.
   const refused =
@@ -151,7 +149,7 @@ export default function HistoryEntry({
                 {version.summary}
               </Typography>
             )}
-            {meta && (
+            {(meta.length > 0 || version.createdAt) && (
               <Typography
                 sx={{
                   typography: "s3",
@@ -160,7 +158,14 @@ export default function HistoryEntry({
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {meta}
+                {meta.join(" · ")}
+                {meta.length > 0 && version.createdAt && " · "}
+                {version.createdAt && (
+                  // Relative to read at a glance; the exact time on hover.
+                  <Tooltip title={fDateTime(version.createdAt)} arrow>
+                    <span>{relativeTime(version.createdAt)}</span>
+                  </Tooltip>
+                )}
               </Typography>
             )}
           </Box>

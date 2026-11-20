@@ -60,6 +60,48 @@ function ChangeGroup({ title, change, children }) {
     </Stack>
   );
 }
+// Rules and use cases are sentences: one per line, the old wording struck
+// through and the new marked added, as the design shows a reworded rule.
+function WordingGroup({ title, change }) {
+  const removed = list(change?.removed).map(label);
+  const added = list(change?.added).map(label);
+  if (!removed.length && !added.length) return null;
+  const line = { display: "block", typography: "s2" };
+  return (
+    <Stack spacing={0.5} data-testid={`diff-group-${title}`}>
+      <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+        {title}
+      </Typography>
+      {removed.map((text) => (
+        <Typography
+          key={`removed-${text}`}
+          component="del"
+          sx={{
+            ...line,
+            color: "text.disabled",
+            textDecoration: "line-through",
+          }}
+        >
+          {text}
+        </Typography>
+      ))}
+      {added.map((text) => (
+        <Typography
+          key={`added-${text}`}
+          component="ins"
+          sx={{ ...line, color: "status.success.fg", textDecoration: "none" }}
+        >
+          {text}
+        </Typography>
+      ))}
+    </Stack>
+  );
+}
+WordingGroup.propTypes = {
+  title: PropTypes.string.isRequired,
+  change: PropTypes.object,
+};
+
 ChangeGroup.propTypes = {
   title: PropTypes.string.isRequired,
   change: PropTypes.object,
@@ -72,8 +114,8 @@ function EnvironmentDiff({ diff }) {
   return (
     <Stack spacing={1.5}>
       <ChangeGroup title={COPY.tools} change={contract.tools} />
-      <ChangeGroup title={COPY.rules} change={contract.rules} />
-      <ChangeGroup title={COPY.useCases} change={contract.use_cases} />
+      <WordingGroup title={COPY.rules} change={contract.rules} />
+      <WordingGroup title={COPY.useCases} change={contract.use_cases} />
       {fields.length > 0 && (
         <ChangeGroup title={COPY.fields} change={{ changed: fields }} />
       )}

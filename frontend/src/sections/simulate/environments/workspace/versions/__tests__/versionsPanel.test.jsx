@@ -7,6 +7,7 @@ import {
   within,
 } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
+import { fDateTime } from "src/utils/format-time";
 
 // Each hook is stubbed; tests set what the server answered.
 const state = {
@@ -182,7 +183,10 @@ const ENV_DIFF = {
   diff: {
     contract: {
       tools: { added: ["issue_refund"], removed: [], changed: [] },
-      rules: { added: [], removed: ["no refunds over $500"] },
+      rules: {
+        added: ["no refunds over $1,000", "ask for the order number"],
+        removed: ["no refunds over $500"],
+      },
       use_cases: { added: [], removed: [] },
       fields: ["persona"],
       modality: { from: "text", to: "voice" },
@@ -241,6 +245,15 @@ describe("VersionsPanel", () => {
   it("renders nothing while versioning is off", () => {
     const { container } = render(<VersionsPanel env={{ id: "env-1" }} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("gives the exact time a version was made on hover", async () => {
+    const user = userEvent.setup();
+    render(<VersionsPanel env={ENV} />);
+    await user.hover(within(entryOf("environment", "v2")).getByText(/ ago$/));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      fDateTime(VERSIONS.environment[0].created_at),
+    );
   });
 
   it("lists agent, environment and scenario versions with their badges and origin", () => {
@@ -321,8 +334,16 @@ describe("VersionsPanel", () => {
       within(detail).queryByText("1 tool added, 1 world file changed"),
     ).toBeNull();
     expect(within(detail).getByText("issue_refund")).toBeInTheDocument();
+    // A rule reads as its wording, one per line: the old one struck through,
+    // the new one marked added.
     expect(
-      within(detail).getByText("no refunds over $500"),
+      within(detail).getByText("no refunds over $500").closest("del"),
+    ).not.toBeNull();
+    expect(
+      within(detail).getByText("no refunds over $1,000").closest("ins"),
+    ).not.toBeNull();
+    expect(
+      within(detail).getByText("ask for the order number"),
     ).toBeInTheDocument();
     expect(within(detail).getByText("persona")).toBeInTheDocument();
     expect(within(detail).getByText("text → voice")).toBeInTheDocument();
