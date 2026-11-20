@@ -749,7 +749,8 @@ export default function ScenariosStep({
         initialCount={addPreset?.count}
       />
       <ScenarioDrawer
-        row={openRow}
+        // The page's current copy of the open row, so a refresh (a validation ending) shows in the open drawer.
+        row={pageData.rows.find((one) => one.id === openRow?.id) ?? openRow}
         env={env}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {

@@ -98,6 +98,14 @@ export const SCENARIOS_COPY = {
     `Validating · proved ${proved} of ${total}`,
   validationNoResults:
     "Validation finished but recorded no results; try again.",
+  validationDone: (proved, total) =>
+    Number.isInteger(total) && total > 0
+      ? `Validation finished · proved ${proved} of ${total}`
+      : "Validation finished",
+  // A press would only return the validation already running, which does not prove this case.
+  validationElsewhere:
+    "Another validation is running; validate this case when it ends.",
+  nothingToValidate: "Nothing to validate",
   archive: "Archive",
   restore: "Restore",
   archiveTitle: "Archive this scenario?",

@@ -9,6 +9,7 @@ import {
   amendHarnessScenarios,
   archiveHarnessScenario,
   getHarnessScenarioCoverage,
+  getHarnessRunningValidation,
   getHarnessScenarioRecords,
   getHarnessScenarioValidation,
   getHarnessSourceChanges,
@@ -135,11 +136,38 @@ export function useHarnessScenarioCoverage(
 // How often a running scenario validation is read; it can take up to the 45-minute check deadline.
 export const VALIDATION_POLL_MS = 15_000;
 
+// Under the list's key, so whatever refreshes the list (a validation ending, an archive) reads it again.
+export const runningValidationKey = (jobId) => [
+  ...scenariosListKey(jobId),
+  "running-validation",
+];
+
+/**
+ * The default pair's validation still running, so a page opened after it started (another page, a reload) follows
+ * it instead of offering a second Validate; and how many cases a Validate of those not yet proved would prove.
+ */
+export function useRunningScenarioValidation(jobId) {
+  return useQuery({
+    queryKey: runningValidationKey(jobId),
+    queryFn: () => getHarnessRunningValidation(jobId),
+    enabled: Boolean(jobId),
+    meta: { errorHandled: true },
+  });
+}
+
 /** Start proving every scenario of the environment's default pair. */
 export function useValidateScenarios(jobId) {
+  const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: (body = {}) => validateHarnessScenarios(jobId, body),
+    // Every other Validate on the page follows the validation this one started.
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: runningValidationKey(jobId),
+        exact: true,
+      });
+    },
   });
 }
 

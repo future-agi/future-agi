@@ -169,6 +169,15 @@ export const validateHarnessScenarios = async (id, body = {}) => {
 export const getHarnessScenarioValidation = async (id, jobId) =>
   (await axios.get(validatePath(id), { params: { job_id: jobId } })).data;
 
+const runningValidationPath = (id) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/scenarios/validate/running/",
+    { id },
+  );
+// The default pair's validation still running, and how many cases a Validate of those not yet proved would prove.
+export const getHarnessRunningValidation = async (id) =>
+  (await axios.get(runningValidationPath(id))).data;
+
 export const archiveHarnessScenario = async (id, key, reason = "") =>
   (await axios.post(archivePath(id, key), { reason })).data;
 
