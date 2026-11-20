@@ -362,7 +362,7 @@ jobs:
         run: |
           if [ -n "$ISOLATED_MODULE" ]; then
             exec env "$ISOLATED_GATE=1" PG_TEST_DB="$ISOLATED_DB" CH_DATABASE="$ISOLATED_DB" CH25_DATABASE="$ISOLATED_DB" \
-              uv run pytest -q "tracer/tests/$ISOLATED_MODULE.py" --junitxml="junit-${{ matrix.group }}.xml"
+              uv run pytest -q -ra "tracer/tests/$ISOLATED_MODULE.py" --junitxml="junit-${{ matrix.group }}.xml"
           fi
           if [ "$FOCUSED_ATTACHMENTS" = true ]; then
             # An opt-in diagnostic, never a substitute for the PR's full gate.
