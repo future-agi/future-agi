@@ -116,6 +116,19 @@ def model(name, **defaults):
     return Model
 
 
+@pytest.fixture(autouse=True)
+def discard_fixture_imports():
+    # monkeypatch restores the entries it replaced, but imports made later by
+    # the synthetic package (e.g. wire) are inserted by Python, not by it.
+    # Do not leave those bound to a different AttachmentError in the next test.
+    prefix = "tracer.services.attachments."
+    existing = {name for name in sys.modules if name.startswith(prefix)}
+    yield
+    for name in tuple(sys.modules):
+        if name.startswith(prefix) and name not in existing:
+            del sys.modules[name]
+
+
 @pytest.fixture
 def lane(monkeypatch, tmp_path):
     from django.conf import settings
