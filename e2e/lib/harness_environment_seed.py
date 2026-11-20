@@ -391,7 +391,11 @@ def _actor_rules():
 
 
 def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False, workers=None):
-    contract = {"agent": "support", "tools": list(DETAILED_TOOLS if tool_detail else TOOLS)}
+    # Each tool as ALK writes it: an object named by `name`, so the review lists the contract item by item.
+    contract = {
+        "agent": "support",
+        "tools": list(DETAILED_TOOLS) if tool_detail else [{"name": tool} for tool in TOOLS],
+    }
     if tool_detail:
         contract["tool_entrypoints"] = list(DETAILED_ENTRYPOINTS)
     if workers:

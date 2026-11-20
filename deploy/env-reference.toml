@@ -739,6 +739,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` lets a run build and certify an environment bundle for a version combination that has none yet. `false` never builds a bundle: a run at the environment's default versions runs as before, a rerun whose versions have no ready bundle runs the defaults, and picking another combination with no ready bundle is refused, as is a default pair with no sealed bundle. Turn it on together with `HARNESS_VERSIONING_NUDGES_ENABLED`."
 
     [[part.section.row]]
+    keys = ["HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE"]
+    default = "`true`"
+    setups = ["S", "D", "H"]
+    text = "`true` makes every environment draft Save go through Validate, not only a Save after a change was accepted or rejected in review: the drafts read says so (`validation_required`) and the Save bar validates, then saves the validated versions. `false` lets an undecided draft save as is."
+
+    [[part.section.row]]
     keys = ["HARNESS_ACTORS_ENABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]

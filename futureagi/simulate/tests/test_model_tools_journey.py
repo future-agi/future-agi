@@ -90,6 +90,8 @@ def _set_fault(auth_client, environment):
 def _save(environment, settings):
     # As in production: a saved Scenarios-tab edit is never resealed, so its pair is left for the first run to certify.
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+    # A plain Save, as where Validate before Save is turned off.
+    settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = False
     versions = "simulate.services.harness_versioning.versions"
     with (
         patch(f"{versions}._default_runtime", return_value=object()),

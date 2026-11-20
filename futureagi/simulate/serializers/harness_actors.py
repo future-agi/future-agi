@@ -211,6 +211,12 @@ class HarnessActorSerializer(serializers.Serializer):
     max_turns = serializers.IntegerField(allow_null=True)
     max_lines = serializers.IntegerField(allow_null=True)
     scenarios = serializers.IntegerField(help_text="Scenarios that include the actor.")
+    review_decision = serializers.ChoiceField(
+        choices=["accepted", "rejected"],
+        allow_null=True,
+        required=False,
+        help_text="The decision taken on the actor in the draft's change review; null when none holds.",
+    )
     arrival_overrides = HarnessActorArrivalOverrideSerializer(
         many=True,
         help_text="Scenarios that bring the actor in by their own trigger, with when it comes in there.",

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1160,
+  endpointCount: 1163,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29154,6 +29154,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/drafts/review/": {
+      get: {
+        operationId: "simulate_api_harness-environments_drafts_drafts_review",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftReview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/review/decisions/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_drafts_review_drafts_review_decisions",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessReviewDecisions",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftReview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/drafts/save/": {
       post: {
         operationId: "simulate_api_harness-environments_drafts_save_drafts",
@@ -29166,6 +29203,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessDraftSaveResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/validate/": {
+      post: {
+        operationId: "simulate_api_harness-environments_drafts_validate_drafts",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDraftValidate",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftValidateResponse",
+          },
+          202: {
+            $ref: "#/definitions/HarnessDraftValidateResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -69161,15 +69220,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessDraftSave: {
-      required: ["drafts", "idempotency_key"],
+    HarnessDraftReview: {
+      required: ["drafts", "changes", "counts", "review_digest", "can_save"],
       type: "object",
       properties: {
         drafts: {
+          title: "Drafts",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/HarnessReviewDraft",
+          },
+        },
+        changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReviewChange",
+          },
+        },
+        counts: {
+          $ref: "#/definitions/HarnessReviewCounts",
+        },
+        review_digest: {
+          title: "Review digest",
+          description: "Send back on Save; a review that moved is refused.",
+          type: "string",
+          minLength: 1,
+        },
+        can_save: {
+          title: "Can save",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessDraftSave: {
+      required: ["idempotency_key"],
+      type: "object",
+      properties: {
+        drafts: {
+          description: "Save the drafts as they are.",
           type: "array",
           items: {
             $ref: "#/definitions/HarnessDraftSaveItem",
           },
+        },
+        candidates: {
+          $ref: "#/definitions/HarnessCandidates",
+        },
+        expected_review_digest: {
+          title: "Expected review digest",
+          description:
+            "The review digest the person saw; Save refuses a review that moved since.",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          description: "A name for the new version; never an identity.",
+          type: "string",
+          maxLength: 80,
         },
         idempotency_key: {
           title: "Idempotency key",
@@ -69198,8 +69306,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDraftValidate: {
+      required: ["expected_revisions"],
+      type: "object",
+      properties: {
+        expected_revisions: {
+          title: "Expected revisions",
+          description: "Per piece, the draft revision the person reviewed.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+        expected_review_digest: {
+          title: "Expected review digest",
+          description:
+            "The review digest the person saw; required once any change is decided.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    HarnessDraftValidateResponse: {
+      required: ["validation", "candidates"],
+      type: "object",
+      properties: {
+        validation: {
+          $ref: "#/definitions/HarnessDraftValidation",
+        },
+        candidates: {
+          $ref: "#/definitions/HarnessCandidates",
+        },
+      },
+    },
     HarnessDrafts: {
-      required: ["environment", "suite", "set_aside"],
+      required: [
+        "environment",
+        "suite",
+        "set_aside",
+        "validation",
+        "candidates",
+      ],
       type: "object",
       properties: {
         environment: {
@@ -69213,6 +69360,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessDraftItem",
           },
+        },
+        validation: {
+          $ref: "#/definitions/HarnessDraftValidation",
+        },
+        candidates: {
+          $ref: "#/definitions/HarnessCandidates",
+        },
+        validation_required: {
+          title: "Validation required",
+          description:
+            "A Save of these drafts must go through Validate first; a plain Save is refused. Always sent by this release; read as false when absent (a server from before it, during a rolling deploy).",
+          type: "boolean",
         },
       },
     },
@@ -70391,6 +70550,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessReviewDecisions: {
+      required: ["expected_revisions", "decisions"],
+      type: "object",
+      properties: {
+        expected_revisions: {
+          title: "Expected revisions",
+          description: "Per piece, the draft revision the person reviewed.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+        decisions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReviewDecision",
+          },
         },
       },
     },
@@ -106997,6 +107176,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Scenarios that include the actor.",
           type: "integer",
         },
+        review_decision: {
+          title: "Review decision",
+          description:
+            "The decision taken on the actor in the draft's change review; null when none holds.",
+          type: "string",
+          enum: ["accepted", "rejected"],
+          "x-nullable": true,
+        },
         arrival_overrides: {
           description:
             "Scenarios that bring the actor in by their own trigger, with when it comes in there.",
@@ -107774,6 +107961,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "id",
         "label",
+        "name",
         "status",
         "is_default",
         "created_at",
@@ -107796,6 +107984,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requested_here",
         "pickable",
         "discardable",
+        "candidate_state",
       ],
       type: "object",
       properties: {
@@ -107810,10 +107999,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        name: {
+          title: "Name",
+          description: "The name a person gave the version, if any.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         status: {
           title: "Status",
           type: "string",
-          enum: ["draft", "active", "discarded"],
+          enum: ["draft", "candidate", "active", "discarded"],
         },
         is_default: {
           title: "Is default",
@@ -107949,6 +108145,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         release_checks: {
           $ref: "#/definitions/HarnessReleaseChecks",
         },
+        candidate_state: {
+          title: "Candidate state",
+          description:
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          type: "string",
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ],
+          "x-nullable": true,
+        },
+        saved_without_check: {
+          title: "Saved without check",
+          description:
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
+          type: "boolean",
+        },
       },
     },
     HarnessAgentPayloadChange: {
@@ -108020,7 +108238,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         purpose: {
           title: "Purpose",
           type: "string",
-          enum: ["agent_move", "recheck"],
+          enum: ["agent_move", "recheck", "save"],
           "x-nullable": true,
         },
         finished_at: {
@@ -108989,7 +109207,225 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessReviewChange: {
+      required: [
+        "id",
+        "piece",
+        "kind",
+        "key",
+        "document",
+        "action",
+        "fields",
+        "patch",
+        "base_digest",
+        "draft_digest",
+        "summary",
+        "decision",
+        "affects",
+        "sources",
+        "depends_on",
+        "graded",
+        "revalidate",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        piece: {
+          title: "Piece",
+          type: "string",
+          enum: ["environment", "suite"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "world_state",
+            "source",
+            "scenario",
+            "file",
+          ],
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        document: {
+          title: "Document",
+          type: "string",
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["added", "removed", "changed"],
+        },
+        fields: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        patch: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        base_digest: {
+          title: "Base digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+          minLength: 1,
+        },
+        decision: {
+          title: "Decision",
+          type: "string",
+          enum: ["accepted", "rejected"],
+          "x-nullable": true,
+        },
+        affects: {
+          title: "Affects",
+          description: "The scenario keys this change touches, or `all`.",
+          type: "object",
+        },
+        sources: {
+          description:
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        depends_on: {
+          description:
+            "Changes this one needs; accepting it means accepting them.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        graded: {
+          title: "Graded",
+          description: "The change alters what trials are graded on.",
+          type: "boolean",
+        },
+        revalidate: {
+          description:
+            "The scenarios to prove again once this change is saved.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        rows: {
+          description:
+            "A world state change: rows added, removed and changed per table; null when it cannot be read.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessReviewCounts: {
+      required: ["total", "accepted", "rejected", "undecided"],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        accepted: {
+          title: "Accepted",
+          type: "integer",
+        },
+        rejected: {
+          title: "Rejected",
+          type: "integer",
+        },
+        undecided: {
+          title: "Undecided",
+          type: "integer",
+        },
+      },
+    },
+    HarnessReviewDraft: {
+      required: ["id", "revision", "parent_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        parent_id: {
+          title: "Parent id",
+          type: "string",
+        },
+      },
+    },
+    HarnessCandidates: {
+      description:
+        "The versions Validate built; send them to Save once validation is ready.",
+      required: ["environment_version_id", "suite_version_id"],
+      type: "object",
+      properties: {
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessDraftSaveItem: {
+      description: "Save the drafts as they are.",
       required: ["piece", "expected_parent_id"],
       type: "object",
       properties: {
@@ -109013,10 +109449,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDraftValidation: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          description:
+            "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.",
+          type: "string",
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "unavailable",
+          ],
+        },
+        job_id: {
+          title: "Job id",
+          description: "The validation job, while one runs.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          $ref: "#/definitions/HarnessValidationError",
+        },
+        affected_scenarios: {
+          description: "Scenarios that need a failed action on every path.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        dropped_scenarios: {
+          description: "Scenarios certifying left out of the suite.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessDraftItem: {
       required: [
         "id",
         "label",
+        "name",
         "status",
         "is_default",
         "created_at",
@@ -109039,6 +109524,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requested_here",
         "pickable",
         "discardable",
+        "candidate_state",
         "stale",
         "revision",
         "last_edited_by",
@@ -109060,10 +109546,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        name: {
+          title: "Name",
+          description: "The name a person gave the version, if any.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         status: {
           title: "Status",
           type: "string",
-          enum: ["draft", "active", "discarded"],
+          enum: ["draft", "candidate", "active", "discarded"],
         },
         is_default: {
           title: "Is default",
@@ -109198,6 +109691,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         release_checks: {
           $ref: "#/definitions/HarnessReleaseChecks",
+        },
+        candidate_state: {
+          title: "Candidate state",
+          description:
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          type: "string",
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ],
+          "x-nullable": true,
+        },
+        saved_without_check: {
+          title: "Saved without check",
+          description:
+            "Saved while the check was unavailable; its pairings read Untested until checked. Read as false when absent.",
+          type: "boolean",
         },
         stale: {
           title: "Stale",
@@ -111119,6 +111634,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
           pattern: "^(task|worker:.*\\S.*)$",
           maxLength: 255,
           minLength: 1,
+        },
+      },
+    },
+    HarnessReviewDecision: {
+      required: ["decision"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "One change; omit with `kind` or `remaining`.",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "world_state",
+            "source",
+            "scenario",
+            "file",
+          ],
+        },
+        remaining: {
+          title: "Remaining",
+          description: "Every change not yet decided.",
+          type: "boolean",
+        },
+        decision: {
+          title: "Decision",
+          type: "string",
+          enum: ["accepted", "rejected"],
         },
       },
     },
@@ -132252,6 +132804,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Context only; never decides the verdict.",
           type: "number",
           "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessValidationError: {
+      required: ["code", "message", "failed_actions"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+        failed_actions: {
+          description: "Each action whose check failed, with the reason.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
         },
       },
       "x-nullable": true,

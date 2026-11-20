@@ -22,6 +22,7 @@ from simulate.services.harness_actor_rules import (
 )
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.drafts import DraftRef
+from simulate.services.harness_versioning.review import held_decisions
 from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
@@ -129,4 +130,5 @@ def written_cast(
         suite_files,
         draft.revision if draft is not None else None,
         world_stores(environment),
+        held_decisions(draft, environment_files) if draft is not None else None,
     )

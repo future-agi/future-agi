@@ -1199,6 +1199,11 @@ HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower()
     "true",
     "yes",
 )
+# Validate before Save on every draft save where validation is available, not only once a change was decided: the
+# Save bar validates the drafts, then saves the validated versions. Set to false to let an undecided draft save as is.
+HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = os.getenv(
+    "HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE", "true"
+).lower() in ("1", "true", "yes")
 # A pinned run that misses the bundle cache certifies its own bundle; off, it runs the
 # environment's default pair as before.
 HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(

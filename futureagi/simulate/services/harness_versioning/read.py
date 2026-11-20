@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessJob,
     RunTest,
 )
+from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import diffs
 from simulate.services.harness_versioning.versions import (
     actors_enabled,
@@ -171,10 +172,17 @@ def _newest_first(queryset: QuerySet) -> QuerySet:
     )
 
 
-def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]:
+def _piece_item(
+    version: Any,
+    default_id: Any,
+    *,
+    suite: bool,
+    candidate_states: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     return {
         "id": str(version.id),
         "label": _label(version.version_number),
+        "name": version.name or None,
         "status": version.status,
         "is_default": version.id == default_id,
         "created_at": version.created_at.isoformat(),
@@ -202,7 +210,28 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
         "pickable": None,
         "discardable": None,
         "release_checks": None,
+        "candidate_state": _candidate_state(version, candidate_states or {}),
+        "saved_without_check": _saved_without_check(version),
     }
+
+
+def _saved_without_check(version: Any) -> bool:
+    """Whether ``version`` was saved while the check was unavailable on our side. A
+    list reads the flag as an annotation and never loads the documents for it."""
+    flag = getattr(version, "uncertified_flag", None)
+    if flag is None and "documents" not in version.get_deferred_fields():
+        flag = (version.documents or {}).get("uncertified")
+    return flag in (True, "true")
+
+
+def _candidate_state(version: Any, states: Mapping[str, str]) -> str | None:
+    """How History labels a candidate: validating, ready or failed while it is the live one, superseded or expired
+    once set aside."""
+    if version.status == VersionStatus.CANDIDATE:
+        return states.get(str(version.id), "superseded")
+    if version.discard_reason in (DiscardReason.SUPERSEDED, DiscardReason.EXPIRED):
+        return str(version.discard_reason)
+    return None
 
 
 def _agent_definition_id(job: HostedHarnessJob) -> Any:
@@ -466,6 +495,7 @@ def _agent_item(
     return {
         "id": str(version.id),
         "label": _agent_label(version.version_name, version.version_number),
+        "name": None,
         "status": (
             _AGENT_STATUS.get(runtime.preflight_status, "active")
             if runtime is not None
@@ -522,6 +552,8 @@ def _agent_item(
         and not _held_elsewhere(
             version, getattr(runtime, "asked_for", None), environment_id
         ),
+        "candidate_state": None,
+        "saved_without_check": False,
     }
 
 
@@ -540,17 +572,26 @@ def agent_version_item(job: HostedHarnessJob, version: AgentVersion) -> dict[str
     )
 
 
+# A draft Save promoted through its validated candidates is set aside with the version it became: it is listed once,
+# as that version.
+_SAVED_DRAFT = Q(status=VersionStatus.DISCARDED, documents__has_key="saved_version_id")
+
+
 def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
     environments = _newest_first(
         HarnessEnvironmentVersion.no_workspace_objects.filter(job=job)
+        .exclude(_SAVED_DRAFT)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
+        .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
     )
     suites = _newest_first(
         # A suite version private to a fix is never listed.
         HarnessSuiteVersion.no_workspace_objects.filter(job=job, fix_run__isnull=True)
+        .exclude(_SAVED_DRAFT)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
+        .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
     )
     from simulate.services.harness_agent_versions import _default_lineage
     from simulate.services.harness_readiness.release import release_checks_for
@@ -564,6 +605,10 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
             job=job
         ).values_list("id", "documents__stage_outputs", "documents__release_checks")
     }
+
+    from simulate.services.harness_versioning.candidate_sets import candidate_states
+
+    states = candidate_states(job)
     agents = _agent_versions(job)
     runtimes = _runtimes(job, agents)
     parents = _parent_agent_versions(job, runtimes)
@@ -582,13 +627,21 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         ],
         "environment": [
             {
-                **_piece_item(version, job.environment_version_id, suite=False),
+                **_piece_item(
+                    version,
+                    job.environment_version_id,
+                    suite=False,
+                    candidate_states=states,
+                ),
                 "release_checks": release.get(version.id),
             }
             for version in environments
         ],
         "suite": [
-            _piece_item(version, job.suite_version_id, suite=True) for version in suites
+            _piece_item(
+                version, job.suite_version_id, suite=True, candidate_states=states
+            )
+            for version in suites
         ],
     }
 

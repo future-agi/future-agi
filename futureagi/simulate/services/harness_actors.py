@@ -239,10 +239,14 @@ def _verdict(
     share_actions: list[str] | None,
 ) -> _Verdict:
     """Every check a write runs, without writing: the cast after the edit, and what refuses it."""
-    # The scenario count is read-side only; it is never written into a record.
+    # The scenario count and the review decision are read-side only; they are never written into a record.
     record = cast(
         ActorRecord,
-        {name: value for name, value in (body or {}).items() if name != "scenarios"},
+        {
+            name: value
+            for name, value in (body or {}).items()
+            if name not in ("scenarios", "review_decision")
+        },
     )
     sent_id = record.pop("id", None)
     if sent_id and new_id and sent_id != new_id:

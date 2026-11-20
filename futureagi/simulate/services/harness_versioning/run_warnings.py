@@ -23,7 +23,11 @@ from simulate.services.harness_versioning.read import (
     _message_label,
     version_refs,
 )
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.review_items import saved_changes
+from simulate.services.harness_versioning.versions import (
+    proof_passes,
+    versioning_enabled,
+)
 from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
@@ -69,6 +73,51 @@ def _cache_state(environment: HostedHarnessJob, pins: ResolvedPins) -> str | Non
 
 def _names(names: list[str]) -> str:
     return ", ".join(names)
+
+
+def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[str]:
+    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that hold
+    no proof against this environment version."""
+    from simulate.models import HarnessSuiteMember
+
+    reviewed = [
+        one
+        for version in (environment_version, suite_version)
+        for one in saved_changes(getattr(version, "documents", None))
+    ]
+    touched = {
+        key
+        for one in reviewed
+        if one["decision"] == "accepted" and one["graded"]
+        for key in one["revalidate"]
+    }
+    if not touched:
+        return []
+    members = set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
+    from simulate.services.harness_starting_records import scenario_token
+
+    # A change names a scenario by its folder, the suite by its key: the same scenario either way once normalised.
+    tokens = {scenario_token(key) for key in touched}
+    return sorted(
+        key
+        for key in members
+        if scenario_token(key) in tokens
+        and not any(
+            proof_passes(proof) and scenario_token(name) == scenario_token(key)
+            for name, proof in proofs.items()
+        )
+    )
 
 
 def _credential_warnings(runtime: HarnessAgentVersionRuntime) -> list[dict[str, Any]]:
@@ -173,6 +222,20 @@ def run_warnings(
                 f"Suite {_message_label(_label(suite_version.version_number))}"
                 " hasn't been proved"
                 f" against environment {environment_label}",
+                "suite",
+            )
+        )
+    unproved = _needs_revalidation(environment_version, suite_version)
+    if unproved:
+        shown = unproved[:5] + (
+            [f"{len(unproved) - 5} more"] if len(unproved) > 5 else []
+        )
+        warnings.append(
+            _warning(
+                "scenarios_need_revalidation",
+                f"Saved changes to environment {environment_label} or its suite changed what"
+                f" {len(unproved)} scenario{'s' if len(unproved) != 1 else ''} are graded on;"
+                f" prove {_names(shown)} again",
                 "suite",
             )
         )

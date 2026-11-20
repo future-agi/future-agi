@@ -306,6 +306,7 @@ RUN_DROPPED_METADATA = (
     "default_pair_sealed",
     "conversation_checkpoints",
     "draft_saves",
+    "draft_validation",
     "evidence_adds",
     "observability_refusal",
 )

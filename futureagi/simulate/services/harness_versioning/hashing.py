@@ -66,6 +66,9 @@ ENVIRONMENT_UNHASHED_ROOTS = (
 )
 WORLD_SEED_FILES = ("world.sqlite", "store.json", "collections.json", "schema.sql")
 SCENARIO_ROOTS = ("scenarios", "scenario")
+# What ALK's suite index adds to each entry (`folder.write_index`: the case's folder and its solution's step count). They
+# belong to the index only: a case's own document never carries them, and one that does took them from its entry.
+INDEX_ONLY_FIELDS = frozenset({"folder", "steps"})
 
 
 def read_tree(root: Path) -> dict[str, bytes]:

@@ -47,7 +47,8 @@ from simulate.services.hosted_harness import (
 
 logger = structlog.get_logger(__name__)
 
-Purpose = Literal["agent_move", "recheck"]
+# `save`: the reviewed changes a Validate composed, checked before Save makes them the defaults.
+Purpose = Literal["agent_move", "recheck", "save"]
 Caller = Literal["activation", "hand", "no_change", "land"]
 
 # A check still running this long after it was asked for is stopped. A slow worker or
@@ -424,7 +425,7 @@ def start_validation(
     environment. Takes the environment's lock; the job's workflow starts on commit.
     """
     from simulate.services.harness_versioning.backfill import effective_runtime
-    from simulate.services.harness_versioning.versions import _lock_environment
+    from simulate.services.harness_versioning.versions import lock_environment
 
     if (
         environment_version is None
@@ -433,7 +434,7 @@ def start_validation(
     ):
         return None
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         if move is not None:
             drop_waiting_moves(locked, move["agent_version_id"])
         runtime = effective_runtime(
@@ -1076,13 +1077,13 @@ def complete_move(
         hand_move,
     )
     from simulate.services.harness_versioning.versions import (
-        _lock_environment,
+        lock_environment,
         move_agent,
     )
     from simulate.services.hosted_harness import agent_version_pickable
 
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         version = AgentVersion.no_workspace_objects.filter(
             id=move["agent_version_id"]
         ).first()

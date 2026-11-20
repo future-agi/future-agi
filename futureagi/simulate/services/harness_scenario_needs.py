@@ -7,7 +7,7 @@ checks are read with Python's ``ast``. Never estimated from text.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -21,6 +21,7 @@ from simulate.models import (
 )
 from simulate.services.harness_check_reading import CheckReading, read_check
 from simulate.services.hosted_harness import grades_nothing
+from simulate.services.scenario_refs import arrives_on_tool, step_tools
 
 logger = structlog.get_logger(__name__)
 
@@ -67,11 +68,6 @@ class CaseNeeds:
 ACTING = "*acting_actor*"
 
 
-def _triggered_on_tool(actor: Mapping[str, Any]) -> bool:
-    trigger = actor.get("trigger")
-    return isinstance(trigger, Mapping) and trigger.get("kind") == "on_tool"
-
-
 def door_needs(document: Mapping[str, Any] | None) -> frozenset[str]:
     """The world actions a scenario's faults are set on, and `ACTING` when one of its actors acts in the world."""
     if not isinstance(document, Mapping):
@@ -83,7 +79,7 @@ def door_needs(document: Mapping[str, Any] | None) -> frozenset[str]:
     }
     if any(
         isinstance(actor, Mapping)
-        and (actor.get("actions") or _triggered_on_tool(actor))
+        and (actor.get("actions") or arrives_on_tool(actor) is not None)
         for actor in document.get("actors") or []
     ):
         needs.add(ACTING)
@@ -279,17 +275,10 @@ def _path_tools(document: Mapping[str, Any]) -> frozenset[str] | None:
     """
     paths = [document.get("solution") or []]
     paths += [one or [] for one in document.get("alternatives") or []]
-    named = [frozenset(_step_tools(path)) for path in paths]
+    named = [frozenset(step_tools(path)) for path in paths]
     if not any(named):
         return None
     return frozenset.intersection(*named)
-
-
-def _step_tools(path: Iterable[Any]) -> Iterable[str]:
-    for step in path:
-        tool = step.get("tool") if isinstance(step, Mapping) else None
-        if isinstance(tool, str) and tool:
-            yield tool
 
 
 def _checks(

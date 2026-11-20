@@ -3,6 +3,7 @@ actor sees and never sees."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal, TypedDict, cast
 
 from simulate.models import HostedHarnessJob
@@ -76,6 +77,7 @@ from simulate.services.harness_actor_validation import (
     required_fields,
 )
 from simulate.services.harness_versioning import drafts
+from simulate.services.harness_versioning.review import held_decisions
 from simulate.services.harness_versioning.versions import suite_documents
 
 # The way of joining that never speaks in the conversation.
@@ -99,6 +101,8 @@ class ActorRow(ActorFields):
     files: list[str]
     records: list[RecordSource]
     scenarios: int
+    # The decision taken on the actor in the draft's change review, while the actor is as it was decided.
+    review_decision: Literal["accepted", "rejected"] | None
     # The scenarios that bring the actor in by their own trigger, read differently from its own.
     arrival_overrides: list[ArrivalOverride]
     removable: bool
@@ -179,6 +183,7 @@ def _actor_row(
     rules: ActorRules,
     defaults: RecordDefaults,
     arrivals: list[ArrivalOverride],
+    decisions: Mapping[str, Literal["accepted", "rejected"]] | None = None,
 ) -> ActorRow:
     actor_id = str(actor.get("id") or "")
     name = names.get(actor_id, actor_id)
@@ -196,6 +201,7 @@ def _actor_row(
         "files": files,
         "records": records,
         "scenarios": len(using),
+        "review_decision": (decisions or {}).get(f"actor:{actor_id}"),
         "arrival_overrides": arrivals,
         "removable": not blocked,
         "removal_blocked_by": blocked,
@@ -251,8 +257,10 @@ def cast_view(
     suite_files: dict[str, bytes],
     draft_revision: int | None,
     stores: object = None,
+    decisions: Mapping[str, Literal["accepted", "rejected"]] | None = None,
 ) -> Cast:
-    """The cast as the editor reads it; `draft_revision` is the open draft's, none when it reads the saved version."""
+    """The cast as the editor reads it; `draft_revision` is the open draft's, none when it reads the saved version.
+    `decisions` are the draft's change-review decisions that still hold, by item."""
     rules = actor_rules(environment_files)
     defaults = record_defaults(rules)
     documents = suite_documents(suite_files)
@@ -275,6 +283,7 @@ def cast_view(
                 rules=rules,
                 defaults=defaults,
                 arrivals=arrival_overrides(documents, one),
+                decisions=decisions,
             )
             # The caller's side first, the cast's order kept within each side.
             for one in sorted(actors, key=lambda one: side_of(one) != "caller")
@@ -332,4 +341,5 @@ def read_actors(environment: HostedHarnessJob) -> Cast:
         sides["suite"],
         draft.revision if draft is not None else None,
         world_stores(environment),
+        held_decisions(draft, sides["environment"]) if draft is not None else None,
     )

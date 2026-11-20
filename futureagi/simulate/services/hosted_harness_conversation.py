@@ -1248,6 +1248,8 @@ def _project_event(
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
         conversation.state = HostedHarnessConversation.State.WARM_IDLE
+        # A stopped turn's question stops with it.
+        conversation.blocking_input = None
         conversation.active_invocation_id = None
         return
     if kind == "turn_completed":
@@ -1257,21 +1259,12 @@ def _project_event(
                 id=command_id,
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
-        blocking_message_id = (conversation.blocking_input or {}).get("message_id")
-        answered = bool(
-            blocking_message_id
-            and conversation.messages.filter(
-                role=HostedHarnessConversationMessage.Role.USER,
-                reply_to=blocking_message_id,
-                sequence__lte=conversation.command_acked_through,
-            ).exists()
-        )
-        if answered:
+        if not payload.get("ignored"):
+            # The turn is over: a question it asked that nobody answered ended with
+            # it (one asked again within the turn too); only a later turn asks anew.
             conversation.blocking_input = None
-        if (
-            conversation.state != HostedHarnessConversation.State.WAITING_FOR_USER
-            or answered
-        ):
+            conversation.state = HostedHarnessConversation.State.WARM_IDLE
+        elif conversation.state != HostedHarnessConversation.State.WAITING_FOR_USER:
             conversation.state = HostedHarnessConversation.State.WARM_IDLE
         conversation.active_invocation_id = None
         if command_id:
@@ -1950,6 +1943,8 @@ class _DraftCommand:
     origin: str
     author: Any
     draft_kwargs: dict[str, Any]
+    # The person's message the turn answered, which each change it makes cites.
+    message_id: str
 
 
 def _draft_command(
@@ -1968,6 +1963,7 @@ def _draft_command(
         origin=origin or ("extend" if payload.get("_origin") == "extend" else "chat"),
         author=command_author(payload, environment),
         draft_kwargs=draft_kwargs,
+        message_id=str(command.id) if command is not None else "",
     )
 
 
@@ -2127,6 +2123,7 @@ def promote_conversation_checkpoint(
                     origin=draft_command.origin,
                     user=draft_command.author,
                     expected=expected,
+                    message_id=draft_command.message_id,
                     **draft_command.draft_kwargs,
                 )
             except HostedHarnessError as exc:

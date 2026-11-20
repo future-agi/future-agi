@@ -202,7 +202,7 @@ def rows(
             # The measured reading still holds the cases the gap's tools leave out.
             if stale is not None:
                 row["stale_because"] = stale
-                if stale != "built_with_unknown":
+                if stale not in _UNKNOWN:
                     row["was"] = _gated(capability, reading, fresh)[0]
             else:
                 row["blocked_by"] = _gated(capability, reading, statuses)[3]
@@ -225,13 +225,13 @@ def rows(
             )
         else:
             fresh[capability.id] = _gated(capability, reading, fresh)[0]
-            if stale == "built_with_unknown":
+            if stale in _UNKNOWN:
                 row = _row(
                     capability,
                     "untested",
                     reading=reading,
-                    reason_code="built_with_unknown",
-                    reason="The agent this environment was built with is not known",
+                    reason_code=stale,
+                    reason=_UNKNOWN[stale],
                     checked_at=evidence.checked_at,
                 )
             elif stale is not None:
@@ -372,6 +372,13 @@ def failed_actions(bundle: HarnessAssembledBundle | None) -> list[Mapping[str, A
     ]
 
 
+# Evidence that cannot be told to hold for the pairing: its rows read Untested.
+_UNKNOWN = {
+    "built_with_unknown": "The agent this environment was built with is not known",
+    "saved_without_check": "Saved while the check was unavailable. Re-check before"
+    " relying on these versions",
+}
+
 StaleBecause = Literal[
     "agent_version", "environment_version", "suite_version", "harness_version"
 ]
@@ -379,7 +386,7 @@ StaleBecause = Literal[
 
 def _stale(
     pairing: Pairing, evidence: Evidence
-) -> StaleBecause | Literal["built_with_unknown"] | None:
+) -> StaleBecause | Literal["built_with_unknown", "saved_without_check"] | None:
     """Rule 3: evidence other than the pairing's own was measured with the agent the
     environment version was built with, on the environment version that holds the
     build certificate (an edit saves a new one without certifying it) and on the
@@ -393,6 +400,11 @@ def _stale(
     )
     if evidence.source == "pair_certificate":
         return "harness_version" if harness_moved else None
+    if any(
+        (version.documents or {}).get("uncertified")
+        for version in (pairing.environment_version, pairing.suite_version)
+    ):
+        return "saved_without_check"
     built_with = pairing.environment_version.agent_version_id
     if built_with is None:
         return "built_with_unknown"
@@ -427,9 +439,7 @@ def _picked_agent_frameworks(pairing: Pairing) -> dict[str, str]:
     return release.frameworks(certificate)
 
 
-def _stale_reason(
-    stale: StaleBecause, pairing: Pairing, evidence: Evidence
-) -> tuple[str, str]:
+def _stale_reason(stale: str, pairing: Pairing, evidence: Evidence) -> tuple[str, str]:
     if stale == "harness_version":
         moved = release.harness_outdated(
             evidence.certificate, pairing.environment.organization_id
@@ -758,7 +768,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
             "recheck": None,
         }
     if pair is not None and (
-        row["status"] == "stale" or code in ("built_with_unknown", "not_run")
+        row["status"] == "stale" or code in (*_UNKNOWN, "not_run")
     ):
         return {
             "type": "recheck",
