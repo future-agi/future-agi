@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "dd120ce5b7ce2193f44a379b0fc9034b4b4d18d426febe88d214ac6c7685b1a5",
+  "source_contract_sha256": "0b31bb799e891f7f8a571cc9f691c462a72c7abafcf5efa6d97d5015e0cd19c3",
   "tool_count": 128,
   "tools": [
     {
@@ -9845,18 +9845,19 @@
             "enum": [
               "session",
               "call",
+              "trace",
               "transcript",
               "dataset"
             ]
           },
           "project_id": {
             "title": "Project id",
-            "description": "Session and call imports: the Observe project.",
+            "description": "Session, call and trace imports: the Observe project.",
             "type": "string",
             "format": "uuid"
           },
           "ids": {
-            "description": "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
+            "description": "Session, call, trace and dataset imports: session ids, the trace ids of calls or traces, or row ids, in the order picked.",
             "type": "array",
             "items": {
               "type": "string",

@@ -51579,6 +51579,251 @@
                 }
             ]
         },
+        "/simulate/api/agent-fix-issues/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-issues_list",
+                "description": "Each named issue's newest job, for the issue list's epoch icon: one call per\npage of issues. Without ``project_id`` the ids are read in every project the\ncaller may read, so a page across projects is one call too; each result names\nits project.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "cluster_ids",
+                        "in": "query",
+                        "description": "The issues' ids, comma-separated: one page of the issue list.",
+                        "required": true,
+                        "type": "string",
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssueStatusList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "simulate_api_agent-fix-issues_create",
+                "description": "Start Run Epoch from an issue: import the picked traces as evidence for the\nenvironment and ask its builder to draft them. One builder turn, billed as\nauthoring credits.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssueCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssueJobDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/agent-fix-issues/plan/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-issues_plan",
+                "description": "What Run Epoch on an issue shows before anything is drafted: the environment,\na sample of the issue's traces with why each was picked, and the launch form's\ndefaults. It reads the picked traces' roots once, and calls no model.",
+                "parameters": [
+                    {
+                        "name": "cluster_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "maxLength": 20,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "environment_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssuePlan"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/agent-fix-issues/{id}/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-issues_read",
+                "description": "Run Epoch from an Error Feed issue: plan it, start it from the picked traces,\nfollow it, run it after the review, and stop it before its epoch starts.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssueJobDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/agent-fix-issues/{id}/run/": {
+            "post": {
+                "operationId": "simulate_api_agent-fix-issues_run",
+                "description": "Run Epoch after the review: the kept drafts join the environment's suite, and\nthe current version runs on the kept scenarios. The epoch starts from that run\nonce it finishes.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssueRun"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssueJobDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/agent-fix-issues/{id}/stop/": {
+            "post": {
+                "operationId": "simulate_api_agent-fix-issues_stop",
+                "description": "Stop before the epoch starts: drafting is dropped, or the baseline canceled.\nA started epoch stops on its own route.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixIssueJobDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/agent-fix-runs/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_list",
@@ -54955,7 +55200,7 @@
         "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions_suite_suite_members",
-                "description": "The scenarios in one suite version, by number; a coding agent's read leaves\nout the held-back cases.",
+                "description": "The scenarios in one suite version, by number, each with the Error Feed\nissue it came from, if any; a coding agent's read leaves out the held-back\ncases.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -141689,6 +141934,1341 @@
                 }
             }
         },
+        "AgentFixIssue": {
+            "required": [
+                "cluster_id",
+                "project_id",
+                "title"
+            ],
+            "type": "object",
+            "properties": {
+                "cluster_id": {
+                    "title": "Cluster id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "AgentFixIssueEnvironment": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AgentFixIssueSamplePick": {
+            "required": [
+                "member_id",
+                "unit",
+                "source_id",
+                "reason",
+                "started_at"
+            ],
+            "type": "object",
+            "properties": {
+                "member_id": {
+                    "title": "Member id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "enum": [
+                        "call",
+                        "session",
+                        "trace"
+                    ]
+                },
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "enum": [
+                        "example",
+                        "cited",
+                        "recent"
+                    ]
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "AgentFixFailure": {
+            "required": [
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "AgentFixIssueBaseline": {
+            "required": [
+                "run_id",
+                "state",
+                "scenarios",
+                "completed_count",
+                "failed_count"
+            ],
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenarios": {
+                    "title": "Scenarios",
+                    "type": "integer"
+                },
+                "completed_count": {
+                    "title": "Completed count",
+                    "type": "integer"
+                },
+                "failed_count": {
+                    "title": "Failed count",
+                    "type": "integer"
+                }
+            },
+            "x-nullable": true
+        },
+        "AgentFixIssueEpoch": {
+            "required": [
+                "id",
+                "number",
+                "environment_id",
+                "state",
+                "step",
+                "failure_code",
+                "retryable",
+                "limited_validation",
+                "pull_request_url"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "number": {
+                    "title": "Number",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "step": {
+                    "title": "Step",
+                    "type": "string",
+                    "enum": [
+                        "variations",
+                        "reproduce",
+                        "search",
+                        "verify",
+                        "done"
+                    ],
+                    "x-nullable": true
+                },
+                "failure_code": {
+                    "title": "Failure code",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
+                },
+                "limited_validation": {
+                    "title": "Limited validation",
+                    "type": "boolean"
+                },
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "AgentFixIssueJob": {
+            "required": [
+                "id",
+                "phase",
+                "issue",
+                "environment",
+                "sample",
+                "ending",
+                "baseline",
+                "epoch",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "phase": {
+                    "title": "Phase",
+                    "type": "string",
+                    "enum": [
+                        "drafting",
+                        "review",
+                        "blocked",
+                        "measuring",
+                        "launched",
+                        "ended"
+                    ]
+                },
+                "issue": {
+                    "$ref": "#/definitions/AgentFixIssue"
+                },
+                "environment": {
+                    "$ref": "#/definitions/AgentFixIssueEnvironment"
+                },
+                "sample": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixIssueSamplePick"
+                    }
+                },
+                "ending": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "baseline": {
+                    "$ref": "#/definitions/AgentFixIssueBaseline"
+                },
+                "epoch": {
+                    "$ref": "#/definitions/AgentFixIssueEpoch"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "AgentFixIssueStatus": {
+            "required": [
+                "cluster_id",
+                "project_id",
+                "job"
+            ],
+            "type": "object",
+            "properties": {
+                "cluster_id": {
+                    "title": "Cluster id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job": {
+                    "$ref": "#/definitions/AgentFixIssueJob"
+                }
+            }
+        },
+        "AgentFixIssueStatusList": {
+            "required": [
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixIssueStatus"
+                    }
+                }
+            }
+        },
+        "AgentFixIssueCreate": {
+            "required": [
+                "cluster_id",
+                "project_id",
+                "environment_id",
+                "member_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "cluster_id": {
+                    "title": "Cluster id",
+                    "type": "string",
+                    "maxLength": 20,
+                    "minLength": 1
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "member_ids": {
+                    "description": "The plan's picks after any swap: each pick's member_id.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "minLength": 1
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
+                }
+            }
+        },
+        "EvidenceNewCheck": {
+            "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+            "required": [
+                "name",
+                "what"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "what": {
+                    "title": "What",
+                    "type": "string"
+                }
+            }
+        },
+        "EvidenceDuplicateOf": {
+            "description": "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
+            "required": [
+                "import_id",
+                "case_id",
+                "scenario_name"
+            ],
+            "type": "object",
+            "properties": {
+                "import_id": {
+                    "title": "Import id",
+                    "description": "The import holding the case.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "case_id": {
+                    "title": "Case id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "scenario_name": {
+                    "title": "Scenario name",
+                    "description": "Its drafted scenario's title; blank until drafted.",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
+        "EvidenceTurn": {
+            "required": [
+                "role",
+                "text",
+                "truncated",
+                "trace_id",
+                "at"
+            ],
+            "type": "object",
+            "properties": {
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "agent"
+                    ]
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "description": "Blank for a turn no trace recorded.",
+                    "type": "string"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "EvidenceTranscript": {
+            "required": [
+                "status",
+                "reason",
+                "turns"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "turns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceTurn"
+                    }
+                }
+            }
+        },
+        "EvidenceToolCall": {
+            "required": [
+                "span_id",
+                "trace_id",
+                "name",
+                "at",
+                "failed",
+                "error",
+                "input",
+                "output",
+                "input_truncated",
+                "output_truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "boolean"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "input": {
+                    "title": "Input",
+                    "type": "string"
+                },
+                "output": {
+                    "title": "Output",
+                    "type": "string"
+                },
+                "input_truncated": {
+                    "title": "Input truncated",
+                    "type": "boolean"
+                },
+                "output_truncated": {
+                    "title": "Output truncated",
+                    "type": "boolean"
+                }
+            }
+        },
+        "EvidenceToolCalls": {
+            "required": [
+                "status",
+                "reason",
+                "calls"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "calls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceToolCall"
+                    }
+                }
+            }
+        },
+        "EvidencePart": {
+            "description": "Whether the tool calls recorded their inputs.",
+            "required": [
+                "status",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
+        "EvidenceLabel": {
+            "required": [
+                "name",
+                "kind",
+                "value",
+                "notes",
+                "target"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "notes": {
+                    "title": "Notes",
+                    "type": "string"
+                },
+                "target": {
+                    "title": "Target",
+                    "description": "row: a dataset row's label column.",
+                    "type": "string",
+                    "enum": [
+                        "session",
+                        "trace",
+                        "span",
+                        "row"
+                    ]
+                }
+            }
+        },
+        "EvidenceLabels": {
+            "required": [
+                "status",
+                "reason",
+                "labels"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceLabel"
+                    }
+                }
+            }
+        },
+        "EvidenceExpectedOutcome": {
+            "description": "What a dataset row's expected outcome column says should happen.",
+            "required": [
+                "status",
+                "reason",
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "present",
+                        "partial",
+                        "truncated",
+                        "missing",
+                        "unreadable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                }
+            }
+        },
+        "EvidenceImportCase": {
+            "required": [
+                "id",
+                "source_id",
+                "name",
+                "status",
+                "reason",
+                "source_available",
+                "scenario_key",
+                "scenario_name",
+                "new_checks",
+                "changed_since_import",
+                "also_from",
+                "duplicate_of",
+                "trace_ids",
+                "started_at",
+                "ended_at",
+                "transcript",
+                "tool_calls",
+                "tool_inputs",
+                "tool_outputs",
+                "starting_state",
+                "labels",
+                "expected_outcome"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "description": "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
+                    "type": "string"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "unavailable",
+                        "drafted",
+                        "blocked",
+                        "added",
+                        "discarded",
+                        "duplicate"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "source_available": {
+                    "title": "Source available",
+                    "description": "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
+                    "type": "boolean"
+                },
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "description": "The drafted scenario's key, once drafted.",
+                    "type": "string"
+                },
+                "scenario_name": {
+                    "title": "Scenario name",
+                    "description": "The drafted scenario's title, once drafted; blank when the builder gave none.",
+                    "type": "string"
+                },
+                "new_checks": {
+                    "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceNewCheck"
+                    }
+                },
+                "changed_since_import": {
+                    "title": "Changed since import",
+                    "description": "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "also_from": {
+                    "title": "Also from",
+                    "description": "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "duplicate_of": {
+                    "$ref": "#/definitions/EvidenceDuplicateOf"
+                },
+                "trace_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "ended_at": {
+                    "title": "Ended at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "transcript": {
+                    "$ref": "#/definitions/EvidenceTranscript"
+                },
+                "tool_calls": {
+                    "$ref": "#/definitions/EvidenceToolCalls"
+                },
+                "tool_inputs": {
+                    "$ref": "#/definitions/EvidencePart"
+                },
+                "tool_outputs": {
+                    "$ref": "#/definitions/EvidencePart"
+                },
+                "starting_state": {
+                    "$ref": "#/definitions/EvidencePart"
+                },
+                "labels": {
+                    "$ref": "#/definitions/EvidenceLabels"
+                },
+                "expected_outcome": {
+                    "$ref": "#/definitions/EvidenceExpectedOutcome"
+                }
+            }
+        },
+        "EvidenceRedactionFinding": {
+            "required": [
+                "case_id",
+                "part",
+                "index",
+                "field",
+                "entity",
+                "start",
+                "end",
+                "value",
+                "replacement"
+            ],
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "title": "Case id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "part": {
+                    "title": "Part",
+                    "type": "string",
+                    "enum": [
+                        "transcript",
+                        "tool_calls",
+                        "labels",
+                        "expected_outcome"
+                    ]
+                },
+                "index": {
+                    "title": "Index",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "input",
+                        "output",
+                        "error",
+                        "notes",
+                        "value",
+                        "name"
+                    ]
+                },
+                "entity": {
+                    "title": "Entity",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "end": {
+                    "title": "End",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "replacement": {
+                    "title": "Replacement",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "EvidenceRedaction": {
+            "required": [
+                "method",
+                "reason",
+                "findings",
+                "total"
+            ],
+            "type": "object",
+            "properties": {
+                "method": {
+                    "title": "Method",
+                    "description": "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
+                    "type": "string",
+                    "enum": [
+                        "presidio",
+                        "basic"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceRedactionFinding"
+                    }
+                },
+                "total": {
+                    "title": "Total",
+                    "description": "Every finding, including those past the listed ones.",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "EvidenceImport": {
+            "required": [
+                "id",
+                "environment_id",
+                "project_id",
+                "dataset_id",
+                "agent_version_id",
+                "source_kind",
+                "created_at",
+                "simulated",
+                "production",
+                "drafting",
+                "cases",
+                "redaction"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "description": "The Observe project; null for evidence from outside Observe.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "dataset_id": {
+                    "title": "Dataset id",
+                    "description": "A dataset import's dataset; null otherwise.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "enum": [
+                        "session",
+                        "call",
+                        "trace",
+                        "transcript",
+                        "dataset"
+                    ]
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "simulated": {
+                    "title": "Simulated",
+                    "description": "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
+                    "type": "boolean"
+                },
+                "production": {
+                    "title": "Production",
+                    "description": "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
+                    "type": "boolean"
+                },
+                "drafting": {
+                    "title": "Drafting",
+                    "description": "True while the environment's builder is drafting cases.",
+                    "type": "boolean"
+                },
+                "cases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvidenceImportCase"
+                    }
+                },
+                "redaction": {
+                    "$ref": "#/definitions/EvidenceRedaction"
+                }
+            }
+        },
+        "AgentFixLaunchSurface": {
+            "required": [
+                "id",
+                "label",
+                "allowed",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "enum": [
+                        "prompt",
+                        "tools",
+                        "settings",
+                        "code"
+                    ]
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "allowed": {
+                    "title": "Allowed",
+                    "type": "boolean"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "AgentFixIssueDefaults": {
+            "required": [
+                "surfaces",
+                "budget_credits",
+                "budget_credits_max",
+                "max_minutes_max",
+                "reply_latency_margin_pct",
+                "cost_margin_pct"
+            ],
+            "type": "object",
+            "properties": {
+                "surfaces": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixLaunchSurface"
+                    }
+                },
+                "budget_credits": {
+                    "title": "Budget credits",
+                    "type": "integer"
+                },
+                "budget_credits_max": {
+                    "title": "Budget credits max",
+                    "type": "integer"
+                },
+                "max_minutes_max": {
+                    "title": "Max minutes max",
+                    "type": "integer"
+                },
+                "reply_latency_margin_pct": {
+                    "title": "Reply latency margin pct",
+                    "type": "integer"
+                },
+                "cost_margin_pct": {
+                    "title": "Cost margin pct",
+                    "type": "integer"
+                }
+            }
+        },
+        "AgentFixIssueJobDetail": {
+            "required": [
+                "id",
+                "phase",
+                "issue",
+                "environment",
+                "sample",
+                "ending",
+                "baseline",
+                "epoch",
+                "created_at",
+                "evidence_import",
+                "defaults"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "phase": {
+                    "title": "Phase",
+                    "type": "string",
+                    "enum": [
+                        "drafting",
+                        "review",
+                        "blocked",
+                        "measuring",
+                        "launched",
+                        "ended"
+                    ]
+                },
+                "issue": {
+                    "$ref": "#/definitions/AgentFixIssue"
+                },
+                "environment": {
+                    "$ref": "#/definitions/AgentFixIssueEnvironment"
+                },
+                "sample": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixIssueSamplePick"
+                    }
+                },
+                "ending": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "baseline": {
+                    "$ref": "#/definitions/AgentFixIssueBaseline"
+                },
+                "epoch": {
+                    "$ref": "#/definitions/AgentFixIssueEpoch"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "evidence_import": {
+                    "$ref": "#/definitions/EvidenceImport"
+                },
+                "defaults": {
+                    "$ref": "#/definitions/AgentFixIssueDefaults"
+                }
+            }
+        },
+        "AgentFixIssueSample": {
+            "required": [
+                "unit",
+                "picks",
+                "alternates"
+            ],
+            "type": "object",
+            "properties": {
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "enum": [
+                        "call",
+                        "session",
+                        "trace"
+                    ],
+                    "x-nullable": true
+                },
+                "picks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixIssueSamplePick"
+                    }
+                },
+                "alternates": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixIssueSamplePick"
+                    }
+                }
+            }
+        },
+        "AgentFixIssueScenarios": {
+            "required": [
+                "held",
+                "limit"
+            ],
+            "type": "object",
+            "properties": {
+                "held": {
+                    "title": "Held",
+                    "type": "integer"
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer"
+                }
+            },
+            "x-nullable": true
+        },
+        "AgentFixIssuePlan": {
+            "required": [
+                "issue",
+                "environment",
+                "blocked",
+                "sample",
+                "open_job_id",
+                "issue_scenarios",
+                "defaults"
+            ],
+            "type": "object",
+            "properties": {
+                "issue": {
+                    "$ref": "#/definitions/AgentFixIssue"
+                },
+                "environment": {
+                    "$ref": "#/definitions/AgentFixIssueEnvironment"
+                },
+                "blocked": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "sample": {
+                    "$ref": "#/definitions/AgentFixIssueSample"
+                },
+                "open_job_id": {
+                    "title": "Open job id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "issue_scenarios": {
+                    "$ref": "#/definitions/AgentFixIssueScenarios"
+                },
+                "defaults": {
+                    "$ref": "#/definitions/AgentFixIssueDefaults"
+                }
+            }
+        },
+        "AgentFixIssueRun": {
+            "required": [
+                "surfaces",
+                "budget_credits",
+                "case_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "surfaces": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "prompt",
+                            "tools",
+                            "settings",
+                            "code"
+                        ]
+                    },
+                    "minItems": 1
+                },
+                "locked_paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 512,
+                        "minLength": 1
+                    },
+                    "default": []
+                },
+                "budget_credits": {
+                    "title": "Budget credits",
+                    "type": "integer",
+                    "maximum": 50000,
+                    "minimum": 1
+                },
+                "max_minutes": {
+                    "title": "Max minutes",
+                    "type": "integer",
+                    "maximum": 1440,
+                    "minimum": 1
+                },
+                "allowed_models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "minLength": 1
+                    },
+                    "maxItems": 50
+                },
+                "reply_latency_margin_pct": {
+                    "title": "Reply latency margin pct",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 0
+                },
+                "cost_margin_pct": {
+                    "title": "Cost margin pct",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 0
+                },
+                "cost_limit_usd": {
+                    "title": "Cost limit usd",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "case_ids": {
+                    "description": "The import's cases to keep: drafted ones, and repeats of scenarios the suite already holds.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 20,
+                    "minItems": 1
+                }
+            }
+        },
         "AgentFixEnvironment": {
             "required": [
                 "name",
@@ -141862,6 +143442,11 @@
                     "title": "Meters agent cost",
                     "type": "boolean",
                     "default": false
+                },
+                "measured_automatically": {
+                    "title": "Measured automatically",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -141899,22 +143484,28 @@
             },
             "x-nullable": true
         },
-        "AgentFixFailure": {
+        "AgentFixEpochIssue": {
             "required": [
-                "code",
-                "message"
+                "job_id",
+                "cluster_id",
+                "project_id"
             ],
             "type": "object",
             "properties": {
-                "code": {
-                    "title": "Code",
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "cluster_id": {
+                    "title": "Cluster id",
                     "type": "string",
                     "minLength": 1
                 },
-                "message": {
-                    "title": "Message",
+                "project_id": {
+                    "title": "Project id",
                     "type": "string",
-                    "minLength": 1
+                    "format": "uuid"
                 }
             },
             "x-nullable": true
@@ -142012,7 +143603,8 @@
                 "attempt",
                 "agent_version_id",
                 "version_number",
-                "verdict"
+                "verdict",
+                "pull_request_url"
             ],
             "type": "object",
             "properties": {
@@ -142066,9 +143658,7 @@
                 },
                 "pull_request_url": {
                     "title": "Pull request url",
-                    "type": "string",
-                    "format": "uri",
-                    "maxLength": 512
+                    "type": "string"
                 },
                 "created_at": {
                     "title": "Created at",
@@ -142208,6 +143798,9 @@
                     "title": "Limited validation",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "issue": {
+                    "$ref": "#/definitions/AgentFixEpochIssue"
                 },
                 "check_runs": {
                     "description": "The base version's runs; each candidate lists its own.",
@@ -142500,42 +144093,6 @@
                         "type": "string",
                         "minLength": 1
                     }
-                }
-            }
-        },
-        "AgentFixLaunchSurface": {
-            "required": [
-                "id",
-                "label",
-                "allowed",
-                "reason"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "enum": [
-                        "prompt",
-                        "tools",
-                        "settings",
-                        "code"
-                    ]
-                },
-                "label": {
-                    "title": "Label",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "allowed": {
-                    "title": "Allowed",
-                    "type": "boolean"
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
                 }
             }
         },
@@ -142855,6 +144412,9 @@
                     "title": "Limited validation",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "issue": {
+                    "$ref": "#/definitions/AgentFixEpochIssue"
                 },
                 "check_runs": {
                     "description": "The base version's runs; each candidate lists its own.",
@@ -149904,6 +151464,7 @@
                     "enum": [
                         "session",
                         "call",
+                        "trace",
                         "transcript",
                         "dataset"
                     ]
@@ -150033,18 +151594,19 @@
                     "enum": [
                         "session",
                         "call",
+                        "trace",
                         "transcript",
                         "dataset"
                     ]
                 },
                 "project_id": {
                     "title": "Project id",
-                    "description": "Session and call imports: the Observe project.",
+                    "description": "Session, call and trace imports: the Observe project.",
                     "type": "string",
                     "format": "uuid"
                 },
                 "ids": {
-                    "description": "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
+                    "description": "Session, call, trace and dataset imports: session ids, the trace ids of calls or traces, or row ids, in the order picked.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -150075,680 +151637,6 @@
                     "title": "Production",
                     "description": "Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence.",
                     "type": "boolean"
-                }
-            }
-        },
-        "EvidenceNewCheck": {
-            "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
-            "required": [
-                "name",
-                "what"
-            ],
-            "type": "object",
-            "properties": {
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "what": {
-                    "title": "What",
-                    "type": "string"
-                }
-            }
-        },
-        "EvidenceDuplicateOf": {
-            "description": "For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.",
-            "required": [
-                "import_id",
-                "case_id",
-                "scenario_name"
-            ],
-            "type": "object",
-            "properties": {
-                "import_id": {
-                    "title": "Import id",
-                    "description": "The import holding the case.",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "case_id": {
-                    "title": "Case id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "scenario_name": {
-                    "title": "Scenario name",
-                    "description": "Its drafted scenario's title; blank until drafted.",
-                    "type": "string"
-                }
-            },
-            "x-nullable": true
-        },
-        "EvidenceTurn": {
-            "required": [
-                "role",
-                "text",
-                "truncated",
-                "trace_id",
-                "at"
-            ],
-            "type": "object",
-            "properties": {
-                "role": {
-                    "title": "Role",
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "agent"
-                    ]
-                },
-                "text": {
-                    "title": "Text",
-                    "type": "string"
-                },
-                "truncated": {
-                    "title": "Truncated",
-                    "type": "boolean"
-                },
-                "trace_id": {
-                    "title": "Trace id",
-                    "description": "Blank for a turn no trace recorded.",
-                    "type": "string"
-                },
-                "at": {
-                    "title": "At",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                }
-            }
-        },
-        "EvidenceTranscript": {
-            "required": [
-                "status",
-                "reason",
-                "turns"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "present",
-                        "partial",
-                        "truncated",
-                        "missing",
-                        "unreadable"
-                    ]
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string"
-                },
-                "turns": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvidenceTurn"
-                    }
-                }
-            }
-        },
-        "EvidenceToolCall": {
-            "required": [
-                "span_id",
-                "trace_id",
-                "name",
-                "at",
-                "failed",
-                "error",
-                "input",
-                "output",
-                "input_truncated",
-                "output_truncated"
-            ],
-            "type": "object",
-            "properties": {
-                "span_id": {
-                    "title": "Span id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "trace_id": {
-                    "title": "Trace id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string"
-                },
-                "at": {
-                    "title": "At",
-                    "type": "string",
-                    "format": "date-time"
-                },
-                "failed": {
-                    "title": "Failed",
-                    "type": "boolean"
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "string"
-                },
-                "input": {
-                    "title": "Input",
-                    "type": "string"
-                },
-                "output": {
-                    "title": "Output",
-                    "type": "string"
-                },
-                "input_truncated": {
-                    "title": "Input truncated",
-                    "type": "boolean"
-                },
-                "output_truncated": {
-                    "title": "Output truncated",
-                    "type": "boolean"
-                }
-            }
-        },
-        "EvidenceToolCalls": {
-            "required": [
-                "status",
-                "reason",
-                "calls"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "present",
-                        "partial",
-                        "truncated",
-                        "missing",
-                        "unreadable"
-                    ]
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string"
-                },
-                "calls": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvidenceToolCall"
-                    }
-                }
-            }
-        },
-        "EvidencePart": {
-            "description": "Whether the tool calls recorded their inputs.",
-            "required": [
-                "status",
-                "reason"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "present",
-                        "partial",
-                        "truncated",
-                        "missing",
-                        "unreadable"
-                    ]
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string"
-                }
-            }
-        },
-        "EvidenceLabel": {
-            "required": [
-                "name",
-                "kind",
-                "value",
-                "notes",
-                "target"
-            ],
-            "type": "object",
-            "properties": {
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "value": {
-                    "title": "Value",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "notes": {
-                    "title": "Notes",
-                    "type": "string"
-                },
-                "target": {
-                    "title": "Target",
-                    "description": "row: a dataset row's label column.",
-                    "type": "string",
-                    "enum": [
-                        "session",
-                        "trace",
-                        "span",
-                        "row"
-                    ]
-                }
-            }
-        },
-        "EvidenceLabels": {
-            "required": [
-                "status",
-                "reason",
-                "labels"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "present",
-                        "partial",
-                        "truncated",
-                        "missing",
-                        "unreadable"
-                    ]
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string"
-                },
-                "labels": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvidenceLabel"
-                    }
-                }
-            }
-        },
-        "EvidenceExpectedOutcome": {
-            "description": "What a dataset row's expected outcome column says should happen.",
-            "required": [
-                "status",
-                "reason",
-                "text"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "present",
-                        "partial",
-                        "truncated",
-                        "missing",
-                        "unreadable"
-                    ]
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string"
-                },
-                "text": {
-                    "title": "Text",
-                    "type": "string"
-                }
-            }
-        },
-        "EvidenceImportCase": {
-            "required": [
-                "id",
-                "source_id",
-                "name",
-                "status",
-                "reason",
-                "source_available",
-                "scenario_key",
-                "scenario_name",
-                "new_checks",
-                "changed_since_import",
-                "also_from",
-                "duplicate_of",
-                "trace_ids",
-                "started_at",
-                "ended_at",
-                "transcript",
-                "tool_calls",
-                "tool_inputs",
-                "tool_outputs",
-                "starting_state",
-                "labels",
-                "expected_outcome"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "source_id": {
-                    "title": "Source id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "name": {
-                    "title": "Name",
-                    "description": "A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source.",
-                    "type": "string"
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "pending",
-                        "unavailable",
-                        "drafted",
-                        "blocked",
-                        "added",
-                        "discarded",
-                        "duplicate"
-                    ]
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string"
-                },
-                "source_available": {
-                    "title": "Source available",
-                    "description": "False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored.",
-                    "type": "boolean"
-                },
-                "scenario_key": {
-                    "title": "Scenario key",
-                    "description": "The drafted scenario's key, once drafted.",
-                    "type": "string"
-                },
-                "scenario_name": {
-                    "title": "Scenario name",
-                    "description": "The drafted scenario's title, once drafted; blank when the builder gave none.",
-                    "type": "string"
-                },
-                "new_checks": {
-                    "description": "Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvidenceNewCheck"
-                    }
-                },
-                "changed_since_import": {
-                    "title": "Changed since import",
-                    "description": "Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again.",
-                    "type": "boolean",
-                    "x-nullable": true
-                },
-                "also_from": {
-                    "title": "Also from",
-                    "description": "How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "duplicate_of": {
-                    "$ref": "#/definitions/EvidenceDuplicateOf"
-                },
-                "trace_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                },
-                "started_at": {
-                    "title": "Started at",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "ended_at": {
-                    "title": "Ended at",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "transcript": {
-                    "$ref": "#/definitions/EvidenceTranscript"
-                },
-                "tool_calls": {
-                    "$ref": "#/definitions/EvidenceToolCalls"
-                },
-                "tool_inputs": {
-                    "$ref": "#/definitions/EvidencePart"
-                },
-                "tool_outputs": {
-                    "$ref": "#/definitions/EvidencePart"
-                },
-                "starting_state": {
-                    "$ref": "#/definitions/EvidencePart"
-                },
-                "labels": {
-                    "$ref": "#/definitions/EvidenceLabels"
-                },
-                "expected_outcome": {
-                    "$ref": "#/definitions/EvidenceExpectedOutcome"
-                }
-            }
-        },
-        "EvidenceRedactionFinding": {
-            "required": [
-                "case_id",
-                "part",
-                "index",
-                "field",
-                "entity",
-                "start",
-                "end",
-                "value",
-                "replacement"
-            ],
-            "type": "object",
-            "properties": {
-                "case_id": {
-                    "title": "Case id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "part": {
-                    "title": "Part",
-                    "type": "string",
-                    "enum": [
-                        "transcript",
-                        "tool_calls",
-                        "labels",
-                        "expected_outcome"
-                    ]
-                },
-                "index": {
-                    "title": "Index",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "field": {
-                    "title": "Field",
-                    "type": "string",
-                    "enum": [
-                        "text",
-                        "input",
-                        "output",
-                        "error",
-                        "notes",
-                        "value",
-                        "name"
-                    ]
-                },
-                "entity": {
-                    "title": "Entity",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "start": {
-                    "title": "Start",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "end": {
-                    "title": "End",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "value": {
-                    "title": "Value",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "replacement": {
-                    "title": "Replacement",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "EvidenceRedaction": {
-            "required": [
-                "method",
-                "reason",
-                "findings",
-                "total"
-            ],
-            "type": "object",
-            "properties": {
-                "method": {
-                    "title": "Method",
-                    "description": "basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.",
-                    "type": "string",
-                    "enum": [
-                        "presidio",
-                        "basic"
-                    ]
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string"
-                },
-                "findings": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvidenceRedactionFinding"
-                    }
-                },
-                "total": {
-                    "title": "Total",
-                    "description": "Every finding, including those past the listed ones.",
-                    "type": "integer",
-                    "minimum": 0
-                }
-            }
-        },
-        "EvidenceImport": {
-            "required": [
-                "id",
-                "environment_id",
-                "project_id",
-                "dataset_id",
-                "agent_version_id",
-                "source_kind",
-                "created_at",
-                "simulated",
-                "production",
-                "drafting",
-                "cases",
-                "redaction"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "environment_id": {
-                    "title": "Environment id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "project_id": {
-                    "title": "Project id",
-                    "description": "The Observe project; null for evidence from outside Observe.",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "dataset_id": {
-                    "title": "Dataset id",
-                    "description": "A dataset import's dataset; null otherwise.",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "agent_version_id": {
-                    "title": "Agent version id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "source_kind": {
-                    "title": "Source kind",
-                    "type": "string",
-                    "enum": [
-                        "session",
-                        "call",
-                        "transcript",
-                        "dataset"
-                    ]
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time"
-                },
-                "simulated": {
-                    "title": "Simulated",
-                    "description": "True when the sources come from a Simulator project: simulated conversations, not production evidence.",
-                    "type": "boolean"
-                },
-                "production": {
-                    "title": "Production",
-                    "description": "True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production.",
-                    "type": "boolean"
-                },
-                "drafting": {
-                    "title": "Drafting",
-                    "description": "True while the environment's builder is drafting cases.",
-                    "type": "boolean"
-                },
-                "cases": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvidenceImportCase"
-                    }
-                },
-                "redaction": {
-                    "$ref": "#/definitions/EvidenceRedaction"
                 }
             }
         },
@@ -152200,7 +153088,9 @@
                 "scenario_key",
                 "number",
                 "name",
-                "use_case"
+                "use_case",
+                "issue_cluster_id",
+                "issue_project_id"
             ],
             "type": "object",
             "properties": {
@@ -152220,6 +153110,18 @@
                 "use_case": {
                     "title": "Use case",
                     "type": "string"
+                },
+                "issue_cluster_id": {
+                    "title": "Issue cluster id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "issue_project_id": {
+                    "title": "Issue project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },

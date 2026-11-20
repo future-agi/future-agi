@@ -76,6 +76,7 @@ from simulate.services.agent_fix_runs import (
     retry_fix_run,
     split_held_back,
 )
+from simulate.services.agent_setup import store_agent
 from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
 from simulate.services.harness_run_evals import queue_evals_for_finished_calls
 from simulate.services.harness_versioning.versions import record_authoring
@@ -89,6 +90,7 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
 from simulate.tests.test_harness_environment_regrade import _mapped_eval
@@ -107,6 +109,7 @@ from simulate.utils.test_execution_utils import (
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings import settings as default_settings
 from tracer.services.clickhouse.client import CHError
+from tracer.services.simulation_project import agent_of_run, ensure_simulation_project
 
 pytestmark = pytest.mark.django_db
 
@@ -256,6 +259,19 @@ def _launch(source_run, user, targets=(KEYS[0],)):
         max_minutes=30,
         user=user,
     )
+
+
+def _measured_by_the_sandbox(source_run, instrumentation="none"):
+    """The run's agent as a source agent that names ``instrumentation``: with "none", only
+    the sandbox's own measuring saw its model calls, in the agent's hidden project."""
+    execution = source_run.test_execution
+    version = execution.agent_version or execution.run_test.agent_version
+    store_agent(
+        agent_version_id=version.id,
+        agent=source_agent(instrumentation=instrumentation),
+        sdk_version="0.2.3",
+    )
+    ensure_simulation_project(agent_of_run(execution))
 
 
 def _tree(files=AGENT):
@@ -2643,6 +2659,26 @@ class TestLaunchConstraints:
             request.cost_margin_pct,
             request.cost_limit_usd,
         ) == (["m1"], True, True, 25, 25, None)
+
+    @pytest.mark.parametrize(
+        ("instrumentation", "spans", "measured"),
+        [("none", True, True), ("none", False, False), ("traceai", True, False)],
+    )
+    def test_a_fix_from_a_run_the_sandbox_measured_says_so(
+        self, source_run, user, instrumentation, spans, measured
+    ):
+        # An agent that names no tracing was seen only by the sandbox's own measuring, so
+        # the fix page and the pull request say so, once that measuring exported spans.
+        # A self-traced agent's never do.
+        _measured_by_the_sandbox(source_run, instrumentation)
+        usage = self._source_usage(
+            source_run,
+            [CallUsage(models=["gpt-5"], llm_spans=1, cost_usd=0.01)] if spans else [],
+        )
+        with patch(TRACED, _usage(usage)):
+            fix_run = _launch(source_run, user)
+
+        assert fix_run.request.get("measured_automatically") is measured
 
     def test_an_untraced_agent_s_fix_measures_nothing_it_cannot_see(
         self, source_run, user

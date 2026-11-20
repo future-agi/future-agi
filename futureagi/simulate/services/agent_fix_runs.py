@@ -35,6 +35,7 @@ from simulate.selectors.agent_fix import (
     fewest_failing_cases,
     is_retryable,
     launch_blocker,
+    measured_automatically,
     model_key,
     models_called,
     overridable_regressions,
@@ -234,6 +235,9 @@ def launch_fix_run(
         cost_limit_usd=cost_limit_usd,
         observes_models=bool(seen),
         meters_agent_cost=bool(usage),
+        # Only when the sandbox's measuring did export spans: an agent that names no
+        # tracing may still have had none of its calls measured.
+        measured_automatically=bool(usage) and measured_automatically(source_run),
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))
@@ -257,12 +261,18 @@ def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) ->
         raise HostedHarnessError(
             "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
-    added = VARIATIONS_PER_CASE * failing_cases
     suites = (source_run.suite_version_id, environment.suite_version_id)
     largest = max(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version_id=one).count()
         for one in suites
     )
+    require_variation_room(largest, failing_cases)
+
+
+def require_variation_room(largest: int, failing_cases: int) -> None:
+    """Refuse variations of ``failing_cases`` that would not fit a suite of ``largest``
+    scenarios, or one run of the cases and their variations."""
+    added = VARIATIONS_PER_CASE * failing_cases
     if largest + added > CHAT_CHECKPOINT_MAX_SCENARIOS:
         raise HostedHarnessError(
             "scenario_limit_exceeded",
