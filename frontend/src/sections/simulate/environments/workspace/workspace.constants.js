@@ -280,7 +280,6 @@ export const VERSIONS_COPY = {
       "A world, tool or rule change makes the next environment version. A scenario-only edit makes the next scenario version. Agent versions are kept on their own.",
     filterLabel: "Show versions of",
     filters: {
-      all: "All",
       environment: "Environment",
       suite: "Scenarios",
       agent: "Agent",

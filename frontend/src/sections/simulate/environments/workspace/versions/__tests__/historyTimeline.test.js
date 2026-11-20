@@ -94,7 +94,7 @@ describe("historyTimeline", () => {
       "suite:s2",
       "suite:s1",
     ]);
-    expect(filterEntries(entries, "all")).toHaveLength(7);
+    expect(filterEntries(entries, null)).toHaveLength(7);
   });
 
   it("names where a pushed version came from with its short commit", () => {

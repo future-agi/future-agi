@@ -173,12 +173,12 @@ export default function VersionsPanel({ env }) {
   const [params, setParams] = useSearchParams();
   const [linkedPiece, linkedId] = (params.get("version") || "").split(":");
   const [picked, setPicked] = useState(null);
-  const [kind, setKind] = useState("all");
+  const [kind, setKind] = useState(null);
   useEffect(() => {
     if (!linkedId) return;
     setPicked({ piece: linkedPiece, id: linkedId });
     // A filter could hide the linked row; show every kind again.
-    setKind("all");
+    setKind(null);
   }, [linkedPiece, linkedId]);
   // Held here so a refusal outlives the refresh that re-renders the row.
   const move = useMoveDefault(env?.id);
@@ -342,7 +342,8 @@ export default function VersionsPanel({ env }) {
               exclusive
               size="small"
               value={kind}
-              onChange={(_, next) => next && setKind(next)}
+              // Clicking the picked one again un-picks it.
+              onChange={(_, next) => setKind(next)}
               aria-label={COPY.filterLabel}
               sx={{ flexShrink: 0 }}
             >

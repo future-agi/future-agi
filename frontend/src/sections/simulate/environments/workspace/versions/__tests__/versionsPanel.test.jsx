@@ -839,6 +839,12 @@ describe("VersionsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Scenarios" }));
     expect(screen.queryAllByTestId(/^history-entry-agent:/)).toHaveLength(0);
     expect(screen.getAllByTestId(/^history-entry-suite:/)).toHaveLength(2);
+    // No "All" choice: un-picking the filter shows every version again.
+    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Scenarios" }));
+    expect(
+      screen.getAllByTestId(/^history-entry-agent:/).length,
+    ).toBeGreaterThan(0);
   });
 
   it("says a filter is empty instead of showing a blank card", async () => {
