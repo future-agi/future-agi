@@ -955,6 +955,36 @@ def test_a_proof_blocked_on_a_source_names_that_source(user, workspace, storage)
     )
 
 
+def test_a_case_kept_for_a_judged_policy_conflict_reads_kept_as_written_with_the_conflict(
+    user, workspace, storage
+):
+    environment = _environment(user, workspace, storage, "lc-judged-conflict")
+    _suite(environment, _ten())
+    why = (
+        "a model judged that its expected outcome may contradict a cited rule (a judgment, not a proof):\n"
+        '  - possible conflict with rule:0 "Refund at most once": it refunds twice\n\n'
+        "Read the rule against the case. Left as it is, the case is kept as written with this warning."
+    )
+    kept = {
+        **PROVED,
+        "proved": False,
+        "holds": True,
+        "kept_as_written": True,
+        "blocked_reason": "policy_conflict",
+        "why": why,
+    }
+    _proofs(environment, {**dict.fromkeys(KEYS, PROVED), REFUND_KEYS[0]: kept})
+
+    view = _views(environment)[REFUND_KEYS[0]]
+
+    assert (view["state"], view["warning"], view["warning_text"]) == (
+        "kept_as_written",
+        "policy_conflict",
+        "Kept as written: a model judged its expected outcome may contradict a cited rule "
+        '(possible conflict with rule:0 "Refund at most once": it refunds twice); a judgment, not a proof.',
+    )
+
+
 @pytest.mark.parametrize(
     ("note", "text"),
     [

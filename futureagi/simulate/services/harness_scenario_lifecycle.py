@@ -111,6 +111,11 @@ WARNING_TEXTS = {
     "evidence_not_captured": (
         "{check} reads {evidence}, which this agent does not share with the test; it will read Not measured."
     ),
+    # A model judged the expected outcome may contradict a cited rule; ALK keeps the case running, as written.
+    "policy_conflict": (
+        "Kept as written: a model judged its expected outcome may contradict a cited rule ({why}); a judgment, not a "
+        "proof."
+    ),
     # ALK's own words (`recorded_note`) when it sends them.
     "recorded_not_run": "{recorded}: recorded, not run (no world effect).",
 }
@@ -292,6 +297,10 @@ def warning_text(
         name=", ".join(str(one.get("name")) for one in controls),
         **extra,
     )
+    if code == "policy_conflict":
+        # As the held wording reads it: the first listed item, else the reason's first line.
+        items, why = why_items(entry), str(entry.get("why") or "").strip().splitlines()
+        values["why"] = items[0] if items else why[0] if why else ""
     if code == "control_not_run":
         assumed = sorted(
             {tool for one in controls for tool in one.get("assumed") or []}
