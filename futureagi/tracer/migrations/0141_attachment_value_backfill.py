@@ -723,10 +723,23 @@ def copy_sources(apps, alias, data):
                 }
                 if item.get("output_envelope_id"):
                     values["output_envelope_id"] = UUID(item["output_envelope_id"])
+                # Only queue rows that satisfy the complete dispatch fence.
+                # Incomplete historical evidence remains non-runnable and can
+                # be retried after the sealed inventory is corrected.
                 if (
                     row.provider_state == "complete"
                     and row.import_job_id is None
                     and row.dispatch_due_at is None
+                    and values.get("output_envelope_id") is not None
+                    and values.get("source_generation") not in (None, "", "null")
+                    and values.get("source_generation_kind")
+                    and values.get("source_mime_type")
+                    and values.get("source_expires_at") is not None
+                    and values.get("source_authority_generation") is not None
+                    and row.output_bytes is not None
+                    and row.output_bytes > 0
+                    and row.output_duration_ms is not None
+                    and row.output_duration_ms > 0
                 ):
                     values["dispatch_due_at"] = timezone.now()
                 put_values(manager, row, values)
@@ -798,6 +811,8 @@ def copy_jobs(apps, alias, data, bindings):
                                 "import live vector below conservative source/scratch/segment peak"
                             )
                 facts = source_values(item) if item and item.get("source") else None
+                if facts and row.recording_id is not None and facts["source_duration_ms"] is None:
+                    fail("recording import requires evidenced positive source duration")
                 if facts:
                     if (
                         facts["source_creator_kind"],
@@ -1061,6 +1076,10 @@ def forwards(apps, schema_editor):
     copy_segments(apps, alias, data, bindings)
     copy_derivatives(apps, alias, data)
     reconcile_budgets(apps, alias, data)
+    # Do not record 0141 as applied while a retryable owner mapping is absent.
+    # The copy is idempotent, so corrected sealed evidence can be retried.
+    if db(apps, "Attachment", alias).filter(storage_binding_id__isnull=True).exists():
+        fail("unresolved historical asset owner evidence")
 
 
 class Migration(migrations.Migration):

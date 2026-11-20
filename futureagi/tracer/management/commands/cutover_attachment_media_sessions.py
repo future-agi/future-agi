@@ -4,12 +4,15 @@ No startup hook, wire-version column, or access-token/login-family mutation.
 See docs/attachments/media-session-cutover.rst before use.
 """
 
+import sys
+
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from model_hub.apps import operator_startup_mutation_authorized
 from tracer.models.attachment import AttachmentMediaSession
 
 
@@ -23,6 +26,10 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+        # AppConfig startup policy is not an invocation boundary: direct calls
+        # must carry the same dedicated bootstrap/operator authorization.
+        if not operator_startup_mutation_authorized([sys.argv[0], "cutover_attachment_media_sessions"]):
+            raise CommandError("This cutover requires SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator.")
         if (
             getattr(settings, "FI_ATTACHMENTS_ENABLED", False)
             or not options["quiesced"]
