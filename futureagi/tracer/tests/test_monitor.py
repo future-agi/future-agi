@@ -149,6 +149,31 @@ class TestUserAlertMonitorCreateAPI:
         assert user_alert_monitor.last_checked_at is None
         assert user_alert_monitor.deleted is False
 
+    def test_edit_without_recipients_keeps_an_unsubscribed_address_out(
+        self, auth_client, user_alert_monitor
+    ):
+        """TH-9836: the alert form leaves out recipients it didn't change, so
+        an edit after someone unsubscribed doesn't add them back."""
+        from tfc.utils import email_unsubscribe as eu
+
+        user_alert_monitor.notification_emails = ["a@example.com", "b@example.com"]
+        user_alert_monitor.save(update_fields=["notification_emails"])
+        eu.set_subscribed(
+            eu.Link("b@example.com", eu.MONITOR_ALERTS, str(user_alert_monitor.id)),
+            False,
+        )
+
+        response = auth_client.patch(
+            f"/tracer/user-alerts/{user_alert_monitor.id}/",
+            {"name": "Renamed alert"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_alert_monitor.refresh_from_db()
+        assert user_alert_monitor.name == "Renamed alert"
+        assert user_alert_monitor.notification_emails == ["a@example.com"]
+
     @pytest.mark.requires_ee
     def test_create_monitor_rejects_other_workspace_project(
         self, auth_client, organization, user
