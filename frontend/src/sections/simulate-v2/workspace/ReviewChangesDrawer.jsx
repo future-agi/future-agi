@@ -157,6 +157,15 @@ export default function ReviewChangesDrawer({
       ),
     });
   const counts = reviewCountsOf(list);
+  /* The version's name starts from the first accepted change (handover:
+     "pre-fill an editable name"); typing replaces it. */
+  const firstAccepted =
+    list.find((c) => c.decision === "accepted") || list[0] || null;
+  const suggestedName = String(firstAccepted?.detail || "")
+    .replace(/\.$/, "")
+    .slice(0, 80);
+  const [nameTouched, setNameTouched] = useState(false);
+  const shownName = nameTouched ? note : note || suggestedName;
   const names = cost?.scenarioNames || [];
   /* data.md §4: save after the affected scenario checks pass — checked
      here, before the save, and again whenever the changes move. */
@@ -704,11 +713,20 @@ export default function ReviewChangesDrawer({
             <TextField
               size="small"
               fullWidth
-              placeholder="Name this version (optional)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
+              label="Version name"
+              placeholder="Name this version"
+              value={shownName}
+              onChange={(e) => {
+                setNameTouched(true);
+                setNote(e.target.value);
+              }}
+              inputProps={{ maxLength: 80 }}
               InputProps={{ sx: { typography: "s1" } }}
             />
+            {/* What Save does, plainly (handover). */}
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {`Save makes ${cost?.label ? `environment ${cost.label}` : "the next version"} from the accepted changes. ${thenRun ? "Then the run you asked for starts." : "It doesn't start a run."} Earlier runs keep the version they ran on.`}
+            </Typography>
             {/* Every change is decided before the save (data.md §3). */}
             <Stack direction="row" alignItems="center" spacing={1}>
               <Typography
@@ -783,8 +801,9 @@ export default function ReviewChangesDrawer({
                       !!counts.undecided || !counts.accepted || needsCheck
                     }
                     onClick={() => {
-                      onSave(note);
+                      onSave(shownName.trim());
                       setNote("");
+                      setNameTouched(false);
                     }}
                   >
                     {`${cost?.label ? `Save environment ${cost.label}` : "Save"}${thenRun ? " and run" : ""}`}

@@ -2681,6 +2681,44 @@ export default function EnvironmentWorkspace() {
                 onHistory={() => go("history")}
               />
             )}
+            {/* The pair check, said where people look (handover: the
+                ~15-minute re-check after a new default showed little). */}
+            {capsChecking && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.5}
+                sx={{
+                  px: 0.75,
+                  height: 22,
+                  borderRadius: "4px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    bgcolor: "primary.main",
+                    animation: "env-pulse 1.4s ease-in-out infinite",
+                  }}
+                />
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
+                  Checking the agent with this environment…
+                </Typography>
+              </Stack>
+            )}
             {/*
               Sealed · Live · Prompt only (RSI PRD "Environments, defined"):
               where the agent runs and how its tools are answered — which is
