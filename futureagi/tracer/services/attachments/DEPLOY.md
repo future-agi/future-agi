@@ -21,7 +21,12 @@ a Voice `conversation` only when it is on):
 
 Binding reads a parent span only if it started at most
 `FI_ATTACHMENTS_BIND_LOOKBACK_HOURS` (default 48) before its upload, so a late
-attach or import to an older trace needs a wider lookback.
+attach or import to an older trace needs a wider lookback. The backend and
+workers read this interval, `FI_ATTACHMENTS_ORPHAN_GRACE_HOURS` and
+`FI_ATTACHMENTS_AUDIT_RETENTION_DAYS` from their environment when enabled.
+Lookback and grace use whole hours (1–876000); audit retention uses whole
+days (1–36500). Unset or
+blank uses the default; other invalid values prevent enabled startup.
 
 ## Lifecycle schedules
 
@@ -189,14 +194,9 @@ object itself. A job that raises in the 30 s tick is logged by exception type
 only, and the tick goes on to the next job.
 
 A job is charged to the deployment row `global:imports`, plus its organization
-and project rows. Imports do not use the upload shards `global:0..15`: a shard
-holds 1/16 of the deployment caps (512 MiB), less than one valid import, and a
-long import on a shard would throttle every upload hashed to it. The
-`global:imports` row holds `FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT` (default 50)
-of the deployment caps: by default 4 GiB, 64 transfers and 4096 validation
-jobs (half the upload deployment caps), and 32 recordings, 32768 objects and
-32768 links (half the import-only deployment bounds). A value outside 1-100
-fails closed: every import is throttled.
+and project rows. Imports do not use upload shards. Their fixed deployment
+pool is defined by `capacity.IMPORT_POOL_CAP`; a process environment override
+cannot enlarge it.
 
 An import whose peak cannot fit in the smallest cap of its three rows is
 refused `too_large` (413). By default that cap is the project's 1 GiB. The
@@ -257,10 +257,14 @@ produced at the moment of deletion.
 | `FI_ATTACHMENTS_ENVELOPE_KEYS` | `id:base64url(32 bytes)[,id:key...]`. The first key seals and every key can open, which allows rotation. Keep it in a secret, never in plain values. It is never `SECRET_KEY`. |
 | `FI_ATTACHMENTS_IMPORT_HOSTS` | Comma-separated hosts (or parent domains) the importer may fetch from. Empty denies every remote source. |
 | `FI_ATTACHMENTS_WORK_DIR` | Private, non-shared scratch directory. Size it for each concurrent job's source snapshot plus one window, at most 1 GiB + 8 MiB per job, with up to 2 jobs per tick per worker. |
-| `FI_ATTACHMENTS_TRANSFER_SECONDS` | Per-range timeout (default 120). |
-| `FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND` | Importer egress token bucket (default 8 MiB/s). |
-| `FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT` | Caps of the `global:imports` budget row, in percent (1-100) of the deployment caps (default 50). |
+| `FI_ATTACHMENTS_BINDING_ACCESS` | JSON object keyed by immutable binding fingerprint, with `quarantine` and `serving` credential-reference mappings. Values name environment variables, not secrets. Missing or invalid references deny access for that binding. Historical access does not use the current storage default. |
 | `FI_ATTACHMENTS_STORAGE_*` | The private storage from the backend-core lane (DPL01). |
+
+`FI_ATTACHMENTS_TRANSFER_SECONDS`, `FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND`
+and `FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT` are legacy settings, not runtime
+transfer or capacity controls. For compatibility, enabled processes accept
+positive integer values (1–100 for the percentage); blank or unset uses 120,
+8388608 and 50 respectively. Disabled processes ignore these overrides.
 
 With Compose these pass through `env_file`. With Helm, put the plain values in
 `config.extraEnv` and the keys in the chart's secret-backed environment.

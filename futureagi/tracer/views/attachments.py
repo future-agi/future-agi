@@ -302,12 +302,13 @@ class AttachmentView(APIView):
         return {"trace_id": trace_id, "span_id": span_id}
 
     def viewer(self, request, project_id):
-        project = principal.project_scope(project_id)
-        return principal.project_viewer(principal.identity(request), project)
+        identity = principal.identity(request)
+        principal.require_application_session(identity)
+        return principal.project_viewer(identity, principal.project_scope(project_id))
 
     def writer(self, request, project_id):
-        project = principal.project_scope(project_id)
-        return principal.project_writer(principal.identity(request), project)
+        identity = principal.identity(request)
+        return principal.project_writer(identity, principal.project_scope(project_id))
 
 
 class AttachmentSessionView(AttachmentView):

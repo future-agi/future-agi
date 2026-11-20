@@ -107,8 +107,10 @@ def _check_identity(writer, workspace, scope=None):
             enabled=True,
             deleted=False,
         ).first()
-        if key is None or (
-            key.workspace_id and key.workspace_id != writer.workspace_id
+        if (
+            key is None
+            or key.is_expired
+            or (key.workspace_id and key.workspace_id != writer.workspace_id)
         ):
             raise AttachmentError("credential_scope_unsupported", 403)
         if key.type in {"ingest", "coding_agent"}:

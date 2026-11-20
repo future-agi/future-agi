@@ -550,3 +550,57 @@ def test_malformed_secret_value_is_never_represented(historical):
     env["HISTORICAL_S_SECRET"] = ApprovedPosture()
     with pytest.raises(sc.StorageConfigurationError, match="credentials_invalid"):
         materialize(historical, environ=env)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_production_settings_resolve_persisted_access_without_current_default():
+    """Exercise the real settings import and binding lookup, not provider I/O."""
+    from django.db import connection
+
+    from tracer.tests.attachment_fixtures import storage_binding
+
+    binding = storage_binding()
+    database = connection.settings_dict
+    assert database["NAME"] == database["TEST"]["NAME"]
+    code = """
+import sys
+from uuid import UUID
+import django
+from django.conf import settings
+from tfc.utils.storage_config import resolve_attachment_binding_config, StorageConfigurationError
+
+django.setup()
+try:
+    settings.FI_ATTACHMENTS_STORAGE["resolved"]
+except StorageConfigurationError:
+    pass
+else:
+    raise AssertionError("Invalid admission default must be rejected")
+for operation in ("admit", "read", "erase"):
+    access = resolve_attachment_binding_config(UUID(sys.argv[1]), operation=operation, settings=settings)
+    assert access.identity_sha256 == sys.argv[2]
+    assert access.serving_credentials.secret_key_ref == "HISTORICAL_S_SECRET"
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(binding.id), binding.identity_sha256],
+        env={
+            **os.environ,
+            "DJANGO_SETTINGS_MODULE": "tfc.settings.settings",
+            "PG_DB": database["NAME"],
+            "PG_USER": database["USER"],
+            "PG_PASSWORD": database["PASSWORD"],
+            "PGBOUNCER_HOST": database["HOST"],
+            "PGBOUNCER_PORT": str(database["PORT"]),
+            "DJANGO_CACHE_BACKEND": "redis",
+            "REDIS_CACHE_URL": "redis://localhost:16379/0",
+            "FI_ATTACHMENTS_ENABLED": "true",
+            "FI_ATTACHMENTS_STORAGE_BACKEND": "invalid-current-default",
+            "FI_ATTACHMENTS_BINDING_ACCESS": json.dumps(
+                {binding.identity_sha256: access_mapping()}
+            ),
+        },
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        timeout=120,
+    )
+    assert result.returncode == 0

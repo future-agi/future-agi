@@ -104,7 +104,7 @@ def identity(request):
         .filter(api_key=api_key, secret_key=secret_key, enabled=True, deleted=False)
         .first()
     )
-    if key is None or key.organization_id is None:
+    if key is None or key.is_expired or key.organization_id is None:
         raise AttachmentError("unauthenticated", 401)
     return Principal(
         kind="api_key", id=key.pk, organization_id=key.organization_id, api_key=key
@@ -212,10 +212,14 @@ def project_writer(principal, project):
     ), scope
 
 
-def project_viewer(principal, project):
-    """Viewer for scoped application routes: a live application session only."""
+def require_application_session(principal):
     if principal.kind != "user" or principal.application_session_id is None:
         raise AttachmentError("credential_scope_unsupported", 403)
+
+
+def project_viewer(principal, project):
+    """Viewer for scoped application routes: a live application session only."""
+    require_application_session(principal)
     if principal.saml_organization_id is not None and str(
         principal.saml_organization_id
     ) != str(project.organization_id):
@@ -231,8 +235,7 @@ def project_viewer(principal, project):
 
 def media_viewer(request, principal):
     """Viewer for the media-session exchange, which carries no project."""
-    if principal.kind != "user" or principal.application_session_id is None:
-        raise AttachmentError("credential_scope_unsupported", 403)
+    require_application_session(principal)
     organization_id = _user_org(request, principal)
     return Viewer(
         principal.id, principal.application_session_id, organization_id, None, None

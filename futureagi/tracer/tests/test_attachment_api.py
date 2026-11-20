@@ -776,6 +776,7 @@ def test_writer_bootstrap_of_a_new_name_creates_a_disabled_scope(api):
 def test_ingest_key_needs_explicit_grant(api):
     ingest = OrgApiKey.no_workspace_objects.create(
         type="ingest",
+        expires_at=timezone.now() + timedelta(minutes=10),
         organization_id=api.scope.organization_id,
         workspace_id=api.scope.workspace_id,
         simulation_agent_id=uuid.uuid4(),
@@ -803,17 +804,46 @@ def test_ingest_key_needs_explicit_grant(api):
     )
     ok(post(api, path, body, {**headers, **key()}), 200, "BootstrapResponse")
     upload = upload_request(api, body)
-    ok(
+    admitted = ok(
         post(api, f"{base(api)}/uploads", upload, {**headers, **key("up")}),
         201,
         "UploadResponse",
     )
-    # An ingest key is never a viewer.
+    # A current write-only key is not a viewer, regardless of project existence.
+    for project_id in (api.project.id, uuid.uuid4()):
+        path = f"/tracer/v1/projects/{project_id}/attachments/occurrences"
+        assert_error(
+            api.client.get(path, {"trace_id": TRACE}, **headers),
+            403,
+            "credential_scope_unsupported",
+        )
+
+    status_path = f"{base(api)}/uploads/{admitted['upload_id']}/status"
+    capability = auth(admitted["write_capability"])
+    ok(api.client.get(status_path, **capability), 200, "StatusResponse")
+    ingest.expires_at = timezone.now() - timedelta(seconds=1)
+    ingest.save(update_fields=["expires_at"])
     assert_error(
-        api.client.get(f"{base(api)}/occurrences", {"trace_id": TRACE}, **headers),
-        403,
+        post(api, "/tracer/v1/attachment-sessions", body, {**headers, **key()}),
+        401,
         "credential_scope_unsupported",
     )
+    assert_error(
+        api.client.get(status_path, **capability), 403, "credential_scope_unsupported"
+    )
+
+
+def test_project_routes_require_identity_before_lookup(api):
+    for project_id in (api.project.id, uuid.uuid4()):
+        root = f"/tracer/v1/projects/{project_id}/attachments"
+        assert_error(
+            api.client.get(f"{root}/occurrences", {"trace_id": TRACE}),
+            401,
+            "credential_scope_unsupported",
+        )
+        assert_error(
+            post(api, f"{root}/uploads", {}, key()), 401, "credential_scope_unsupported"
+        )
 
 
 # 3-6. content, complete, abort, status -------------------------------------------
