@@ -1,6 +1,9 @@
 name: Skills E2E on GCP
 
 on:
+  # Independent of the worker and caller: GCE clears maximum run time on stop.
+  schedule:
+    - cron: '11,26,41,56 * * * *'
   workflow_call:
     inputs:
       sdk: {required: true, type: string}
@@ -11,9 +14,54 @@ on:
 permissions:
   contents: read
 
+# One seven-case matrix per repository across all caller refs; the sweeper must
+# not wait for it. The worker matrix permits at most two simultaneous creates.
+concurrency:
+  group: skills-e2e-gcp-${{ inputs.sdk && 'workers' || 'sweep' }}
+  cancel-in-progress: false
+
 jobs:
+  sweep:
+    if: github.event_name == 'schedule' && !inputs.sdk
+    environment: skills-e2e-gcp-cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CLOUDSDK_CORE_PROJECT: fagi-omega-staging
+    steps:
+      # No checkout, worker key, or PR input on the scheduled cleanup path.
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: fagi-omega-staging
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_E2E_CLEANUP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Delete expired workers in any power state
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ $GITHUB_REPOSITORY_ID =~ ^[0-9]+$ ]]
+          cutoff=$(date -u -d '3 hours ago' +%s)
+          scope="labels.app=skills-e2e AND labels.workflow=skills-e2e-gcp AND labels.repository=$GITHUB_REPOSITORY_ID"
+          gcloud compute instances list --filter="$scope" --format='value(name,zone.basename(),id,creationTimestamp)' > "$RUNNER_TEMP/workers"
+          rc=0
+          while IFS=$'\t' read -r vm zone id created; do
+            [[ $vm == skills-* && -n $zone && $id =~ ^[0-9]+$ && $created =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]
+            created_epoch=$(date -u -d "$created" +%s)
+            (( created_epoch <= cutoff )) || continue
+            # Re-read the immutable ID and labels before deleting. A name alone is not ownership.
+            current=$(gcloud compute instances describe "$vm" --zone="$zone" --format='value(id,labels.app,labels.workflow,labels.repository)') || { rc=1; continue; }
+            IFS=$'\t' read -r current_id app workflow repo <<< "$current"
+            [[ $current_id == "$id" && $app == skills-e2e && $workflow == skills-e2e-gcp && $repo == "$GITHUB_REPOSITORY_ID" ]] || continue
+            gcloud compute instances delete "$vm" --zone="$zone" --quiet || rc=1
+          done < "$RUNNER_TEMP/workers"
+          exit "$rc"
+
   worker:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: inputs.sdk != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     environment: skills-e2e-gcp
     runs-on: ubuntu-latest
     timeout-minutes: 185
@@ -29,7 +77,6 @@ jobs:
       CLOUDSDK_CORE_PROJECT: fagi-omega-staging
       CLOUDSDK_COMPUTE_ZONE: ${{ vars.GCP_E2E_ZONE }}
       CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
-      VM: skills-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.journey }}
       JOURNEY: ${{ matrix.journey }}
       PR: ${{ github.event.pull_request.number || 0 }}
     steps:
@@ -88,13 +135,21 @@ jobs:
         env:
           SUBNET: ${{ vars.GCP_E2E_SUBNET }}
         run: |
+          set -euo pipefail
           : "${CLOUDSDK_COMPUTE_ZONE:?Configure the worker zone}" "${SUBNET:?Configure the isolated worker subnet}"
-          gcloud compute instances create "$VM" --machine-type=e2-standard-8 \
+          nonce=$(tr -d '-' < /proc/sys/kernel/random/uuid)
+          VM="skills-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$JOURNEY-${nonce:0:12}"
+          id=$(gcloud compute instances create "$VM" --machine-type=e2-standard-8 \
             --subnet="$SUBNET" --no-address --no-service-account --no-scopes \
             --image-family=debian-12 --image-project=debian-cloud --boot-disk-size=160GB --boot-disk-auto-delete \
             --max-run-duration=3h --instance-termination-action=DELETE --no-restart-on-failure \
-            --labels="app=skills-e2e,pr=$PR,run-id=$GITHUB_RUN_ID" \
-            --metadata="enable-oslogin=TRUE,block-project-ssh-keys=TRUE,skills-head=$GITHUB_SHA,skills-base=$BASE,skills-tree=$TREE,skills-case=$JOURNEY"
+            --labels="app=skills-e2e,workflow=skills-e2e-gcp,repository=$GITHUB_REPOSITORY_ID,pr=$PR,run-id=$GITHUB_RUN_ID" \
+            --metadata="enable-oslogin=TRUE,block-project-ssh-keys=TRUE,skills-head=$GITHUB_SHA,skills-base=$BASE,skills-tree=$TREE,skills-case=$JOURNEY" \
+            --format='value(id)')
+          # Failed creates (including ALREADY_EXISTS) never authorize teardown.
+          [[ $id =~ ^[0-9]+$ ]]
+          echo "VM=$VM" >> "$GITHUB_ENV"
+          echo "instance_id=$id" >> "$GITHUB_OUTPUT"
       - name: Create a job-only OS Login key with a fixed deadline
         run: |
           umask 077
@@ -128,7 +183,7 @@ jobs:
           exec bash e2e/scripts/skills-gcp-worker.sh
           BOOTSTRAP
       - name: Refresh controller credentials for evidence and cleanup
-        if: always() && steps.create.outcome != 'skipped'
+        if: always() && steps.create.outcome == 'success' && steps.create.outputs.instance_id != ''
         uses: google-github-actions/auth@v2
         with:
           project_id: fagi-omega-staging
@@ -173,9 +228,15 @@ jobs:
             gcloud compute os-login ssh-keys remove --key-file="$RUNNER_TEMP/skills-ssh.pub" --quiet >/dev/null 2>&1 || echo 'Key not removed; fixed OS Login expiry still applies.'
           fi
       - name: Delete worker and boot disk
-        if: always() && steps.create.outcome != 'skipped'
+        if: always() && steps.create.outcome == 'success' && steps.create.outputs.instance_id != ''
         timeout-minutes: 5
-        run: gcloud compute instances delete "$VM" --quiet --delete-disks=all
+        env:
+          CREATED_ID: ${{ steps.create.outputs.instance_id }}
+        run: |
+          set -euo pipefail
+          current=$(gcloud compute instances describe "$VM" --format='value(id)')
+          [[ $current == "$CREATED_ID" ]] || { echo 'Worker ID changed; leaving it untouched.' >&2; exit 1; }
+          gcloud compute instances delete "$VM" --quiet
       - uses: actions/upload-artifact@v4
         if: always() && steps.create.outcome == 'success'
         with:

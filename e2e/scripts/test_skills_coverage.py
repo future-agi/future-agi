@@ -44,7 +44,7 @@ class RequiredCoverage(unittest.TestCase):
                 path.write_text(json.dumps(dict(case=case, sha=commit, passed=True, count=1, environment='gcp',
                                                 project='fagi-omega-staging', pair_sha256=pair, records=records)))
             def check():
-                return coverage['registered_passes'](folder, commit, sdk, pair, wheel, application, coverage['owners']())
+                return coverage['registered_passes'](folder, commit, sdk, pair, wheel, application, coverage['required_runs']())
             self.assertEqual(len(check()), 7)
             for case in ('j3', 'j4'):
                 path = folder / f'skills-gcp-{case}/{case}.json'
@@ -80,6 +80,16 @@ class RequiredCoverage(unittest.TestCase):
             coverage['reconcile'](folder, commit)
             with self.assertRaisesRegex(ValueError, 'Wrong checkout'):
                 coverage['reconcile'](folder, 'b' * 40)
+            # Host and native must each prove 021; a single receipt cannot satisfy both.
+            for cohort in ('native', 'host'):
+                path = folder / f'{cohort}.json'
+                original = path.read_text()
+                receipt = json.loads(original)
+                receipt['passed'].remove('SKILLS-E2E-021')
+                path.write_text(json.dumps(receipt))
+                with self.assertRaisesRegex(ValueError, rf"missing: .*'{cohort}', 'SKILLS-E2E-021'"):
+                    coverage['reconcile'](folder, commit)
+                path.write_text(original)
             (folder / 'native.json').unlink()
             with self.assertRaisesRegex(ValueError, 'missing'):
                 coverage['reconcile'](folder, commit)

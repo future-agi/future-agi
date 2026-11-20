@@ -11,13 +11,15 @@ MANIFEST = Path(__file__).with_name("skills-coverage.json")
 FLOW = re.compile(r"^(SKILLS-E2E-\d+|OBS-E2E-06[34]):")
 
 
-def owners():
-    result = {}
+def required_runs():
+    # A discovered spec may need to pass on multiple topologies.
+    result = set()
     for cohort, entries in json.loads(MANIFEST.read_text()).items():
         for entry in entries:
-            if entry in result:
-                raise ValueError(f"Duplicate owner: {entry}")
-            result[entry] = cohort
+            run = (cohort, entry)
+            if run in result:
+                raise ValueError(f"Duplicate required run: {run}")
+            result.add(run)
     return result
 
 
@@ -44,9 +46,10 @@ def test_pattern(key):
 def pattern(inventory, cohort):
     # Playwright --grep matches the composed file/describe/test/tags string.
     # Leave its existing quarantine/live grepInvert intact, including on ordinary CI.
-    expected = owners()
+    runs = required_runs()
+    expected = {key for _, key in runs}
     if cohort == 'ordinary':
-        return '^(?!.*(?:' + '|'.join(test_pattern(key) for key in expected) + '))'
+        return '^(?!.*(?:' + '|'.join(test_pattern(key) for key in sorted(expected)) + '))'
     seen = set()
     patterns = []
     for spec in specs(inventory["suites"]):
@@ -58,17 +61,17 @@ def pattern(inventory, cohort):
         if key in seen:
             raise ValueError(f"Duplicate identity: {key}")
         seen.add(key)
-        if expected[key] == cohort:
+        if (cohort, key) in runs:
             patterns.append(test_pattern(key))
-    if seen != set(expected):
-        raise ValueError(f"Absent from discovery: {sorted(set(expected) - seen)}")
+    if seen != expected:
+        raise ValueError(f"Absent from discovery: {sorted(expected - seen)}")
     if not patterns:
         raise ValueError(f"Empty selection: {cohort}")
     return "(?:" + "|".join(patterns) + ")"
 
 
 def passed(report, cohort):
-    expected = {key for key, owner in owners().items() if owner == cohort}
+    expected = {key for owner, key in required_runs() if owner == cohort}
     if not expected:
         raise ValueError(f"Unknown cohort: {cohort}")
     seen = set()
@@ -95,16 +98,13 @@ def passed(report, cohort):
 def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected):
     if not all(re.fullmatch(r"[a-f0-9]{64}", value) for value in (pair_sha, sdk_sha, application_sha)):
         raise ValueError("Invalid producer digest")
-    cases = {
-        "056": ("SKILLS-E2E-056", {"campaign": "registered"}),
-        "057": ("SKILLS-E2E-057", {"campaign": "registered"}),
-        "058": ("SKILLS-E2E-058", {"campaign": "registered"}),
-        "059": ("SKILLS-E2E-059", {"campaign": "registered"}),
-        "063": ("SKILLS-E2E-063", {"guest": "registered"}),
-    }
+    cases = {case: ((f"campaign-registered-{case}", f"SKILLS-E2E-{case}"), {"campaign": "registered"})
+             for case in ("056", "057", "058", "059")}
+    cases["063"] = (("registered-recovery", "SKILLS-E2E-063"), {"guest": "registered"})
     for name in ("j3", "j4"):
-        (identity_key,) = [key for key in expected if key.startswith(f"harness/skills-r3/{name}-driver")]
-        cases[name] = (identity_key, {"configured": "completed"} if name == "j3" else
+        (run,) = [run for run in expected if run[0] == "private-harnesses"
+                  and run[1].startswith(f"harness/skills-r3/{name}-driver")]
+        cases[name] = (run, {"configured": "completed"} if name == "j3" else
                        {"cold": "completed", "configured": "completed"})
     seen = set()
     for path in directory.rglob("*.json"):
@@ -131,9 +131,9 @@ def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha
 
 
 def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_sha=None, application_sha=None):
-    expected = owners()
+    expected = required_runs()
     seen = registered_passes(registered, commit, sdk, pair_sha, sdk_sha, application_sha, expected) if registered is not None else set()
-    cohorts = set(expected.values())
+    cohorts = {cohort for cohort, _ in expected}
     received = set()
     for path in directory.rglob("*.json"):
         receipt = json.loads(path.read_text())
@@ -150,12 +150,13 @@ def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_s
             if path.stem == 'application' and receipt.get('application_sha256') != application_sha:
                 raise ValueError("Wrong application wheel")
         for key in receipt["passed"]:
-            if key in seen or expected.get(key) != path.stem:
-                raise ValueError(f"Duplicated or misrouted result: {key}")
-            seen.add(key)
-    if seen != set(expected):
-        raise ValueError(f"Required passes missing: {sorted(set(expected) - seen)}")
-    print(f"{len(seen)} required Skills cases passed on {commit}")
+            run = (path.stem, key)
+            if run in seen or run not in expected:
+                raise ValueError(f"Duplicated or misrouted result: {run}")
+            seen.add(run)
+    if seen != expected:
+        raise ValueError(f"Required passes missing: {sorted(expected - seen)}")
+    print(f"{len(seen)} required Skills executions passed on {commit}")
 
 
 if __name__ == "__main__":

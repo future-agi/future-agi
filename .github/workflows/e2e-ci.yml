@@ -84,6 +84,7 @@ jobs:
               - 'frontend/**'
               - 'e2e/**'
               - 'bin/e2e'
+              - 'bin/context-campaign.mjs'
               - 'docker-compose.yml'
               - 'docker-compose.distributed.yml'
               - 'docker-compose.dev.yml'
@@ -592,7 +593,7 @@ jobs:
         continue-on-error: true
         run: node e2e/scripts/redis-diagnostics.mjs start --output-dir "$RUNNER_TEMP/redis-diagnostics"
 
-      # The native matrix entry runs run-skills-native-ci.sh (022/108 only); its receipt is required below.
+      # The native matrix entry requires 021 (runtime enabled), 022 and 108 in its receipt.
       - name: Run E2E suite
         id: suite
         run: e2e/stack/run-skill-cohort.sh "$SKILLS_COHORT"

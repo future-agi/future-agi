@@ -30,16 +30,16 @@ bin/e2e compose exec -T native-runtime cat /opt/ctxhub/ci_dataset.json | cmp - "
 PLAYWRIGHT_JSON_OUTPUT_FILE=$(realpath -m "${PLAYWRIGHT_JSON_OUTPUT_FILE:-$envdir/native-playwright.json}")
 export PLAYWRIGHT_JSON_OUTPUT_FILE
 rc=0
-bin/e2e test flows/skills/j2-native-verification.spec.ts flows/skills/skill-traces.spec.ts \
-  --grep 'SKILLS-E2E-(022|108):' --workers=1 --retries=0 --forbid-only --reporter=json --trace off >"$envdir/native-browser.log" 2>&1 || rc=$?
+bin/e2e test flows/skills/j2-captured-source.spec.ts flows/skills/j2-native-verification.spec.ts flows/skills/skill-traces.spec.ts \
+  --grep 'SKILLS-E2E-(021|022|108):' --workers=1 --retries=0 --forbid-only --reporter=json --trace off >"$envdir/native-browser.log" 2>&1 || rc=$?
 if (( rc != 0 )); then echo "Native browser failed (exit $rc)" >&2; exit "$rc"; fi
 # Print only case IDs/statuses; a missing, skipped, expected-failure or retry-only
-# result is not evidence of either journey, even if Playwright itself returned 0.
+# result is not evidence for a journey, even if Playwright itself returned 0.
 jq -e '
   [.suites[] | recurse(.suites[]?) | .specs[]? | .title as $title | .tests[] |
     {id: ($title | split(":")[0]), expected: .expectedStatus, attempts: [.results[] | .status]}] |
   sort_by(.id) | ., (
-    map(.id) == ["SKILLS-E2E-022", "SKILLS-E2E-108"] and
+    map(.id) == ["SKILLS-E2E-021", "SKILLS-E2E-022", "SKILLS-E2E-108"] and
     all(.[]; .expected == "passed" and .attempts == ["passed"])
   )' "$PLAYWRIGHT_JSON_OUTPUT_FILE"
 exit "$rc"
