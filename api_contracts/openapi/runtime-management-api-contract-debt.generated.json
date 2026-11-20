@@ -19,75 +19,19 @@
     "futureagi/saml2_auth/views.py"
   ],
   "summary": {
-    "runtime_backed_validated_request_decorators": 479,
-    "direct_swagger_auto_schema_decorators": 137,
-    "doc_only_input_contract_decorators": 3,
+    "runtime_backed_validated_request_decorators": 482,
+    "direct_swagger_auto_schema_decorators": 134,
+    "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 710,
-    "direct_swagger_auto_schema_decorators": 266,
-    "doc_only_input_contract_decorators": 3,
+    "runtime_backed_validated_request_decorators": 719,
+    "direct_swagger_auto_schema_decorators": 263,
+    "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },
-  "doc_only_input_contract_decorators": [
-    {
-      "path": "futureagi/tracer/views/attachments.py",
-      "line": 765,
-      "class": "AttachmentProviderRegistrationView",
-      "function": "post",
-      "serializers": [
-        "AttachmentProviderRegistrationRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/attachments.py",
-      "line": 831,
-      "class": "AttachmentSourceEnvelopeView",
-      "function": "post",
-      "serializers": [
-        "AttachmentSourceEnvelopeRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/attachments.py",
-      "line": 887,
-      "class": "AttachmentLiveKitEventView",
-      "function": "post",
-      "serializers": [
-        "AttachmentLiveKitEventRequestSerializer"
-      ]
-    }
-  ],
+  "doc_only_input_contract_decorators": [],
   "broad_request_contract_decorators": [],
-  "app_wide_doc_only_input_contract_decorators": [
-    {
-      "path": "futureagi/tracer/views/attachments.py",
-      "line": 765,
-      "class": "AttachmentProviderRegistrationView",
-      "function": "post",
-      "serializers": [
-        "AttachmentProviderRegistrationRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/attachments.py",
-      "line": 831,
-      "class": "AttachmentSourceEnvelopeView",
-      "function": "post",
-      "serializers": [
-        "AttachmentSourceEnvelopeRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/tracer/views/attachments.py",
-      "line": 887,
-      "class": "AttachmentLiveKitEventView",
-      "function": "post",
-      "serializers": [
-        "AttachmentLiveKitEventRequestSerializer"
-      ]
-    }
-  ],
+  "app_wide_doc_only_input_contract_decorators": [],
   "app_wide_broad_request_contract_decorators": []
 }
