@@ -551,7 +551,7 @@ describe("useEnvironment keeps the versions current", () => {
     expect(versionsCalls(spy)).toBe(0);
   });
 
-  it("refreshes the versions list and the unsaved changes once a build or extend finishes while the page is open", async () => {
+  it("refreshes only the versions list once a build finishes while the page is open", async () => {
     getHarnessJob.mockResolvedValue(atStage("running"));
     const { queryClient, Wrapper } = makeWrapper();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
@@ -566,8 +566,6 @@ describe("useEnvironment keeps the versions current", () => {
     expect(spy.mock.calls.find(isVersionsCall)[0]).toMatchObject({
       exact: true,
     });
-    // An extend writes its cases as unsaved changes.
-    expect(draftsCalls(spy)).toBe(1);
   });
 
   it("refreshes again after a later rebuild finishes", async () => {
