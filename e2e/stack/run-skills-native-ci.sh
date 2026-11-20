@@ -8,6 +8,8 @@ envdir=$(realpath -m "$2")
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 export E2E_STACK=standalone E2E_STANDALONE_NETWORK=native
+E2E_GOOGLE_IMAGE_TAG=$(sed -n 's/^FUTURE_AGI_VERSION=//p' e2e/stack/standalone-e2e.env)
+export E2E_GOOGLE_IMAGE_TAG=${E2E_GOOGLE_IMAGE_TAG:?Missing standalone backend image tag}
 # J2_PREPARE_OUT would return early with the benchmark seed instead of running 022.
 unset J2_PREPARE_OUT J2_DRIVER_FIXTURE_OUTPUT J2_EVIDENCE_DIR
 runtime=e2e/stack/native-runtime
@@ -29,7 +31,8 @@ PLAYWRIGHT_JSON_OUTPUT_FILE=$(realpath -m "${PLAYWRIGHT_JSON_OUTPUT_FILE:-$envdi
 export PLAYWRIGHT_JSON_OUTPUT_FILE
 rc=0
 bin/e2e test flows/skills/j2-native-verification.spec.ts flows/skills/skill-traces.spec.ts \
-  --grep 'SKILLS-E2E-(022|108):' --workers=1 --retries=0 --forbid-only --reporter=json || rc=$?
+  --grep 'SKILLS-E2E-(022|108):' --workers=1 --retries=0 --forbid-only --reporter=json --trace off >"$envdir/native-browser.log" 2>&1 || rc=$?
+if (( rc != 0 )); then echo "Native browser failed (exit $rc)" >&2; exit "$rc"; fi
 # Print only case IDs/statuses; a missing, skipped, expected-failure or retry-only
 # result is not evidence of either journey, even if Playwright itself returned 0.
 jq -e '

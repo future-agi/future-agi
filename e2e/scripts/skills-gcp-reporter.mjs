@@ -28,7 +28,7 @@ export default class SkillsGcpReporter {
     const title = process.env.SKILLS_GCP_TITLE;
     const matches = test && relative(this.root, test.location.file) === process.env.SKILLS_GCP_SPEC
       && (id === 'j3' || id === 'j4' ? test.title === title : test.title.startsWith(`SKILLS-E2E-${id}:`));
-    const names = id === 'j4' ? ['cold', 'configured'] : id === 'j3' ? ['fixture'] : id === '063' ? ['guest'] : ['campaign'];
+    const names = id === 'j4' ? ['cold', 'configured'] : id === 'j3' ? ['configured'] : id === '063' ? ['guest'] : ['campaign'];
     const records = [];
     for (const name of names) {
       try {
@@ -40,10 +40,10 @@ export default class SkillsGcpReporter {
         }
       } catch { /* An incomplete registration is not evidence. Keep partial diagnostics. */ }
     }
-    const passed = records.length === names.length && Boolean(matches && tests.length === 1 && run.status === 'passed' && test.expectedStatus === 'passed'
+    const passed = records.length === names.length && (!(id === 'j3' || id === 'j4') || records.every(r => r.status === 'completed')) && Boolean(matches && tests.length === 1 && run.status === 'passed' && test.expectedStatus === 'passed'
       && test.results.length === 1 && result.retry === 0 && result.status === 'passed');
     writeFileSync(join(homedir(), 'result.json'), JSON.stringify({ case: id, sha: process.env.SKILLS_GCP_HEAD,
-      count: tests.length, passed, records, duration_ms: result?.duration ?? 0, error_line: result?.error?.location?.line ?? 0 }), { mode: 0o600 });
+      pair_sha256: process.env.SKILLS_GCP_PAIR_SHA256, count: tests.length, passed, records, duration_ms: result?.duration ?? 0, error_line: result?.error?.location?.line ?? 0 }), { mode: 0o600 });
     if (!passed) return { status: 'failed' };
   }
 }

@@ -20,6 +20,7 @@ const COHORTS = (process.env.J4_COHORTS || 'cold,configured').split(',') as Arra
 
 test('J4 registered driver retains honest cold and configured reports', async ({ scopeActors, request }, testInfo) => {
   test.setTimeout(3_600_000); // Two cohorts, each with a 25-minute child budget.
+  if (process.env.SKILLS_GCP_CASE === 'j4') expect(COHORTS).toEqual(['cold', 'configured']);
   const root = resolve(import.meta.dirname, '../../..');
   const output = resolve(process.env.J4_MEASUREMENT_DIR || '/tmp/j4-evidence/measurement');
   await mkdir(output, { recursive: true });
@@ -143,18 +144,20 @@ test('J4 registered driver retains honest cold and configured reports', async ({
           cwd: root, env: { ...process.env, J4_DRIVER_INPUT: inputPath }, encoding: 'utf8', timeout: 1_500_000,
         });
         await writeFile(resolve(output, `${runId}-cli.json`), JSON.stringify({ exitCode: executed.status, signal: executed.signal, stdout: executed.stdout, stderr: executed.stderr }, null, 2));
-        const report = JSON.parse(await readFile(resolve(output, `${runId}.json`), 'utf8'));
+        expect.soft(executed.status, `${cohort} CLI exit`).toBe(0);
+        const report = await readFile(resolve(output, `${runId}.json`), 'utf8').then(JSON.parse).catch(() => null);
+        // A missing report fails this run, but must not prevent the other cohort from executing.
+        expect.soft(report, `${cohort} registered report`).toBeTruthy();
+        if (!report) continue;
         await writeFile(resolve(output, `${cohort}.json`), JSON.stringify(report, null, 2));
         if (process.env.SKILLS_GCP_CASE === 'j4') await testInfo.attach(`registration-${cohort}`, { contentType: 'application/json', body: JSON.stringify({
           status: report.status, provenance: report.provenance,
         }) });
         // Keep a failed report and still exercise the second cohort.
-        expect.soft(executed.status, `${cohort} CLI exit`).toBe(0);
         expect.soft(report.status, `${cohort} journey`).toBe('completed');
-        expect(report.cohort).toBe(cohort);
-        expect(report.run_id).toBe(runId);
-        expect(report.mode).toBe('product');
-        expect(report.evidence_scope).toBe('synthetic');
+        expect.soft(report).toMatchObject({ job: 'J4', cohort, run_id: runId, mode: 'product', evidence_scope: 'synthetic',
+          teardown: 'confirmed', observations_complete: true, preregistration_hash: digest(registration),
+          provenance: { product_head: manifest.product_head, runtime_digest: runtimeDigest } });
       } finally { await unlink(inputPath); }
     }
   } finally { for (const fake of fakes) await fake.dispose(); }

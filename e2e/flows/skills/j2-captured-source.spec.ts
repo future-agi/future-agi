@@ -106,12 +106,17 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await page.getByRole('tab', {name:'Cases', exact:true}).click();
   await expect(page.getByRole('table', { name: 'Context regression cases' })).toContainText(requestText);
   // This context has no registered target. Only bin/e2e's standalone native overlay provides a runtime.
-  const expectRuntime = process.env.E2E_STACK === 'standalone' && process.env.E2E_STANDALONE_NETWORK === 'native';
-  expect(await read(`${root}native/targets/`)).toMatchObject({ runtime: { available: expectRuntime }, targets: [] });
+  const targets = await read(`${root}native/targets/`);
+  expect(targets).toMatchObject({ runtime: { available: expect.any(Boolean) }, targets: [] });
+  const topologyDeclared = process.env.E2E_STACK === 'distributed'
+    || (process.env.E2E_STACK === 'standalone' && !!process.env.E2E_STANDALONE_NETWORK);
+  if (!process.env.E2E_API_URL || topologyDeclared) {
+    expect(targets.runtime.available).toBe(process.env.E2E_STACK === 'standalone' && process.env.E2E_STANDALONE_NETWORK === 'native');
+  }
   await page.getByRole('tab', {name:'Run a test', exact:true}).click();
   await page.getByRole('radio', { name: /^Test on the application/ }).check();
   const addTarget = page.getByRole('button', { name: 'Add application target', exact: true });
-  if (expectRuntime) {
+  if (targets.runtime.available) {
     await expect(page.getByText('Application target', { exact: true })).toBeVisible();
     await expect(addTarget).toBeEnabled();
   } else {

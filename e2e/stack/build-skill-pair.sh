@@ -8,16 +8,14 @@ product=$(git -C "$root" rev-parse HEAD)
 [[ $dist == /* && ! -e $dist && $product == "${GITHUB_SHA:?}" ]]
 [[ $(git -C "$sdk" rev-parse HEAD) == "${SDK_COMMIT:?}" ]]
 [[ $(git -C "$traceai" rev-parse HEAD) == "${TRACEAI_COMMIT:?}" ]]
-jq -e --arg product "$product" '.backend_commit == $product' "$sdk/sdkgen/contracts/SOURCE.json" >/dev/null || {
-  echo 'The SDK contract backend_commit does not match the tested checkout' >&2; exit 1;
-}
+python3 -I "$root/e2e/stack/check-skill-contract.py" "$root" "$sdk"
 mkdir -p "$dist"
 for repo in "$sdk" "$traceai"; do uv build --python 3.11 --wheel "$repo/python" --out-dir "$dist"; done
 # Use the pnpm major matching each checkout's frozen lock format, not a floating CLI.
 pnpm_locked() {
   case $(sed -n "s/^lockfileVersion: ['\"]*\([0-9]*\).*/\1/p" pnpm-lock.yaml) in
     6) npx --yes pnpm@8.15.0 "$@" ;;
-    9) npx --yes pnpm@10.15.1 "$@" ;;
+    9) npx --yes pnpm@10.30.1 "$@" ;;
     *) echo 'Unsupported pnpm lockfile version' >&2; return 1 ;;
   esac
 }
@@ -47,3 +45,4 @@ sha256sum -- *.whl *.tgz > SHA256SUMS
 sha=$(sha256sum pair.json | cut -d' ' -f1)
 python3 -I "$root/e2e/stack/verify-skill-packages.py" "$dist" "$sha" "$product" "$SDK_COMMIT" "$TRACEAI_COMMIT" --require-sums
 printf 'pair_sha256=%s\n' "$sha" >> "${GITHUB_OUTPUT:?}"
+printf 'sdk_sha256=%s\n' "$(jq -er '.sha256' <<< "$sdk_py")" >> "$GITHUB_OUTPUT"

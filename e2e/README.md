@@ -884,14 +884,18 @@ e2e/stack/run-skills-native-ci.sh "$PAIR_DIR" "$RUNNER_TEMP/native-venvs"
 ```
 
 The script verifies the fixture and packages, builds the guest, boots the native
-stack and runs 022 and 108 with one worker. It leaves the stack up for diagnostics;
+stack and runs 022 and 108 with one worker and zero retries. Mock Google uses the
+checkout's backend image tag. In 022 the repaired candidate must also pass the
+retained application's three independent ledger checks. In 108 a real SDK load
+before the job proves ingestion; a second load after both cells finish must be
+visible in ClickHouse before inspecting the bounded job window for native links. It leaves the stack up for diagnostics;
 clean up the isolated worker with `E2E_STACK=standalone E2E_STANDALONE_NETWORK=native bin/e2e down -v`.
 This is synthetic container evidence, not E2B qualification.
 
 ### Pinning the Skills test packages
 
-The pair is locked **after** all three candidates have been built (the SDK itself
-pins the product commit). The release owner records the SHA-256 of `pair.json`
+The build receipt binds the **tested product commit** and both pinned package
+source commits to the five built archives. The producer records the SHA-256 of `pair.json`
 independently of the package directory. Its JSON form is `{"schema":1,
 "sources":{"product":"<commit>","sdk":"<commit>","traceai":"<commit>"},
 "artifacts":{...}}`. Supply one `{"file":"<basename>","sha256":"<digest>"}`
@@ -906,15 +910,27 @@ A self-computed checksum of unknown packages is not a release receipt.
 
 ### Skills in required CI
 
-`skill-packages` builds the two wheels and three npm archives from full public
-`SKILL_PAIR_SDK_COMMIT` and `SKILL_PAIR_TRACEAI_COMMIT` revisions. Set them in
-`stack/skill-pair.lock.json` or as non-secret workflow configuration variables.
-The SDK's `sdkgen/contracts/SOURCE.json` must name **the actual tested checkout**
-(`github.sha`, including PR/queue merge commits). To pair a freshly generated
-merge SHA, publish the SDK pin **after** that SHA exists and set the variables
-without changing the checkout. Missing or stale pins fail the required check;
-`sdk-ref` controls a different, later live suite. The build job passes the
-`pair.json` digest as a workflow output, separate from the run-scoped artifact.
+`stack/skill-pair.lock.json` pins the public SDK and traceAI by full Git SHA.
+`skill-packages` checks all three actual checkout identities, builds two Python
+wheels and three npm archives, and returns the pair and SDK-wheel digests as
+job outputs, separate from the artifact. `application-wheels` builds the support
+application once and supplies its digest; 061 and 063 install those same bytes.
+`sdk-ref` selects a different, later live suite and cannot override the pair.
+
+**Contract rule.** The SDK records the backend revision used to generate it,
+not a future PR merge SHA. The lock retains the SDK's full `SOURCE.json`,
+including the original OpenAPI, MCP and non-Skills baseline digests, and a
+fingerprint of the original Skills contract. CI compares the tested checkout's
+entire Skills path set, transitively referenced models, global API settings
+(except descriptive metadata), Skills MCP tool definitions and full MCP name
+inventory with that fingerprint. It also verifies SDK snapshot metadata and
+shipped Skills operations/models against the tested files. A non-Skills-only
+change can be compatible; any change to this projection requires review and
+repinning. To obtain the fingerprint when refreshing the pair, run
+`python3 -I e2e/stack/check-skill-contract.py --source-fingerprint <sdk-checkout> <original-backend-checkout>`.
+It checks both raw file hashes against the pinned SDK before emitting a hash.
+Never derive a replacement from a failing candidate. Receipts still name the
+exact tested SHA, including ephemeral PR and merge-queue commits.
 
 Only the E2E frontend is built with `VITE_SKILL_TRACES=on`. Host cases receive
 `SKILL_TRACES_PYTHON` (SDK with telemetry) and `SKILL_TRACES_NO_OTEL_PYTHON`
@@ -934,25 +950,37 @@ standalone topologies on different workers or take the first stack down first.
 Observe cases and three named harnesses. `run-skill-cohort.sh <cohort>` uses
 Playwright discovery with the normal quarantine/live policy, checks real JSON
 results for one pass (not a skip, expected failure or retry) and emits only
-IDs and the tested SHA. The ordinary suite runs the complement. The required
-aggregate rejects a missing cohort; raw Skills reports, attachments and
-private fixture inputs must stay on their original worker.
+the case identities, tested SHA and relevant package digests. The ordinary suite
+selects the complement without requiring a complete Skills inventory. Catalog
+validation runs separately; Skills discovery and pass reconciliation fail if a
+required identity is missing. The required **E2E Tests Pass** aggregate also
+checks job outcomes; a skipped or cancelled applicable worker cannot pass.
+Private browser output, raw attachments and actor inputs are not uploaded.
+On the host, R7 executes and inspects each client's copied plan with the plain
+interpreter, then verifies the installed lock. Case 021 checks the disabled
+runtime UI on distributed and the enabled UI on native; an attached backend
+with no topology declared is checked against its own targets API.
 
 ### Registered Skills journeys on GCP
 
-`skills-e2e-gcp.yml` tests the **checked-out merge commit** for applicable internal PRs (or the selected commit on dispatch). The `Skills GCP coverage` check requires seven first-attempt Playwright passes. Each case has its own ephemeral Debian VM and stack:
+`e2e-ci.yml` calls the protected `skills-e2e-gcp.yml` workflow **in the same
+Actions run**, after both package producers succeed. Applicable internal PRs,
+merge groups, pushes, schedules and dispatches use the same handoff. Each
+worker verifies the pair against the producer digest and the exact tested SHA;
+063 also verifies the application wheel instead of rebuilding it. The aggregate
+requires the following seven first-attempt receipts:
 
 | Case | Stack | Evidence required |
 | --- | --- | --- |
 | SKILLS-E2E-056 | Standalone, campaigns on | Protected CLI refuses without Checkpoint P; no counts or campaign writes |
-| SKILLS-E2E-057, 058, 059 | Standalone, campaigns on, one VM per ID | Real native Codex against loopback; cold adoption, recurring rollout and recovery each complete separately. No Checkpoint P or real-GitHub claim |
-| SKILLS-E2E-063 | Standalone | Registered recovery with the SDK + support-application wheels in a separate network-isolated container guest; eight faults, not E2B |
-| J3 fixture | Distributed | Configured fixture: three v1 parents referencing v7, one pinned. **Provisioning**, not a measured J3 journey |
-| J4 driver | Distributed | Both cold and configured CLI runs exit zero and retain completed reports for the running backend image |
+| SKILLS-E2E-057, 058, 059 | Standalone, campaigns on, one VM per ID | Native Codex against loopback; cold adoption, recurring rollout and recovery each complete separately. No Checkpoint P or real-GitHub claim |
+| SKILLS-E2E-063 | Standalone | Registered recovery with the same SDK and support-application wheels in an isolated container guest; eight faults, not E2B |
+| J3 driver | Distributed | Provision three v1 parents over v7, one pinned; execute the configured registered driver with the paired SDK. Require exit zero, a completed report bound to its registration and checkout, complete observations and confirmed teardown |
+| J4 driver | Distributed | Both cold and configured registered journeys exit zero with distinct completed reports for their own registrations and running backend image |
 
 Before enabling the workflow:
 
-1. Protect the `skills-e2e-gcp` GitHub environment with required trusted reviewers and no self-approval. Review the workflow **and** the exact tested changes before approving. Restrict the WIF provider/service-account binding to this repository's immutable ID, the approved environment subject, this workflow and the allowed events; do not authorize generic PR subjects. Set `GCP_WIF_PROVIDER` (full provider resource name) and `GCP_E2E_SERVICE_ACCOUNT` (controller service-account email) as variables or secrets. Do not set a JSON key. Fork PRs never enter this job and cannot satisfy coverage via a skip; use a reviewed internal branch for the qualification run.
-2. In `fagi-omega-staging`, set `GCP_E2E_ZONE` and `GCP_E2E_SUBNET` to a compatible isolated subnet with outbound NAT for public package/image downloads, no production access, and firewall ingress for IAP SSH only. The controller needs instance/boot disk create, inspect and delete, subnet use, IAP tunneling and OS Admin Login. It also needs object read access to **only** the paired inputs/receipts. No controller or default service account is attached to the VM. Set a project quota/budget for aggregate concurrency across PRs. Per run: at most two concurrent `e2-standard-8` VMs, seven total, 160 GB auto-deleted boot disks, three-hour GCE `DELETE` deadline independent of Actions cleanup.
-3. Supply the compatible package producer from **Pinning the Skills test packages** above. `GCP_E2E_PAIR_PREFIX` is a `gs://` prefix containing `<tested-product-sha>/pair.json` and its five named files. `GCP_E2E_RECEIPT_PREFIX` is an independently controlled `gs://` prefix containing `<tested-product-sha>.json` with `product`, `sdk`, `traceai` (full Git SHAs) and `pair_sha256` (the independent lock digest). Only the trusted producer may write receipts; neither the dispatcher nor any test process should have write access. The producer must verify the SDK source's product pin, including on merge-ref builds. J6 resolves the support application's actual wheel dependencies; a differently pinned SDK is not a substitute. A missing/mismatched receipt fails before VM creation. No pre-existing private J3 actors or customer credentials are required: the fixture creates its inputs on the guest.
-4. Require **Skills GCP coverage** in branch protection. After a dispatch or PR run, inspect the seven `skills-gcp-*` artifacts. They contain allowlisted stage timings, test count/status/duration, first error line when available, and registration digests. The controller never fetches the raw Playwright report, screenshots, traces, child logs or J3/J4 actor inputs. Check cleanup with `gcloud compute instances list --project=fagi-omega-staging --filter="labels.app=skills-e2e AND labels.run-id=$RUN_ID"`; expect no instances for that run (including after cancellation).
+1. Protect the `skills-e2e-gcp` GitHub environment with required trusted reviewers and no self-approval. Review the workflow **and** the exact tested changes before approving. Restrict the WIF provider/service-account binding to this repository's immutable ID, the approved environment subject, this workflow and the allowed events; do not authorize generic PR subjects. Set `GCP_WIF_PROVIDER` (full provider resource name) and `GCP_E2E_SERVICE_ACCOUNT` (controller service-account email) as environment variables or environment secrets on `skills-e2e-gcp`. Do not set a JSON key. Fork PRs never enter this job and cannot satisfy coverage via a skip; use a reviewed internal branch for the qualification run.
+2. In `fagi-omega-staging`, set `GCP_E2E_ZONE` and `GCP_E2E_SUBNET` to a compatible isolated subnet with outbound NAT for public package/image downloads, no production access, and firewall ingress for IAP SSH only. The controller needs instance/boot disk create, inspect and delete, subnet use, IAP tunneling and OS Admin Login. No controller or default service account is attached to the VM. Set a project quota/budget for aggregate concurrency across PRs. Per run: at most two concurrent `e2-standard-8` VMs, seven total, 160 GB auto-deleted boot disks, three-hour GCE `DELETE` deadline independent of Actions cleanup.
+3. Set the required branch/merge-queue check to **E2E Tests Pass**. There is no GCS prefix, package credential or separate dispatch to configure. Approve only reviewed internal code in the protected environment. The GCP worker creates its own synthetic actors and never needs a personal API key.
+4. After an authorized run, inspect the seven `skills-gcp-*` artifacts and verify that `gcloud compute instances list --project=fagi-omega-staging --filter="labels.app=skills-e2e AND labels.run-id=$RUN_ID"` is empty. Each worker has a distinct OS Login key with a fixed three-hour expiry; cleanup also removes that exact public key. Each guest keeps raw command output private; even a pre-browser failure exports only the bounded worker log (operation, exit code and source line) and stage timings. A completed browser run adds case identity/status, duration and validated registration digests. Missing results, wrong SDK bytes or a different application wheel fail reconciliation.

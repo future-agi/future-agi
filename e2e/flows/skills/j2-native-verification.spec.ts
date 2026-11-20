@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { test, expect, measuredConfiguration } from '../../lib/skills-native-fixtures';
@@ -265,6 +266,24 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     const noState = await req('POST', `contexts/${contextId}/native/preview/`, { binding_id: target.binding_id, binding_revision: target.revision, candidate_version: 7, baselines: { reference: 4 }, case_ids: [bare.id], repetitions: 1, historical_case_ids: [] });
     expect(noState.reproduction).toBe('not_reproduced');
     expect(noState.missing_inputs[0].input).toContain('business state fixture');
+    // Run the application's independent retained pipeline on the repaired candidate, not Hub's grades.
+    const binding = await req('POST', `contexts/${contextId}/bindings/`, { name: `retained-ci ${prefix}`, kind: 'runtime',
+      selector: { version: 7 }, update_mode: 'manual', profile: 'retained-ci', profile_version: '1', repository: null, expected_report_interval_seconds: 3600 });
+    const access = await req('POST', 'contexts/credentials/', { purpose: 'consume', grants: [{ kind: 'agent_context', resource_id: contextId,
+      labels: [], version_ids: [v7.version.id] }], binding_ids: [], expires_at: new Date(Date.now() + 3600000).toISOString() });
+    try {
+      // Pass the secret through the environment, never in argv or an attachment.
+      execFileSync('docker', ['exec', '-e', 'CTXHUB_CONTEXT_CREDENTIAL', '-e', 'CTXHUB_REGISTRY_URL=http://app:8000', RUNTIME_CONTAINER,
+        'python', '/opt/ctxhub/retained_ci.py', '--binding-id', binding.id, '--context-id', contextId, '--label', prefix],
+      { env: { ...process.env, CTXHUB_CONTEXT_CREDENTIAL: access.secret }, timeout: 280000, stdio: 'pipe' });
+      const retained = JSON.parse(execFileSync('docker', ['exec', RUNTIME_CONTAINER, 'cat', `/fi_output/ci/${prefix}.json`], { encoding: 'utf8' }));
+      expect(retained).toMatchObject({ label: prefix, context_id: contextId, binding_id: binding.id, pipeline: 'synthetic-support-regression', passed: true });
+      expect(retained.cases.map((c: {case:string}) => c.case).sort()).toEqual(['chargeback', 'refund', 'shipping']);
+      for (const row of retained.cases) expect(row).toMatchObject({ status: 'completed', passed: true, version_id: v7.version.id });
+    } finally {
+      await req('DELETE', `contexts/credentials/${access.id}/`);
+      await req('DELETE', `contexts/bindings/${binding.id}/`, { revision: binding.revision });
+    }
     await testInfo.attach('J2-native-independent', { body: JSON.stringify({ evidenceClass: 'synthetic fixture', run, textOnly: textOnly.decision, nearMiss: nearMiss.decision, noState, business, suite: suite.revision }), contentType: 'application/json' });
     if (process.env.J2_DRIVER_FIXTURE_OUTPUT) await writeFile(process.env.J2_DRIVER_FIXTURE_OUTPUT, JSON.stringify({ contextId }), { mode: 0o600 });
   } finally { if (!process.env.J2_PREPARE_OUT) await fixtures.dispose().catch(() => undefined); }

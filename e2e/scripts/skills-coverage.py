@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -33,10 +34,19 @@ def identity(spec):
     return f"{spec['file']} › {spec['title']}"
 
 
+def test_pattern(key):
+    if ' › ' not in key:
+        return r"\b" + re.escape(key) + ":"
+    filename, title = key.split(' › ', 1)
+    return re.escape(filename) + r" .*" + re.escape(title) + r"(?: |$)"
+
+
 def pattern(inventory, cohort):
     # Playwright --grep matches the composed file/describe/test/tags string.
     # Leave its existing quarantine/live grepInvert intact, including on ordinary CI.
     expected = owners()
+    if cohort == 'ordinary':
+        return '^(?!.*(?:' + '|'.join(test_pattern(key) for key in expected) + '))'
     seen = set()
     patterns = []
     for spec in specs(inventory["suites"]):
@@ -48,17 +58,13 @@ def pattern(inventory, cohort):
         if key in seen:
             raise ValueError(f"Duplicate identity: {key}")
         seen.add(key)
-        if cohort == "ordinary" or expected[key] == cohort:
-            if FLOW.match(spec["title"]):
-                patterns.append(r"\b" + key + ":")
-            else:
-                patterns.append(re.escape(spec["file"]) + r" .*" + re.escape(spec["title"]) + r"(?: |$)")
+        if expected[key] == cohort:
+            patterns.append(test_pattern(key))
     if seen != set(expected):
         raise ValueError(f"Absent from discovery: {sorted(set(expected) - seen)}")
     if not patterns:
         raise ValueError(f"Empty selection: {cohort}")
-    group = "(?:" + "|".join(patterns) + ")"
-    return "^(?!.*" + group + ")" if cohort == "ordinary" else group
+    return "(?:" + "|".join(patterns) + ")"
 
 
 def passed(report, cohort):
@@ -86,7 +92,9 @@ def passed(report, cohort):
 # These cases are executed on registered GCP workers, not a hosted runner
 # claiming a GCP environment. Their reporter checks the exact Playwright test,
 # expected status and single attempt before emitting its allowlisted result.
-def registered_passes(directory, commit, sdk, application_sha, expected):
+def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected):
+    if not all(re.fullmatch(r"[a-f0-9]{64}", value) for value in (pair_sha, sdk_sha, application_sha)):
+        raise ValueError("Invalid producer digest")
     cases = {
         "056": ("SKILLS-E2E-056", {"campaign": "registered"}),
         "057": ("SKILLS-E2E-057", {"campaign": "registered"}),
@@ -96,7 +104,7 @@ def registered_passes(directory, commit, sdk, application_sha, expected):
     }
     for name in ("j3", "j4"):
         (identity_key,) = [key for key in expected if key.startswith(f"harness/skills-r3/{name}-driver")]
-        cases[name] = (identity_key, {"fixture": "fixture"} if name == "j3" else
+        cases[name] = (identity_key, {"configured": "completed"} if name == "j3" else
                        {"cold": "completed", "configured": "completed"})
     seen = set()
     for path in directory.rglob("*.json"):
@@ -107,21 +115,24 @@ def registered_passes(directory, commit, sdk, application_sha, expected):
         key, statuses = cases[case]
         records = data["records"]
         if (key in seen or data["sha"] != commit or data["passed"] is not True or data["count"] != 1
-                or data["environment"] != "gcp" or data["project"] != "fagi-omega-staging"
+                or data["pair_sha256"] != pair_sha or data["environment"] != "gcp" or data["project"] != "fagi-omega-staging"
                 or len(records) != len(statuses) or {r["name"]: r["status"] for r in records} != statuses
                 or not all(r["product_head"] == commit and r["sdk_commit"] == sdk for r in records)):
             raise ValueError(f"Invalid or incomplete registered result: {key}")
-        if case == "063" and application_sha not in records[0]["package_hashes"]:
-            raise ValueError("J6 guest did not use the application wheel from the producer")
+        # J4 drives the browser/backend; its registration hashes the application manifests, not a Python client.
+        if case != "j4":
+            wheels = [sdk_sha, application_sha] if case == "063" else [sdk_sha]
+            if any(sorted(r["package_hashes"]) != sorted(wheels) for r in records):
+                raise ValueError(f"Wrong wheel digests for {case}")
         seen.add(key)
     if seen != {key for key, _ in cases.values()}:
         raise ValueError(f"Missing registered passes: {sorted({key for key, _ in cases.values()} - seen)}")
     return seen
 
 
-def reconcile(directory, commit, registered=None, sdk=None, application_sha=None):
+def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_sha=None, application_sha=None):
     expected = owners()
-    seen = registered_passes(registered, commit, sdk, application_sha, expected) if registered is not None else set()
+    seen = registered_passes(registered, commit, sdk, pair_sha, sdk_sha, application_sha, expected) if registered is not None else set()
     cohorts = set(expected.values())
     received = set()
     for path in directory.rglob("*.json"):
@@ -131,6 +142,13 @@ def reconcile(directory, commit, registered=None, sdk=None, application_sha=None
         received.add(path.stem)
         if receipt["commit"] != commit or path.stem != receipt["cohort"]:
             raise ValueError("Wrong checkout or cohort in execution receipt")
+        if pair_sha is not None and path.stem != 'campaign-executor':
+            if receipt.get('pair_sha256') != pair_sha:
+                raise ValueError(f"Wrong package pair: {path.stem}")
+            if path.stem != 'typescript' and receipt.get('sdk_sha256') != sdk_sha:
+                raise ValueError(f"Wrong SDK wheel: {path.stem}")
+            if path.stem == 'application' and receipt.get('application_sha256') != application_sha:
+                raise ValueError("Wrong application wheel")
         for key in receipt["passed"]:
             if key in seen or expected.get(key) != path.stem:
                 raise ValueError(f"Duplicated or misrouted result: {key}")
@@ -143,6 +161,7 @@ def reconcile(directory, commit, registered=None, sdk=None, application_sha=None
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("ordinary")
     for cmd in ["pattern", "receipt"]:
         p = sub.add_parser(cmd)
         p.add_argument("report", type=Path)
@@ -155,15 +174,27 @@ if __name__ == "__main__":
     p.add_argument("commit")
     p.add_argument("--registered", type=Path, required=True)
     p.add_argument("--sdk", required=True)
+    p.add_argument("--pair-sha", required=True)
+    p.add_argument("--sdk-sha", required=True)
     p.add_argument("--application-sha", required=True)
     args = parser.parse_args()
     try:
-        if args.cmd == "pattern":
+        if args.cmd == "ordinary":
+            print(pattern(None, "ordinary"))
+        elif args.cmd == "pattern":
             print(pattern(json.loads(args.report.read_text()), args.cohort))
         elif args.cmd == "receipt":
             keys = passed(json.loads(args.report.read_text()), args.cohort)
-            args.out.write_text(json.dumps(dict(commit=args.commit, cohort=args.cohort, passed=keys)) + "\n")
+            receipt = dict(commit=args.commit, cohort=args.cohort, passed=keys)
+            if args.cohort != 'campaign-executor':
+                receipt['pair_sha256'] = os.environ['SKILL_TRACE_PAIR_SHA256']
+                if args.cohort != 'typescript':
+                    pair = json.loads((Path(os.environ['RUNNER_TEMP']) / 'skill-pair/pair.json').read_text())
+                    receipt['sdk_sha256'] = pair['artifacts']['sdk_python']['sha256']
+                if args.cohort == 'application':
+                    receipt['application_sha256'] = os.environ['J6_APP_SHA256']
+            args.out.write_text(json.dumps(receipt) + "\n")
         else:
-            reconcile(args.directory, args.commit, args.registered, args.sdk, args.application_sha)
+            reconcile(args.directory, args.commit, args.registered, args.sdk, args.pair_sha, args.sdk_sha, args.application_sha)
     except (OSError, ValueError, KeyError) as exc:
         sys.exit(str(exc))

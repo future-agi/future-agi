@@ -440,6 +440,15 @@ test('SKILLS-E2E-108: F8 native verification emits no customer loads',meta(8,'Ke
     expect(done.status).toBe('completed');
     expect(done.cells).toHaveLength(2);
     expect(done.cells.every((c:{status:string}) => c.status === 'completed')).toBe(true);
-    expect(await probe.ch('SELECT trace_id FROM skill_trace_links FINAL WHERE project_id={p:UUID} AND start_time>=fromUnixTimestamp64Milli({t:Int64})',{p:project,t:start})).toEqual([]);
+    // Send a second real SDK load down the same customer ingestion path after the job.
+    // Query only after its link is visible; the two control traces are not native traffic.
+    const end = Date.now();
+    const watermark = s.emit('python', [s.agent('support', [s.refund], false)])!;
+    expect(watermark).not.toBe(control);
+    await expect.poll(() => probe.ch('SELECT project_id FROM skill_trace_links FINAL WHERE trace_id={t:String}',
+      {t:watermark}), POLL.SPAN_VISIBLE).toEqual([{project_id:project}]);
+    expect(await probe.ch(`SELECT trace_id FROM skill_trace_links FINAL WHERE project_id={p:UUID}
+      AND start_time BETWEEN fromUnixTimestamp64Milli({start:Int64}) AND fromUnixTimestamp64Milli({end:Int64}) + INTERVAL 1 MILLISECOND
+      AND trace_id NOT IN ({before:String}, {after:String})`, {p:project,start,end,before:control,after:watermark})).toEqual([]);
   } finally { await fixtures.dispose(); }
 });

@@ -3654,7 +3654,7 @@
 
 **Goal:** An incident responder proves a context repair on the actual application with matched native runs, and the product holds a text-only success and a routing near-miss
 
-**Spec:** `flows/skills/j2-native-verification.spec.ts:37`
+**Spec:** `flows/skills/j2-native-verification.spec.ts:38`
 
 **Tags:** —
 

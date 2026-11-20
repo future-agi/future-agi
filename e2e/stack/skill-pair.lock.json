@@ -1,4 +1,14 @@
 {
-  "SKILL_PAIR_SDK_COMMIT": null,
-  "SKILL_PAIR_TRACEAI_COMMIT": null
+  "SKILL_PAIR_SDK_COMMIT": "4ac8b0e5d9b998a7caab29bde094a10731d40664",
+  "SKILL_PAIR_TRACEAI_COMMIT": "630221ab1280f294ea2affeb1b52b93707eaed6f",
+  "contract": {
+    "source": {
+      "backend_commit": "17ef98737d5b19a72cf4ae2fdce336813c479086",
+      "openapi_sha256": "70c03da3e1750c852322914ca2cbf6c041624a5ebfbd48b03e6b261090f726a3",
+      "mcp_sha256": "570da58adf472a96b8ac3152cd31601a04fa1a6268ea412e9035b332403bab71",
+      "non_skills_sdk_commit": "5b8a98f8275812aa0e83afbf0929bf4dca126566",
+      "non_skills_slice_sha256": "0986e8a40fb643fc2474493784add4617c1986e9762c4bfb7309441105892d8b"
+    },
+    "skills_projection_sha256": "f01d2fa2534da7d1e35523d3cd050053f285660bf56864aba5526d95cce2cccc"
+  }
 }

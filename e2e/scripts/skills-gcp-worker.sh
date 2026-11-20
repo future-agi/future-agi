@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Runs only on the disposable Debian 12 worker. The controller writes the source
 # identity into instance metadata. Its credentials and Git config stay off-VM.
-set -euo pipefail
-stage() { echo "$1" > "$HOME/stage"; printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$HOME/stages.log"; }
+set -Eeu -o pipefail
+op=bootstrap
+trap 'rc=$?; printf "failed %s %d %d\n" "$op" "$rc" "$LINENO" >> "$HOME/worker.log"; exit "$rc"' ERR
+stage() { op=$1; printf "stage %s\n" "$op" >> "$HOME/worker.log"; echo "$1" > "$HOME/stage"; printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$HOME/stages.log"; }
 meta() { curl -fsS --max-time 5 --noproxy '*' -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/$1"; }
 project=$(meta project/project-id)
 [[ $project == fagi-omega-staging && $(uname -sm) == 'Linux x86_64' ]]
@@ -12,12 +14,16 @@ export SKILLS_GCP_CASE SKILLS_GCP_HEAD
 [[ $SKILLS_GCP_HEAD == "$(meta instance/attributes/skills-head)" && $(git rev-parse 'HEAD^{tree}') == "$(meta instance/attributes/skills-tree)" ]]
 
 stage bootstrap
+op=apt
 sudo apt-get install -y --no-install-recommends acl ca-certificates curl jq python3-venv
 sudo install -d -m 0755 /etc/apt/keyrings
+op=docker-repository
 sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
 echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable' | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 sudo apt-get update -qq
+op=docker-install
 sudo apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+op=docker-start
 sudo systemctl start docker
 # OS Login principals come from NSS rather than /etc/passwd. Grant access on
 # this throwaway VM without rewriting a local account or running tests as root.
@@ -28,9 +34,11 @@ install -d -m 0700 "$private" "$private/bin"
 receipt=$HOME/receipt.json
 sdk=$(jq -er '.sdk' "$receipt")
 pair_digest=$(jq -er '.pair_sha256' "$receipt")
-wheels=$(python3 -I e2e/stack/verify-skill-packages.py "$HOME/pair" "$pair_digest" "$SKILLS_GCP_HEAD" "$sdk" "$(jq -er '.traceai' "$receipt")")
+op=verify-pair
+wheels=$(python3 -I e2e/stack/verify-skill-packages.py "$HOME/pair" "$pair_digest" "$SKILLS_GCP_HEAD" "$sdk" "$(jq -er '.traceai' "$receipt")" --require-sums)
 sdk_wheel="$HOME/pair/${wheels%%$'\n'*}"
 # Match the ordinary E2E job's Node and lockfile rather than Debian's Node 18.
+op=node-install
 node_container=$(docker create node:22.18.0-bookworm-slim)
 docker cp "$node_container:/usr/local/bin/node" "$private/bin/node"
 docker cp "$node_container:/usr/local/lib/node_modules/npm" "$private/npm"
@@ -39,9 +47,12 @@ ln -s "$private/npm/bin/npm-cli.js" "$private/bin/npm"
 export PATH="$private/bin:$PATH" CI=1
 npm install --prefix "$private/tools" --ignore-scripts yarn@1.22.22
 ln -s "$private/tools/node_modules/yarn/bin/yarn.js" "$private/bin/yarn"
+op=harness-install
 yarn --cwd e2e install --frozen-lockfile
+op=browser-install
 (cd e2e && yarn playwright install --with-deps chromium)
 
+op=client-install
 case "$SKILLS_GCP_CASE" in
   056|057|058|059)
     export E2E_STACK=standalone E2E_SKILLS_CAMPAIGNS_ENABLED=true
@@ -62,17 +73,21 @@ case "$SKILLS_GCP_CASE" in
     export E2E_STACK=standalone J6_WHEELS="$private/wheels" J6_APP_PYTHON="$private/sdk/bin/python" J6_PROVENANCE="$private/provenance.json"
     spec=flows/skills/j6-incident-recovery.spec.ts; grep='SKILLS-E2E-063:'
     python3 -m venv "$private/sdk"
-    mkdir "$J6_WHEELS"
-    cp "$sdk_wheel" "$J6_WHEELS/"
-    # Build outside the checkout; setuptools writes build/ and egg-info.
-    cp -r e2e/fixtures/skills-r3/support-application "$private/support-application"
-    "$J6_APP_PYTHON" -m pip wheel --no-deps --wheel-dir "$J6_WHEELS" "$private/support-application"
+    mv "$HOME/application" "$J6_WHEELS"
+    files=("$J6_WHEELS"/*); app=("$J6_WHEELS"/ctxhub_support_application-*.whl)
+    [[ ${#files[@]} == 2 && ${#app[@]} == 1 && -f ${app[0]} ]]
+    cmp "$sdk_wheel" "$J6_WHEELS/${sdk_wheel##*/}"
+    printf '%s  %s\n' "$(jq -er '.application_sha256' "$receipt")" "${app[0]}" | sha256sum -c -
     "$J6_APP_PYTHON" -m pip install "$J6_WHEELS"/*.whl
     "$J6_APP_PYTHON" -m pip check
     ;;
   j3|j4)
     export E2E_STACK=distributed
     if [[ $SKILLS_GCP_CASE == j3 ]]; then
+      python3 -m venv "$private/sdk"
+      export J3_PYTHON="$private/sdk/bin/python"
+      "$J3_PYTHON" -m pip install "${sdk_wheel}[context-deepagents]" deepagents==0.4.11 langgraph-checkpoint-sqlite
+      "$J3_PYTHON" -m pip check
       export J3_DRIVER_FIXTURE_DIR="$private/j3" J3_PROVENANCE_PATH="$private/provenance.json" J3_COHORT=configured
       spec=harness/skills-r3/j3-driver-fixture.spec.ts; grep='J3 driver initial condition: three v1 parents over a v7 shared policy'
     else
@@ -84,12 +99,15 @@ case "$SKILLS_GCP_CASE" in
 esac
 stage build
 if [[ $E2E_STACK == standalone ]]; then
+  op=build-standalone
   bin/e2e build standalone
   E2E_GOOGLE_IMAGE_TAG=$(sed -n 's/^FUTURE_AGI_VERSION=//p' e2e/stack/standalone-e2e.env)
   export E2E_GOOGLE_IMAGE_TAG
   service=app
 else
+  op=build-distributed
   bin/e2e build all
+  op=build-gateway
   docker build -t futureagi/agentcc-gateway:e2e-local agentcc-gateway
   export FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local AGENTCC_GATEWAY_VERSION=e2e-local
   export CODE_EXECUTOR_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local E2E_GOOGLE_IMAGE_TAG=e2e-local
@@ -120,11 +138,8 @@ if [[ -n ${J5_PROVENANCE_JSON:-} ]]; then
   export J5_PROVENANCE_JSON="$private/j5-provenance.json"
 fi
 stage playwright
+export SKILLS_GCP_PAIR_SHA256="$pair_digest"
 export SKILLS_GCP_SPEC="$spec" SKILLS_GCP_TITLE="$grep"
 bin/e2e test "$spec" -g "$grep" --workers=1 --retries=0 --output="$private/pw" --reporter=./scripts/skills-gcp-reporter.mjs
 jq -e '.passed == true and .count == 1' "$HOME/result.json" >/dev/null
-if [[ $SKILLS_GCP_CASE == j3 ]]; then
-  [[ $(stat -c '%a' "$J3_DRIVER_FIXTURE_DIR/input.json") == 600 ]]
-  jq -e '(.parents | length == 3) and (.leaves | length == 15) and (.parents | all(.id != null))' "$J3_DRIVER_FIXTURE_DIR/input.json" >/dev/null
-fi
 stage completed

@@ -249,17 +249,29 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
     const command = await page.evaluate(() => navigator.clipboard.readText());
     await page.evaluate(() => navigator.clipboard.writeText(''));
     expect(command).toContain('--allow-preview');
-    expect(command).toContain("FI_CONTEXT_ORIGIN='http://localhost:8100'");
-    const env = { ...process.env, PATH: [sdkBin, process.env.PATH].filter(Boolean).join(delimiter), FI_CONTEXT_CREDENTIAL: credential.secret, FI_CONTEXT_ORIGIN: E2E.apiUrl, FI_CONTEXT_ORGANIZATION_ID: actor.organizationId, FI_CONTEXT_WORKSPACE_ID: actor.workspaceId };
-    await run('bash', ['-c', command], { cwd: project, env, timeout: 60000 });
+    const lines = command.split('\n');
+    expect(lines).toContain(`export FI_CONTEXT_ORIGIN='${new URL(E2E.apiUrl).origin}'`);
+    expect(lines).toContain(`export FI_CONTEXT_ORGANIZATION_ID='${actor.organizationId}'`);
+    expect(lines).toContain(`export FI_CONTEXT_WORKSPACE_ID='${actor.workspaceId}'`);
+    expect(lines.at(-1)).toBe("python -m fi.context inspect --plan 'context-plan.json' --diff");
+    // Start with the paired venv and read-only key, not inherited SDK scope or PYTHONPATH.
+    const env = { HOME: project, PATH: [sdkBin, '/usr/bin', '/bin'].join(delimiter), FI_CONTEXT_CREDENTIAL: credential.secret };
+    const { stdout } = await run('bash', ['-ec', command], { cwd: project, env, timeout: 60000 });
     const plan = JSON.parse(await readFile(`${project}/context-plan.json`, 'utf8'));
-    expect(JSON.stringify(plan)).toContain(inspection.manifest.digest);
+    const inspectionOutput = JSON.parse(stdout.trim().split('\n').at(-1)!);
+    expect(plan.plan_digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(inspectionOutput.plan_digest).toBe(plan.plan_digest);
+    expect(inspectionOutput.diffs).toContainEqual(expect.objectContaining({ path: 'AGENTS.md', diff: expect.stringContaining('Working instructions') }));
     await page.getByRole('button', { name: 'Copy apply command', exact: true }).click();
     await expect(page.getByText('Copied the apply command.', { exact: true })).toBeVisible();
     const applyCommand = await page.evaluate(() => navigator.clipboard.readText());
     await page.evaluate(() => navigator.clipboard.writeText(''));
     expect(applyCommand).toBe("python -m fi.context apply --plan 'context-plan.json' --quiescent");
-    await run('bash', ['-c', applyCommand], { cwd: project, env, timeout: 60000 });
+    await run('bash', ['-ec', applyCommand], { cwd: project, env: { ...env, FI_CONTEXT_ORIGIN: E2E.apiUrl,
+      FI_CONTEXT_ORGANIZATION_ID: actor.organizationId, FI_CONTEXT_WORKSPACE_ID: actor.workspaceId }, timeout: 60000 });
+    const lock = JSON.parse(await readFile(`${project}/.futureagi-context.lock.json`, 'utf8'));
+    expect(lock.materialization.profile).toBe(client);
+    expect(lock.digest).toBe(inspection.manifest.digest);
     expect(await readFile(`${project}/AGENTS.md`, 'utf8')).toContain('Working instructions');
     proofs.push({ client, planned: true, inspected: true, applied: true, digest: inspection.manifest.digest });
   }

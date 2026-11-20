@@ -1,12 +1,15 @@
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { digest } from '../../lib/skills-r3/canonical.mjs';
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { test, expect } from '../../lib/scope-actors';
 import { E2E } from '../../lib/env';
 
-// Prerequisite provisioning only. Not a @flow and not a measured complete job.
+// Provision the initial condition. In registered CI the driver must also complete, while the actors are live.
 // Private actor credentials stay on the owned VM; never fetch this output.
 test('J3 driver initial condition: three v1 parents over a v7 shared policy', async ({ request, scopeActors }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(process.env.SKILLS_GCP_CASE === 'j3' ? 2_100_000 : 180_000);
   expect(process.platform).toBe('linux');
   const directory = process.env.J3_DRIVER_FIXTURE_DIR;
   const provenancePath = process.env.J3_PROVENANCE_PATH;
@@ -54,7 +57,6 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
   }
   const sha = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
   provenance.fixture_hash = sha({ leaves, parents, initialPolicyVersion: 7 });
-  if (process.env.SKILLS_GCP_CASE === 'j3') await testInfo.attach('registration-fixture', { contentType: 'application/json', body: JSON.stringify({ status: 'fixture', provenance }) });
   const actor = (value: typeof author) => ({ ...value.tokens, userId: value.userId, organizationId: value.organizationId, workspaceId: value.workspaceId });
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const issued = await owner.api.post<{ result: { api_key: string; secret_key: string } }>('/accounts/key/generate_secret_key/', { key_name: `${prefix}-sdk` });
@@ -69,5 +71,24 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
       customer_input_hash: provenance.fixture_hash, initial_conditions_hash: sha({ leaves, parents, version: 7, cohort }), safety_requirements_hash: sha(['exact-v8', 'pin-v7', 'separate-parent-review', 'independent-label-authorization', 'fresh-resumed-boundaries']), complete_job_boundary_hash: sha('J3 full ROUND3-PLAN target flow; no narrowed boundary'),
       expected_observations: { 'dependents-and-pins': parents.map((parent, index) => `${parent.name}:${index === 2 ? 'pin-v7' : 'follower'}`), 'accepted-v8-not-v9': [8, 8, 7], 'descriptor-projection': true, 'monotonic-draft-revisions': true, 'fresh-resumed-identities': { fresh: [8, 8, 7], resumed: [7, 7, 7] }, 'source-aba-rejected': true },
     }), { mode: 0o600 });
+  }
+  if (process.env.SKILLS_GCP_CASE === 'j3') {
+    const root = resolve(import.meta.dirname, '../../..');
+    const runId = `j3-${randomUUID()}`;
+    const registrationPath = `${directory}/configured.json`;
+    expect(process.env.J3_COHORT).toBe('configured');
+    expect(process.env.J3_PYTHON).toBeTruthy();
+    expect((await stat(`${directory}/input.json`)).mode & 0o777).toBe(0o600);
+    expect((await stat(registrationPath)).mode & 0o777).toBe(0o600);
+    const registration = JSON.parse(await readFile(registrationPath, 'utf8'));
+    const child = spawnSync(process.execPath, ['e2e/benchmarks/context-hub/cli.mjs', 'run', 'J3', runId, registrationPath, 'registered', directory], {
+      cwd: root, env: { ...process.env, J3_DRIVER_INPUT: `${directory}/input.json` }, stdio: 'ignore', timeout: 1_920_000,
+    });
+    expect(child.status, 'registered J3 driver exit').toBe(0);
+    const report = JSON.parse(await readFile(`${directory}/${runId}.json`, 'utf8'));
+    expect(report).toMatchObject({ job: 'J3', run_id: runId, cohort: 'configured', status: 'completed', mode: 'product',
+      evidence_scope: 'synthetic', observations_complete: true, teardown: 'confirmed', preregistration_hash: digest(registration),
+      provenance: { ...provenance, product_head: process.env.SKILLS_GCP_HEAD } });
+    await testInfo.attach('registration-configured', { contentType: 'application/json', body: JSON.stringify({ status: report.status, provenance: report.provenance }) });
   }
 });
