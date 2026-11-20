@@ -48,7 +48,7 @@ import {
   shownEnvValues,
 } from "./connectDraft";
 import { LogoTile, OptionCard, TextLink } from "./connectBits";
-import { MONO } from "./connectStyles";
+import { ACTION_SX, MONO } from "./connectStyles";
 
 const INSTALL_PATH = `${paths.dashboard.settings.integrations}?${new URLSearchParams(
   {
@@ -606,7 +606,7 @@ export default function GitHubConnectFlow({ outcome, onComplete }) {
         disabled={!source || !canConnect || startScan.isPending}
         onClick={findAgents}
         endIcon={<Iconify icon="solar:magnifer-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Find agents
       </Button>
@@ -657,7 +657,7 @@ export default function GitHubConnectFlow({ outcome, onComplete }) {
         disabled={!ready}
         onClick={toDetails}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Next
       </Button>
@@ -710,7 +710,7 @@ export default function GitHubConnectFlow({ outcome, onComplete }) {
         disabled={!name.trim() || !canConnect || connect.isPending}
         onClick={connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Connect agent
       </Button>

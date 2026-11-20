@@ -25,7 +25,7 @@ import {
   shownEnvValues,
 } from "./connectDraft";
 import { UPLOAD_SOURCE } from "./connectSources";
-import { MONO } from "./connectStyles";
+import { ACTION_SX, MONO } from "./connectStyles";
 import FolderUploadField from "./FolderUploadField";
 
 const WHOLE_UPLOAD = "Connect the uploaded folder anyway";
@@ -197,7 +197,7 @@ export default function UploadConnectFlow({ onComplete }) {
         disabled={!source || uploading || !canConnect || startScan.isPending}
         onClick={findAgents}
         endIcon={<Iconify icon="solar:magnifer-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Find agents
       </Button>
@@ -243,7 +243,7 @@ export default function UploadConnectFlow({ onComplete }) {
         disabled={!ready}
         onClick={toDetails}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Next
       </Button>
@@ -283,7 +283,7 @@ export default function UploadConnectFlow({ onComplete }) {
         disabled={!name.trim() || !canConnect || connect.isPending}
         onClick={connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ flexShrink: 0 }}
+        sx={ACTION_SX}
       >
         Connect agent
       </Button>
