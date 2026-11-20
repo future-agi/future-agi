@@ -51,11 +51,19 @@ export const scopeBreakdownOf = (env, envState, { plan = null, gaps = null, only
   const shelved = (envState?.scenarios || []).filter((sc) => (sc.archived || sc.retired) && !sc.proposed && (!wanted || wanted.has(sc.id))).length;
   const unselected = wanted ? Math.max(0, s.plan.poolSize - runRows.length - blocked.length) : 0;
   const sitOut = wanted ? 0 : s.sitOut;
-  const stale = Object.keys(staleScenariosOf(env, envState, runRows, agentLabel) || {}).length;
+  const staleIds = Object.keys(staleScenariosOf(env, envState, runRows, agentLabel) || {});
+  const stale = staleIds.length;
   return {
     eligible: runRows.length,
     stale,
+    /* Which ones changed since they were last proved — the Run dialog names them. */
+    staleIds,
     blocked: blocked.length,
+    /* Each one by name, with its reason in plain words and the rest after " — ". */
+    blockedList: blocked.map((sc) => {
+      const [plain, ...more] = String(sc.skipReason || "").split(" — ");
+      return { id: sc.id, plain, detail: more.join(" — ") };
+    }),
     blockedWhy: top(blocked.map((sc) => String(sc.skipReason || "").split(" — ")[0])),
     excluded: shelved + sitOut + unselected,
     excludedWhy: [

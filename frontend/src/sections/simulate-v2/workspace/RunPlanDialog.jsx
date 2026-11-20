@@ -56,6 +56,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import SideDrawer from "../components/SideDrawer";
 import ToolFitRow from "../run/ToolFitRow";
+import RunHeldNotes from "./RunHeldNotes";
 import { startsFromCode } from "../_mock/connectionCheck";
 
 /* Pre-run cost and spending cap for simulations: hidden for now. */
@@ -943,6 +944,15 @@ export default function RunPlanDialog({
                   </Typography>
                 </Stack>
               </Tooltip>
+            )}
+
+            {verdict && (
+              <RunHeldNotes
+                report={compat}
+                scenarios={envState?.scenarios || []}
+                staleIds={fromSuite?.staleIds || []}
+                envHeld={fromSuite?.blockedList || []}
+              />
             )}
 
             {/* ── Ready to run (plan T06): this agent version on this
