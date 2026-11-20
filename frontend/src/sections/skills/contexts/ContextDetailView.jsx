@@ -87,6 +87,7 @@ function Detail({ scopeKey, query, versionQuery, fileQuery, selectedPath = 'AGEN
   const linksPanel = { scopeKey: `${scopeKey}:${viewed?.id}`, readOnly: true, rowOpensSkill: true, session: { contextSpec: { links: (descriptor?.links || []).map((link) => ({ skillId: link.skillId, selector: link.requested })) }, resolvedLock: { links: descriptor?.links || [] } } };
   return <Stack spacing={{ xs: 0.5, sm: 1.5 }} sx={{ minWidth: 0 }}>
     <ObjectHeader crumbs={[{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: context.name }]} title={context.name} purpose={descriptor?.description || context.description}
+      sx={{ rowGap: { xs: 0.5, sm: 1.5 } }}
       actions={<Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap', justifyContent: { xs: 'flex-end', sm: 'flex-start' } }}>
         {query.data.ownDraft && <Button color="primary" variant="outlined" disabled={cannotEdit || !onResumeDraft} onClick={onResumeDraft}>Resume your draft</Button>}
         {query.data.ownDraft && onReviewDraft && <Button variant="outlined" onClick={onReviewDraft}>Review saved draft</Button>}

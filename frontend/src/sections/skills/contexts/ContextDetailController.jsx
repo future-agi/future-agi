@@ -104,7 +104,7 @@ function Detail() {
     runtime: <ContextRuntimeView context={{ id: contextId, name: contextName }} versionId={selectedVersion?.id} onRollback={() => openTab('recovery')} onCheckTracing={() => openTab('use')} />,
     usage: <Suspense fallback={<ContentSkeleton variant="panel" label="Loading usage" />}><UsageTab kind="agent_context" skill={{ id: contextId, name: contextName, latestVersion: query.data?.context?.latestVersion ?? undefined }} onInstall={() => openTab('use')} /></Suspense>,
   } : {};
-  return <Stack spacing={1.5} sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
+  return <Stack spacing={1.5} sx={{ p: { xs: 2, md: 3 }, pt: { xs: 1, sm: 2, md: 3 }, minWidth: 0 }}>
     {requested !== null && number === null && <Alert severity="error">Choose a positive, explicit release number. No latest-version substitution was made.</Alert>}
     <ContextDetailView initialTab={params.get('tab')} scopeKey={scopeKey} query={scoped(query)} versionQuery={scoped(version)} fileQuery={scoped(file)} selectedPath={path} onSelectPath={selectPath}
       versions={allChoices} onSelectVersion={(value) => { selectPath('AGENTS.md'); setParams((current) => { const next = new URLSearchParams(current); next.set('version', String(value)); return next; }); }}
