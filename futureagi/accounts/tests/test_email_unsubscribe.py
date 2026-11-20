@@ -400,3 +400,81 @@ class TestReviewRound2Storage:
 
         assert b"Nothing to change" in page.content
         assert b"<form" not in page.content
+
+
+@pytest.mark.django_db
+class TestReviewRound2MailHelper:
+    """Review round 2, checkpoint 2: the notification path of email_helper."""
+
+    def test_preference_reads_do_not_grow_with_recipients(self, user):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        counts = []
+        for n in (1, 10, 100):
+            recipients = [user.email] + [f"r{i}@example.com" for i in range(n - 1)]
+            with CaptureQueriesContext(connection) as queries:
+                assert len(_send(recipients, eu.INTEGRATION_ERRORS)) == n
+            counts.append(len(queries))
+
+        # 1 recipient is an exact account match; more add one case-insensitive read.
+        assert counts[0] <= counts[1] == counts[2] <= 2
+
+    def test_lookup_failure_sends_to_nobody(self, user):
+        with mock.patch.object(eu, "_users_for_emails", side_effect=RuntimeError):
+            with pytest.raises(RuntimeError):
+                _send([user.email, "other@example.com"], eu.INTEGRATION_ERRORS)
+
+        assert mail.outbox == []
+
+    def test_mixed_preferences_send_only_to_subscribed(self, user):
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+
+        messages = _send([user.email, "other@example.com"], eu.INTEGRATION_ERRORS)
+
+        assert [m.to for m in messages] == [["other@example.com"]]
+
+    def test_one_message_per_address_whatever_its_case(self, user):
+        messages = _send(
+            [user.email, user.email.upper(), "Other@Example.com", "other@example.com"],
+            eu.INTEGRATION_ERRORS,
+        )
+
+        assert [m.to for m in messages] == [[user.email], ["Other@Example.com"]]
+
+    def test_returns_how_many_recipients_were_reached(self, user):
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+        mail.outbox = []
+
+        reached = email_helper(
+            "Integration Error: Langfuse",
+            "integration_error.html",
+            {"connection_name": "c", "platform": "Langfuse", "error_message": "x"},
+            [user.email, "a@example.com", "b@example.com"],
+            notification_category=eu.INTEGRATION_ERRORS,
+        )
+
+        assert reached == 2
+
+    def test_plain_text_part_carries_the_link(self, user):
+        (message,) = _send([user.email], eu.INTEGRATION_ERRORS)
+
+        assert _token_from(message) in message.body
+
+    @override_settings(BASE_URL="http://localhost:8000")
+    def test_one_click_header_only_over_https(self, user):
+        (message,) = _send([user.email], eu.INTEGRATION_ERRORS)
+
+        assert "List-Unsubscribe" in message.extra_headers
+        assert "List-Unsubscribe-Post" not in message.extra_headers
+
+    @pytest.mark.parametrize(
+        "category, scope",
+        [("newsletter", None), (eu.MONITOR_ALERTS, None), (eu.INTEGRATION_ERRORS, "x")],
+        ids=["unknown-category", "monitor-without-id", "scope-on-account-category"],
+    )
+    def test_rejects_an_unsupported_category_or_scope(self, user, category, scope):
+        with pytest.raises(ValueError):
+            _send([user.email], category, scope)
+
+        assert mail.outbox == []

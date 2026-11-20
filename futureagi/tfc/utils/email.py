@@ -3,7 +3,7 @@ import re
 
 import structlog
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 
@@ -113,8 +113,11 @@ def email_helper(
             template context) and RFC 8058 one-click ``List-Unsubscribe``
             headers. Leave unset for transactional mail (invites, password
             reset, sign-in), which must always arrive.
-        unsubscribe_scope: The object a scoped category is about, e.g. the
-            monitor id for monitor alerts.
+        unsubscribe_scope: The monitor id, for monitor alerts (required
+            there, and rejected for every other category).
+
+    Returns the number of recipients reached for notification mail (each
+    address once, opted-out ones skipped); raises if none could be reached.
     """
     if reply_to is None:
         reply_to_list = _default_reply_to()
@@ -136,49 +139,77 @@ def email_helper(
 
     from tfc.utils import email_unsubscribe
 
-    # One message per recipient: each needs its own unsubscribe token, and
+    if notification_category not in email_unsubscribe.CATEGORY_LABELS:
+        raise ValueError(f"Unknown notification category: {notification_category}")
+    if (notification_category == email_unsubscribe.MONITOR_ALERTS) != bool(
+        unsubscribe_scope
+    ):
+        raise ValueError("unsubscribe_scope is the monitor id, for monitor alerts only")
+
+    # Resolve every recipient's preference before sending to anyone, so a
+    # lookup failure sends nothing and the caller can retry the whole send.
+    links = email_unsubscribe.recipient_links(
+        to_email_list, notification_category, unsubscribe_scope
+    )
+
+    # One message per recipient: each needs its own unsubscribe link, and
     # recipients of a shared alert should not see each other's addresses.
     # A failure for one recipient must not stop the rest, nor make a caller
     # that retries on error (integration alerts) re-send to those already
     # reached; so raise only when nobody received it.
     delivered, last_error = 0, None
-    for recipient in to_email_list:
-        if email_unsubscribe.is_opted_out(recipient, notification_category):
-            continue
-        url = email_unsubscribe.unsubscribe_url(
-            recipient, notification_category, unsubscribe_scope
-        )
-        try:
-            _send(
-                mail_subject,
-                template_name,
-                {**context, "unsubscribe_url": url},
-                [recipient],
-                sender,
-                reply_to_list,
-                headers={
-                    "List-Unsubscribe": f"<{url}>",
-                    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-                },
-            )
-            delivered += 1
-        except Exception as exc:  # mail backend: best-effort per recipient
-            last_error = exc
-            logger.exception(
-                "notification_email_send_failed",
-                category=notification_category,
-                template=template_name,
-                error=str(exc),
-            )
+    with get_connection() as connection:
+        for link in links:
+            try:
+                url = email_unsubscribe.link_url(link)
+                headers = {"List-Unsubscribe": f"<{url}>"}
+                # RFC 8058: mail clients POST to the link only over HTTPS.
+                if url.startswith("https://"):
+                    headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+                _send(
+                    mail_subject,
+                    template_name,
+                    {**context, "unsubscribe_url": url},
+                    [link.email],
+                    sender,
+                    reply_to_list,
+                    headers=headers,
+                    connection=connection,
+                    text_footer=f"Unsubscribe from these emails: {url}",
+                )
+                delivered += 1
+            except Exception as exc:  # mail backend: best-effort per recipient
+                last_error = exc
+                logger.exception(
+                    "notification_email_send_failed",
+                    category=notification_category,
+                    template=template_name,
+                    error=str(exc),
+                )
     if last_error is not None and delivered == 0:
         raise last_error
+    return delivered
 
 
-def _send(subject, template_name, context, to, sender, reply_to, headers=None):
+def _send(
+    subject,
+    template_name,
+    context,
+    to,
+    sender,
+    reply_to,
+    headers=None,
+    connection=None,
+    text_footer=None,
+):
     html_body = render_to_string(template_name, context)
+    text_body = _html_to_text(html_body)
+    if text_footer:
+        text_body = f"{text_body}\n{text_footer}\n"
     msg = EmailMultiAlternatives(
         subject=subject,
-        body=_html_to_text(html_body),
+        body=text_body,
+        connection=connection,
         from_email=sender,
         to=to,
         reply_to=reply_to,

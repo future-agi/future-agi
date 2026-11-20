@@ -104,9 +104,39 @@ def unsubscribe_url(
     if user_id is None and category != MONITOR_ALERTS:
         user = _user_for_email(email)
         user_id = user.pk if user else None
+    return link_url(Link(email, category, scope, user_id))
+
+
+def link_url(link: Link) -> str:
     backend = (os.environ.get("BACKEND_URL") or settings.BASE_URL).rstrip("/")
-    token = make_token(email, category, scope, user_id)
+    token = make_token(*link)
     return f"{backend}/accounts/notifications/email/unsubscribe/?token={token}"
+
+
+def recipient_links(recipients, category: str, scope: str | None = None):
+    """A ``Link`` for each recipient who still gets ``category``, one per
+    address (compared case-insensitively, first spelling kept), in order.
+
+    Runs a fixed number of queries however many recipients there are, all on
+    the primary, so an unsubscribe made a moment ago is already honoured.
+    """
+    addresses = {}
+    for recipient in recipients:
+        address = (recipient or "").strip()
+        if address and address.lower() not in addresses:
+            addresses[address.lower()] = address
+    if category == MONITOR_ALERTS:
+        return [Link(a, category, scope) for a in addresses.values()]
+
+    users = _users_for_emails(list(addresses.values()))
+    opted_out = _opted_out_ids(list(users.values()), category)
+    links = []
+    for address in addresses.values():
+        user = users.get(address)
+        if user is not None and user.pk in opted_out:
+            continue
+        links.append(Link(address, category, None, str(user.pk) if user else None))
+    return links
 
 
 def _user_model():
@@ -124,6 +154,41 @@ def _user_for_email(email: str):
     return (exact or users or [None])[0]
 
 
+def _users_for_emails(addresses):
+    """Address -> account, in at most two queries: exact spellings first (the
+    unique index serves them), then a case-insensitive match for the rest."""
+    from django.db.models.functions import Lower
+
+    model = _user_model()
+    with force_primary():
+        found = {u.email: u for u in model.objects.filter(email__in=addresses)}
+        rest = {a.lower(): a for a in addresses if a not in found}
+        if rest:
+            for user in model.objects.annotate(_email=Lower("email")).filter(
+                _email__in=list(rest)
+            ):
+                found.setdefault(rest[user._email], user)
+    return found
+
+
+def _opted_out_ids(users, category: str) -> set:
+    """Primary keys of the accounts that turned ``category`` off."""
+    if category == ANNOTATION_DIGEST:
+        from model_hub.models.annotation_queues import AnnotationNotificationState
+
+        if not users:
+            return set()
+        with force_primary():
+            return set(
+                AnnotationNotificationState.objects.filter(
+                    user__in=users, digest_enabled=False
+                ).values_list("user_id", flat=True)
+            )
+    return {
+        u.pk for u in users if category in ((u.config or {}).get(USER_CONFIG_KEY) or [])
+    }
+
+
 def _user_for(link: Link):
     if link.user_id:
         try:
@@ -135,14 +200,7 @@ def _user_for(link: Link):
 
 
 def _opted_out(user, category: str) -> bool:
-    if category == ANNOTATION_DIGEST:
-        from model_hub.models.annotation_queues import AnnotationNotificationState
-
-        with force_primary():
-            return AnnotationNotificationState.objects.filter(
-                user=user, digest_enabled=False
-            ).exists()
-    return category in ((user.config or {}).get(USER_CONFIG_KEY) or [])
+    return user.pk in _opted_out_ids([user], category)
 
 
 def is_opted_out(email: str, category: str) -> bool:
