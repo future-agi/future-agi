@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from tracer.views.project import sdk_key_snippets
+from tracer.views.project import sdk_key_snippets, sdk_urls
 
 API = "http://localhost:8001"
 COLLECTOR = "http://localhost:4319"
@@ -87,3 +87,16 @@ class TestSdkKeySnippets:
                 assert variable not in snippet
             assert "YOUR_FI_API_KEY" in snippet
             assert "YOUR_FI_SECRET_KEY" in snippet
+
+
+@pytest.mark.unit
+class TestSdkUrls:
+    def test_self_hosted_gives_the_api_and_collector(self, self_hosted, settings):
+        settings.FI_API_PUBLIC_URL = f"{API}/"
+
+        assert sdk_urls() == {"fi_base_url": API, "fi_traces_url": COLLECTOR}
+
+    def test_cloud_gives_none(self, settings):
+        settings.CLOUD_DEPLOYMENT = "US"
+
+        assert sdk_urls() is None

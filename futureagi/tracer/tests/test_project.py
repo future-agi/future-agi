@@ -1120,6 +1120,53 @@ class TestProjectSDKCodeAPI:
             'process.env.FI_TRACES_URL = "http://localhost:4318";' in keys["TypeScript"]
         )
 
+    def test_self_hosted_gives_signed_in_users_the_sdk_urls(
+        self, auth_client, settings
+    ):
+        """The first-run screen and the Observe empty state build their
+        snippet from these: the same URLs as `keys`."""
+        settings.CLOUD_DEPLOYMENT = ""
+        settings.FI_API_PUBLIC_URL = "http://localhost:8001"
+        settings.FI_COLLECTOR_PUBLIC_URL = "http://localhost:4319"
+
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "observe"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result(response)["sdk_urls"] == {
+            "fi_base_url": "http://localhost:8001",
+            "fi_traces_url": "http://localhost:4319",
+        }
+
+    def test_cloud_gives_no_sdk_urls(self, auth_client, settings):
+        settings.CLOUD_DEPLOYMENT = "US"
+
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "observe"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "sdk_urls" not in get_result(response)
+
+    def test_anonymous_callers_get_no_sdk_urls(self, api_client, settings):
+        """BASE_URL can name an internal host: never before sign-in."""
+        settings.CLOUD_DEPLOYMENT = ""
+        settings.FI_API_PUBLIC_URL = "http://api.internal:8001"
+        settings.FI_COLLECTOR_PUBLIC_URL = "http://otlp.internal:4319"
+
+        response = api_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "observe"}
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+        body = response.content.decode()
+        assert "api.internal" not in body
+        assert "otlp.internal" not in body
+
     def test_get_sdk_code_observe(self, auth_client):
         """Get SDK code for observe project type."""
         response = auth_client.get(

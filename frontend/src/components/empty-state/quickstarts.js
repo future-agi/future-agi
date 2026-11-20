@@ -58,13 +58,26 @@ messages = prompt.compile(company_name="Acme", customer_question="Where is my or
   ],
 };
 
-export const quickstartTracing = (project = "my-project") => ({
+// Off Future AGI Cloud the SDK must be pointed at this install, or the spans
+// go to Cloud: FI_BASE_URL is its API and FI_TRACES_URL its trace collector,
+// as useSdkUrls gives them (null on Cloud and while they load, which leaves
+// the keys only).
+const tracingEnvLines = ({ apiUrl, tracesUrl } = {}) =>
+  [
+    KEYS,
+    apiUrl && `export FI_BASE_URL="${apiUrl}"`,
+    tracesUrl && `export FI_TRACES_URL="${tracesUrl}"`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+export const quickstartTracing = (project = "my-project", sdkUrls = {}) => ({
   title: "Send your first trace",
   snippets: [
     {
       label: "Python",
       code: `pip install -U "fi-instrumentation-otel>=1.5.0"
-${KEYS}
+${tracingEnvLines(sdkUrls)}
 
 from fi_instrumentation import register
 from fi_instrumentation.fi_types import ProjectType

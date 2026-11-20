@@ -24,6 +24,8 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import { statusColors } from "src/utils/runStatus";
 import { useSetupChecks } from "src/api/ossSetup/oss-setup";
 import { HOST_API } from "src/config-global";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useSdkUrls } from "src/hooks/useSdkUrls";
 import {
   CHECK_STATUS,
   CHECK_REVEAL_STAGGER_MS,
@@ -141,19 +143,24 @@ export default function ValidationStep({
 
   const checks = useMemo(() => data?.checks ?? [], [data]);
   const setupMeta = getSetupMeta(data?.setup);
-  const collectorUrl = data?.collector_http_url;
+  // Signed in, the SDK URLs come from the backend, as in the in-app SDK
+  // snippet. Before sign-in, or until it answers: the URL this page reached
+  // the API on, and the collector the setup checks report.
+  const sdkUrls = useSdkUrls({ enabled: Boolean(authenticated) });
+  const { isCloud } = useDeploymentMode();
+  const apiUrl = sdkUrls.apiUrl || HOST_API;
+  const collectorUrl = sdkUrls.tracesUrl || data?.collector_http_url;
   const accountExists = Boolean(data?.account_exists);
   const steps = useMemo(
     () =>
       nextSteps({
         authenticated,
         accountExists,
-        // VITE_HOST_API, else http://localhost:<BACKEND_PORT>: the order the
-        // server's SDK snippet (FI_API_PUBLIC_URL) follows after BASE_URL.
-        apiUrl: HOST_API,
+        apiUrl,
         collectorUrl,
+        cloud: isCloud,
       }),
-    [authenticated, accountExists, collectorUrl],
+    [authenticated, accountExists, apiUrl, collectorUrl, isCloud],
   );
 
   let connectionState = CONNECTION_STATE.CONNECTING;

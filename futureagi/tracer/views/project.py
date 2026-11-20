@@ -113,24 +113,34 @@ from tracer.utils.property_registry import validate_property_graph_namespace
 logger = structlog.get_logger(__name__)
 
 
+def sdk_urls():
+    """Off Future AGI Cloud, what an SDK outside the stack sets as FI_BASE_URL
+    (this install's API, FI_API_PUBLIC_URL) and FI_TRACES_URL (its trace
+    collector, FI_COLLECTOR_PUBLIC_URL). None on Cloud, where the SDK defaults
+    apply. Signed-in callers only: BASE_URL can name an internal host."""
+    if is_cloud_env(settings.CLOUD_DEPLOYMENT):
+        return None
+    return {
+        "fi_base_url": settings.FI_API_PUBLIC_URL.rstrip("/"),
+        "fi_traces_url": settings.FI_COLLECTOR_PUBLIC_URL.rstrip("/"),
+    }
+
+
 def sdk_key_snippets():
     """The keys block of the in-app SDK snippet, per language, with placeholder
-    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's API
-    (FI_API_PUBLIC_URL) and FI_TRACES_URL to its trace collector
-    (FI_COLLECTOR_PUBLIC_URL): the SDKs default to Cloud, and without them the
-    spans (prompts and completions included) would leave for
-    api.futureagi.com."""
+    keys. Off Future AGI Cloud it also sets FI_BASE_URL and FI_TRACES_URL
+    (sdk_urls): the SDKs default to Cloud, and without them the spans (prompts
+    and completions included) would leave for api.futureagi.com."""
     snippets = {
         lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
         for lang, code in ORG_KEYS.items()
     }
-    if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
-        urls = {
-            "api_url": settings.FI_API_PUBLIC_URL.rstrip("/"),
-            "traces_url": settings.FI_COLLECTOR_PUBLIC_URL.rstrip("/"),
-        }
+    urls = sdk_urls()
+    if urls:
         for lang, lines in ORG_SELF_HOSTED_URLS.items():
-            snippets[lang] += lines.format(**urls)
+            snippets[lang] += lines.format(
+                api_url=urls["fi_base_url"], traces_url=urls["fi_traces_url"]
+            )
     return snippets
 
 
@@ -1568,6 +1578,11 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             "keys": sdk_key_snippets(),
             "instruments": INSTRUMENTORS,
         }
+        # The same URLs as `keys`, for the in-app hints that build their own
+        # snippet (the first-run screen, the Observe empty state).
+        urls = sdk_urls()
+        if urls:
+            response["sdk_urls"] = urls
         return self._gm.success_response(response)
 
     @action(detail=False, methods=["get"])
