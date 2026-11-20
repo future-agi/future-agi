@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("simulate", "0113_merge_actors_and_evidence_import"),
+        ("simulate", "0115_merge_agent_definition_synced_and_actors"),
         ("tracer", "0135_eval_put_back"),
     ]
 

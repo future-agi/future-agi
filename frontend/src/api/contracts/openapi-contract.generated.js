@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1159,
+  endpointCount: 1180,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -9800,6 +9800,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
               default: 20,
             },
           },
+          platform: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "langfuse",
+                "datadog",
+                "posthog",
+                "pagerduty",
+                "mixpanel",
+                "cloud_storage",
+                "message_queue",
+                "linear",
+                "slack",
+                "github",
+              ],
+            },
+          },
         },
         responses: {
           200: {
@@ -9874,6 +9892,89 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/integrations/connections/{connection_id}/repositories/": {
+      get: {
+        operationId: "integrations_connections_repositories_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          q: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 100,
+              default: "",
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              default: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SourceRepositoriesResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          502: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+      {
+        get: {
+          operationId: "integrations_connections_repositories_branches_list",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/SourceBranchesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            403: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            502: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/integrations/connections/{connection_id}/slack/channels/": {
       get: {
         operationId: "integrations_connections_slack_channels_list",
@@ -10078,6 +10179,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/IntegrationErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/github/install/": {
+      post: {
+        operationId: "integrations_github_install_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/IntegrationEmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GitHubInstallResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/github/install/complete/": {
+      post: {
+        operationId: "integrations_github_install_complete_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/GitHubInstallComplete",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GitHubInstallCompleteResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -27218,6 +27372,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
@@ -27242,6 +27399,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27278,6 +27438,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/agent-definitions/{agent_id}/build-preflight/": {
+      get: {
+        operationId: "simulate_agent-definitions_build-preflight_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentBuildPreflightResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/agent-definitions/{agent_id}/delete/": {
       delete: {
         operationId: "simulate_agent-definitions_delete_delete",
@@ -27289,7 +27480,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/AgentDefinitionDeleteResponse",
           },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27317,10 +27517,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/found-check/": {
+      post: {
+        operationId: "simulate_agent-definitions_found-check_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFoundCheckResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27385,6 +27616,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/agent-definitions/{agent_id}/versions/change/": {
+      post: {
+        operationId: "simulate_agent-definitions_versions_change_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentVersionChangeRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentVersionChangeResponse",
+          },
+          202: {
+            $ref: "#/definitions/AgentVersionChangeResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/agent-definitions/{agent_id}/versions/create/": {
       post: {
         operationId: "simulate_agent-definitions_versions_create_create",
@@ -27401,7 +27669,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27449,7 +27723,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/AgentVersionActivateResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27512,6 +27792,220 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_code_changes_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodeChangesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_code_compare_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodeCompareResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            422: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/":
+      {
+        get: {
+          operationId:
+            "simulate_agent-definitions_versions_code_compare_patches_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+            path: {
+              required: true,
+              schema: {
+                type: "array",
+                items: {
+                  type: "string",
+                  maxLength: 4096,
+                  minLength: 1,
+                },
+                minItems: 1,
+                maxItems: 25,
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodePatchesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            422: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_code_file_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          path: {
+            required: true,
+            schema: {
+              type: "string",
+              maxLength: 4096,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentCodeFileResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_code_tree_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentCodeTreeResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_compatibility_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            environment_id: {
+              required: true,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentVersionCompatibilityResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": {
       delete: {
         operationId: "simulate_agent-definitions_versions_delete_delete",
@@ -27520,16 +28014,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
-          200: {
-            $ref: "#/definitions/AgentVersionDeleteResponse",
-          },
-          400: {
+          404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          410: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": {
+      post: {
+        operationId: "simulate_agent-definitions_versions_discard_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentVersionActionResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
-          500: {
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27562,6 +28078,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/":
+      {
+        post: {
+          operationId: "simulate_agent-definitions_versions_production_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EmptyRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentVersionProductionResponse",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            409: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/restore/": {
       post: {
         operationId: "simulate_agent-definitions_versions_restore_create",
@@ -27578,10 +28123,137 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": {
+      post: {
+        operationId: "simulate_agent-definitions_versions_retry_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentVersionActionResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/connect/": {
+      post: {
+        operationId: "simulate_agents_connect_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentConnectRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentConnectResponse",
+          },
+          201: {
+            $ref: "#/definitions/AgentConnectResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/connect/availability/": {
+      get: {
+        operationId: "simulate_agents_connect_availability_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentConnectAvailabilityResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/scan/": {
+      post: {
+        operationId: "simulate_agents_scan_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentSourceRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentScanStartedResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/scan/{scan_id}/": {
+      get: {
+        operationId: "simulate_agents_scan_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentScanResponse",
+          },
+          404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27782,7 +28454,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -28854,6 +29532,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -28866,6 +29547,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29029,6 +29713,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/agent-policy/": {
+      post: {
+        operationId: "simulate_api_harness-environments_agent_policy",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessAgentPolicy",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessAgentPolicyResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          502: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/compare/": {
       get: {
         operationId: "simulate_api_harness-environments_compare",
@@ -29091,6 +29812,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessDraftSaveResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29105,6 +29829,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29123,6 +29850,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29162,6 +29892,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29181,6 +29914,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/SimulateEvalConfigResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29193,6 +29929,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29366,6 +30105,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessNudge",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29384,6 +30126,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessNudge",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29449,6 +30194,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessRunCreateResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29470,6 +30218,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
             },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
             },
@@ -29490,6 +30241,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationsQueued",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29603,6 +30357,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessAgentCredentialsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29624,6 +30381,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             200: {
               $ref: "#/definitions/HarnessVersions",
             },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
             },
@@ -29644,6 +30404,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessVersions",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29687,6 +30450,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             200: {
               $ref: "#/definitions/HarnessVersions",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29752,6 +30518,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessJobRead",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29785,6 +30554,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessPreflightResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29801,6 +30573,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessSecretFileUploadResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29821,6 +30596,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessAgentCredentialsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29837,6 +30615,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessSourceUploadResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29874,6 +30655,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           201: {
             $ref: "#/definitions/HarnessJobAdjustment",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29892,6 +30676,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessJobRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29912,6 +30699,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           202: {
             $ref: "#/definitions/HarnessConversationRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           409: {
             $ref: "#/definitions/ApiTextErrorResponse",
@@ -29935,6 +30725,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           201: {
             $ref: "#/definitions/HarnessJobExtend",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29953,6 +30746,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           202: {
             $ref: "#/definitions/HarnessRunCreateResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29989,6 +30785,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessScenarioAmendResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -31935,6 +32734,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/RunTestErrorResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/RunTestErrorResponse",
           },
@@ -32382,6 +33184,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/RunTestErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/RunTestErrorResponse",
@@ -33121,6 +33926,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/ErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ErrorResponse",
@@ -50213,6 +51021,307 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentBuildPreflightResponse: {
+      type: "object",
+      properties: {
+        ok: {
+          title: "Ok",
+          type: "boolean",
+          readOnly: true,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentBuildPreflightCheck",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeChangesResponse: {
+      type: "object",
+      properties: {
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeChange",
+          },
+          readOnly: true,
+        },
+        unavailable: {
+          title: "Unavailable",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
+    AgentCodeCompareResponse: {
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        unavailable: {
+          title: "Unavailable",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        same_code: {
+          title: "Same code",
+          type: "boolean",
+          readOnly: true,
+        },
+        env_changed: {
+          title: "Env changed",
+          type: "boolean",
+          readOnly: true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeCompareFile",
+          },
+          readOnly: true,
+        },
+        total_files: {
+          title: "Total files",
+          type: "integer",
+          readOnly: true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          readOnly: true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeFileResponse: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+        language: {
+          title: "Language",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        content: {
+          title: "Content",
+          type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodePatchesResponse: {
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodePatch",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeTreeResponse: {
+      type: "object",
+      properties: {
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          readOnly: true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeEntry",
+          },
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentConnectAvailabilityResponse: {
+      type: "object",
+      properties: {
+        reading_enabled: {
+          title: "Reading enabled",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentConnectRequest: {
+      required: ["kind", "name"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["github", "archive"],
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          minLength: 1,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          pattern: "^[A-Za-z0-9._/-]+$",
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["public", "private"],
+          default: "public",
+        },
+        installation_id: {
+          title: "Installation id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        repository_id: {
+          title: "Repository id",
+          type: "integer",
+          minimum: 1,
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          pattern: "^[0-9a-fA-F]{40}$",
+          minLength: 1,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          pattern:
+            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+          maxLength: 512,
+        },
+        entry: {
+          title: "Entry",
+          type: "string",
+          pattern:
+            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+          maxLength: 512,
+        },
+        env_values: {
+          title: "Env values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentConnectResponse: {
+      type: "object",
+      properties: {
+        agent_id: {
+          title: "Agent id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        exists: {
+          title: "Exists",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
     AgentDefinition: {
       required: ["agent_name", "inbound", "description"],
       type: "object",
@@ -50480,6 +51589,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         versions_updated: {
           title: "Versions updated",
           type: "integer",
+          readOnly: true,
+        },
+        skipped_agent_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
           readOnly: true,
         },
       },
@@ -50960,6 +52077,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        observe_project: {
+          $ref: "#/definitions/ObserveProjectRef",
+        },
+        connected: {
+          title: "Connected",
+          type: "boolean",
+          readOnly: true,
+        },
+        managed_by: {
+          $ref: "#/definitions/RunEnvironmentRef",
+        },
+        found_check: {
+          $ref: "#/definitions/AgentFoundCheck",
+        },
+        source_checked_at: {
+          title: "Source checked at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        source_check_interval_seconds: {
+          title: "Source check interval seconds",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
       },
     },
     AgentDefinitionEditRequest: {
@@ -50968,6 +52112,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         observability_enabled: {
           title: "Observability enabled",
           type: "boolean",
+        },
+        production_project_id: {
+          title: "Production project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
         agent_name: {
           title: "Agent name",
@@ -51361,6 +52511,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/RunEnvironmentRef",
           },
           readOnly: true,
+        },
+        observe_project: {
+          $ref: "#/definitions/ObserveProjectRef",
         },
       },
     },
@@ -52564,6 +53717,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentFoundCheckResponse: {
+      type: "object",
+      properties: {
+        found_checked_at: {
+          title: "Found checked at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
     AgentPlaygroundErrorResponse: {
       type: "object",
       properties: {
@@ -52940,6 +54104,141 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentScanResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["pending", "running", "found", "none", "error", "failed"],
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agents: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FoundAgent",
+          },
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+          readOnly: true,
+        },
+        error: {
+          $ref: "#/definitions/AgentScanError",
+        },
+        failure: {
+          $ref: "#/definitions/AgentScanFailure",
+        },
+      },
+    },
+    AgentScanStartedResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
+    AgentSourceRequest: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["github", "archive"],
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          minLength: 1,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          pattern: "^[A-Za-z0-9._/-]+$",
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["public", "private"],
+          default: "public",
+        },
+        installation_id: {
+          title: "Installation id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        repository_id: {
+          title: "Repository id",
+          type: "integer",
+          minimum: 1,
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AgentVersionActionResponse: {
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
     AgentVersionActivateResponse: {
       type: "object",
       properties: {
@@ -52951,6 +54250,153 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         version: {
           $ref: "#/definitions/AgentVersionResponse",
+        },
+      },
+    },
+    AgentVersionChangeRequest: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["sync", "upload", "credentials", "manual"],
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          format: "uuid",
+        },
+        prompt: {
+          title: "Prompt",
+          type: "string",
+          maxLength: 65536,
+        },
+        settings: {
+          $ref: "#/definitions/HarnessAgentConfigChange",
+        },
+        secret_values: {
+          title: "Secret values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentVersionChangeResponse: {
+      type: "object",
+      properties: {
+        version: {
+          $ref: "#/definitions/AgentVersionResponse",
+        },
+        created: {
+          title: "Created",
+          type: "boolean",
+          readOnly: true,
+        },
+        up_to_date: {
+          title: "Up to date",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentVersionCompatibilityResponse: {
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "clean",
+            "new_tool",
+            "tool_removed_or_changed",
+            "new_rule",
+            "unmeasured",
+          ],
+          readOnly: true,
+        },
+        base: {
+          title: "Base",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        same_version: {
+          title: "Same version",
+          type: "boolean",
+          readOnly: true,
+        },
+        tools_added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        tools_removed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        tools_changed: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentVersionToolChange",
+          },
+          readOnly: true,
+        },
+        services_added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        rules_added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        prompt_changed: {
+          title: "Prompt changed",
+          type: "boolean",
+          readOnly: true,
+        },
+        model_changed: {
+          title: "Model changed",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },
@@ -53093,17 +54539,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    AgentVersionDeleteResponse: {
-      type: "object",
-      properties: {
-        message: {
-          title: "Message",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-      },
-    },
     AgentVersionListResponse: {
       type: "object",
       properties: {
@@ -53192,10 +54627,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        in_production: {
+          title: "In production",
+          type: "boolean",
+          readOnly: true,
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        check_step: {
+          title: "Check step",
+          description:
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          type: "string",
+          enum: ["snapshot", "reading", "check"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        check_failure: {
+          $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        check_started_at: {
+          title: "Check started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        environments_count: {
+          title: "Environments count",
+          type: "integer",
+          readOnly: true,
+        },
+        source: {
+          $ref: "#/definitions/AgentVersionSource",
+        },
         created_at: {
           title: "Created at",
           type: "string",
           format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    AgentVersionProductionResponse: {
+      type: "object",
+      properties: {
+        version: {
+          $ref: "#/definitions/AgentVersionResponse",
+        },
+        moved_environment_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
           readOnly: true,
         },
       },
@@ -53329,6 +54826,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           minLength: 1,
           "x-nullable": true,
+        },
+        source: {
+          $ref: "#/definitions/AgentVersionSource",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        check_step: {
+          title: "Check step",
+          description:
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          type: "string",
+          enum: ["snapshot", "reading", "check"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        check_failure: {
+          $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        check_started_at: {
+          title: "Check started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        environments_count: {
+          title: "Environments count",
+          type: "integer",
+          readOnly: true,
         },
         created_at: {
           title: "Created at",
@@ -67382,6 +68920,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GitHubInstallComplete: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        setup_action: {
+          title: "Setup action",
+          type: "string",
+          default: "",
+          maxLength: 32,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          default: "",
+          maxLength: 255,
+        },
+        installation_id: {
+          title: "Installation id",
+          type: "string",
+          default: "",
+          maxLength: 32,
+        },
+      },
+    },
+    GitHubInstallCompleteResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GitHubInstallCompleteResult",
+        },
+      },
+    },
+    GitHubInstallResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GitHubInstallResult",
+        },
+      },
+    },
     GraphCreate: {
       required: ["name"],
       type: "object",
@@ -68215,6 +69809,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent_version"],
       type: "object",
       properties: {
+        agent_version: {
+          $ref: "#/definitions/HarnessVersion",
+        },
+      },
+    },
+    HarnessAgentPolicy: {
+      required: ["policy"],
+      type: "object",
+      properties: {
+        policy: {
+          title: "Policy",
+          type: "string",
+          enum: ["follow", "pinned"],
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    HarnessAgentPolicyResponse: {
+      type: "object",
+      properties: {
+        policy: {
+          title: "Policy",
+          type: "string",
+          enum: ["follow", "pinned"],
+          readOnly: true,
+        },
         agent_version: {
           $ref: "#/definitions/HarnessVersion",
         },
@@ -74683,6 +76307,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         host_url: {
@@ -74802,6 +76427,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         display_name: {
@@ -87973,6 +89599,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranchesResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SourceBranchesResult",
+        },
+      },
+    },
+    SourceRepositoriesResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SourceRepositoriesResult",
+        },
+      },
+    },
     SpanAttributeDetailResponse: {
       required: [
         "key",
@@ -88478,7 +90130,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     StoredAgentResponse: {
-      required: ["agent", "sdk_version", "stored_at", "setup_stale"],
+      required: ["agent", "sdk_version", "stored_at", "setup_stale", "origin"],
       type: "object",
       properties: {
         agent: {
@@ -88497,6 +90149,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         setup_stale: {
           title: "Setup stale",
           type: "boolean",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          enum: ["build", "reading"],
         },
       },
     },
@@ -94063,6 +95720,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         host_url: {
@@ -94277,6 +95935,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Result",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    ViewerReadOnlyError: {
+      required: ["detail"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          enum: ["viewer_read_only"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        action: {
+          title: "Action",
+          type: "string",
         },
       },
     },
@@ -96044,6 +97779,178 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentBuildPreflightCheck: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "blocked"],
+          readOnly: true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
+    AgentCodeChange: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified"],
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeCompareFile: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        previous_path: {
+          title: "Previous path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified", "renamed"],
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        collapsed: {
+          title: "Collapsed",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodePatch: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        unchanged: {
+          title: "Unchanged",
+          type: "boolean",
+          readOnly: true,
+        },
+        hunks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeHunk",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeEntry: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+      },
+    },
+    AgentFoundCheck: {
+      required: ["required", "done_at"],
+      type: "object",
+      properties: {
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        done_at: {
+          title: "Done at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    ObserveProjectRef: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
     RunEnvironmentRef: {
       required: ["id", "name"],
       type: "object",
@@ -97453,6 +99360,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "status",
         "environment",
         "agent_version",
+        "environment_version",
+        "partial",
         "outcome_passed",
         "outcome_failed",
         "outcome_errored",
@@ -97531,6 +99440,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_version: {
           $ref: "#/definitions/AgentVersionRef",
         },
+        environment_version: {
+          $ref: "#/definitions/EnvironmentVersionRef",
+        },
+        partial: {
+          title: "Partial",
+          type: "boolean",
+          "x-nullable": true,
+        },
         outcome_passed: {
           title: "Outcome passed",
           description: "Passed receipts; null for a run without receipts.",
@@ -97596,6 +99513,201 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    AgentScanError: {
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentScanFailure: {
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+      "x-nullable": true,
+    },
+    FoundAgent: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          readOnly: true,
+        },
+        entry: {
+          title: "Entry",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        framework: {
+          $ref: "#/definitions/FoundAgentFramework",
+        },
+        confidence: {
+          title: "Confidence",
+          type: "string",
+          enum: ["high", "medium", "low"],
+          readOnly: true,
+        },
+        evidence: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        env_names: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        estimates: {
+          $ref: "#/definitions/FoundAgentEstimates",
+        },
+      },
+    },
+    HarnessAgentConfigChange: {
+      type: "object",
+      properties: {
+        phone_number: {
+          title: "Phone number",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        agent_name: {
+          title: "Agent name",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          type: "boolean",
+        },
+      },
+    },
+    AgentVersionToolChange: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        before: {
+          $ref: "#/definitions/AgentToolSignature",
+        },
+        after: {
+          $ref: "#/definitions/AgentToolSignature",
+        },
+      },
+    },
+    AgentVersionCheckFailure: {
+      description:
+        "Why a failed check failed, when the version carries a reason.",
+      required: ["code", "message", "retryable"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentVersionSource: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          minLength: 1,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          minLength: 1,
+        },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          minLength: 1,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          minLength: 1,
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     AgentccRequestLogMetadataValues: {
       required: ["application", "service", "tags"],
@@ -105589,6 +107701,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GitHubInstallCompleteResult: {
+      required: ["outcome"],
+      type: "object",
+      properties: {
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["connected", "requested", "already_connected"],
+        },
+      },
+    },
+    GitHubInstallResult: {
+      required: ["install_url"],
+      type: "object",
+      properties: {
+        install_url: {
+          title: "Install url",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+        },
+      },
+    },
     GraphExecutionDetailResult: {
       type: "object",
       properties: {
@@ -107121,6 +109256,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+      "x-nullable": true,
     },
     HarnessAgentPayloadChange: {
       required: ["config"],
@@ -108105,6 +110241,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sub_goals_count",
         "tools_count",
         "runs_count",
+        "agent_version",
+        "agent_policy",
         "last_updated",
         "created_at",
         "flows_count",
@@ -108175,6 +110313,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runs_count: {
           title: "Runs count",
           type: "integer",
+        },
+        agent_version: {
+          $ref: "#/definitions/AgentVersionRef",
+        },
+        agent_policy: {
+          title: "Agent policy",
+          type: "string",
+          enum: ["follow", "pinned"],
         },
         last_updated: {
           title: "Last updated",
@@ -108461,6 +110607,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sub_goals_count",
         "tools_count",
         "runs_count",
+        "agent_version",
+        "agent_policy",
         "last_updated",
         "created_at",
         "last_run",
@@ -108526,6 +110674,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runs_count: {
           title: "Runs count",
           type: "integer",
+        },
+        agent_version: {
+          $ref: "#/definitions/AgentVersionRef",
+        },
+        agent_policy: {
+          title: "Agent policy",
+          type: "string",
+          enum: ["follow", "pinned"],
         },
         last_updated: {
           title: "Last updated",
@@ -108904,6 +111060,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 255,
           minLength: 1,
+          "x-nullable": true,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          pattern:
+            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+          maxLength: 512,
           "x-nullable": true,
         },
         archive_artifact_id: {
@@ -109617,6 +111781,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "grading",
             "platform_sync",
+            "artifact",
           ],
         },
         stage: {
@@ -117622,6 +119787,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "grading",
             "platform_sync",
+            "artifact",
           ],
           "x-nullable": true,
         },
@@ -120196,6 +122362,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranchesResult: {
+      required: ["branches"],
+      type: "object",
+      properties: {
+        branches: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceBranch",
+          },
+        },
+      },
+    },
+    SourceRepositoriesResult: {
+      required: ["repositories", "next_page"],
+      type: "object",
+      properties: {
+        repositories: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceRepository",
+          },
+        },
+        next_page: {
+          title: "Next page",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
     SpanAttributeNumericStats: {
       type: "object",
       properties: {
@@ -120420,6 +122615,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "gaps",
         "instrumentation",
         "setup_hash",
+        "extension",
       ],
       type: "object",
       properties: {
@@ -120499,6 +122695,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Setup hash",
           type: "string",
           minLength: 1,
+        },
+        extension: {
+          $ref: "#/definitions/StoredExtension",
         },
       },
     },
@@ -123785,6 +125984,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentCodeHunk: {
+      type: "object",
+      properties: {
+        old_start: {
+          title: "Old start",
+          type: "integer",
+          readOnly: true,
+        },
+        old_lines: {
+          title: "Old lines",
+          type: "integer",
+          readOnly: true,
+        },
+        new_start: {
+          title: "New start",
+          type: "integer",
+          readOnly: true,
+        },
+        new_lines: {
+          title: "New lines",
+          type: "integer",
+          readOnly: true,
+        },
+        lines: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          readOnly: true,
+        },
+      },
+    },
     AgentFixVerdict: {
       required: ["accepted", "reason", "must_pass_regressions"],
       type: "object",
@@ -124162,6 +126393,90 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    EnvironmentVersionRef: {
+      required: ["id", "version_number"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    FoundAgentEstimates: {
+      type: "object",
+      properties: {
+        tools: {
+          title: "Tools",
+          type: "integer",
+          readOnly: true,
+        },
+        prompt_files: {
+          title: "Prompt files",
+          type: "integer",
+          readOnly: true,
+        },
+      },
+    },
+    FoundAgentFramework: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentToolSignature: {
+      type: "object",
+      properties: {
+        arguments: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        required: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
     },
     AlertOption: {
       required: ["value", "label"],
@@ -129926,27 +132241,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessAgentConfigChange: {
-      type: "object",
-      properties: {
-        phone_number: {
-          title: "Phone number",
-          type: "string",
-          maxLength: 512,
-          minLength: 1,
-        },
-        agent_name: {
-          title: "Agent name",
-          type: "string",
-          maxLength: 512,
-          minLength: 1,
-        },
-        target_speaks_first: {
-          title: "Target speaks first",
-          type: "boolean",
-        },
-      },
-    },
     HarnessCompareInterval: {
       description: "Newcombe 95% interval of the difference.",
       required: ["low", "high"],
@@ -132009,6 +134303,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         display_name: {
@@ -136300,6 +138595,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranch: {
+      required: ["name", "is_default"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+      },
+    },
+    SourceRepository: {
+      required: ["id", "full_name", "default_branch", "private"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "integer",
+        },
+        full_name: {
+          title: "Full name",
+          type: "string",
+          minLength: 1,
+        },
+        default_branch: {
+          title: "Default branch",
+          type: "string",
+        },
+        private: {
+          title: "Private",
+          type: "boolean",
+        },
+      },
+    },
     SpanListColumnConfig: {
       required: ["id", "name", "is_visible"],
       type: "object",
@@ -136576,6 +138909,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+      },
+    },
+    StoredExtension: {
+      required: ["framework", "source"],
+      type: "object",
+      properties: {
+        framework: {
+          $ref: "#/definitions/StoredFramework",
+        },
+        source: {
+          $ref: "#/definitions/StoredSourceEcho",
         },
       },
     },
@@ -141046,6 +143391,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    StoredFramework: {
+      required: ["name", "version"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    StoredSourceEcho: {
+      type: "object",
+      properties: {
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
     },
     StoredToolEndpoint: {
       required: ["url"],
