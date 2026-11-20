@@ -4638,9 +4638,12 @@ export default function EnvironmentWorkspace() {
                 ) : panel === "runs" ? (
                   <RunsPanel env={worldEnv} envState={envState} onGo={go} />
                 ) : panel === "improvements" ? (
-                  <ImprovementSourcesList
-                    env={{ envId: env.id, label: env.name }}
-                  />
+                  /* The same 16px inset as the other tabs (Runs, Actors). */
+                  <Box sx={{ p: 2 }}>
+                    <ImprovementSourcesList
+                      env={{ envId: env.id, label: env.name }}
+                    />
+                  </Box>
                 ) : panel === "world" ? (
                   <WorldPanel
                     env={worldEnv}
