@@ -9,6 +9,7 @@ import base64
 import hashlib
 import io
 import json
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,7 +79,7 @@ def expand(schema, swagger):
 def body_schema(swagger, route):
     # A focused generator factors its common /tracer/v1 prefix into basePath.
     route = "/" + route
-    route = route.removeprefix(swagger.get("basePath", ""))
+    route = route.removeprefix(swagger.get("basePath", "").rstrip("/"))
     operation = swagger["paths"][route]["post"]
     parameters = [p for p in operation["parameters"] if p["in"] == "body"]
     assert len(parameters) == 1
@@ -87,11 +88,12 @@ def body_schema(swagger, route):
 
 
 @pytest.mark.parametrize("route,view", ROUTES)
-def test_control_post_annotation_is_documentation_only(route, view):
+def test_control_posts_document_validation_boundary(route, view):
     assert view.post._swagger_auto_schema["request_body"] is not None
-    assert not hasattr(view.post, "__wrapped__"), (
-        "Do not run serializer validation before authorization/signature verification"
-    )
+    if view is views.AttachmentLiveKitEventView:
+        assert not hasattr(view.post, "__wrapped__"), "verify the raw bytes first"
+    else:
+        assert view.post._swagger_auto_schema["runtime_request_validation"] is True
 
 
 @pytest.mark.parametrize("route,view", ROUTES)
@@ -101,7 +103,7 @@ def test_control_posts_generate_required_typed_body(swagger, route, view):
     assert schema["properties"]
 
 
-def test_registration_has_exact_six_keys_and_closed_association(swagger):
+def test_registration_has_six_required_fields_and_optional_dispatch_mode(swagger):
     schema = body_schema(swagger, ROUTES[1][0])
     expected = {
         "connection_id",
@@ -111,7 +113,9 @@ def test_registration_has_exact_six_keys_and_closed_association(swagger):
         "association",
         "direction",
     }
-    assert set(schema["properties"]) == set(schema["required"]) == expected
+    assert set(schema["required"]) == expected
+    assert set(schema["properties"]) == expected | {"dispatch_mode"}
+    assert schema["properties"]["dispatch_mode"]["enum"] == ["auto", "sdk_explicit"]
     assert schema["additionalProperties"] is False
     fields = schema["properties"]
     assert fields["egress_id"]["pattern"] == "^EG_[A-Za-z0-9]{1,61}$"
@@ -179,6 +183,90 @@ def test_webhook_documents_provider_extensions_and_integer_variants(swagger):
             {"type": "integer"},
             {"type": "string", "pattern": "^[0-9]+$", "maxLength": 20},
         ]
+
+
+def test_out_of_range_observation_does_not_update_registration():
+    registration = SimpleNamespace(
+        room_digest=provider_recordings._digest("room"),
+        provider_state="registered",
+        provider_updated_at=1,
+        save=Mock(),
+    )
+    info = {"roomName": "room", "status": "EGRESS_ACTIVE", "updatedAt": 2**63}
+    assert not provider_recordings._apply_info(registration, info)
+    registration.save.assert_not_called()
+    assert (registration.provider_state, registration.provider_updated_at) == (
+        "registered",
+        1,
+    )
+
+
+def test_import_documents_both_typed_descriptors_and_receipts():
+    generator = OpenAPISchemaGenerator(
+        info=openapi.Info(title="Import contract", default_version="v1"),
+        patterns=[path("imports", views.AttachmentImportView.as_view())],
+    )
+    schema = generator.get_schema(request=None, public=True).as_odict()
+    body = body_schema(schema, "imports")
+    for name in ("upload", "recording"):
+        descriptor = body["properties"][name]
+        assert descriptor["properties"]["schema_version"]["type"] == "integer"
+        assert descriptor["properties"]["association"]["type"] == "object"
+        assert {"schema_version", "association"} <= set(descriptor["required"])
+    response = expand(
+        schema["paths"]["/imports"]["post"]["responses"]["202"]["schema"], schema
+    )
+    assert set(response["required"]) == {"job_id", "state"}
+    assert {"upload_id", "recording_id"} <= set(response["properties"])
+    assert [set(branch["required"]) for branch in response["x-oneOf"]] == [
+        {"upload_id", "job_id", "state"},
+        {"mode", "recording_id", "job_id", "state"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "scope_enabled,connection_enabled", [(False, True), (True, False)]
+)
+def test_ineligible_pending_receipt_advances_retry_without_opening_it(
+    monkeypatch, scope_enabled, connection_enabled
+):
+    now = datetime.now(UTC)
+    receipt = SimpleNamespace(
+        pending_due_at=now,
+        pending_expires_at=now + timedelta(minutes=5),
+        pending_ciphertext=b"opaque",
+        save=Mock(),
+    )
+    scope = SimpleNamespace(enabled=scope_enabled)
+    connection = SimpleNamespace(
+        enabled=connection_enabled, revoked_at=None, provider="livekit"
+    )
+    for model, item in (
+        (provider_recordings.AttachmentScope, scope),
+        (provider_recordings.AttachmentProviderConnection, connection),
+    ):
+        query = Mock()
+        query.get.return_value = item
+        monkeypatch.setattr(
+            model.objects, "select_for_update", lambda query=query: query
+        )
+    query = Mock()
+    query.filter.return_value.first.return_value = receipt
+    monkeypatch.setattr(
+        provider_recordings.AttachmentProviderEvent.objects,
+        "select_for_update",
+        lambda: query,
+    )
+    monkeypatch.setattr(provider_recordings.transaction, "atomic", nullcontext)
+    assert (
+        provider_recordings.apply_pending_completion(
+            scope_id=UID, connection_id=UID, event_id="event", now=now
+        )
+        is None
+    )
+    assert now < receipt.pending_due_at <= receipt.pending_expires_at
+    receipt.save.assert_called_once_with(update_fields=["pending_due_at"])
+    assert receipt.pending_ciphertext == b"opaque"
 
 
 class RawRequest:
@@ -336,7 +424,9 @@ def test_envelope_route_rejects_locators_and_other_import_variants(body, monkeyp
     )
     monkeypatch.setattr(provider_recordings, "completed_output", lookup)
     with pytest.raises(AttachmentError):
-        views.AttachmentSourceEnvelopeView().post(SimpleNamespace(data=body), UID)
+        views.AttachmentSourceEnvelopeView().post(
+            SimpleNamespace(method="POST", data=body), UID
+        )
     lookup.assert_not_called()
 
 
@@ -368,7 +458,9 @@ def test_provider_registration_route_rejects_unknown_keys(extra, monkeypatch):
         | extra
     )
     with pytest.raises(AttachmentError):
-        views.AttachmentProviderRegistrationView().post(SimpleNamespace(data=body), UID)
+        views.AttachmentProviderRegistrationView().post(
+            SimpleNamespace(method="POST", data=body), UID
+        )
     register.assert_not_called()
 
 
@@ -389,10 +481,18 @@ def test_dark_webhook_does_not_read_or_verify_body(monkeypatch):
     [(ROUTES[0][0], "204"), (ROUTES[1][0], "201"), (ROUTES[2][0], "200")],
 )
 def test_request_schemas_are_not_inferred_as_success_responses(swagger, route, status):
-    route = ("/" + route).removeprefix(swagger.get("basePath", ""))
+    route = ("/" + route).removeprefix(swagger.get("basePath", "").rstrip("/"))
     responses = swagger["paths"][route]["post"]["responses"]
     assert status in responses
-    assert "schema" not in responses[status]
+    if status == "204":
+        assert "schema" not in responses[status]
+    else:
+        name = (
+            "AttachmentProviderRegistrationResponse"
+            if status == "201"
+            else "AttachmentSourceEnvelopeResponse"
+        )
+        assert responses[status]["schema"] == {"$ref": f"#/definitions/{name}"}
     assert not any(key.startswith("2") and key != status for key in responses)
 
 
@@ -442,3 +542,17 @@ def test_runtime_route_declaration_matches_documented_control_view(route, view):
 
 def test_schema_generation_does_not_mutate_canonical_wire_schema(swagger):
     assert wire._schema() == json.loads(wire.SCHEMA_PATH.read_text())
+
+
+def test_gateway_successes_document_bytes_not_error_documents():
+    generator = OpenAPISchemaGenerator(
+        info=openapi.Info(title="Gateway contract", default_version="v1"),
+        patterns=[path("media", views.AttachmentMediaView.as_view())],
+    )
+    responses = generator.get_schema(request=None, public=True).as_odict()["paths"][
+        "/media"
+    ]["get"]["responses"]
+    for status in ("200", "206"):
+        assert responses[status]["schema"] == {"type": "file"}
+    for status in ("304", "404", "416", "429"):
+        assert "schema" not in responses[status]

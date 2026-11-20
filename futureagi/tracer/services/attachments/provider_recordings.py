@@ -294,12 +294,16 @@ def _lock_registrar(registrar, scope_id, session_id):
     )
 
 
+def _connection_enabled(connection):
+    return (
+        connection.enabled
+        and not connection.revoked_at
+        and connection.provider == "livekit"
+    )
+
+
 def _check_connection(connection):
-    if (
-        not connection.enabled
-        or connection.revoked_at
-        or connection.provider != "livekit"
-    ):
+    if not _connection_enabled(connection):
         raise AttachmentError("source_unavailable", 403)
 
 
@@ -460,6 +464,7 @@ def _apply_info(
         or not isinstance(room, str)
         or not hmac.compare_digest(_digest(room), registration.room_digest)
         or registration.provider_state in TERMINAL_PROVIDER_STATES
+        or not 0 <= updated <= 2**63 - 1
         or updated < registration.provider_updated_at
         or (
             state not in TERMINAL_PROVIDER_STATES
@@ -1219,13 +1224,14 @@ def apply_pending_completion(*, scope_id, connection_id, event_id, now=None):
             return None
         if receipt.pending_due_at > now:
             return None
-        _check_connection(live)
-        if not scope.enabled:
-            raise AttachmentError("disabled", 403)
         receipt.pending_due_at = min(
             receipt.pending_expires_at, now + timedelta(seconds=PENDING_RETRY_SECONDS)
         )
         receipt.save(update_fields=["pending_due_at"])
+        # A disabled owner cannot authorize work, but must not monopolize
+        # selection. Commit the retry cursor without opening the receipt.
+        if not scope.enabled or not _connection_enabled(live):
+            return None
         claim = receipt.pending_due_at
         row = AttachmentProviderRecording.objects.filter(
             scope_id=scope_id,

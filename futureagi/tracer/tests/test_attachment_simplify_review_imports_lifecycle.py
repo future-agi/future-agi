@@ -140,7 +140,8 @@ def test_takeover_saves_current_lease_before_resize_and_rolls_back(
         resize_locked=resize,
     )
     monkeypatch.setattr(lane.transaction, "atomic", atomic)
-    monkeypatch.setattr(lane, "_locked_job", locked)
+    monkeypatch.setattr(lane, "_locked_job_rows", locked)
+    monkeypatch.setattr(lane, "_check_job", lambda *_: events.append("authorized"))
     monkeypatch.setattr(
         lane.sandbox, "prepare_import_scratch", lambda *args: events.append("scratch")
     )
@@ -156,11 +157,18 @@ def test_takeover_saves_current_lease_before_resize_and_rolls_back(
             "attempts",
         ):
             assert getattr(job, key) == original[key]
-        assert events == ["budgets", "owners", "lease", "resize"]
+        assert events == ["budgets", "owners", "authorized", "lease", "resize"]
     else:
         fence = lane.claim(job.id, scope_id=job.scope_id, now=now)
         assert fence.epoch == 2 and fence.token == saved["token"]
-        assert events == ["budgets", "owners", "lease", "resize", "scratch"]
+        assert events == [
+            "budgets",
+            "owners",
+            "authorized",
+            "lease",
+            "resize",
+            "scratch",
+        ]
 
 
 @pytest.mark.parametrize("serving", [None, "already-recorded-serving"])
@@ -411,6 +419,7 @@ def test_l16_rejected_before_admission_or_source_body(lane, monkeypatch, whole):
     install(
         monkeypatch,
         "source_providers",
+        _envelope_provider=lambda *_: None,
         resolve=lambda **_: facts,
         open_source=Mock(side_effect=AssertionError("no source fetch")),
     )
@@ -431,3 +440,24 @@ def test_l16_rejected_before_admission_or_source_body(lane, monkeypatch, whole):
     assert error.value.code == "unsupported_media"
     admission.assert_not_called()
     assert not lane.AttachmentImportJob.objects.rows
+
+
+@pytest.mark.parametrize("expiry", [False, True])
+def test_single_retirement_updates_both_locked_owners(lane, monkeypatch, expiry):
+    job, _, _, fence, *_ = lease_fixture(lane, monkeypatch)
+    upload = lane.AttachmentUpload.objects.create(state="validating")
+    asset = lane.Attachment.objects.create(state="validating")
+    job.upload_id, job.recording_id = upload.id, None
+
+    @contextmanager
+    def locked(*args, **kwargs):
+        yield job, None, None, upload, asset
+
+    monkeypatch.setattr(lane, "_locked_job", locked)
+    if expiry:
+        assert lane._expire(job.id, job.deadline)
+        expected = "expired"
+    else:
+        lane._retire(job.id, fence, reason="validation_failed", terminal="rejected")
+        expected = "rejected"
+    assert asset.state == upload.state == job.state == expected

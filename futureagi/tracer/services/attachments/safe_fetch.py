@@ -28,6 +28,8 @@ from tracer.services.attachments.contract import AttachmentError
 BUFFER_BYTES = 256 * 1024
 USER_AGENT = "attachment-importer/1"
 MAX_RANGE_BYTES = 8 * 1024 * 1024
+# getaddrinfo cannot be cancelled. Timeouts must not free its slot before exit.
+_DNS_SLOTS = threading.BoundedSemaphore(8)
 _NAT64 = (
     ipaddress.ip_network("64:ff9b::/96"),
     ipaddress.ip_network("64:ff9b:1::/48"),
@@ -138,10 +140,17 @@ def resolve(
         except (OSError, UnicodeError):
             result.append(None)
         finally:
+            _DNS_SLOTS.release()
             ready.set()
 
     worker = threading.Thread(target=lookup, daemon=True)
-    worker.start()
+    if not _DNS_SLOTS.acquire(blocking=False):
+        raise unavailable()
+    try:
+        worker.start()
+    except RuntimeError:
+        _DNS_SLOTS.release()
+        raise unavailable() from None
     if not ready.wait(min(timeout_seconds, 3)) or not result or result[0] is None:
         raise unavailable()
     answers = result[0]

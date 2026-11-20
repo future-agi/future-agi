@@ -10,6 +10,7 @@ with an F01 ``Reason``; 429 always carries ``Retry-After``. Every response is
 
 import uuid
 from collections.abc import Sequence
+from functools import wraps
 
 import structlog
 from django.conf import settings
@@ -31,6 +32,7 @@ from tracer.serializers.attachments import (
     AttachmentEmptyRequestSerializer,
     AttachmentErrorSerializer,
     AttachmentImportRequestSerializer,
+    AttachmentImportResponseSerializer,
     AttachmentImportStatusResponseSerializer,
     AttachmentLinkRequestSerializer,
     AttachmentLiveKitEventRequestSerializer,
@@ -479,7 +481,7 @@ class AttachmentImportView(AttachmentView):
         manual_parameters=[IDEMPOTENCY_HEADER],
         request_serializer=AttachmentImportRequestSerializer,
         strict_request_validation=False,
-        responses={202: openapi.Response("Import accepted"), **ERRORS},
+        responses={202: AttachmentImportResponseSerializer, **ERRORS},
     )
     def post(self, request, project_id):
         """Admit a completed-recording import with ORIGINAL credentials only.
@@ -715,8 +717,12 @@ class AttachmentMediaView(AttachmentView):
         operation_id="getAttachmentMedia",
         tags=[TAG],
         responses={
-            200: openapi.Response("Media bytes"),
-            206: openapi.Response("Partial media bytes"),
+            200: openapi.Response(
+                "Media bytes", openapi.Schema(type=openapi.TYPE_FILE)
+            ),
+            206: openapi.Response(
+                "Partial media bytes", openapi.Schema(type=openapi.TYPE_FILE)
+            ),
             304: openapi.Response("Not modified"),
             404: openapi.Response("Not found"),
             416: openapi.Response("Range not satisfiable"),
@@ -758,19 +764,41 @@ class AttachmentMediaView(AttachmentView):
         return attachment_media.private(HttpResponse(status=404))
 
 
+def _validated_writer_request(serializer, *, responses):
+    """The shared validator reads request.data; check the writer before entering it."""
+
+    def invalid(_errors):
+        raise AttachmentError("invalid_request")
+
+    def decorate(post):
+        validated = validated_request(
+            request_serializer=serializer,
+            reject_unknown_fields=True,
+            validation_error_response=invalid,
+            responses=responses,
+        )(post)
+
+        @wraps(validated)
+        def authorized(view, request, project_id):
+            writer, scope = view.writer(request, project_id)
+            broker.check_writer(writer, scope)
+            return validated(view, request, project_id, writer=writer, scope=scope)
+
+        return authorized
+
+    return decorate
+
+
 class AttachmentProviderRegistrationView(AttachmentView):
     """Product control route; not an addition to F01 import payloads."""
 
-    # Documentation only: preserve authorization and raw-body parsing order.
-    @swagger_auto_schema(
-        request_body=AttachmentProviderRegistrationRequestSerializer,
+    @_validated_writer_request(
+        AttachmentProviderRegistrationRequestSerializer,
         responses={201: AttachmentProviderRegistrationResponseSerializer},
     )
-    def post(self, request, project_id):
+    def post(self, request, project_id, *, writer, scope):
         from tracer.services.attachments import provider_recordings
 
-        writer, scope = self.writer(request, project_id)
-        broker.check_writer(writer, scope)
         body = request.data
         required = {
             "connection_id",
@@ -827,18 +855,15 @@ class AttachmentProviderLookupView(AttachmentView):
 class AttachmentSourceEnvelopeView(AttachmentView):
     """Resolve a registered source to its sealed reference; never accept a URL."""
 
-    # Documentation only: preserve authorization and raw-body parsing order.
-    @swagger_auto_schema(
-        request_body=AttachmentSourceEnvelopeRequestSerializer,
+    @_validated_writer_request(
+        AttachmentSourceEnvelopeRequestSerializer,
         responses={200: AttachmentSourceEnvelopeResponseSerializer},
     )
-    def post(self, request, project_id):
+    def post(self, request, project_id, *, writer, scope):
         from tracer.models.attachment import CaptureSession
         from tracer.services.attachments import provider_recordings, source_providers
         from tracer.services.attachments.interfaces import SourceRef
 
-        writer, scope = self.writer(request, project_id)
-        broker.check_writer(writer, scope)
         body = request.data
         if not isinstance(body, dict) or set(body) != {"source"}:
             raise AttachmentError("invalid_request")

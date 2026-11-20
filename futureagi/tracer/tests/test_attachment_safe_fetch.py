@@ -1,7 +1,7 @@
 """SSRF-safe importer transport against a real loopback TLS server.
 
-The only injected seam is address authorization (so the loopback test server
-is reachable); everything else, including TLS verification, is the real code.
+The fixture routes an approved HTTPS origin to a loopback TLS server.
+Hostname, certificate, revision and response checks use the production client.
 """
 
 import datetime
@@ -10,6 +10,7 @@ import io
 import socket
 import ssl
 import threading
+from dataclasses import replace
 
 import pytest
 from cryptography import x509
@@ -76,6 +77,7 @@ def test_public_unicast_allowed(address):
         "https://xmedia.example.com/a",
         "https://media.example.com/a\r\nHost: x",
         "ftp://media.example.com/a",
+        "https://media.example.com:8443/a",
         "https://media.example.com%2f@evil.com/",
         "",
         None,
@@ -119,6 +121,19 @@ def test_any_private_answer_denies_the_host():
     assert safe_fetch.resolve(
         "media.example.com", 443, getaddrinfo=answers("8.8.8.8", "1.1.1.1")
     ) == ["8.8.8.8", "1.1.1.1"]
+
+
+def test_busy_resolver_defers_without_starting_another_lookup(monkeypatch):
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(safe_fetch, "_DNS_SLOTS", slots)
+    assert slots.acquire(blocking=False)
+    with pytest.raises(AttachmentError, match="source_unavailable"):
+        safe_fetch.resolve("media.example.com", 443, getaddrinfo=answers("8.8.8.8"))
+    slots.release()
+    for _ in range(2):
+        assert safe_fetch.resolve(
+            "media.example.com", 443, getaddrinfo=answers("8.8.8.8")
+        ) == ["8.8.8.8"]
 
 
 def _certificate(tmp_path, name):
@@ -209,11 +224,12 @@ def server(tmp_path):
 def source(port, cert, *, host="media.example.com", window=4096):
     client = ssl.create_default_context(cafile=str(cert))
     destination = safe_fetch.parse_destination(
-        f"https://{host}:{port}/rec.wav?sig=canary-signature",
+        f"https://{host}/rec.wav?sig=canary-signature",
         approved_hosts=(host,),
     )
     return safe_fetch.RangeSource(
-        destination=destination,
+        destination=replace(destination, port=port),
+        generation=ETAG,
         total_bytes=len(BODY),
         window=window,
         timeout_seconds=10,
@@ -243,7 +259,7 @@ def test_exact_ranges_pinned_and_header_minimal(server, monkeypatch):
         lowered = {k.lower() for k in headers}
         assert "authorization" not in lowered and "cookie" not in lowered
         assert headers["Accept-Encoding"] == "identity"
-    assert all(h.get("If-Match") == ETAG for h in Handler.seen[1:])
+    assert all(h.get("If-Match") == ETAG for h in Handler.seen)
 
 
 @pytest.mark.parametrize(
@@ -253,9 +269,9 @@ def test_exact_ranges_pinned_and_header_minimal(server, monkeypatch):
         ("redirect", "source_unavailable"),  # never followed
         ("short", "validation_failed"),
         ("total", "validation_failed"),  # total length changed
-        ("etag", "validation_failed"),  # generation changed between ranges
+        ("etag", "snapshot_changed"),  # generation changed between ranges
         ("gzip", "validation_failed"),
-        ("precondition", "conflict"),
+        ("precondition", "snapshot_changed"),
     ],
 )
 def test_unsafe_or_inconsistent_responses_rejected(server, mode, code):

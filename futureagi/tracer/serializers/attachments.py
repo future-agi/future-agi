@@ -213,26 +213,6 @@ class AttachmentStatusResponseSerializer(serializers.Serializer):
     reason = serializers.ChoiceField(choices=REASONS)
 
 
-class AttachmentImportRequestSerializer(serializers.Serializer):
-    mode = serializers.CharField(required=False)
-    recording = serializers.DictField(required=False)
-    upload = serializers.DictField(required=False)
-
-    def get_fields(self) -> dict[str, serializers.Field]:
-        # The F01 member "source" is added here: a class attribute of that name
-        # would shadow Field.source. DRF reads the same fields, in this order.
-        fields = super().get_fields()
-        fields["source"] = serializers.DictField()
-        return fields
-
-
-class AttachmentImportResponseSerializer(serializers.Serializer):
-    mode = serializers.CharField()
-    job_id = serializers.UUIDField()
-    recording_id = serializers.UUIDField()
-    state = serializers.CharField()
-
-
 class AttachmentImportStatusResponseSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     state = serializers.ChoiceField(choices=STATUSES)
@@ -470,6 +450,55 @@ class AttachmentControlImportSourceField(serializers.JSONField):
         swagger_schema_fields = {
             "type": "object",
             "x-oneOf": _control_f01_schema("ImportSource")["oneOf"],
+        }
+
+
+class AttachmentCompletedRecordingImportSerializer(serializers.Serializer):
+    schema_version = serializers.IntegerField(min_value=1, max_value=1)
+    association = AttachmentControlAssociationSerializer()
+    policy_version = serializers.CharField(max_length=128)
+    deletion_generation = serializers.IntegerField(min_value=0)
+    mime_type = serializers.ChoiceField(
+        choices=_CONTROL_F01["CompletedRecordingImport"]["properties"]["mime_type"][
+            "enum"
+        ]
+    )
+    direction = serializers.ChoiceField(choices=DIRECTIONS)
+    source_kind = serializers.ChoiceField(choices=("ProviderFile", "RemoteUrl"))
+    recording_id = AttachmentControlUUIDField()
+    modality = serializers.ChoiceField(choices=("audio",))
+    declared_bytes = serializers.IntegerField(min_value=1, max_value=1073741824)
+    declared_duration_ms = serializers.IntegerField(min_value=1, max_value=7200000)
+
+
+class AttachmentImportRequestSerializer(serializers.Serializer):
+    mode = serializers.ChoiceField(choices=("completed_recording",), required=False)
+    recording = AttachmentCompletedRecordingImportSerializer(required=False)
+    upload = AttachmentUploadRequestSerializer(required=False)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        fields["source"] = AttachmentControlImportSourceField()
+        return fields
+
+    class Meta:
+        swagger_schema_fields = {
+            "additionalProperties": False,
+            "x-oneOf": _control_f01_schema("ImportRequest")["oneOf"],
+        }
+
+
+class AttachmentImportResponseSerializer(serializers.Serializer):
+    mode = serializers.ChoiceField(choices=("completed_recording",), required=False)
+    job_id = AttachmentControlUUIDField()
+    upload_id = AttachmentControlUUIDField(required=False)
+    recording_id = AttachmentControlUUIDField(required=False)
+    state = serializers.ChoiceField(choices=("importing",))
+
+    class Meta:
+        swagger_schema_fields = {
+            "additionalProperties": False,
+            "x-oneOf": _control_f01_schema("ImportResponse")["oneOf"],
         }
 
 

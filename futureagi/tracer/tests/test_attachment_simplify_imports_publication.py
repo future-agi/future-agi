@@ -232,25 +232,28 @@ def test_single_validation_outside_transaction_then_atomic_publication(
     derivatives.enqueue_for_asset_locked = lambda *_: calls.append("derivatives")
     uploads = types.ModuleType("tracer.services.attachments.uploads")
 
-    def settle(*_args, **_kwargs):
-        assert not active and job.state == "ready"
-        calls.append("settle")
-
-    uploads.settle = settle
-    # The unified inline receipt precedes enqueue in the same transaction.
-    # Keep the legacy post-commit settlement expectation visible below.
+    uploads.settle = Mock(side_effect=AssertionError("settlement precedes cleanup"))
     accounting = types.ModuleType("tracer.services.attachments.accounting")
 
     def receipt(allocation, *, attachment, outcome):
         assert active and allocation is target and attachment is asset
         assert outcome == target.state == asset.state == "ready"
+        calls.append("receipt")
 
     accounting.receipt_locked = Mock(side_effect=receipt)
     for module in (validation, publication, derivatives, uploads, accounting):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     lane.publish(job_id=job.id, fence=fence, segment_ids=(), manifest=None)
     accounting.receipt_locked.assert_called_once()
-    assert calls == ["remote", "validate", "remote", "publish", "derivatives", "settle"]
+    assert calls == [
+        "remote",
+        "validate",
+        "remote",
+        "publish",
+        "receipt",
+        "derivatives",
+    ]
+    uploads.settle.assert_not_called()
     assert target.state == job.state == asset.state == "ready"
     target.save.assert_called_once_with(update_fields=["state"])
     assert lane.AttachmentUpload.objects.get(pk=target.id) is target

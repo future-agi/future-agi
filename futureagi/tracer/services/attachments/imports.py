@@ -1044,7 +1044,7 @@ def claim(job_id, *, scope_id, now):
             scope_id=scope_id, pool_keys=(capacity.IMPORT_POOL_KEY,)
         )
         with _locked_job_rows(job_id, scope_id=scope_id) as rows:
-            job, _, _, target, _ = rows
+            job, _, _, target, asset = rows
             if job.state in TERMINAL_RECORDING_STATES or (
                 job.lease_until and job.lease_until > now
             ):
@@ -1058,6 +1058,7 @@ def claim(job_id, *, scope_id, now):
                 _retire_locked(
                     job,
                     target,
+                    asset,
                     error.code,
                     _terminal_denial(error.code),
                     claim_denied=True,
@@ -1878,14 +1879,14 @@ def publish(*, job_id, fence, segment_ids, manifest):
 def _retire(job_id, fence, *, reason, terminal=None):
     with (
         transaction.atomic(),
-        _locked_job(job_id, authorize=False) as (job, _, _, target, _),
+        _locked_job(job_id, authorize=False) as (job, _, _, target, asset),
     ):
         if (job.lease_token, job.lease_epoch) != (
             fence.token,
             fence.epoch,
         ) or job.state in TERMINAL_RECORDING_STATES:
             return
-        _retire_locked(job, target, reason, terminal)
+        _retire_locked(job, target, asset, reason, terminal)
 
 
 def _terminal_denial(code):
@@ -1902,7 +1903,16 @@ def _log_deferred(job_id, code):
     )
 
 
-def _retire_locked(job, target, reason, terminal, *, claim_denied=False):
+def _retire_targets(target, asset, terminal):
+    # Both rows are locked by _locked_job_rows. Whole recordings have no asset
+    # at this point; a single import owns both an upload and its pending asset.
+    for row in (target, asset):
+        if row is not None and row.state not in TERMINAL_RECORDING_STATES:
+            row.state = terminal
+            row.save(update_fields=["state"])
+
+
+def _retire_locked(job, target, asset, reason, terminal, *, claim_denied=False):
     job.reason = public_reason(reason)
     # The schema deliberately forbids writing->idle. A transient attempt
     # leaves the old lease to expire; only a new epoch may enter recovery.
@@ -1920,9 +1930,7 @@ def _retire_locked(job, target, reason, terminal, *, claim_denied=False):
         fields += ["lease_phase", "lease_token", "lease_until"]
         job.state, job.finished_at = terminal, timezone.now()
         fields += ["state", "finished_at"]
-        if target.state not in TERMINAL_RECORDING_STATES:
-            target.state = terminal
-            target.save(update_fields=["state"])
+        _retire_targets(target, asset, terminal)
     job.save(update_fields=fields)
 
 
@@ -1992,7 +2000,7 @@ def run(job_id, *, scope_id, storage=None, source_factory=None):
 def _expire(job_id, now):
     with (
         transaction.atomic(),
-        _locked_job(job_id, authorize=False) as (job, _, _, target, _),
+        _locked_job(job_id, authorize=False) as (job, _, _, target, asset),
     ):
         if job.state in TERMINAL_RECORDING_STATES:
             return False
@@ -2017,9 +2025,7 @@ def _expire(job_id, now):
                 "lease_until",
             ]
         )
-        if target.state not in TERMINAL_RECORDING_STATES:
-            target.state = job.state
-            target.save(update_fields=["state"])
+        _retire_targets(target, asset, job.state)
         return True
 
 
