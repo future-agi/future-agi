@@ -16,7 +16,7 @@ export function attachmentTransport(source) {
   }
   update("streamAttachmentContent", [
     [
-      /JSON\.stringify\(streamAttachmentContentBody\)/,
+      /JSON\.stringify\(\s*streamAttachmentContentBody\s*,?\s*\)/,
       "streamAttachmentContentBody",
     ],
   ]);
