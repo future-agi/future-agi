@@ -172,6 +172,30 @@ def _connected_build_source(runtime: Any, payload: dict[str, Any]) -> dict[str, 
     return {**(payload.get("source") or {}), **version_source(runtime)}
 
 
+def _environment_build_runtime(
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
+) -> Any:
+    from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.harness_agent_versions import environment_owned
+
+    metadata = payload.get("metadata") or {}
+    try:
+        definition_id = uuid.UUID(str(metadata.get("agent_definition_id") or ""))
+        version_id = uuid.UUID(str(metadata.get("agent_version_id") or ""))
+    except ValueError:
+        return None
+    if not environment_owned(definition_id):
+        return None
+    return HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_definition_id=definition_id,
+        agent_version_id=version_id,
+        agent_version__deleted=False,
+        agent_definition__organization_id=organization_id,
+        agent_definition__workspace_id=workspace_id,
+        agent_definition__deleted=False,
+    ).first()
+
+
 def get_harness_provider():
     """Return the configured public harness backend."""
     name = str(getattr(settings, "HARNESS_PROVIDER", "hosted") or "hosted").lower()
@@ -1379,6 +1403,7 @@ def _environment_agent_maker(
     user,
     repository_id=None,
     workspace=None,
+    version_bound=False,
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
     version inside the job's transaction."""
@@ -1388,13 +1413,19 @@ def _environment_agent_maker(
         ensure_environment_agent,
         submitted_credentials,
     )
+    from simulate.services.harness_credentials import is_names_only_ref
 
-    secret_submitted = submitted_credentials(
-        organization, payload["agent"]["secret_refs"], secret_values
-    )
+    secret_refs = payload["agent"]["secret_refs"]
+    if version_bound:
+        secret_refs = {
+            alias: ref
+            for alias, ref in secret_refs.items()
+            if not is_names_only_ref(ref)
+        }
+    secret_submitted = submitted_credentials(organization, secret_refs, secret_values)
     check = (
         CreationCheck(report={}, required_variable_names=[])
-        if _builds_connected_agent(organization, workspace, payload)
+        if version_bound or _builds_connected_agent(organization, workspace, payload)
         else check_creation_credentials(
             organization, payload, secret_submitted, analysis
         )
@@ -1461,6 +1492,7 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
+        from simulate.serializers.harness_job import names_agent_version
         from simulate.services.harness_agent_versions import advisory_xact_lock
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
@@ -1494,15 +1526,39 @@ class HostedHarnessProvider:
         # This uses only references/configuration and deployment env presence.
         # Definitive launch validation runs again after vault resolution.
         workspace = request_workspace(request)
+        version_bound = False
         try:
             connected_runtime = _connected_build_runtime(
                 organization.id, getattr(workspace, "id", None), payload
             )
             if connected_runtime is not None:
                 payload["source"] = _connected_build_source(connected_runtime, payload)
+            else:
+                connected_runtime = _environment_build_runtime(
+                    organization.id, getattr(workspace, "id", None), payload
+                )
+                if connected_runtime is not None:
+                    from simulate.services.harness_agent_versions import (
+                        apply_agent_version,
+                    )
+
+                    apply_agent_version(payload, connected_runtime)
+                    version_bound = True
         except (ValueError, ValidationError):
             connected_runtime = None
+            version_bound = False
         connected_build = connected_runtime is not None
+        if (
+            not connected_build
+            and (payload.get("source") or {}).get("kind") == "provider"
+            and names_agent_version(payload["agent"], payload.get("metadata"))
+        ):
+            refusal = HostedHarnessError(
+                "version_not_buildable",
+                "This agent version can't be built from here",
+                status_code=409,
+            )
+            return Response(refusal.as_dict(), status=refusal.status_code)
         available_names: list[str] = []
         if connected_build:
             from simulate.services.harness_agent_versions import (
@@ -1606,6 +1662,7 @@ class HostedHarnessProvider:
                         request.user,
                         repository_id,
                         workspace=workspace,
+                        version_bound=version_bound,
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)

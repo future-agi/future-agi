@@ -1049,3 +1049,100 @@ class TestConnectedAgentCreationCheck:
 
         assert len(calls.asked) == 1
         assert calls.made == [self.CHECKED]
+
+
+def _from_version(job, version_id=None):
+    version = job.agent_version
+    return _body(
+        source={"kind": "provider", "visibility": "public"},
+        metadata={
+            "name": "from version",
+            "agent_definition_id": str(version.agent_definition_id),
+            "agent_version_id": str(version_id or version.id),
+        },
+    )
+
+
+class TestBuildFromEnvironmentVersion:
+    @pytest.mark.parametrize("made", [_vapi, _phone, _livekit])
+    def test_pins_the_named_version_and_takes_its_target(
+        self, client, user, workspace, gates, made
+    ):
+        first = _job(_post(client, workspace, made()))
+        definition_id = first.agent_version.agent_definition_id
+        agents = _definitions(user.organization).count()
+        versions = AgentVersion.objects.filter(
+            agent_definition_id=definition_id
+        ).count()
+
+        job = _job(_post(client, workspace, _from_version(first)))
+
+        side = _side(first.agent_version_id)
+        stored = side.agent_payload
+        agent = job.payload["agent"]
+        assert job.agent_version_id == first.agent_version_id
+        assert agent["connector"] == stored["connector"]
+        assert agent["config"] == stored["config"]
+        assert agent["secret_refs"] == {
+            name: agent_version_secret_ref(name)
+            for name in service.version_credential_names(side)
+        }
+        assert job.payload["source"]["kind"] == "provider"
+        metadata = job.payload["metadata"]
+        assert metadata["agent_definition_owner"] == "environment"
+        assert metadata["build_agent_version_id"] == str(first.agent_version_id)
+        assert _definitions(user.organization).count() == agents
+        assert (
+            AgentVersion.objects.filter(agent_definition_id=definition_id).count()
+            == versions
+        )
+
+    def test_the_version_lends_its_provider_key(self, client, user, workspace, gates):
+        first = _job(_post(client, workspace, _vapi()))
+
+        job = _job(_post(client, workspace, _from_version(first)))
+
+        assert job.payload["agent"]["config"]["assistant_id"] == "asst-1"
+        assert job.payload["agent"]["secret_refs"] == {
+            "VAPI_API_KEY": agent_version_secret_ref("VAPI_API_KEY")
+        }
+        _no_values(json.dumps(job.payload))
+
+    def test_a_version_of_another_agent_is_refused(
+        self, client, user, workspace, gates
+    ):
+        first = _job(_post(client, workspace, _vapi()))
+        other = _job(_post(client, workspace, _vapi(assistant="asst-2")))
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+
+        response = _post(
+            client, workspace, _from_version(first, other.agent_version_id)
+        )
+
+        assert response.status_code == 409, response.content
+        assert response.json()["error"] == "version_not_buildable"
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+    def test_a_version_that_has_not_passed_its_check_is_refused(
+        self, client, user, workspace, gates
+    ):
+        first = _job(_post(client, workspace, _vapi()))
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=first.agent_version_id
+        ).update(preflight_status=HarnessAgentVersionRuntime.PreflightStatus.FAILED)
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+
+        response = _post(client, workspace, _from_version(first))
+
+        assert response.status_code == 409, response.content
+        assert response.json()["error"] == "version_not_ready"
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+    def test_a_provider_source_without_a_version_is_refused(
+        self, client, user, workspace, gates
+    ):
+        body = _body(source={"kind": "provider", "visibility": "public"})
+
+        response = _post(client, workspace, body)
+
+        assert response.status_code == 400, response.content

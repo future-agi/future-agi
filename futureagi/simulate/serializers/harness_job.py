@@ -169,6 +169,16 @@ VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 # Connectors that reach an already-running agent, so the run carries no source tree.
 PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
 
+
+def names_agent_version(agent, metadata) -> bool:
+    metadata = metadata or {}
+    return (
+        agent.get("connector") == "auto"
+        and bool(metadata.get("agent_definition_id"))
+        and bool(metadata.get("agent_version_id"))
+    )
+
+
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
 _PHONE_FIXED_NATIONAL_DIGITS = (("91", 10), ("1", 10))
@@ -617,9 +627,13 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                     }
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
-        elif source["kind"] == "provider" and (
-            agent["connector"] not in PROVIDER_TARGET_CONNECTORS
-            or not provider_target_mode
+        elif (
+            source["kind"] == "provider"
+            and not names_agent_version(agent, attrs.get("metadata"))
+            and (
+                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
+                or not provider_target_mode
+            )
         ):
             raise serializers.ValidationError(
                 {
