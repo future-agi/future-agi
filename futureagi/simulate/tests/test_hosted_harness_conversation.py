@@ -2632,7 +2632,7 @@ def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_
 
 
 @pytest.mark.django_db
-def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
+def test_a_question_whose_turn_ended_unanswered_closes_with_the_turn(
     organization,
 ):
     job, _ = create_hosted_job(
@@ -2689,19 +2689,16 @@ def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
         message_id=question,
         payload={"prompt": "Confirm this change"},
     )
-    # The turn that asked ends unanswered (stopped), so the question stays open for now.
+    # The turn that asked ends unanswered: its question ends with it, and the chat is idle, not waiting.
     emit(
         "turn_completed",
         acknowledged_through=1,
         payload={"command_message_id": str(rework.id)},
     )
     conversation.refresh_from_db()
-    assert (conversation.state, conversation.blocking_input["message_id"]) == (
-        "waiting_for_user",
-        question,
-    )
+    assert (conversation.state, conversation.blocking_input) == ("warm_idle", None)
 
-    # The person writes in the chat instead of answering; that message runs a turn of its own.
+    # The person writes in the chat; that message runs a turn of its own, which asks nothing.
     _c, typed, _ = enqueue_message(
         job, content="No, not this one", client_request_id="typed"
     )
