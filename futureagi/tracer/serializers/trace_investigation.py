@@ -85,6 +85,10 @@ class InvestigationLimitsSerializer(serializers.Serializer):
     max_output_tokens_total = serializers.IntegerField(min_value=1)
     max_evidence_bytes = serializers.IntegerField(min_value=1)
     max_tool_result_bytes = serializers.IntegerField(min_value=1)
+    # Reader pipeline; absent on attempts claimed before it existed.
+    max_reader_calls = serializers.IntegerField(min_value=0, required=False)
+    max_check_calls = serializers.IntegerField(min_value=0, required=False)
+    min_check_score = serializers.IntegerField(min_value=1, max_value=5, required=False)
 
 
 class InvestigationEvidenceWindowSerializer(serializers.Serializer):
