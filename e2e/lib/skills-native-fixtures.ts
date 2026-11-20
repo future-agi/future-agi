@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { test as base, expect } from './fixtures';
+import type { Req } from './skills-r3/j2-fixture';
 
 // One native-runtime service and one provider fixture namespace per local
 // standalone stack. Do not replace another worker's model rules mid-job.
@@ -24,4 +25,14 @@ export const test = base.extend<{ nativeNamespace: string }>({
     }
   },
 });
+// Availability alone means only that two URLs are configured. Ask the app
+// for the live, authenticated guest measurement before setting up a native run.
+export async function measuredConfiguration(req: Req, contextId: string) {
+  const root = `contexts/${contextId}/native/`;
+  const { runtime } = await req('GET', `${root}targets/`);
+  expect(runtime, 'Standalone native runtime is not configured').toMatchObject({ available: true, evidence_class: 'synthetic fixture' });
+  const { configuration } = await req('GET', `${root}runtime-configuration/`);
+  if (process.env.CTXHUB_APP_COMMIT) expect(configuration.code_commit).toBe(process.env.CTXHUB_APP_COMMIT);
+  return configuration;
+}
 export { expect };
