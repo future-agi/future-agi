@@ -709,17 +709,25 @@ def test_uncaptured_evidence_warns(user, workspace, storage, monkeypatch):
         "simulate.services.harness_readiness.report.resolve_pairing",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(
-        "simulate.services.harness_readiness.report.readiness_report",
-        lambda pairing, **kwargs: {
+    reads = []
+
+    def report(pairing, **kwargs):
+        reads.append(pairing)
+        return {
             "rows": [
                 {"id": "tool_routing", "status": "blocked"},
                 {"id": "state", "status": "supported"},
             ]
-        },
+        }
+
+    monkeypatch.setattr(
+        "simulate.services.harness_readiness.report.readiness_report", report
     )
 
     views = _views(environment)
+
+    # The pair's readiness is read once for all its cases, not once per case.
+    assert len(reads) == 1
 
     assert (views[REFUND_KEYS[0]]["state"], views[REFUND_KEYS[0]]["warning"]) == (
         "active",

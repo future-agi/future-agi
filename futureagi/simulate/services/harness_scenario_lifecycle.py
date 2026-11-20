@@ -580,6 +580,7 @@ def scenario_lifecycle(
     failed = failed_changes(environment) if default else {}
     good: LifecycleState = "active" if saved else "validated"
     views: dict[str, LifecycleView] = {}
+    not_captured: set[str] | None = None
     for key in contents:
         row: Mapping[str, Any] = rows.get(key) or {}
         entry = proofs.get(key) if isinstance(proofs, Mapping) else None
@@ -720,10 +721,12 @@ def scenario_lifecycle(
             view["state"] in ("validated", "active", "kept_as_written")
             and not view["warning"]
         ):
-            missing = _uncaptured_check(
-                entry,
-                uncaptured(environment, suite_version, environment_version, proofs),
-            )
+            if not_captured is None:
+                # The pair's readiness, read once for every case.
+                not_captured = uncaptured(
+                    environment, suite_version, environment_version, proofs
+                )
+            missing = _uncaptured_check(entry, not_captured)
             if missing is not None:
                 view["warning"] = "evidence_not_captured"
                 view["warning_text"] = warning_text(
