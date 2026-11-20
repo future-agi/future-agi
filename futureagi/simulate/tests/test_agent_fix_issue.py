@@ -945,6 +945,24 @@ class TestStop:
         job.refresh_from_db()
         assert job.ending["code"] == "stopped"
 
+    def test_a_stop_whose_cancels_both_fail_still_ends_the_job(
+        self, environment, issue, user, boundaries
+    ):
+        job, _case = _in_review(environment, issue, user)
+        baseline = _run(environment, key="baseline-both-fail", state="running")
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(
+            baseline_run=baseline
+        )
+        job.refresh_from_db()
+        boundaries.cancel.side_effect = RuntimeError("temporal is unreachable")
+
+        with patch("simulate.services.agent_fix_issue.HostedHarnessGateway") as gateway:
+            gateway.return_value.cancel.side_effect = RuntimeError("gateway is down")
+            stopped = jobs.stop_issue_job(job)
+
+        assert stopped.ending["code"] == "stopped"
+        gateway.return_value.cancel.assert_called_once()
+
     def test_stopping_again_cancels_a_baseline_the_first_stop_left_running(
         self, environment, issue, user, boundaries
     ):

@@ -574,7 +574,14 @@ def _cancel_run(run: HostedHarnessJob) -> None:
         cancel_hosted_harness_gateway_workflow(str(run.id))
     except Exception:
         logger.exception("agent_fix_issue_baseline_cancel_failed", run=str(run.id))
-        HostedHarnessGateway().cancel(run, reason="user_canceled")
+        try:
+            HostedHarnessGateway().cancel(run, reason="user_canceled")
+        except Exception:
+            # Stop, and a launch whose workflow would not start, still answer: a
+            # later Stop of the ended job cancels the baseline it left running.
+            logger.exception(
+                "agent_fix_issue_baseline_gateway_cancel_failed", run=str(run.id)
+            )
 
 
 def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
