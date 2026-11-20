@@ -69054,6 +69054,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-nullable": true,
           },
         },
+        lifecycle_counts: {
+          $ref: "#/definitions/HarnessLifecycleCounts",
+        },
       },
     },
     HarnessConversationOverviewQuery: {
@@ -109610,6 +109613,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessLifecycleCounts: {
+      description: "Present for a versioned environment.",
+      required: [
+        "draft",
+        "validated",
+        "active",
+        "kept_as_written",
+        "archived",
+        "proved",
+        "not_proved",
+        "legacy_without_control",
+      ],
+      type: "object",
+      properties: {
+        draft: {
+          title: "Draft",
+          type: "integer",
+        },
+        validated: {
+          title: "Validated",
+          type: "integer",
+        },
+        active: {
+          title: "Active",
+          type: "integer",
+        },
+        kept_as_written: {
+          title: "Kept as written",
+          type: "integer",
+        },
+        archived: {
+          title: "Archived",
+          type: "integer",
+        },
+        proved: {
+          title: "Proved",
+          type: "integer",
+        },
+        not_proved: {
+          title: "Not proved",
+          type: "integer",
+        },
+        legacy_without_control: {
+          title: "Legacy without control",
+          description:
+            "Legacy cases running kept as written with no negative control: Validate and rebuild keep them running as written, each with a warning that it has no negative control.",
+          type: "integer",
+        },
+      },
+    },
     HarnessConversationFailedScenario: {
       required: ["scenario_key"],
       type: "object",
@@ -112657,56 +112710,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "Why a rebuild that brought it back could not prove it; empty otherwise.",
           type: "string",
-        },
-      },
-    },
-    HarnessLifecycleCounts: {
-      description: "Present for a versioned environment.",
-      required: [
-        "draft",
-        "validated",
-        "active",
-        "kept_as_written",
-        "archived",
-        "proved",
-        "not_proved",
-        "legacy_without_control",
-      ],
-      type: "object",
-      properties: {
-        draft: {
-          title: "Draft",
-          type: "integer",
-        },
-        validated: {
-          title: "Validated",
-          type: "integer",
-        },
-        active: {
-          title: "Active",
-          type: "integer",
-        },
-        kept_as_written: {
-          title: "Kept as written",
-          type: "integer",
-        },
-        archived: {
-          title: "Archived",
-          type: "integer",
-        },
-        proved: {
-          title: "Proved",
-          type: "integer",
-        },
-        not_proved: {
-          title: "Not proved",
-          type: "integer",
-        },
-        legacy_without_control: {
-          title: "Legacy without control",
-          description:
-            "Legacy cases running kept as written with no negative control: Validate and rebuild keep them running as written, each with a warning that it has no negative control.",
-          type: "integer",
         },
       },
     },

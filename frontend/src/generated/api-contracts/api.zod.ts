@@ -56007,6 +56007,23 @@ export const SimulateApiHarnessConversationsOverviewResponse = zod.object({
     .describe(
       "The unsaved changes by piece, where the environment has drafts.",
     ),
+  lifecycle_counts: zod
+    .object({
+      draft: zod.number(),
+      validated: zod.number(),
+      active: zod.number(),
+      kept_as_written: zod.number(),
+      archived: zod.number(),
+      proved: zod.number(),
+      not_proved: zod.number(),
+      legacy_without_control: zod
+        .number()
+        .describe(
+          "Legacy cases running kept as written with no negative control: Validate and rebuild keep them running as written, each with a warning that it has no negative control.",
+        ),
+    })
+    .optional()
+    .describe("Present for a versioned environment."),
 });
 
 export const SimulateApiHarnessConversationsPublishParams = zod.object({

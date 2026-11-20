@@ -156962,6 +156962,9 @@
                         "type": "string",
                         "x-nullable": true
                     }
+                },
+                "lifecycle_counts": {
+                    "$ref": "#/definitions/HarnessLifecycleCounts"
                 }
             }
         },

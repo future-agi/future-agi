@@ -28,6 +28,9 @@ from simulate.serializers.harness_job import (
     HarnessRunWarningSerializer,
     phone_number_error,
 )
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessLifecycleCountsSerializer,
+)
 from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
 )
@@ -1108,22 +1111,6 @@ class HarnessScenarioLifecycleSerializer(serializers.Serializer):
     source_changed_version_id = serializers.CharField(allow_null=True)
     must_pass = serializers.BooleanField()
     negative_controls = HarnessNegativeControlSerializer(many=True)
-
-
-class HarnessLifecycleCountsSerializer(serializers.Serializer):
-    """Cases per state, and proved / not proved over every case not archived."""
-
-    draft = serializers.IntegerField()
-    validated = serializers.IntegerField()
-    active = serializers.IntegerField()
-    kept_as_written = serializers.IntegerField()
-    archived = serializers.IntegerField()
-    proved = serializers.IntegerField()
-    not_proved = serializers.IntegerField()
-    legacy_without_control = serializers.IntegerField(
-        help_text="Legacy cases running kept as written with no negative control: Validate and rebuild keep them "
-        "running as written, each with a warning that it has no negative control."
-    )
 
 
 class HarnessScenarioRowSerializer(serializers.Serializer):

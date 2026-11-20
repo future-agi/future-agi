@@ -25695,6 +25695,7 @@ export interface HarnessConversationOverviewApi {
   earlier_messages: HarnessConversationOverviewApiEarlierMessagesItem[];
   /** The unsaved changes by piece, where the environment has drafts. */
   drafts?: HarnessConversationOverviewApiDrafts;
+  lifecycle_counts?: HarnessLifecycleCountsApi;
 }
 
 export interface HarnessConversationFailedScenarioApi {
