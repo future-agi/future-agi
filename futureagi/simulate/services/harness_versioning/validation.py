@@ -389,23 +389,23 @@ def live_validation(bundle_id: Any) -> HostedHarnessJob | None:
             state__in=_LIVE_STATES,
             payload__metadata__certify_only=True,
         )
-        .exclude(payload__metadata__scenario_proving="only")
+        .exclude(payload__metadata__contains={"scenario_proving": "only"})
         .order_by("-created_at")
         .first()
     )
 
 
-def live_check(bundle_id: Any) -> HostedHarnessJob | None:
-    """Any validation job still live on this bundle, prove-only jobs included."""
-    return (
-        HostedHarnessJob.no_workspace_objects.filter(
-            validation_jobs(),
-            assembled_bundle_id=bundle_id,
-            state__in=_LIVE_STATES,
-        )
-        .order_by("-created_at")
-        .first()
+def live_check(bundle_id: Any, *, reading: bool = True) -> HostedHarnessJob | None:
+    """Any validation job still live on this bundle, prove-only jobs included; without ``reading``, a job that
+    only reads the agent's tools is left out."""
+    jobs = HostedHarnessJob.no_workspace_objects.filter(
+        validation_jobs(),
+        assembled_bundle_id=bundle_id,
+        state__in=_LIVE_STATES,
     )
+    if not reading:
+        jobs = jobs.exclude(payload__metadata__contains={"agent_reading": "only"})
+    return jobs.order_by("-created_at").first()
 
 
 def validating(environment_id: Any, agent_version_id: Any) -> bool:
