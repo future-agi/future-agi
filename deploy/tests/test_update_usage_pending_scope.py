@@ -69,6 +69,7 @@ LATEST = (
     ('simulate','0116_harness_version_candidate'),
     ('simulate','0117_readiness_fix_run'),
     ('simulate','0117_scenario_lifecycle'),
+    ('simulate','0118_merge_0117_readiness_fix_run_0117_scenario_lifecycle'),
 )
 # Eight SQL additions shared with the SQL-only candidate. These identities
 # account for the graph; they are not safety declarations for opaque operations.
