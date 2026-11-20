@@ -100,7 +100,7 @@ from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     live_eval_specs,
 )
-from simulate.services.run_traces_v3 import CallUsage, run_usage
+from simulate.services.run_traces_v3 import CallUsage, run_traces_source, run_usage
 from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
@@ -522,6 +522,15 @@ def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
     if execution is None:
         return {}
     return run_usage(execution) or {}
+
+
+def measured_automatically(run: HostedHarnessJob) -> bool:
+    """Whether only the sandbox's own measuring could see the run's model calls: its agent
+    names no tracing, so any span carries the model, tokens and timing, never a prompt or
+    a reply."""
+    execution = run.test_execution
+    source = run_traces_source(execution) if execution is not None else None
+    return source is not None and source.measured_automatically
 
 
 def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
