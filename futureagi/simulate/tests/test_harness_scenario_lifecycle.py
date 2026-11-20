@@ -226,6 +226,35 @@ def test_the_chat_reads_the_removed_cases_and_a_restore_takes_back_its_key_and_r
     assert retired_keys(environment, [mismatched]) == [key]
 
 
+def test_a_case_removed_two_saves_ago_is_still_offered_from_the_last_saved_version_that_held_it(
+    user, workspace, storage
+):
+    from simulate.models import HostedHarnessJob
+    from simulate.models.harness_versioning import VersionStatus
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment, older, row, _document = _removed_case(
+        user, workspace, storage, "lc-removed-two-ago"
+    )
+    # Another save since: S3 is the default, S2 is an earlier saved version, and S1 still the last to hold the case.
+    middle = environment.suite_version
+    newest = _copy(middle, HarnessSuiteVersion, hash=middle.hash[:-4] + "last")
+    _members_of(middle, newest)
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        suite_version=newest
+    )
+    environment.refresh_from_db()
+
+    [removed] = removed_scenarios(environment)
+
+    # Saved versions keep their status once another becomes the default; only drafts and discarded ones are not saved.
+    assert {older.status, middle.status} == {VersionStatus.ACTIVE}
+    assert (removed["scenario_key"], removed["suite_version"]) == (
+        row.scenario_key,
+        str(older.id),
+    )
+
+
 def test_a_new_case_never_takes_an_archived_or_removed_row_on_either_pairing_path(
     user, workspace, storage
 ):
