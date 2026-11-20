@@ -954,6 +954,11 @@ def test_bootstrap_install_native_schema_uses_ch_password(
     # keep this double focused by treating that already-qualified extension as
     # complete after the bootstrap's packaged DDL is accepted.
     monkeypatch.setattr(cli.native, "inspect_skill_extension", Mock(return_value=()))
+    # The packaged 028 apply and its receipt go through apply_schema, which the
+    # read-only server double does not model; stub it so only native DDL is seen.
+    monkeypatch.setattr(cli.apply_schema, "ensure_versions_table", Mock())
+    monkeypatch.setattr(cli.apply_schema, "fetch_applied", Mock(return_value={}))
+    monkeypatch.setattr(cli.apply_schema, "apply_file", Mock())
     server = install_env(password)
     bootstrap_install.clickhouse_native_schema(lambda _: None, 120)
     assert server.connect.call_args.kwargs["username"] == USER

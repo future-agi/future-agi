@@ -157,6 +157,9 @@ class MemoryClient:
                 "names": tuple(self.definitions),
             }
             rows = [(n, *row) for n, row in self.tables.items()]
+        elif sql == "SELECT engine FROM system.databases WHERE name = currentDatabase()":
+            # The Skills extension refuses a replicated or remote database.
+            rows = [("Atomic",)]
         elif "FROM system.columns" in sql:
             rows = [
                 (n, col, *shape)

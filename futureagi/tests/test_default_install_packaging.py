@@ -532,8 +532,13 @@ def test_installer_build_args_are_declared_in_the_standalone_dockerfile(
     passed = set(re.findall(build_arg, standalone))
     assert {"BACKEND_IMAGE", "FI_COLLECTOR_IMAGE", "AGENTCC_GATEWAY_IMAGE"} <= passed
     assert passed <= _dockerfile_args()
+    # The frontend build takes only arguments frontend/Dockerfile declares.
+    frontend = set(
+        re.findall(build_arg, "\n".join(re.findall(r"^(?!.*FRONTEND_IMAGE=).*futureagi/frontend:.*$", text, re.M)))
+    )
+    assert frontend <= _dockerfile_args(ROOT / "frontend" / "Dockerfile")
     # The rest go to the backend build (futureagi/Dockerfile.oss).
-    backend = set(re.findall(build_arg, text)) - passed
+    backend = set(re.findall(build_arg, text)) - passed - frontend
     assert backend == {"IMAGE_VARIANT"}
     assert backend <= _dockerfile_args(ROOT / "futureagi" / "Dockerfile.oss")
 
