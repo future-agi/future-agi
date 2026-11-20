@@ -105,11 +105,19 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await page.getByRole('tab', { name: 'Tests', exact: true }).click();
   await page.getByRole('tab', {name:'Cases', exact:true}).click();
   await expect(page.getByRole('table', { name: 'Context regression cases' })).toContainText(requestText);
-  // The captured case sits beside the application target; text capture alone is never native evidence.
-  // With no application registered the answer check is the default, so choose the application test first.
+  // This context has no registered target. Only bin/e2e's standalone native overlay provides a runtime.
+  const expectRuntime = process.env.E2E_STACK === 'standalone' && process.env.E2E_STANDALONE_NETWORK === 'native';
+  expect(await read(`${root}native/targets/`)).toMatchObject({ runtime: { available: expectRuntime }, targets: [] });
   await page.getByRole('tab', {name:'Run a test', exact:true}).click();
   await page.getByRole('radio', { name: /^Test on the application/ }).check();
-  await expect(page.getByText('Application target', { exact: true })).toBeVisible();
+  const addTarget = page.getByRole('button', { name: 'Add application target', exact: true });
+  if (expectRuntime) {
+    await expect(page.getByText('Application target', { exact: true })).toBeVisible();
+    await expect(addTarget).toBeEnabled();
+  } else {
+    await expect(page.getByText('Application tests are off', { exact: true })).toBeVisible();
+    await expect(addTarget).toHaveCount(0);
+  }
   await page.getByRole('tab', {name:'Cases', exact:true}).click();
   await expect(page.getByText('Test cases', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('J2-context-tests.png'), animations: 'disabled' });
@@ -117,7 +125,9 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   await page.reload();
   await page.getByRole('tab', { name: 'Tests', exact: true }).click();
   await page.getByRole('tab', {name:'Cases', exact:true}).click();
-  await expect(page.getByRole('table', { name: 'Context regression cases' })).toBeVisible();
+  const darkCases = page.getByRole('table', { name: 'Context regression cases' });
+  await expect(darkCases).toBeVisible();
+  await expect(darkCases).toContainText(requestText);
   await page.screenshot({ path: testInfo.outputPath('J2-context-tests-dark.png'), animations: 'disabled' });
   await testInfo.attach('J2-capture-independent', { body: JSON.stringify({ evidenceClass: 'synthetic fixture', suite, capture: rows[0], expected, fallibility: ['wrong-source-rejected', 'changed-request-rejected'], nativeQualification: false }), contentType: 'application/json' });
   // Cloud-local configured input for a fresh registered-driver attempt. Never fetch credentials.
