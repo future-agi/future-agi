@@ -303,13 +303,15 @@ def _agents_by_run_test(jobs: list[HostedHarnessJob]) -> dict[Any, dict[str, Any
         deleted=False,
         agent_definition__isnull=False,
     ).select_related("agent_definition")
-    return {
-        run_test.id: {
-            "id": str(run_test.agent_definition.id),
-            "name": run_test.agent_definition.agent_name or None,
-        }
-        for run_test in run_tests
-    }
+    agents: dict[Any, dict[str, Any]] = {}
+    for run_test in run_tests:
+        agent = run_test.agent_definition
+        if agent is not None:
+            agents[run_test.id] = {
+                "id": str(agent.id),
+                "name": agent.agent_name or None,
+            }
+    return agents
 
 
 def version_ref(

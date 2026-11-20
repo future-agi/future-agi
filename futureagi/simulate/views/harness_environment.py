@@ -1294,7 +1294,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
-        response = paginator.get_paginated_response(environment_rows(page))
+        response = paginator.get_paginated_response(environment_rows(page or []))
         response.data["status_counts"] = status_counts(self._scoped_jobs(request))
         return response
 

@@ -8,12 +8,11 @@ import {
   NameCell,
   AgentCell,
   LastRunCell,
-  RunButtonCell,
 } from "./environmentTableCells";
 
 // No column sorts: the list API takes no ordering and always returns newest
 // first, so a sort arrow would promise something the server can't do.
-export function buildEnvironmentColumns({ onRowActions, onRun }) {
+export function buildEnvironmentColumns({ onRowActions }) {
   return [
     {
       id: "name",
@@ -100,14 +99,6 @@ export function buildEnvironmentColumns({ onRowActions, onRun }) {
           {relativeTime(getValue())}
         </Typography>
       ),
-    },
-    {
-      id: "run",
-      accessorKey: "id",
-      header: "",
-      size: 96,
-      enableSorting: false,
-      cell: (props) => <RunButtonCell {...props} onRun={onRun} />,
     },
     {
       id: "actions",
