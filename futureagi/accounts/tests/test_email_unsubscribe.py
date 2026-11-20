@@ -20,6 +20,8 @@ from tfc.utils import email_unsubscribe as eu
 from tfc.utils.email import email_helper
 
 URL = "/accounts/notifications/email/unsubscribe/"
+# The body a mail client sends with an RFC 8058 one-click unsubscribe.
+ONE_CLICK = {"List-Unsubscribe": "One-Click"}
 
 
 def _send(to, category=None, scope=None, template="integration_error.html"):
@@ -73,7 +75,7 @@ def monitor(db, organization, workspace):
 
 @pytest.mark.django_db
 class TestHeaders:
-    @override_settings(BASE_URL="https://api.acme.test")
+    @override_settings(FI_API_PUBLIC_URL="https://api.acme.test")
     def test_notification_mail_carries_one_click_headers_and_footer(self, user):
         (message,) = _send([user.email], eu.INTEGRATION_ERRORS)
 
@@ -204,7 +206,7 @@ class TestOneClick:
     def test_digest_category_uses_the_digest_flag(self, api_client, user):
         token = eu.make_token(*_link(user, eu.ANNOTATION_DIGEST))
 
-        api_client.post(f"{URL}?token={token}", {}, format="multipart")
+        api_client.post(f"{URL}?token={token}", ONE_CLICK, format="multipart")
 
         state = AnnotationNotificationState.objects.get(user=user)
         assert state.digest_enabled is False
@@ -216,7 +218,9 @@ class TestOneClick:
     )
     def test_invalid_token_changes_nothing(self, api_client, user, token):
         assert b"Link invalid" in api_client.get(URL, {"token": token}).content
-        response = api_client.post(f"{URL}?token={token}", {}, format="multipart")
+        response = api_client.post(
+            f"{URL}?token={token}", ONE_CLICK, format="multipart"
+        )
         assert response.status_code == 400
         assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
 
@@ -242,7 +246,9 @@ class TestOneClick:
         later = time.time() + days * 86400
 
         with mock.patch("django.core.signing.time.time", return_value=later):
-            response = api_client.post(f"{URL}?token={token}", {}, format="multipart")
+            response = api_client.post(
+                f"{URL}?token={token}", ONE_CLICK, format="multipart"
+            )
             page = api_client.get(URL, {"token": token}).content
 
         assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS) is works
@@ -255,7 +261,9 @@ class TestMonitorAlerts:
     def test_unsubscribe_removes_address_from_that_monitor(self, api_client, monitor):
         token = eu.make_token("lead@example.com", eu.MONITOR_ALERTS, str(monitor.id))
 
-        response = api_client.post(f"{URL}?token={token}", {}, format="multipart")
+        response = api_client.post(
+            f"{URL}?token={token}", ONE_CLICK, format="multipart"
+        )
 
         assert response.status_code == 200
         monitor.refresh_from_db()
@@ -266,7 +274,7 @@ class TestMonitorAlerts:
 
     def test_resubscribe_never_re_adds_a_monitor_recipient(self, api_client, monitor):
         token = eu.make_token("lead@example.com", eu.MONITOR_ALERTS, str(monitor.id))
-        api_client.post(f"{URL}?token={token}", {}, format="multipart")
+        api_client.post(f"{URL}?token={token}", ONE_CLICK, format="multipart")
 
         response = api_client.post(
             f"{URL}?token={token}", {"action": "resubscribe"}, format="multipart"
@@ -318,7 +326,9 @@ class TestMonitorAlerts:
         monitor.deleted = True
         monitor.save(update_fields=["deleted"])
 
-        response = api_client.post(f"{URL}?token={token}", {}, format="multipart")
+        response = api_client.post(
+            f"{URL}?token={token}", ONE_CLICK, format="multipart"
+        )
 
         assert b"Nothing to change" in response.content
 
@@ -379,7 +389,7 @@ class TestReviewRound2Storage:
         )
         token = eu.make_token(*_link(twin, eu.INTEGRATION_ERRORS))
 
-        api_client.post(f"{URL}?token={token}", {}, format="multipart")
+        api_client.post(f"{URL}?token={token}", ONE_CLICK, format="multipart")
 
         twin.refresh_from_db()
         user.refresh_from_db()
@@ -461,7 +471,7 @@ class TestReviewRound2MailHelper:
 
         assert _token_from(message) in message.body
 
-    @override_settings(BASE_URL="http://localhost:8000")
+    @override_settings(FI_API_PUBLIC_URL="http://localhost:8000")
     def test_one_click_header_only_over_https(self, user):
         (message,) = _send([user.email], eu.INTEGRATION_ERRORS)
 
@@ -478,3 +488,106 @@ class TestReviewRound2MailHelper:
             _send([user.email], category, scope)
 
         assert mail.outbox == []
+
+
+@pytest.mark.django_db
+class TestReviewRound2Page:
+    """Review round 2, checkpoint 3: the public page and its contract."""
+
+    @override_settings(FI_API_PUBLIC_URL="https://host.test/api")
+    def test_form_posts_to_the_same_public_address_as_the_link(self, api_client, user):
+        (message,) = _send([user.email], eu.INTEGRATION_ERRORS)
+        link = message.extra_headers["List-Unsubscribe"].strip("<>")
+
+        page = api_client.get(URL, {"token": _token_from(message)}).content.decode()
+
+        assert link.startswith(f"https://host.test/api{URL}?token=")
+        assert f"action='{link}'" in page
+
+    def test_post_without_a_button_or_one_click_marker_changes_nothing(
+        self, api_client, user
+    ):
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
+
+        response = api_client.post(f"{URL}?token={token}", {}, format="multipart")
+
+        assert response.status_code == 400
+        assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+
+    def test_page_answers_a_browser_that_accepts_only_html(self, api_client, user):
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
+
+        response = api_client.get(URL, {"token": token}, HTTP_ACCEPT="text/html")
+
+        assert response.status_code == 200
+        assert response["Content-Type"].startswith("text/html")
+
+    def test_page_fits_a_phone_and_follows_light_or_dark(self, api_client, user):
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
+
+        page = api_client.get(URL, {"token": token}).content
+
+        assert b"name='viewport'" in page
+        assert b"prefers-color-scheme" in page
+
+    def test_monitor_page_names_the_monitor(self, api_client, monitor):
+        token = eu.make_token("oncall@example.com", eu.MONITOR_ALERTS, str(monitor.id))
+
+        page = api_client.get(URL, {"token": token}).content.decode()
+
+        assert f"“{monitor.name}”" in page
+
+    def test_digest_page_names_both_tracks(self, api_client, user):
+        token = eu.make_token(*_link(user, eu.ANNOTATION_DIGEST))
+
+        page = api_client.get(URL, {"token": token}).content
+
+        assert b"daily and realtime" in page
+
+    def test_contract_declares_the_token_html_and_no_auth(self):
+        import json
+        from pathlib import Path
+
+        spec = json.loads(
+            (
+                Path(__file__).resolve().parents[3]
+                / "api_contracts/openapi/swagger.json"
+            ).read_text()
+        )
+        for path in (
+            URL,
+            "/accounts/notifications/unsubscribe/",
+            "/accounts/notifications/snooze/",
+        ):
+            for method, operation in spec["paths"][path].items():
+                if method == "parameters":
+                    continue
+                params = {p["name"]: p for p in operation.get("parameters", [])}
+                assert params["token"]["in"] == "query", (path, method)
+                assert operation["security"] == [], (path, method)
+                assert "text/html" in operation["produces"], (path, method)
+
+
+def test_link_token_is_kept_out_of_traces_and_request_logs(rf):
+    from tfc.logging.middleware import CallbackRequestMiddleware
+    from tfc.telemetry.middleware import OTelContextMiddleware
+
+    request = rf.get(URL, {"token": "signed-tok-123"})
+    span = mock.Mock()
+    OTelContextMiddleware(lambda r: None)._capture_request(span, request)
+    recorded = {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
+
+    assert "signed-tok-123" not in recorded["http.url"]
+    assert "signed-tok-123" not in recorded.get("http.query_params", "")
+    assert "signed-tok-123" not in CallbackRequestMiddleware.format_request(request)
+
+
+@pytest.mark.django_db
+def test_monitor_alert_footer_says_why_the_address_gets_it(monitor):
+    (message, _) = _send(
+        ["oncall@example.com", "x@example.com"], eu.MONITOR_ALERTS, str(monitor.id)
+    )
+    html = message.alternatives[0][0]
+
+    assert "this address is on this monitor" in html
+    assert "because you have an account" not in html

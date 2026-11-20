@@ -16,9 +16,9 @@ Opt-outs live in storage that already exists, so no schema change:
   that owns the address.
 """
 
-import os
 from datetime import timedelta
 from typing import NamedTuple
+from urllib.parse import quote
 
 from django.conf import settings
 from django.core import signing
@@ -35,7 +35,7 @@ MONITOR_ALERTS = "monitor_alerts"
 
 # Category -> the words used on the unsubscribe page ("Stop <label> to ...").
 CATEGORY_LABELS = {
-    ANNOTATION_DIGEST: "annotation digest emails",
+    ANNOTATION_DIGEST: "annotation digest emails (daily and realtime)",
     ANNOTATION_DISCUSSION: "annotation comment and review emails",
     AUTOMATION_RULE_RUNS: "automation rule run emails",
     INTEGRATION_ERRORS: "integration error emails",
@@ -43,6 +43,7 @@ CATEGORY_LABELS = {
 }
 
 USER_CONFIG_KEY = "email_optouts"
+PAGE_PATH = "/accounts/notifications/email/unsubscribe/"
 _SALT = "email-notification-unsubscribe"
 # How long a link works after the email is sent. US law (CAN-SPAM) requires
 # at least 30 days; the older digest links used the same limit.
@@ -107,10 +108,23 @@ def unsubscribe_url(
     return link_url(Link(email, category, scope, user_id))
 
 
+def public_api_url() -> str:
+    """The API's address as a mail reader's browser reaches it: the URL the
+    install publishes for outside callers (BASE_URL, else the UI's
+    VITE_HOST_API, see ``settings.FI_API_PUBLIC_URL``). The same on the API
+    and on the workers that send mail, and on a self-hosted install it
+    never names Future AGI Cloud."""
+    return settings.FI_API_PUBLIC_URL.rstrip("/")
+
+
+def page_url(token: str) -> str:
+    """The unsubscribe page for ``token``: the emailed link, and the target of
+    the page's own buttons, so both reach the API the same way."""
+    return f"{public_api_url()}{PAGE_PATH}?token={quote(token, safe=':')}"
+
+
 def link_url(link: Link) -> str:
-    backend = (os.environ.get("BACKEND_URL") or settings.BASE_URL).rstrip("/")
-    token = make_token(*link)
-    return f"{backend}/accounts/notifications/email/unsubscribe/?token={token}"
+    return page_url(make_token(*link))
 
 
 def recipient_links(recipients, category: str, scope: str | None = None):
@@ -213,6 +227,16 @@ def is_opted_out(email: str, category: str) -> bool:
         return False
     user = _user_for_email(email)
     return user is not None and _opted_out(user, category)
+
+
+def describe(link: Link) -> str:
+    """What the link turns off, for the page: the category, and for a
+    monitor alert the monitor's name."""
+    if link.category == MONITOR_ALERTS:
+        monitor = _monitor(link.scope)
+        if monitor is not None and monitor.name:
+            return f"alert emails for the monitor \u201c{monitor.name}\u201d"
+    return CATEGORY_LABELS[link.category]
 
 
 def is_subscribed(link: Link) -> bool:

@@ -2381,42 +2381,26 @@
             "get": {
                 "operationId": "accounts_notifications_email_unsubscribe_list",
                 "description": "Per-category unsubscribe for notification emails. Token is signed.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML unsubscribe page",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2426,9 +2410,15 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "post": {
                 "operationId": "accounts_notifications_email_unsubscribe_create",
@@ -2441,43 +2431,26 @@
                         "schema": {
                             "$ref": "#/definitions/EmailUnsubscribeRequest"
                         }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "HTML unsubscribe page",
+                        "description": "HTML unsubscribe result page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2487,9 +2460,13 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
                 ],
+                "security": [],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
@@ -2498,43 +2475,34 @@
         "/accounts/notifications/snooze/": {
             "get": {
                 "operationId": "accounts_notifications_snooze_list",
-                "description": "Snooze the realtime track for N days (default 7). Daily still fires.",
-                "parameters": [],
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML snooze result",
+                        "description": "HTML snooze confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2544,9 +2512,72 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "accounts_notifications_snooze_create",
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SnoozeRequest"
+                        }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML snooze result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -2554,42 +2585,26 @@
             "get": {
                 "operationId": "accounts_notifications_unsubscribe_list",
                 "description": "Digest unsubscribe link from older emails. Token is HMAC-signed.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML unsubscribe result",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2599,9 +2614,15 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -89879,6 +89900,18 @@
                     "enum": [
                         "unsubscribe",
                         "resubscribe"
+                    ]
+                }
+            }
+        },
+        "SnoozeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "snooze"
                     ]
                 }
             }

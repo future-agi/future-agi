@@ -598,6 +598,17 @@ export interface EmailUnsubscribeRequestApi {
   action?: EmailUnsubscribeRequestApiAction;
 }
 
+export type SnoozeRequestApiAction =
+  (typeof SnoozeRequestApiAction)[keyof typeof SnoozeRequestApiAction];
+
+export const SnoozeRequestApiAction = {
+  snooze: "snooze",
+} as const;
+
+export interface SnoozeRequestApi {
+  action?: SnoozeRequestApiAction;
+}
+
 export interface UserOnboardingResultApi {
   role: string;
   goals: string[];
@@ -41541,6 +41552,49 @@ export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
 
 export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
   "x-gcp-marketplace-token": string;
+};
+
+export type AccountsNotificationsEmailUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsEmailUnsubscribeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsSnoozeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsSnoozeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
 };
 
 export type AccountsOrganizationMembersListParams = {

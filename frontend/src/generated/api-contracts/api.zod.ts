@@ -666,11 +666,20 @@ export const AccountsMeTimezoneCreateResponse = zod.object({
 /**
  * Per-category unsubscribe for notification emails. Token is signed.
  */
+export const AccountsNotificationsEmailUnsubscribeListQueryParams = zod.object({
+  token: zod.string().describe("Signed token from the emailed link."),
+});
+
 export const AccountsNotificationsEmailUnsubscribeListResponse = zod.string();
 
 /**
  * Per-category unsubscribe for notification emails. Token is signed.
  */
+export const AccountsNotificationsEmailUnsubscribeCreateQueryParams =
+  zod.object({
+    token: zod.string().describe("Signed token from the emailed link."),
+  });
+
 export const AccountsNotificationsEmailUnsubscribeCreateBody = zod.object({
   action: zod.enum(["unsubscribe", "resubscribe"]).optional(),
 });
@@ -679,12 +688,43 @@ export const AccountsNotificationsEmailUnsubscribeCreateResponse = zod.string();
 
 /**
  * Snooze the realtime track for N days (default 7). Daily still fires.
+GET asks first, because link scanners prefetch URLs; POST snoozes.
  */
+export const AccountsNotificationsSnoozeListQueryParams = zod.object({
+  token: zod.string().describe("Signed token from the emailed link."),
+  days: zod
+    .number()
+    .optional()
+    .describe("Days to pause realtime digests, 1 to 30 (default 7)."),
+});
+
 export const AccountsNotificationsSnoozeListResponse = zod.string();
+
+/**
+ * Snooze the realtime track for N days (default 7). Daily still fires.
+GET asks first, because link scanners prefetch URLs; POST snoozes.
+ */
+export const AccountsNotificationsSnoozeCreateQueryParams = zod.object({
+  token: zod.string().describe("Signed token from the emailed link."),
+  days: zod
+    .number()
+    .optional()
+    .describe("Days to pause realtime digests, 1 to 30 (default 7)."),
+});
+
+export const AccountsNotificationsSnoozeCreateBody = zod.object({
+  action: zod.enum(["snooze"]).optional(),
+});
+
+export const AccountsNotificationsSnoozeCreateResponse = zod.string();
 
 /**
  * Digest unsubscribe link from older emails. Token is HMAC-signed.
  */
+export const AccountsNotificationsUnsubscribeListQueryParams = zod.object({
+  token: zod.string().describe("Signed token from the emailed link."),
+});
+
 export const AccountsNotificationsUnsubscribeListResponse = zod.string();
 
 /**

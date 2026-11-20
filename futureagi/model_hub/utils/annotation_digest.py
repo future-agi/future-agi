@@ -15,7 +15,6 @@ the ``annotation_digest`` category) or pause realtime only via
 ``realtime_snoozed_until`` (snooze link).
 """
 
-import os
 from datetime import datetime, timedelta
 
 import structlog
@@ -205,9 +204,10 @@ def _frontend_url() -> str:
 
 
 def _backend_url() -> str:
-    """This install's API. BASE_URL defaults to api.futureagi.com on Cloud
-    only, so a self-hosted unsubscribe link never leaves the install."""
-    return (os.environ.get("BACKEND_URL") or settings.BASE_URL).rstrip("/")
+    """This install's public API, the same address the unsubscribe links use."""
+    from tfc.utils.email_unsubscribe import public_api_url
+
+    return public_api_url()
 
 
 # ---------------------------------------------------------------------------

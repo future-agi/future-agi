@@ -79,15 +79,23 @@ def test_unsubscribe_annotation_digest_invalid_token(api_client):
 
 @pytest.mark.django_db
 def test_snooze_annotation_digest_happy_path(api_client, user):
-    """Valid token snoozes realtime track for N days."""
+    """GET asks (link scanners prefetch it); POST snoozes the realtime track."""
     from django.utils import timezone
 
     from model_hub.models.annotation_queues import AnnotationNotificationState
     from model_hub.utils.annotation_digest import _unsubscribe_token
 
     token = _unsubscribe_token(user.id)
+    url = f"/accounts/notifications/snooze/?token={token}&days=3"
+    page = api_client.get(url)
+    assert page.status_code == 200
+    assert b"Pause realtime emails?" in page.content
+    assert not AnnotationNotificationState.objects.filter(
+        user=user, realtime_snoozed_until__isnull=False
+    ).exists()
+
     before = timezone.now()
-    response = api_client.get(f"/accounts/notifications/snooze/?token={token}&days=3")
+    response = api_client.post(url, {"action": "snooze"}, format="multipart")
     assert response.status_code == 200
     assert b"Snoozed" in response.content
 

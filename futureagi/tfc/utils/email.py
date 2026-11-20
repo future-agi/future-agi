@@ -152,6 +152,14 @@ def email_helper(
         to_email_list, notification_category, unsubscribe_scope
     )
 
+    # The footer says why this address gets the email, beside the link.
+    reason = (
+        "You're getting this because this address is on this monitor's "
+        "alert recipients."
+        if notification_category == email_unsubscribe.MONITOR_ALERTS
+        else None
+    )
+
     # One message per recipient: each needs its own unsubscribe link, and
     # recipients of a shared alert should not see each other's addresses.
     # A failure for one recipient must not stop the rest, nor make a caller
@@ -169,7 +177,11 @@ def email_helper(
                 _send(
                     mail_subject,
                     template_name,
-                    {**context, "unsubscribe_url": url},
+                    {
+                        **context,
+                        "unsubscribe_url": url,
+                        "unsubscribe_reason": reason,
+                    },
                     [link.email],
                     sender,
                     reply_to_list,
