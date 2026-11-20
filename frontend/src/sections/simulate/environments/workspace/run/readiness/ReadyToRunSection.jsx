@@ -772,6 +772,8 @@ export default function ReadyToRunSection({
     />
   );
   const builder = view.groups.builder;
+  // Nothing to fix leaves no group box, not an empty padded one.
+  const anyGroup = Object.values(view.groups).some((lines) => lines.length);
   const ticked = (line) => ticks.get(line.rowId) ?? !chatShown;
   const takeable = builder.filter(fixable);
   const chosen = takeable.filter(ticked);
@@ -878,7 +880,7 @@ export default function ReadyToRunSection({
         </Stack>
       )}
       {!view.grouped && view.open.map(renderLine)}
-      {view.grouped && (
+      {view.grouped && anyGroup && (
         <Stack spacing={1} sx={{ px: 1.5, py: 1.25, ...dividerTop }}>
           {view.groups.needs_you.length > 0 && (
             <GroupCard group="needs_you" count={view.groups.needs_you.length}>
