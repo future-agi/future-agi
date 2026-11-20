@@ -1339,10 +1339,14 @@ def _numbers_meant(numbers: Any, ranges: Any) -> list[int]:
     return list(dict.fromkeys(found))
 
 
-def _scenario_summary(row: HostedHarnessScenario, full: bool) -> dict[str, Any]:
+def _scenario_summary(
+    row: HostedHarnessScenario, full: bool, lifecycle: Any = None
+) -> dict[str, Any]:
     persona = row.persona if isinstance(row.persona, dict) else {}
     summary = {
         "number": row.number,
+        # The badge the Scenarios tab shows, and why, so the builder can explain it.
+        "lifecycle": _lifecycle_line(row, lifecycle),
         "name": row.name or row.scenario_key,
         "use_case": row.use_case,
         "branch": row.branch,
@@ -1376,6 +1380,22 @@ def _scenario_summary(row: HostedHarnessScenario, full: bool) -> dict[str, Any]:
     else:
         summary["situation"] = (row.instruction or "")[:240]
     return summary
+
+
+def _lifecycle_line(row: Any, lifecycle: Any) -> dict[str, Any] | None:
+    """A row's state, reason and reason text, read from the Scenarios tab's own lifecycle; None unversioned."""
+    from simulate.services.harness_provider import _with_lifecycle
+
+    if lifecycle is None:
+        return None
+    view = _with_lifecycle(
+        {
+            "scenario_key": row.scenario_key,
+            "draft_change": getattr(row, "draft_change", None),
+        },
+        lifecycle,
+    )["lifecycle"]
+    return {name: view.get(name) for name in ("state", "reason", "reason_text")}
 
 
 def removed_scenarios(
@@ -1490,6 +1510,12 @@ def conversation_scenarios(
     matching = queryset.count()
     rows = list(queryset[(page - 1) * page_size : page * page_size])
     found = {row.number for row in rows}
+    from simulate.services.harness_provider import _lifecycle_for_list
+
+    # The same lifecycle the Scenarios tab lists, on the environment's default pair.
+    lifecycle = _lifecycle_for_list(environment, {}) if rows else None
+    if not isinstance(lifecycle, dict):
+        lifecycle = None
     return {
         "total_scenarios": live.count(),
         "matching": matching,
@@ -1499,7 +1525,10 @@ def conversation_scenarios(
         "numbers_not_found": [number for number in numbers if number not in found]
         if numbers and matching <= page_size
         else [],
-        "rows": [_scenario_summary(row, full=bool(params.get("full"))) for row in rows],
+        "rows": [
+            _scenario_summary(row, full=bool(params.get("full")), lifecycle=lifecycle)
+            for row in rows
+        ],
     }
 
 
