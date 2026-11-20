@@ -113133,6 +113133,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        measured_automatically: {
+          title: "Measured automatically",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     AgentFixEvalWarning: {
