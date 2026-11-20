@@ -265,13 +265,18 @@ import type {
   AttachmentEmptyRequestApi,
   AttachmentErrorApi,
   AttachmentImportRequestApi,
+  AttachmentImportResponseApi,
   AttachmentImportStatusResponseApi,
   AttachmentLinkRequestApi,
   AttachmentOccurrenceApi,
   AttachmentOccurrencePageApi,
+  AttachmentProviderRegistrationRequestApi,
+  AttachmentProviderRegistrationResponseApi,
   AttachmentRecordingManifestApi,
   AttachmentResolveRequestApi,
   AttachmentResolveResponseApi,
+  AttachmentSourceEnvelopeRequestApi,
+  AttachmentSourceEnvelopeResponseApi,
   AttachmentStatusResponseApi,
   AttachmentUploadRequestApi,
   AttachmentUploadResponseApi,
@@ -91718,12 +91723,12 @@ export const exchangeAttachmentMediaSession = async (
 };
 
 export type getAttachmentMediaResponse200 = {
-  data: void;
+  data: Blob;
   status: 200;
 };
 
 export type getAttachmentMediaResponse206 = {
-  data: void;
+  data: Blob;
   status: 206;
 };
 
@@ -91894,6 +91899,54 @@ export const bootstrapAttachmentSession = async (
   );
 };
 
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponseSuccess =
+  tracerV1AttachmentsProvidersLivekitEventsCreateResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponseError =
+  tracerV1AttachmentsProvidersLivekitEventsCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponse =
+  | tracerV1AttachmentsProvidersLivekitEventsCreateResponseSuccess
+  | tracerV1AttachmentsProvidersLivekitEventsCreateResponseError;
+
+export const getTracerV1AttachmentsProvidersLivekitEventsCreateUrl = () => {
+  return `/tracer/v1/attachments/providers/livekit/events`;
+};
+
+/**
+ * Signed LiveKit provider JSON (at most 65536 original bytes). The Authorization JWT signature and SHA-256 body claim are verified before strict JSON decoding; never normalize or reserialize the body. Only matching registered egress events advance recording state.
+ */
+export const tracerV1AttachmentsProvidersLivekitEventsCreate = async (
+  tracerV1AttachmentsProvidersLivekitEventsCreateBody: Blob,
+  options?: RequestInit,
+): Promise<tracerV1AttachmentsProvidersLivekitEventsCreateResponse> => {
+  return apiMutator<tracerV1AttachmentsProvidersLivekitEventsCreateResponse>(
+    getTracerV1AttachmentsProvidersLivekitEventsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...options?.headers,
+      },
+      body: JSON.stringify(tracerV1AttachmentsProvidersLivekitEventsCreateBody),
+    },
+  );
+};
+
 export type tracerV1HealthListResponse200 = {
   data: OTLPHealthResponseApi;
   status: 200;
@@ -91941,7 +91994,7 @@ export const tracerV1HealthList = async (
 };
 
 export type importAttachmentResponse202 = {
-  data: void;
+  data: AttachmentImportResponseApi;
   status: 202;
 };
 
@@ -92020,8 +92073,8 @@ is ever in the body. Admission (scope ``allow_import`` plus deny-wins
 privacy, exact policy and deletion generation, atomic reservations)
 runs before any byte is read; the worker does the transfer.
 
-A single-attachment import has no trusted resolver deployed and is
-refused identically for every well-formed request.
+Both canonical forms use metadata-only source resolution before owner
+capacity reservation. They share the same original-identity checks.
  * @summary Admit a completed-recording import with ORIGINAL credentials only.
  */
 export const importAttachment = async (
@@ -92433,6 +92486,102 @@ export const deleteAttachmentOccurrence = async (
   );
 };
 
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse201 = {
+  data: AttachmentProviderRegistrationResponseApi;
+  status: 201;
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 201>;
+  };
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseSuccess =
+  tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseError =
+  tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse =
+  | tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseSuccess
+  | tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseError;
+
+export const getTracerV1ProjectsAttachmentsProviderRecordingsCreateUrl = (
+  projectId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/provider-recordings`;
+};
+
+/**
+ * Product control route; not an addition to F01 import payloads.
+ */
+export const tracerV1ProjectsAttachmentsProviderRecordingsCreate = async (
+  projectId: string,
+  attachmentProviderRegistrationRequestApi: AttachmentProviderRegistrationRequestApi,
+  options?: RequestInit,
+): Promise<tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse> => {
+  return apiMutator<tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse>(
+    getTracerV1ProjectsAttachmentsProviderRecordingsCreateUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentProviderRegistrationRequestApi),
+    },
+  );
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponse200 = {
+  data: AttachmentProviderRegistrationResponseApi;
+  status: 200;
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponseSuccess =
+  tracerV1ProjectsAttachmentsProviderRecordingsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponseError =
+  tracerV1ProjectsAttachmentsProviderRecordingsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponse =
+  | tracerV1ProjectsAttachmentsProviderRecordingsReadResponseSuccess
+  | tracerV1ProjectsAttachmentsProviderRecordingsReadResponseError;
+
+export const getTracerV1ProjectsAttachmentsProviderRecordingsReadUrl = (
+  projectId: string,
+  registeredOutputId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/provider-recordings/${registeredOutputId}`;
+};
+
+export const tracerV1ProjectsAttachmentsProviderRecordingsRead = async (
+  projectId: string,
+  registeredOutputId: string,
+  options?: RequestInit,
+): Promise<tracerV1ProjectsAttachmentsProviderRecordingsReadResponse> => {
+  return apiMutator<tracerV1ProjectsAttachmentsProviderRecordingsReadResponse>(
+    getTracerV1ProjectsAttachmentsProviderRecordingsReadUrl(
+      projectId,
+      registeredOutputId,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type readRecordingManifestResponse200 = {
   data: AttachmentRecordingManifestApi;
   status: 200;
@@ -92719,6 +92868,54 @@ export const resolveAttachmentOccurrences = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(attachmentResolveRequestApi),
+    },
+  );
+};
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse200 = {
+  data: AttachmentSourceEnvelopeResponseApi;
+  status: 200;
+};
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseSuccess =
+  tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseError =
+  tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse =
+  | tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseSuccess
+  | tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseError;
+
+export const getTracerV1ProjectsAttachmentsSourceEnvelopesCreateUrl = (
+  projectId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/source-envelopes`;
+};
+
+/**
+ * Resolve a registered source to its sealed reference; never accept a URL.
+ */
+export const tracerV1ProjectsAttachmentsSourceEnvelopesCreate = async (
+  projectId: string,
+  attachmentSourceEnvelopeRequestApi: AttachmentSourceEnvelopeRequestApi,
+  options?: RequestInit,
+): Promise<tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse> => {
+  return apiMutator<tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse>(
+    getTracerV1ProjectsAttachmentsSourceEnvelopesCreateUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentSourceEnvelopeRequestApi),
     },
   );
 };

@@ -40051,6 +40051,51 @@ export interface AttachmentBootstrapResponseApi {
   transfer_modes: string[];
 }
 
+/**
+ * Completion requires exactly one result; other shapes do not publish an output.
+ */
+export interface AttachmentLiveKitFileResultApi {
+  /**
+   * Only a signed completion can select this locator; host approval and metadata/revision checks still apply.
+   * @minLength 1
+   */
+  location?: string;
+  /** Bytes; completion requires 1 through 1073741824. */
+  size?: number;
+  /** Nanoseconds; completion requires 1 through 7200000000000. */
+  duration?: number;
+  [key: string]: unknown;
+}
+
+export interface AttachmentLiveKitEgressInfoApi {
+  /** @minLength 1 */
+  egressId?: string;
+  /** @minLength 1 */
+  roomName?: string;
+  /** LiveKit EGRESS_* enum name or numeric enum value (0 through 6); unknown states do not advance a registration. */
+  status?: string;
+  updatedAt?: number;
+  endedAt?: number;
+  /** Completion requires exactly one result; other shapes do not publish an output. */
+  fileResults?: AttachmentLiveKitFileResultApi[];
+  [key: string]: unknown;
+}
+
+export interface AttachmentLiveKitEventRequestApi {
+  /**
+   * Processing requires a nonempty event ID of at most 64 characters.
+   * @minLength 1
+   */
+  id?: string;
+  /**
+   * Only egress_started, egress_updated and egress_ended are processed; other signed events are acknowledged.
+   * @minLength 1
+   */
+  event?: string;
+  egressInfo?: AttachmentLiveKitEgressInfoApi;
+  [key: string]: unknown;
+}
+
 export type OTLPHealthResponseApiStatus =
   (typeof OTLPHealthResponseApiStatus)[keyof typeof OTLPHealthResponseApiStatus];
 
@@ -40064,21 +40109,267 @@ export interface OTLPHealthResponseApi {
   service: string;
 }
 
-export type AttachmentImportRequestApiRecording = {
-  [key: string]: string | null;
-};
+export type AttachmentImportRequestApi =
+  | {
+      upload: unknown &
+        unknown &
+        unknown &
+        unknown &
+        unknown &
+        unknown &
+        unknown & {
+          schema_version: 1;
+          /**
+           * @maxLength 36
+           * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+           */
+          attachment_id: string;
+          /**
+           * @maxLength 36
+           * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+           */
+          occurrence_id: string;
+          association: {
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            capture_session_id: string;
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            correlation_nonce: string;
+            parent: {
+              trace_id: unknown | string;
+              /**
+               * @maxLength 16
+               * @pattern ^(?!0{16}$)[0-9a-f]{16}$
+               */
+              span_id: string;
+            };
+          };
+          /**
+           * @maxLength 128
+           * @pattern ^[a-zA-Z0-9_-]{1,128}$
+           */
+          policy_version: string;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          deletion_generation: number;
+          mime_type:
+            | "audio/wav"
+            | "audio/ogg"
+            | "audio/mpeg"
+            | "audio/mp4"
+            | "audio/webm"
+            | "audio/flac"
+            | "audio/L16"
+            | "image/png"
+            | "image/jpeg"
+            | "image/webp"
+            | "video/mp4"
+            | "video/webm"
+            | "application/pdf"
+            | "application/octet-stream";
+          modality: "audio" | "image" | "video" | "document" | "file";
+          direction: "input" | "output" | "mixed";
+          source_kind:
+            | "Bytes"
+            | "Blob"
+            | "RemoteUrl"
+            | "LocalFile"
+            | "OwnedRecordingFile"
+            | "ProviderFile";
+          purpose?:
+            | "conversation_recording"
+            | "turn_recording"
+            | "model_input"
+            | "model_output"
+            | "tool_result"
+            | "computer_screenshot"
+            | "diagnostic"
+            | "document";
+          /**
+           * @minimum 1
+           * @maximum 52428800
+           */
+          declared_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 65535
+           */
+          message_index?: number;
+          /**
+           * @minimum 0
+           * @maximum 65535
+           */
+          part_index?: number;
+          /**
+           * @maxLength 36
+           * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+           */
+          recording_id?: string;
+          /**
+           * @minimum 0
+           * @maximum 65535
+           */
+          segment_index?: number;
+          /**
+           * @maxLength 128
+           * @pattern ^[a-zA-Z0-9_-]{1,128}$
+           */
+          conversation_id?: string;
+          /**
+           * @maxLength 128
+           * @pattern ^[a-zA-Z0-9_-]{1,128}$
+           */
+          turn_id?: string;
+          /**
+           * @maxLength 128
+           * @pattern ^[a-zA-Z0-9_-]{1,128}$
+           */
+          tool_call_id?: string;
+        };
+      source:
+        | {
+            kind: "RemoteUrlEnvelope";
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            envelope_id: string;
+          }
+        | {
+            kind: "ProviderFile";
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            connection_id: string;
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            registered_output_id: string;
+          };
+    }
+  | {
+      mode: "completed_recording";
+      /** Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply. */
+      recording: {
+        schema_version: 1;
+        association: {
+          /**
+           * @maxLength 36
+           * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+           */
+          capture_session_id: string;
+          /**
+           * @maxLength 36
+           * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+           */
+          correlation_nonce: string;
+          parent: {
+            trace_id: unknown | string;
+            /**
+             * @maxLength 16
+             * @pattern ^(?!0{16}$)[0-9a-f]{16}$
+             */
+            span_id: string;
+          };
+        };
+        /**
+         * @maxLength 128
+         * @pattern ^[a-zA-Z0-9_-]{1,128}$
+         */
+        policy_version: string;
+        /**
+         * @minimum 0
+         * @maximum 9007199254740991
+         */
+        deletion_generation: number;
+        mime_type:
+          | "audio/wav"
+          | "audio/ogg"
+          | "audio/mpeg"
+          | "audio/mp4"
+          | "audio/webm"
+          | "audio/flac"
+          | "audio/L16";
+        direction: "input" | "output" | "mixed";
+        source_kind: "ProviderFile" | "RemoteUrl";
+        /**
+         * @maxLength 36
+         * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+         */
+        recording_id: string;
+        modality: "audio";
+        /**
+         * @minimum 1
+         * @maximum 1073741824
+         */
+        declared_bytes: number;
+        /**
+         * @minimum 1
+         * @maximum 7200000
+         */
+        declared_duration_ms: number;
+      };
+      source:
+        | {
+            kind: "RemoteUrlEnvelope";
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            envelope_id: string;
+          }
+        | {
+            kind: "ProviderFile";
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            connection_id: string;
+            /**
+             * @maxLength 36
+             * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+             */
+            registered_output_id: string;
+          };
+    };
 
-export type AttachmentImportRequestApiUpload = { [key: string]: string | null };
-
-export type AttachmentImportRequestApiSource = { [key: string]: string | null };
-
-export interface AttachmentImportRequestApi {
-  /** @minLength 1 */
-  mode?: string;
-  recording?: AttachmentImportRequestApiRecording;
-  upload?: AttachmentImportRequestApiUpload;
-  source: AttachmentImportRequestApiSource;
-}
+export type AttachmentImportResponseApi =
+  | {
+      /**
+       * @maxLength 36
+       * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+       */
+      job_id: string;
+      /**
+       * @maxLength 36
+       * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+       */
+      upload_id: string;
+      state: "importing";
+    }
+  | {
+      mode: "completed_recording";
+      /**
+       * @maxLength 36
+       * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+       */
+      job_id: string;
+      /**
+       * @maxLength 36
+       * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+       */
+      recording_id: string;
+      state: "importing";
+    };
 
 export type AttachmentImportStatusResponseApiState =
   (typeof AttachmentImportStatusResponseApiState)[keyof typeof AttachmentImportStatusResponseApiState];
@@ -40310,6 +40601,273 @@ export interface AttachmentLinkRequestApi {
   deletion_generation: number;
 }
 
+export type AttachmentProviderRegistrationRequestApiDirection =
+  (typeof AttachmentProviderRegistrationRequestApiDirection)[keyof typeof AttachmentProviderRegistrationRequestApiDirection];
+
+export const AttachmentProviderRegistrationRequestApiDirection = {
+  input: "input",
+  output: "output",
+  mixed: "mixed",
+} as const;
+
+export type AttachmentProviderRegistrationRequestApiDispatchMode =
+  (typeof AttachmentProviderRegistrationRequestApiDispatchMode)[keyof typeof AttachmentProviderRegistrationRequestApiDispatchMode];
+
+export const AttachmentProviderRegistrationRequestApiDispatchMode = {
+  auto: "auto",
+  sdk_explicit: "sdk_explicit",
+} as const;
+
+export interface AttachmentControlParentApi {
+  /**
+   * @maxLength 36
+   * @pattern (?:^(?!0{32}$)[0-9a-f]{32}$)|(?:^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)
+   */
+  trace_id: string;
+  /**
+   * @maxLength 16
+   * @pattern ^(?!0{16}$)[0-9a-f]{16}$
+   */
+  span_id: string;
+}
+
+export interface AttachmentControlAssociationApi {
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  capture_session_id: string;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  correlation_nonce: string;
+  parent: AttachmentControlParentApi;
+}
+
+export interface AttachmentProviderRegistrationRequestApi {
+  connection_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^EG_[A-Za-z0-9]{1,61}$
+   */
+  egress_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 256
+   */
+  room_name: string;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  recording_id: string;
+  association: AttachmentControlAssociationApi;
+  direction: AttachmentProviderRegistrationRequestApiDirection;
+  dispatch_mode?: AttachmentProviderRegistrationRequestApiDispatchMode;
+}
+
+export type AttachmentProviderRegistrationResponseApiState =
+  (typeof AttachmentProviderRegistrationResponseApiState)[keyof typeof AttachmentProviderRegistrationResponseApiState];
+
+export const AttachmentProviderRegistrationResponseApiState = {
+  registered: "registered",
+  active: "active",
+  ending: "ending",
+  complete: "complete",
+  failed: "failed",
+  aborted: "aborted",
+  limit_reached: "limit_reached",
+} as const;
+
+export type AttachmentProviderRegistrationResponseApiDispatchMode =
+  (typeof AttachmentProviderRegistrationResponseApiDispatchMode)[keyof typeof AttachmentProviderRegistrationResponseApiDispatchMode];
+
+export const AttachmentProviderRegistrationResponseApiDispatchMode = {
+  auto: "auto",
+  sdk_explicit: "sdk_explicit",
+} as const;
+
+export type AttachmentProviderRegistrationResponseApiImportRequestMode =
+  (typeof AttachmentProviderRegistrationResponseApiImportRequestMode)[keyof typeof AttachmentProviderRegistrationResponseApiImportRequestMode];
+
+export const AttachmentProviderRegistrationResponseApiImportRequestMode = {
+  completed_recording: "completed_recording",
+} as const;
+
+export type AttachmentProviderRegistrationResponseApiImportRequestRecordingSchemaVersion =
+  (typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingSchemaVersion)[keyof typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingSchemaVersion];
+
+export const AttachmentProviderRegistrationResponseApiImportRequestRecordingSchemaVersion =
+  {
+    NUMBER_1: 1,
+  } as const;
+
+export type AttachmentProviderRegistrationResponseApiImportRequestRecordingAssociationParent =
+  {
+    trace_id: string;
+    /**
+     * @maxLength 16
+     * @pattern ^(?!0{16}$)[0-9a-f]{16}$
+     */
+    span_id: string;
+  };
+
+export type AttachmentProviderRegistrationResponseApiImportRequestRecordingAssociation =
+  {
+    /**
+     * @maxLength 36
+     * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+     */
+    capture_session_id: string;
+    /**
+     * @maxLength 36
+     * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+     */
+    correlation_nonce: string;
+    parent: AttachmentProviderRegistrationResponseApiImportRequestRecordingAssociationParent;
+  };
+
+export type AttachmentProviderRegistrationResponseApiImportRequestRecordingMimeType =
+  (typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingMimeType)[keyof typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingMimeType];
+
+export const AttachmentProviderRegistrationResponseApiImportRequestRecordingMimeType =
+  {
+    "audio/wav": "audio/wav",
+    "audio/ogg": "audio/ogg",
+    "audio/mpeg": "audio/mpeg",
+    "audio/mp4": "audio/mp4",
+    "audio/webm": "audio/webm",
+    "audio/flac": "audio/flac",
+    "audio/L16": "audio/L16",
+  } as const;
+
+export type AttachmentProviderRegistrationResponseApiImportRequestRecordingDirection =
+  (typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingDirection)[keyof typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingDirection];
+
+export const AttachmentProviderRegistrationResponseApiImportRequestRecordingDirection =
+  {
+    input: "input",
+    output: "output",
+    mixed: "mixed",
+  } as const;
+
+export type AttachmentProviderRegistrationResponseApiImportRequestRecordingSourceKind =
+  (typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingSourceKind)[keyof typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingSourceKind];
+
+export const AttachmentProviderRegistrationResponseApiImportRequestRecordingSourceKind =
+  {
+    ProviderFile: "ProviderFile",
+    RemoteUrl: "RemoteUrl",
+  } as const;
+
+export type AttachmentProviderRegistrationResponseApiImportRequestRecordingModality =
+  (typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingModality)[keyof typeof AttachmentProviderRegistrationResponseApiImportRequestRecordingModality];
+
+export const AttachmentProviderRegistrationResponseApiImportRequestRecordingModality =
+  {
+    audio: "audio",
+  } as const;
+
+/**
+ * Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply.
+ */
+export type AttachmentProviderRegistrationResponseApiImportRequestRecording = {
+  schema_version: AttachmentProviderRegistrationResponseApiImportRequestRecordingSchemaVersion;
+  association: AttachmentProviderRegistrationResponseApiImportRequestRecordingAssociation;
+  /**
+   * @maxLength 128
+   * @pattern ^[a-zA-Z0-9_-]{1,128}$
+   */
+  policy_version: string;
+  /**
+   * @minimum 0
+   * @maximum 9007199254740991
+   */
+  deletion_generation: number;
+  mime_type: AttachmentProviderRegistrationResponseApiImportRequestRecordingMimeType;
+  direction: AttachmentProviderRegistrationResponseApiImportRequestRecordingDirection;
+  source_kind: AttachmentProviderRegistrationResponseApiImportRequestRecordingSourceKind;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  recording_id: string;
+  modality: AttachmentProviderRegistrationResponseApiImportRequestRecordingModality;
+  /**
+   * @minimum 1
+   * @maximum 1073741824
+   */
+  declared_bytes: number;
+  /**
+   * @minimum 1
+   * @maximum 7200000
+   */
+  declared_duration_ms: number;
+};
+
+export type AttachmentProviderRegistrationResponseApiImportRequest = {
+  mode: AttachmentProviderRegistrationResponseApiImportRequestMode;
+  /** Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply. */
+  recording: AttachmentProviderRegistrationResponseApiImportRequestRecording;
+  source: unknown;
+};
+
+export type AttachmentProviderBindingApiProvider =
+  (typeof AttachmentProviderBindingApiProvider)[keyof typeof AttachmentProviderBindingApiProvider];
+
+export const AttachmentProviderBindingApiProvider = {
+  livekit: "livekit",
+} as const;
+
+export interface AttachmentProviderBindingApi {
+  provider: AttachmentProviderBindingApiProvider;
+  /**
+   * @minLength 1
+   * @pattern ^EG_[A-Za-z0-9]{1,61}$
+   */
+  egress_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^[0-9a-f]{64}$
+   */
+  room_digest: string;
+}
+
+export type AttachmentProviderFileApiKind =
+  (typeof AttachmentProviderFileApiKind)[keyof typeof AttachmentProviderFileApiKind];
+
+export const AttachmentProviderFileApiKind = {
+  ProviderFile: "ProviderFile",
+} as const;
+
+export interface AttachmentProviderFileApi {
+  kind: AttachmentProviderFileApiKind;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  connection_id: string;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  registered_output_id: string;
+}
+
+export interface AttachmentProviderRegistrationResponseApi {
+  state: AttachmentProviderRegistrationResponseApiState;
+  dispatch_mode: AttachmentProviderRegistrationResponseApiDispatchMode;
+  binding: AttachmentProviderBindingApi;
+  import_request?: AttachmentProviderRegistrationResponseApiImportRequest;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  job_id?: string;
+  source: AttachmentProviderFileApi;
+}
+
 export type AttachmentRecordingManifestApiLayout =
   (typeof AttachmentRecordingManifestApiLayout)[keyof typeof AttachmentRecordingManifestApiLayout];
 
@@ -40450,6 +41008,35 @@ export interface AttachmentResolveResultApi {
 
 export interface AttachmentResolveResponseApi {
   items: AttachmentResolveResultApi[];
+}
+
+export type AttachmentSourceEnvelopeRequestApiSource = {
+  [key: string]: unknown;
+};
+
+export interface AttachmentSourceEnvelopeRequestApi {
+  source: AttachmentSourceEnvelopeRequestApiSource;
+}
+
+export type AttachmentOpaqueEnvelopeApiKind =
+  (typeof AttachmentOpaqueEnvelopeApiKind)[keyof typeof AttachmentOpaqueEnvelopeApiKind];
+
+export const AttachmentOpaqueEnvelopeApiKind = {
+  RemoteUrlEnvelope: "RemoteUrlEnvelope",
+} as const;
+
+export interface AttachmentOpaqueEnvelopeApi {
+  kind: AttachmentOpaqueEnvelopeApiKind;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  envelope_id: string;
+}
+
+export interface AttachmentSourceEnvelopeResponseApi {
+  registration?: AttachmentProviderRegistrationResponseApi;
+  source: AttachmentOpaqueEnvelopeApi;
 }
 
 export type AttachmentUploadRequestApiMimeType =
@@ -42227,6 +42814,78 @@ export interface ActivationResponseApi {
   allowed_services: string[];
   allowed_models: string[];
   scope: ActivationResponseApiScope;
+}
+
+export type AttachmentCompletedRecordingImportApiMimeType =
+  (typeof AttachmentCompletedRecordingImportApiMimeType)[keyof typeof AttachmentCompletedRecordingImportApiMimeType];
+
+export const AttachmentCompletedRecordingImportApiMimeType = {
+  "audio/wav": "audio/wav",
+  "audio/ogg": "audio/ogg",
+  "audio/mpeg": "audio/mpeg",
+  "audio/mp4": "audio/mp4",
+  "audio/webm": "audio/webm",
+  "audio/flac": "audio/flac",
+  "audio/L16": "audio/L16",
+} as const;
+
+export type AttachmentCompletedRecordingImportApiDirection =
+  (typeof AttachmentCompletedRecordingImportApiDirection)[keyof typeof AttachmentCompletedRecordingImportApiDirection];
+
+export const AttachmentCompletedRecordingImportApiDirection = {
+  input: "input",
+  output: "output",
+  mixed: "mixed",
+} as const;
+
+export type AttachmentCompletedRecordingImportApiSourceKind =
+  (typeof AttachmentCompletedRecordingImportApiSourceKind)[keyof typeof AttachmentCompletedRecordingImportApiSourceKind];
+
+export const AttachmentCompletedRecordingImportApiSourceKind = {
+  ProviderFile: "ProviderFile",
+  RemoteUrl: "RemoteUrl",
+} as const;
+
+export type AttachmentCompletedRecordingImportApiModality =
+  (typeof AttachmentCompletedRecordingImportApiModality)[keyof typeof AttachmentCompletedRecordingImportApiModality];
+
+export const AttachmentCompletedRecordingImportApiModality = {
+  audio: "audio",
+} as const;
+
+export interface AttachmentCompletedRecordingImportApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  schema_version: number;
+  association: AttachmentControlAssociationApi;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  policy_version: string;
+  /** @minimum 0 */
+  deletion_generation: number;
+  mime_type: AttachmentCompletedRecordingImportApiMimeType;
+  direction: AttachmentCompletedRecordingImportApiDirection;
+  source_kind: AttachmentCompletedRecordingImportApiSourceKind;
+  /**
+   * @maxLength 36
+   * @pattern ^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+   */
+  recording_id: string;
+  modality: AttachmentCompletedRecordingImportApiModality;
+  /**
+   * @minimum 1
+   * @maximum 1073741824
+   */
+  declared_bytes: number;
+  /**
+   * @minimum 1
+   * @maximum 7200000
+   */
+  declared_duration_ms: number;
 }
 
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {

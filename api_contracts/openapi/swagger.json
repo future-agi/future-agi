@@ -194803,7 +194803,9 @@
                             ],
                             "properties": {
                                 "kind": {
-                                    "const": "RemoteUrlEnvelope"
+                                    "enum": [
+                                        "RemoteUrlEnvelope"
+                                    ]
                                 },
                                 "envelope_id": {
                                     "type": "string",
@@ -194822,7 +194824,9 @@
                             ],
                             "properties": {
                                 "kind": {
-                                    "const": "ProviderFile"
+                                    "enum": [
+                                        "ProviderFile"
+                                    ]
                                 },
                                 "connection_id": {
                                     "type": "string",
@@ -194867,7 +194871,9 @@
                             ],
                             "properties": {
                                 "schema_version": {
-                                    "const": 1
+                                    "enum": [
+                                        1
+                                    ]
                                 },
                                 "attachment_id": {
                                     "type": "string",
@@ -194908,7 +194914,7 @@
                                             "properties": {
                                                 "trace_id": {
                                                     "type": "string",
-                                                    "oneOf": [
+                                                    "x-oneOf": [
                                                         {
                                                             "pattern": "^(?!0{32}$)[0-9a-f]{32}$",
                                                             "maxLength": 32
@@ -195049,7 +195055,9 @@
                                     "if": {
                                         "properties": {
                                             "modality": {
-                                                "const": "audio"
+                                                "enum": [
+                                                    "audio"
+                                                ]
                                             }
                                         }
                                     },
@@ -195073,7 +195081,9 @@
                                     "if": {
                                         "properties": {
                                             "modality": {
-                                                "const": "image"
+                                                "enum": [
+                                                    "image"
+                                                ]
                                             }
                                         }
                                     },
@@ -195093,7 +195103,9 @@
                                     "if": {
                                         "properties": {
                                             "modality": {
-                                                "const": "video"
+                                                "enum": [
+                                                    "video"
+                                                ]
                                             }
                                         }
                                     },
@@ -195112,7 +195124,9 @@
                                     "if": {
                                         "properties": {
                                             "modality": {
-                                                "const": "document"
+                                                "enum": [
+                                                    "document"
+                                                ]
                                             }
                                         }
                                     },
@@ -195130,7 +195144,9 @@
                                     "if": {
                                         "properties": {
                                             "modality": {
-                                                "const": "file"
+                                                "enum": [
+                                                    "file"
+                                                ]
                                             }
                                         }
                                     },
@@ -195148,7 +195164,9 @@
                                     "if": {
                                         "properties": {
                                             "modality": {
-                                                "const": "image"
+                                                "enum": [
+                                                    "image"
+                                                ]
                                             }
                                         }
                                     },
@@ -195177,7 +195195,7 @@
                             ]
                         },
                         "source": {
-                            "oneOf": [
+                            "x-oneOf": [
                                 {
                                     "type": "object",
                                     "additionalProperties": false,
@@ -195187,7 +195205,9 @@
                                     ],
                                     "properties": {
                                         "kind": {
-                                            "const": "RemoteUrlEnvelope"
+                                            "enum": [
+                                                "RemoteUrlEnvelope"
+                                            ]
                                         },
                                         "envelope_id": {
                                             "type": "string",
@@ -195206,7 +195226,9 @@
                                     ],
                                     "properties": {
                                         "kind": {
-                                            "const": "ProviderFile"
+                                            "enum": [
+                                                "ProviderFile"
+                                            ]
                                         },
                                         "connection_id": {
                                             "type": "string",
@@ -195234,7 +195256,9 @@
                     ],
                     "properties": {
                         "mode": {
-                            "const": "completed_recording"
+                            "enum": [
+                                "completed_recording"
+                            ]
                         },
                         "recording": {
                             "type": "object",
@@ -195254,7 +195278,9 @@
                             ],
                             "properties": {
                                 "schema_version": {
-                                    "const": 1
+                                    "enum": [
+                                        1
+                                    ]
                                 },
                                 "association": {
                                     "type": "object",
@@ -195285,7 +195311,7 @@
                                             "properties": {
                                                 "trace_id": {
                                                     "type": "string",
-                                                    "oneOf": [
+                                                    "x-oneOf": [
                                                         {
                                                             "pattern": "^(?!0{32}$)[0-9a-f]{32}$",
                                                             "maxLength": 32
@@ -195346,7 +195372,9 @@
                                     "maxLength": 36
                                 },
                                 "modality": {
-                                    "const": "audio"
+                                    "enum": [
+                                        "audio"
+                                    ]
                                 },
                                 "declared_bytes": {
                                     "type": "integer",
@@ -195362,7 +195390,7 @@
                             "description": "Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply."
                         },
                         "source": {
-                            "oneOf": [
+                            "x-oneOf": [
                                 {
                                     "type": "object",
                                     "additionalProperties": false,
@@ -195372,7 +195400,9 @@
                                     ],
                                     "properties": {
                                         "kind": {
-                                            "const": "RemoteUrlEnvelope"
+                                            "enum": [
+                                                "RemoteUrlEnvelope"
+                                            ]
                                         },
                                         "envelope_id": {
                                             "type": "string",
@@ -195391,7 +195421,9 @@
                                     ],
                                     "properties": {
                                         "kind": {
-                                            "const": "ProviderFile"
+                                            "enum": [
+                                                "ProviderFile"
+                                            ]
                                         },
                                         "connection_id": {
                                             "type": "string",
@@ -195476,7 +195508,9 @@
                             "maxLength": 36
                         },
                         "state": {
-                            "const": "importing"
+                            "enum": [
+                                "importing"
+                            ]
                         }
                     }
                 },
@@ -195491,7 +195525,9 @@
                     ],
                     "properties": {
                         "mode": {
-                            "const": "completed_recording"
+                            "enum": [
+                                "completed_recording"
+                            ]
                         },
                         "job_id": {
                             "type": "string",
@@ -195504,7 +195540,9 @@
                             "maxLength": 36
                         },
                         "state": {
-                            "const": "importing"
+                            "enum": [
+                                "importing"
+                            ]
                         }
                     }
                 }
@@ -195990,7 +196028,9 @@
                     ],
                     "properties": {
                         "mode": {
-                            "const": "completed_recording"
+                            "enum": [
+                                "completed_recording"
+                            ]
                         },
                         "recording": {
                             "type": "object",
@@ -196010,7 +196050,9 @@
                             ],
                             "properties": {
                                 "schema_version": {
-                                    "const": 1
+                                    "enum": [
+                                        1
+                                    ]
                                 },
                                 "association": {
                                     "type": "object",
@@ -196041,7 +196083,7 @@
                                             "properties": {
                                                 "trace_id": {
                                                     "type": "string",
-                                                    "oneOf": [
+                                                    "x-oneOf": [
                                                         {
                                                             "pattern": "^(?!0{32}$)[0-9a-f]{32}$",
                                                             "maxLength": 32
@@ -196102,7 +196144,9 @@
                                     "maxLength": 36
                                 },
                                 "modality": {
-                                    "const": "audio"
+                                    "enum": [
+                                        "audio"
+                                    ]
                                 },
                                 "declared_bytes": {
                                     "type": "integer",
@@ -196118,7 +196162,7 @@
                             "description": "Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply."
                         },
                         "source": {
-                            "oneOf": [
+                            "x-oneOf": [
                                 {
                                     "type": "object",
                                     "additionalProperties": false,
@@ -196128,7 +196172,9 @@
                                     ],
                                     "properties": {
                                         "kind": {
-                                            "const": "RemoteUrlEnvelope"
+                                            "enum": [
+                                                "RemoteUrlEnvelope"
+                                            ]
                                         },
                                         "envelope_id": {
                                             "type": "string",
@@ -196147,7 +196193,9 @@
                                     ],
                                     "properties": {
                                         "kind": {
-                                            "const": "ProviderFile"
+                                            "enum": [
+                                                "ProviderFile"
+                                            ]
                                         },
                                         "connection_id": {
                                             "type": "string",
@@ -196182,7 +196230,9 @@
                     "if": {
                         "properties": {
                             "state": {
-                                "const": "complete"
+                                "enum": [
+                                    "complete"
+                                ]
                             }
                         }
                     },
@@ -196193,7 +196243,7 @@
                     },
                     "else": {
                         "not": {
-                            "anyOf": [
+                            "x-anyOf": [
                                 {
                                     "required": [
                                         "import_request"
@@ -196559,7 +196609,9 @@
                             ],
                             "properties": {
                                 "kind": {
-                                    "const": "RemoteUrlEnvelope"
+                                    "enum": [
+                                        "RemoteUrlEnvelope"
+                                    ]
                                 },
                                 "envelope_id": {
                                     "type": "string",
@@ -196578,7 +196630,9 @@
                             ],
                             "properties": {
                                 "kind": {
-                                    "const": "ProviderFile"
+                                    "enum": [
+                                        "ProviderFile"
+                                    ]
                                 },
                                 "connection_id": {
                                     "type": "string",
