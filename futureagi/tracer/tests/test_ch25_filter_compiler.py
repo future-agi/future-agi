@@ -248,6 +248,32 @@ class TestClickHouseFilterBuilderV2:
         assert meta["number"][0] == cols.ATTRS_NUMBER
         assert meta["boolean"][0] == cols.ATTRS_BOOL
 
+    def test_ascii_text_equality_keeps_unicode_semantics_and_uses_value_index(self):
+        builder = ClickHouseFilterBuilderV2(table="spans")
+        sql, params = builder.translate(
+            [
+                {
+                    "column_id": "prompt_slug",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "Agent_K",
+                    },
+                }
+            ]
+        )
+
+        assert "lowerUTF8(toString(attrs_string[%(attr_key_1)s])) =" in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
+        assert params["attr_key_1"] == "prompt_slug"
+        assert params["attr_2"] == "agent_k"
+        assert {
+            value
+            for key, value in params.items()
+            if key.startswith("latest_filter_legacy_index_")
+        } == {"agent_k", "agent_\N{KELVIN SIGN}"}
+
 
 class TestEndUserDimensionSource:
     """Pin the v1→v2 end-user dimension swap on the user/user_id filter path.
@@ -275,8 +301,11 @@ class TestEndUserDimensionSource:
             self._filter("user", "in", ["bob", "carol"])
         )
         assert "trace_id IN (" in sql
-        assert "SELECT id FROM tracer_enduser FINAL" in sql
+        assert "SELECT DISTINCT id AS end_user_id FROM tracer_enduser FINAL" in sql
         assert "_peerdb_is_deleted = 0 AND deleted = 0" in sql
+        # The old-ID dimension is expanded through the remap, like v2's.
+        assert "FROM end_user_id_remap AS remap_match FINAL" in sql
+        assert "end_users" not in sql
 
     def test_v2_in_targets_end_users_rmt(self):
         sql, _ = ClickHouseFilterBuilderV2(table="spans").translate(

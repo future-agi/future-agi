@@ -14,6 +14,17 @@ import (
 // worked perfectly, and were free and untraced for as long as they existed.
 // Handlers with no provider call behind them are not listed.
 func TestBillableHandlersRunThePipeline(t *testing.T) {
+	// Supported handlers now use receipt-installing wrappers. Keep the final
+	// delegation pinned: accepting a wrapper name alone would hide an omission.
+	wrappers, err := os.ReadFile("handlers_inspection.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []string{"return h.processInspection(", "return h.engine.Process("} {
+		if !strings.Contains(string(wrappers), call) {
+			t.Fatalf("inspection wrappers no longer delegate through %s", call)
+		}
+	}
 	billable := map[string][]string{
 		"handlers.go":            {"ChatCompletion"},
 		"handlers_completion.go": {"TextCompletion"},
@@ -26,6 +37,7 @@ func TestBillableHandlersRunThePipeline(t *testing.T) {
 		"handlers_responses.go":  {"CreateResponse"},
 		"handlers_anthropic.go":  {"AnthropicMessages"},
 		"handlers_genai.go":      {"GenAIHandler"},
+		"handlers_decision.go":   {"SystemOne", "Decisions"},
 	}
 
 	for file, handlers := range billable {
@@ -33,11 +45,24 @@ func TestBillableHandlersRunThePipeline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", file, err)
 		}
-		if !strings.Contains(string(src), "h.engine.Process(") {
-			t.Errorf("%s never calls h.engine.Process — %s bypasses cost, budget, "+
+		if pipelineCallIndex(string(src)) < 0 {
+			t.Errorf("%s never calls the pipeline or its inspection wrapper — %s bypasses cost, budget, "+
 				"credits, logging and tracing", file, strings.Join(handlers, "/"))
 		}
 	}
+}
+
+// pipelineCallIndex recognizes only the two handler wrappers whose delegation
+// is pinned above, plus a direct pipeline call. It returns the earliest call so
+// the caller-extras ordering assertion remains meaningful with mixed paths.
+func pipelineCallIndex(source string) int {
+	first := -1
+	for _, call := range []string{"h.engine.Process(", "h.processTextInspection(", "h.processInputInspection("} {
+		if index := strings.Index(source, call); index >= 0 && (first < 0 || index < first) {
+			first = index
+		}
+	}
+	return first
 }
 
 // Process skips post-plugins for streams, since usage arrives only at close, so

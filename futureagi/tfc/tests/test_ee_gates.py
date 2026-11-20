@@ -23,6 +23,86 @@ from tfc import ee_gates
 from tfc.licensing.types import DeploymentLocation
 
 
+def test_r02_r14_jev_capability_and_exact_ids():
+    from tfc.capabilities.registry import FEATURE_REGISTRY
+
+    feature = FEATURE_REGISTRY["jev_models"]
+    # Community: open on every self-hosted install; still a paid feature so
+    # Cloud resolves it through the plan (has_jev_models).
+    assert not feature.oss_locked and feature.requires_license
+    # Bring your own key: no FutureAGI service or managed credits.
+    assert feature.execution_location.value == "local"
+    assert feature.required_service is None
+    assert feature.metering_dimension is None
+    assert ee_gates.is_jev_model("jev-1.13.0")
+    assert ee_gates.is_jev_model("jev-latest")
+    assert not ee_gates.is_jev_model("jev-preview")
+    assert not ee_gates.is_jev_model("JEV-LATEST")
+
+
+def test_r06_jev_unknown_denied_before_transport():
+    with patch("httpx.post") as dispatch:
+        response = ee_gates.ee_model_gate_for_template("jev-2.0.0")
+    assert response.status_code == 400
+    assert response.data["code"] == "JEV_MODEL_UNKNOWN"
+    dispatch.assert_not_called()
+
+
+def test_r14_jev_off_cloud_allowed():
+    cfg, loc, chk = _cfg(DeploymentLocation.SELF_HOSTED, allowed=True)
+    with cfg, loc, chk as check:
+        assert ee_gates.ee_model_gate_for_template("jev-latest") is None
+    check.assert_called_once_with("jev_models")
+
+
+def test_r14_jev_off_cloud_still_honours_a_capability_denial():
+    cfg, loc, chk = _cfg(DeploymentLocation.SELF_HOSTED, allowed=False)
+    with cfg, loc, chk as check:
+        response = ee_gates.ee_model_gate_for_template("jev-latest")
+    assert response.status_code == 402
+    assert response.data["code"] == "ENTITLEMENT_DENIED"
+    assert response.data["feature"] == "jev"
+    check.assert_called_once_with("jev_models")
+
+
+def test_r14_jev_allowed_before_the_service_is_configured():
+    with patch("tfc.capabilities.service.is_configured", return_value=False):
+        assert ee_gates._jev_denied_off_cloud() is False
+        assert ee_gates.ee_model_gate_for_template("jev-latest") is None
+
+
+def test_r14_jev_cloud_defers_to_engine():
+    cfg, loc, chk = _cfg(DeploymentLocation.CLOUD, allowed=False)
+    with cfg, loc, chk as check:
+        assert ee_gates.ee_model_gate_for_template("jev-latest") is None
+    check.assert_not_called()
+
+
+def test_jev_error_text_without_jev_falls_back_to_the_generic_handling(monkeypatch):
+    """A build without ee/jev reports no Jev error, so callers keep their own
+    text."""
+    import sys
+
+    from tfc.utils.error_codes import get_specific_error_message
+
+    monkeypatch.setitem(sys.modules, "ee.jev.errors", None)
+    error = ValueError("JEV_TIMEOUT")
+    assert ee_gates.describe_jev_error(error) is None
+    assert ee_gates.jev_error_message(error) is None
+    assert get_specific_error_message(error) == "JEV_TIMEOUT"
+
+
+def test_r18_combined_gate_preserves_turing():
+    with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=True):
+        response = ee_gates.ee_model_gate_for_template("turing_large")
+        assert response.status_code == 402
+        assert response.data["feature"] == "turing"
+        assert (
+            ee_gates.ee_model_gate_for_template("turing_large", eval_type="code")
+            is None
+        )
+
+
 def _cfg(location, *, allowed=True):
     """Patch the capability service into a configured state at `location`,
     with check("turing_models") returning `allowed`."""
@@ -117,3 +197,88 @@ def test_strip_handles_empty_and_missing_model_key():
         assert ee_gates.strip_turing_from_config_options(None) == {}
         passthrough = {"temperature": [0.0, 1.0]}
         assert ee_gates.strip_turing_from_config_options(passthrough) is passthrough
+
+
+# ── voice_sim_oss_gate_response() ─────────────────────────────────────────
+# The gate must be dependency-aware, not just code-aware: on the slim OSS
+# image the ee.voice module tree ships (has_ee is True) but the `voice`
+# extra's packages (livekit) are stripped, so a code-presence probe alone
+# would accept a run the worker can never execute (silent hang). Probing
+# livekit importability up front turns that into the clean 402.
+
+
+def test_voice_gate_402s_when_voice_extra_missing():
+    with patch("tfc.utils.lazy_extras.extra_available", return_value=False) as probe:
+        resp = ee_gates.voice_sim_oss_gate_response()
+    probe.assert_called_once_with("livekit")
+    assert resp is not None
+    assert resp.status_code == 402
+    assert resp.data["feature"] == "voice_sim"
+    assert resp.data["upgrade_required"] is True
+    assert resp.data["code"] == "ENTITLEMENT_DENIED"
+
+
+def test_voice_gate_defers_to_entitlement_layer_when_deps_present():
+    """With livekit installed and the capability service reporting anything
+    other than EE_CODE_UNAVAILABLE, the gate passes — license/plan concerns
+    belong to the caller's entitlement layer."""
+    with (
+        patch("tfc.utils.lazy_extras.extra_available", return_value=True),
+        patch("tfc.capabilities.service.is_configured", return_value=True),
+        patch(
+            "tfc.capabilities.service.check",
+            return_value=SimpleNamespace(reason_code=None),
+        ),
+    ):
+        assert ee_gates.voice_sim_oss_gate_response() is None
+
+
+def test_voice_gate_402s_when_deps_present_but_code_stripped():
+    """Deps installed but ee.voice absent (unusual, but the inverse gap):
+    the early-startup fallback probes the module tree and denies."""
+    with (
+        patch("tfc.utils.lazy_extras.extra_available", return_value=True),
+        patch("tfc.capabilities.service.is_configured", return_value=False),
+        patch("tfc.ee_loader.has_ee", return_value=False),
+    ):
+        resp = ee_gates.voice_sim_oss_gate_response()
+    assert resp is not None
+    assert resp.status_code == 402
+    assert resp.data["feature"] == "voice_sim"
+
+
+def test_complete_voice_gate_enforces_cloud_plan_entitlement():
+    organization = SimpleNamespace(id="org-1")
+    feature_check = SimpleNamespace(
+        allowed=False,
+        reason="Voice simulation requires a higher plan",
+    )
+    with (
+        patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=None),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+        patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature",
+            return_value=feature_check,
+        ) as check_feature,
+    ):
+        resp = ee_gates.voice_sim_gate_response(organization)
+
+    check_feature.assert_called_once_with("org-1", "has_voice_sim")
+    assert resp is not None
+    assert resp.status_code == 403
+    assert resp.data["code"] == "permission_denied"
+    assert resp.data["feature"] == "voice_sim"
+
+
+def test_complete_voice_gate_allows_self_hosted_without_plan_check():
+    organization = SimpleNamespace(id="org-1")
+    with (
+        patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=None),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+        patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature"
+        ) as check_feature,
+    ):
+        assert ee_gates.voice_sim_gate_response(organization) is None
+
+    check_feature.assert_not_called()

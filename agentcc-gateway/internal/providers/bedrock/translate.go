@@ -1,7 +1,6 @@
 package bedrock
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/netguard"
 )
 
 // sharedDownloadClient is a package-level HTTP client with connection pooling
@@ -23,35 +23,10 @@ var sharedDownloadClient = &http.Client{
 		MaxIdleConns:        20,
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     90 * time.Second,
-		// Use a custom DialContext to enforce SSRF protection at connect time.
-		DialContext: ssrfSafeDialContext,
+		// SSRF protection at connect time: a request's URL must not reach
+		// private, loopback, link-local or cloud metadata addresses.
+		DialContext: netguard.DialContext(net.Dialer{Timeout: 10 * time.Second}, false),
 	},
-}
-
-// ssrfSafeDialContext wraps the default dialer and rejects connections to
-// private, loopback, link-local, and reserved IP addresses. This prevents
-// SSRF attacks where an attacker passes URLs like http://169.254.169.254/.
-func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid address %q: %w", addr, err)
-	}
-
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
-	}
-
-	for _, ipAddr := range ips {
-		if ipAddr.IP.IsPrivate() || ipAddr.IP.IsLoopback() || ipAddr.IP.IsLinkLocalUnicast() ||
-			ipAddr.IP.IsLinkLocalMulticast() || ipAddr.IP.IsUnspecified() {
-			return nil, fmt.Errorf("URL resolves to private/reserved IP %s — request blocked (SSRF protection)", ipAddr.IP)
-		}
-	}
-
-	// All IPs passed validation; connect to the original address.
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
 }
 
 // Bedrock uses Anthropic Messages format for Claude models.

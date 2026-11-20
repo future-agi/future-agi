@@ -1,5 +1,6 @@
 """Contract tests for the generic ClickHouse streaming read helper."""
 
+from tracer.services.clickhouse.application_read_policy import application_read_settings
 from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
 
@@ -49,19 +50,10 @@ def test_stream_query_normalizes_settings_and_rechunks_rows():
     assert client.call == {
         "sql": "SELECT id FROM spans WHERE project_id = %(project_id)s",
         "parameters": {"project_id": "project-1"},
-        "settings": {
-            "max_execution_time": 9.5,
-            "max_threads": 2,
-            "max_memory_usage": 36 * 1024 * 1024 * 1024,
-            "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-            "max_result_rows": 1_000_000,
-            "max_result_bytes": 512 * 1024 * 1024,
-            "readonly": 2,
-            "read_overflow_mode": "throw",
-            "timeout_overflow_mode": "throw",
-            "result_overflow_mode": "throw",
-        },
+        "settings": application_read_settings({"max_threads": 2}),
     }
+    assert client.call["settings"]["max_execution_time"] == 0
+    assert client.call["settings"]["max_result_rows"] == 0
 
 
 def test_stream_query_removes_row_read_limit_and_preserves_tighter_memory_caps():
@@ -83,15 +75,12 @@ def test_stream_query_removes_row_read_limit_and_preserves_tighter_memory_caps()
         == []
     )
 
-    assert client.call["settings"] == {
-        "max_execution_time": 9.5,
-        "max_memory_usage": 2 * 1024 * 1024 * 1024,
-        "max_bytes_to_read": 2 * 1024 * 1024 * 1024,
-        "max_threads": 4,
-        "max_result_rows": 1_000_000,
-        "max_result_bytes": 512 * 1024 * 1024,
-        "readonly": 2,
-        "read_overflow_mode": "throw",
-        "timeout_overflow_mode": "throw",
-        "result_overflow_mode": "throw",
-    }
+    assert client.call["settings"]["max_memory_usage"] == 2 * 1024**3
+    for name in (
+        "max_execution_time",
+        "max_rows_to_read",
+        "max_bytes_to_read",
+        "max_result_rows",
+        "max_result_bytes",
+    ):
+        assert client.call["settings"][name] == 0

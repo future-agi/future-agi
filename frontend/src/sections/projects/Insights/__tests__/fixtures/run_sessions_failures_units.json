@@ -1,0 +1,113 @@
+{
+  "status": true,
+  "result": {
+    "units": [
+      {
+        "unit_id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12",
+        "label": "What is the Coastline Rain Shell made of? Is it good for rain?",
+        "user_id": "cust_omar_702",
+        "session_id": "358ae2a6-9e87-5291-9c7b-baefdcf55e12",
+        "time": "2026-10-09T10:31:29Z",
+        "excerpt": "What is the Coastline Rain Shell made of? Is it good for rain?",
+        "summary": "The customer asked about the Coastline Rain Shell's material and suitability for rain. The agent stated it was 100% organic cotton, which was wrong. When the customer pointed to the label showing nylon with DWR coating, the agent apologized but gave no corrected product information or answer about rain performance.",
+        "lens_answer": "Agent stated the Coastline Rain Shell was 100% organic cotton when asked about its material and rain suitability, a made-up product fact that contradicts the nylon DWR construction.",
+        "facets": {
+          "topic": "Fabricated product material claim",
+          "outcome": "partially_resolved",
+          "summary": "The customer asked about the Coastline Rain Shell's material and suitability for rain. The agent stated it was 100% organic cotton, which was wrong. When the customer pointed to the label showing nylon with DWR coating, the agent apologized but gave no corrected product information or answer about rain performance.",
+          "language": "English",
+          "sentiment": 2,
+          "attributes": {
+            "asked_for_human": false
+          },
+          "lens_answer": "Agent stated the Coastline Rain Shell was 100% organic cotton when asked about its material and rain suitability, a made-up product fact that contradicts the nylon DWR construction.",
+          "failure_mode": "fabricated product material",
+          "broke_at_turn": 1,
+          "failure_present": true
+        },
+        "metrics": {
+          "cost": 0.0,
+          "turns": 2,
+          "errors": 0,
+          "tokens": 0,
+          "traces": 2,
+          "duration_s": 89.389,
+          "latency_ms": 2194.5
+        },
+        "category_id": "a55e9078defc",
+        "sub_category_id": "e6baf6f113b5"
+      },
+      {
+        "unit_id": "327354ad-fe04-5fe8-a429-e88f0c685f2d",
+        "label": "Hola, mi pedido HP-37680 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+        "user_id": "cust_isla_849",
+        "session_id": "327354ad-fe04-5fe8-a429-e88f0c685f2d",
+        "time": "2026-10-09T11:49:17Z",
+        "excerpt": "Hola, mi pedido HP-37680 todav\u00eda no ha llegado. \u00bfD\u00f3nde est\u00e1?",
+        "summary": "The customer asked where their delayed order was. The agent replied that it was on the way and would arrive Thursday, and the customer thanked the agent and closed the chat. No order lookup appears in the transcript to support the specific delivery day.",
+        "lens_answer": "Agent gave a specific delivery day for the order without any shown lookup of its tracking status when the customer asked where the order was.",
+        "facets": {
+          "topic": "Unverified delivery date claim",
+          "outcome": "resolved",
+          "summary": "The customer asked where their delayed order was. The agent replied that it was on the way and would arrive Thursday, and the customer thanked the agent and closed the chat. No order lookup appears in the transcript to support the specific delivery day.",
+          "language": "Spanish",
+          "sentiment": 4,
+          "attributes": {
+            "asked_for_human": false
+          },
+          "lens_answer": "Agent gave a specific delivery day for the order without any shown lookup of its tracking status when the customer asked where the order was.",
+          "failure_mode": "unverified delivery status claim",
+          "broke_at_turn": 1,
+          "failure_present": true
+        },
+        "metrics": {
+          "cost": 0.0,
+          "turns": 2,
+          "errors": 0,
+          "tokens": 0,
+          "traces": 2,
+          "duration_s": 104.013,
+          "latency_ms": 2006.5
+        },
+        "category_id": "a55e9078defc",
+        "sub_category_id": "e6baf6f113b5"
+      },
+      {
+        "unit_id": "d8e6d1e7-6beb-578c-91a4-a70329321d79",
+        "label": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+        "user_id": "cust_mateo_596",
+        "session_id": "d8e6d1e7-6beb-578c-91a4-a70329321d79",
+        "time": "2026-10-09T11:56:54Z",
+        "excerpt": "I'm 6'1\" and usually wear a large. What size Everyday Merino Tee should I get?",
+        "summary": "A customer asked for sizing advice on the Everyday Merino Tee, then for a pairing for a hiking trip, and said they would buy a jacket and the tee. The agent confirmed both items were in stock and shipping today, though the jacket had never been discussed and no stock lookup is shown.",
+        "lens_answer": "Agent confirmed the jacket and tee were in stock and shipping today without any shown check, even though the jacket had never been mentioned earlier in the conversation.",
+        "facets": {
+          "topic": "Unverified stock claim",
+          "outcome": "resolved",
+          "summary": "A customer asked for sizing advice on the Everyday Merino Tee, then for a pairing for a hiking trip, and said they would buy a jacket and the tee. The agent confirmed both items were in stock and shipping today, though the jacket had never been discussed and no stock lookup is shown.",
+          "language": "English",
+          "sentiment": 4,
+          "attributes": {
+            "asked_for_human": false
+          },
+          "lens_answer": "Agent confirmed the jacket and tee were in stock and shipping today without any shown check, even though the jacket had never been mentioned earlier in the conversation.",
+          "failure_mode": "unverified stock and shipping claim",
+          "broke_at_turn": 3,
+          "failure_present": true
+        },
+        "metrics": {
+          "cost": 0.0,
+          "turns": 3,
+          "errors": 0,
+          "tokens": 0,
+          "traces": 3,
+          "duration_s": 171.623,
+          "latency_ms": 1231
+        },
+        "category_id": "a55e9078defc",
+        "sub_category_id": "5afc03803a16"
+      }
+    ],
+    "total": 28
+  }
+}

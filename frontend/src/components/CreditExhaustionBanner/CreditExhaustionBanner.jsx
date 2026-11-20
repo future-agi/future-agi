@@ -1,7 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Alert, AlertTitle, Button, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
@@ -30,6 +29,14 @@ export const CreditExhaustionBanner = ({
   if (!error || !isCloud) return null;
 
   const ctaText = error.upgradeCta?.text || "Upgrade your plan";
+  const title =
+    error.errorCode === "BUDGET_PAUSED"
+      ? "Usage paused by budget"
+      : error.errorCode === "PAYMENT_REQUIRED"
+        ? "Payment required"
+        : error.dimension === "ai_credits"
+          ? "AI Credits exhausted"
+          : "Usage limit reached";
 
   return (
     <Alert
@@ -44,30 +51,25 @@ export const CreditExhaustionBanner = ({
       action={
         <Button
           size="small"
-          variant="contained"
+          variant="outlined"
           color="warning"
           onClick={onUpgrade}
-          sx={{ whiteSpace: "nowrap", textTransform: "none" }}
+          sx={{ whiteSpace: "nowrap" }}
         >
           {ctaText}
         </Button>
       }
-      sx={(theme) => ({
-        backgroundColor: alpha(theme.palette.warning.main, 0.08),
-        border: `1px solid ${alpha(theme.palette.warning.main, 0.3)}`,
-        borderRadius: 1,
+      sx={{
         "& .MuiAlert-action": {
           pt: 0,
           alignItems: "center",
         },
         ...sx,
-      })}
+      }}
     >
-      <AlertTitle sx={{ fontWeight: 600, mb: 0.25 }}>
-        AI Credits exhausted
-      </AlertTitle>
+      <AlertTitle>{title}</AlertTitle>
       <Typography variant="body2" color="text.secondary">
-        {error.result || "You've used all your free AI credits this month."}
+        {error.result || "This action exceeds your current usage allowance."}
       </Typography>
     </Alert>
   );

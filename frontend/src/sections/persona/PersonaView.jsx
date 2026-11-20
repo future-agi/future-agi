@@ -5,7 +5,7 @@ import GenericCard from "./GenericCard/GenericCard";
 import { useGetPersonas } from "src/api/persona/persona";
 import { useDebounce } from "src/hooks/use-debounce";
 import PropTypes from "prop-types";
-import { extractTagsFromPersona } from "./common";
+import { PERSONAS_DOCS_URL, extractTagsFromPersona } from "./common";
 import PersonaCreateEditDrawer from "./PersonaCreateEdit/PersonaCreateEditDrawer";
 import PersonaInfoDrawer from "./PersonaInfo/PersonaInfoDrawer";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
@@ -93,13 +93,10 @@ const PersonaView = ({
             sx={{
               color: "text.primary",
               borderColor: "divider",
-              padding: 1.5,
-              fontSize: "14px",
-              height: "38px",
             }}
             startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
             component="a"
-            href="https://docs.futureagi.com/docs/simulation/concepts/personas"
+            href={PERSONAS_DOCS_URL}
             target="_blank"
           >
             View Docs
@@ -107,19 +104,11 @@ const PersonaView = ({
           <Button
             variant="contained"
             color="primary"
-            sx={{
-              padding: "8px 12px",
-              borderRadius: "4px",
-              height: "38px",
-            }}
             startIcon={
               <Iconify
-                icon="octicon:plus-24"
+                width={20}
+                icon="solar:add-linear"
                 color="background.paper"
-                sx={{
-                  width: "20px",
-                  height: "20px",
-                }}
               />
             }
             disabled={

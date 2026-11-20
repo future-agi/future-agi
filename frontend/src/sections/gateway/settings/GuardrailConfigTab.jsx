@@ -2,8 +2,6 @@
 import React, { useState } from "react";
 import {
   Stack,
-  Card,
-  CardContent,
   Typography,
   TextField,
   MenuItem,
@@ -13,70 +11,11 @@ import {
   Button,
   Divider,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import InheritedBadge from "../components/InheritedBadge";
 import GuardrailCheckDialog from "./GuardrailCheckDialog";
-
-const GUARDRAIL_CHECKS = [
-  { name: "pii-detection", label: "PII Detection", icon: "mdi:shield-account" },
-  {
-    name: "content-moderation",
-    label: "Content Moderation",
-    icon: "mdi:shield-check",
-  },
-  {
-    name: "prompt-injection",
-    label: "Prompt Injection",
-    icon: "mdi:shield-alert",
-  },
-  {
-    name: "keyword-blocklist",
-    label: "Keyword Blocklist",
-    icon: "mdi:shield-off",
-    description: "Block prompts containing specific keywords or phrases.",
-    fields: [
-      {
-        key: "words",
-        label: "Blocked Keywords",
-        type: "multiline-list",
-        required: true,
-        placeholder: "Enter one keyword or phrase per line",
-        helperText:
-          "Add one keyword or phrase per line. Commas are also supported.",
-      },
-    ],
-  },
-  {
-    name: "secret-detection",
-    label: "Secret Detection",
-    icon: "mdi:shield-key",
-  },
-  {
-    name: "topic-restriction",
-    label: "Topic Restriction",
-    icon: "mdi:shield-lock",
-  },
-  {
-    name: "language-detection",
-    label: "Language Detection",
-    icon: "mdi:translate",
-  },
-  {
-    name: "system-prompt-protection",
-    label: "System Prompt Protection",
-    icon: "mdi:shield-star",
-  },
-  {
-    name: "hallucination-detection",
-    label: "Hallucination Detection",
-    icon: "mdi:shield-search",
-  },
-  {
-    name: "data-leakage-prevention",
-    label: "Data Leakage Prevention",
-    icon: "mdi:shield-remove",
-  },
-];
+import { GUARDRAIL_CHECKS } from "./guardrailChecks";
 
 // Future AGI star logo as inline SVG icon
 const FutureAGIIcon = ({ size = 20, enabled }) => (
@@ -113,7 +52,9 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="46.9"
         gradientUnits="userSpaceOnUse"
       >
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#CF6BE8" />
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
       <linearGradient
@@ -124,8 +65,10 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="46.9"
         gradientUnits="userSpaceOnUse"
       >
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#8B44FF" />
-        <stop offset="1" stopColor="#7A40D9" />
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
+        <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
       <linearGradient
         id="fagi3"
@@ -135,7 +78,9 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="40.09"
         gradientUnits="userSpaceOnUse"
       >
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#CF6BE8" />
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
       <linearGradient
@@ -146,8 +91,10 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="25.42"
         gradientUnits="userSpaceOnUse"
       >
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#8B44FF" />
-        <stop offset="1" stopColor="#7A40D9" />
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
+        <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
     </defs>
   </svg>
@@ -176,18 +123,23 @@ const MODEL_GUARDRAIL_CHECKS = [
         type: "password",
         required: true,
       },
+      // No defaultValue: an empty Base URL means "this platform", which is
+      // what gets the org's keys injected. A filled-in api.futureagi.com
+      // would be saved and point self-hosted installs at the cloud.
       {
         key: "base_url",
         label: "Base URL",
         type: "text",
-        defaultValue: "https://api.futureagi.com",
+        placeholder: "https://api.futureagi.com",
+        helperText:
+          "Leave empty to use this platform. Set only to target another Future AGI environment.",
       },
     ],
   },
   {
     name: "llama-guard",
     label: "Llama Guard",
-    icon: "mdi:shield-sword-outline",
+    icon: "solar:shield-linear",
     provider: "llama_guard",
     description: "Meta Llama Guard content safety classification",
     fields: [
@@ -242,7 +194,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "presidio-pii",
     label: "Presidio PII",
-    icon: "mdi:shield-account-outline",
+    icon: "solar:shield-user-linear",
     provider: "presidio",
     hideConfidence: true,
     description: "AI-powered PII detection via Microsoft Presidio",
@@ -275,7 +227,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "lakera-guard",
     label: "Lakera Guard",
-    icon: "mdi:shield-bug-outline",
+    icon: "solar:shield-linear",
     provider: "lakera",
     description: "Prompt injection & jailbreak detection",
     fields: [
@@ -350,7 +302,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "hiddenlayer-guard",
     label: "HiddenLayer",
-    icon: "mdi:shield-lock-outline",
+    icon: "solar:shield-keyhole-linear",
     provider: "hiddenlayer",
     description:
       "AI model security — adversarial attack & prompt injection detection",
@@ -373,7 +325,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "aporia-guard",
     label: "Aporia Guardrails",
-    icon: "mdi:shield-check-outline",
+    icon: "solar:shield-check-linear",
     provider: "aporia",
     description: "Hallucination, injection, PII & topic restriction guardrails",
     fields: [
@@ -408,7 +360,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "pangea-guard",
     label: "Pangea AI Guard",
-    icon: "mdi:shield-crown-outline",
+    icon: "solar:shield-linear",
     provider: "pangea",
     description: "Prompt injection, PII redaction, malware scanning",
     fields: [
@@ -437,7 +389,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "dynamoai-guard",
     label: "DynamoAI Guard",
-    icon: "mdi:shield-half-full",
+    icon: "solar:shield-linear",
     provider: "dynamoai",
     description: "DynamoGuard policy-based content moderation",
     fields: [
@@ -473,7 +425,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "enkrypt-guard",
     label: "Enkrypt AI",
-    icon: "mdi:shield-key-outline",
+    icon: "solar:shield-keyhole-linear",
     provider: "enkrypt",
     description:
       "Toxicity, PII, injection attack, bias & content policy detection",
@@ -507,7 +459,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "ibm-ai-detector",
     label: "IBM Granite Guardian",
-    icon: "mdi:shield-search",
+    icon: "solar:shield-linear",
     provider: "ibm_ai",
     description: "IBM watsonx Granite Guardian — risk detection via chat model",
     fields: [
@@ -557,7 +509,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "grayswan-guard",
     label: "GraySwan Cygnal",
-    icon: "mdi:shield-alert-outline",
+    icon: "solar:shield-warning-linear",
     provider: "grayswan",
     description: "AI risk monitoring with custom policies & reasoning modes",
     fields: [
@@ -586,7 +538,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "lasso-guard",
     label: "Lasso Security",
-    icon: "mdi:shield-edit-outline",
+    icon: "solar:shield-user-linear",
     provider: "lasso",
     description: "Content moderation, jailbreak detection & PII masking",
     fields: [
@@ -614,7 +566,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "crowdstrike-aidr",
     label: "CrowdStrike AIDR",
-    icon: "mdi:shield-airplane-outline",
+    icon: "solar:shield-linear",
     provider: "crowdstrike",
     description: "AI threat detection and response",
     fields: [
@@ -649,7 +601,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "zscaler-guard",
     label: "Zscaler AI Guard",
-    icon: "mdi:shield-link-variant-outline",
+    icon: "solar:shield-network-linear",
     provider: "zscaler",
     description: "Zero Trust DLP & threat detection for LLM traffic",
     fields: [
@@ -683,7 +635,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "tool-permissions",
     label: "Tool Permissions",
-    icon: "mdi:tools",
+    icon: "solar:toolbox-linear",
     provider: "tool_permission",
     description: "Control which tools/functions an LLM can call",
     fields: [
@@ -713,7 +665,7 @@ const MODEL_GUARDRAIL_CHECKS = [
   {
     name: "mcp-security",
     label: "MCP Security",
-    icon: "mdi:shield-link-variant",
+    icon: "solar:shield-network-linear",
     provider: "mcp_security",
     description:
       "Model Context Protocol safety — validate MCP tool inputs/outputs",
@@ -918,127 +870,123 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
     const summary = meta?.provider ? getProviderSummary(check, meta) : null;
 
     return (
-      <Card key={name} variant="outlined">
-        <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
-          >
-            <Stack direction="row" alignItems="center" spacing={1}>
-              {icon === "__futureagi__" ? (
-                <FutureAGIIcon size={20} enabled={enabled} />
-              ) : (
-                <Iconify
-                  icon={icon}
-                  width={20}
-                  sx={{ color: enabled ? "primary.main" : "text.disabled" }}
-                />
-              )}
-              <Stack>
-                <Typography variant="subtitle2">{label}</Typography>
-                {hasMeta && meta.description && (
-                  <Typography variant="caption" color="text.secondary">
-                    {meta.description}
-                  </Typography>
-                )}
-              </Stack>
-              <InheritedBadge variant={isCustom ? "custom" : "inherited"} />
-            </Stack>
-            <Stack direction="row" alignItems="center" spacing={0.5}>
-              <Switch
-                size="small"
-                checked={enabled}
-                onChange={(e) =>
-                  handleToggleCheck(name, e.target.checked, meta)
-                }
+      <Section variant="panel" key={name}>
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Stack direction="row" alignItems="center" spacing={1}>
+            {icon === "__futureagi__" ? (
+              <FutureAGIIcon size={20} enabled={enabled} />
+            ) : (
+              <Iconify
+                icon={icon}
+                width={20}
+                sx={{ color: enabled ? "primary.main" : "text.disabled" }}
               />
-              <IconButton size="small" onClick={() => handleEdit(name, meta)}>
-                <Iconify icon="mdi:pencil-outline" width={18} />
-              </IconButton>
-              {isCustom && (
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={() => handleResetCheck(name)}
-                >
-                  Reset
-                </Button>
-              )}
-            </Stack>
-          </Stack>
-          {isCustom && (
-            <Stack
-              direction="row"
-              spacing={2}
-              sx={{ mt: 0.5, pl: 3.5 }}
-              flexWrap="wrap"
-            >
-              <Typography variant="caption" color="text.secondary">
-                Action: {action}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Threshold: {Number(threshold).toFixed(2)}
-              </Typography>
-              {summary && (
+            )}
+            <Stack>
+              <Typography variant="subtitle2">{label}</Typography>
+              {hasMeta && meta.description && (
                 <Typography variant="caption" color="text.secondary">
-                  {summary}
+                  {meta.description}
                 </Typography>
               )}
             </Stack>
-          )}
-        </CardContent>
-      </Card>
+            <InheritedBadge variant={isCustom ? "custom" : "inherited"} />
+          </Stack>
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Switch
+              size="small"
+              checked={enabled}
+              onChange={(e) => handleToggleCheck(name, e.target.checked, meta)}
+            />
+            <IconButton size="small" onClick={() => handleEdit(name, meta)}>
+              <Iconify icon="solar:pen-linear" width={20} />
+            </IconButton>
+            {isCustom && (
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => handleResetCheck(name)}
+              >
+                Reset
+              </Button>
+            )}
+          </Stack>
+        </Stack>
+        {isCustom && (
+          <Stack
+            direction="row"
+            spacing={2}
+            sx={{ mt: 0.5, pl: 3.5 }}
+            flexWrap="wrap"
+          >
+            <Typography variant="caption" color="text.secondary">
+              Action: {action}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Threshold: {Number(threshold).toFixed(2)}
+            </Typography>
+            {summary && (
+              <Typography variant="caption" color="text.secondary">
+                {summary}
+              </Typography>
+            )}
+          </Stack>
+        )}
+      </Section>
     );
   };
 
   return (
     <Stack spacing={2}>
       {/* Pipeline-level settings */}
-      <Card variant="outlined">
-        <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Pipeline Settings
-          </Typography>
-          <Stack direction="row" spacing={2} alignItems="center">
-            <TextField
-              select
-              size="small"
-              label="Mode"
-              value={config.pipeline_mode || config.pipelineMode || "parallel"}
-              onChange={(e) =>
-                handlePipelineChange("pipeline_mode", e.target.value)
-              }
-              sx={{ minWidth: 140 }}
-            >
-              <MenuItem value="parallel">Parallel</MenuItem>
-              <MenuItem value="sequential">Sequential</MenuItem>
-            </TextField>
-            <FormControlLabel
-              control={
-                <Switch
-                  size="small"
-                  checked={config.fail_open ?? config.failOpen ?? true}
-                  onChange={(e) =>
-                    handlePipelineChange("fail_open", e.target.checked)
-                  }
-                />
-              }
-              label={<Typography variant="body2">Fail Open</Typography>}
-            />
-            <TextField
-              size="small"
-              label="Timeout (ms)"
-              type="number"
-              value={config.timeout_ms ?? config.timeoutMs ?? 5000}
-              onChange={(e) =>
-                handlePipelineChange("timeout_ms", Number(e.target.value))
-              }
-              sx={{ width: 120 }}
-            />
-          </Stack>
-        </CardContent>
-      </Card>
+      <Section variant="panel">
+        <Typography variant="subtitle2" gutterBottom>
+          Pipeline Settings
+        </Typography>
+        <Stack direction="row" spacing={2} alignItems="center">
+          <TextField
+            select
+            size="small"
+            label="Mode"
+            value={config.pipeline_mode || config.pipelineMode || "parallel"}
+            onChange={(e) =>
+              handlePipelineChange("pipeline_mode", e.target.value)
+            }
+            sx={{ minWidth: 140 }}
+          >
+            <MenuItem value="parallel">Parallel</MenuItem>
+            <MenuItem value="sequential">Sequential</MenuItem>
+          </TextField>
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={[true, "true"].includes(
+                  config.fail_open ?? config.failOpen,
+                )}
+                onChange={(e) =>
+                  handlePipelineChange("fail_open", e.target.checked)
+                }
+              />
+            }
+            label={<Typography variant="body2">Fail Open</Typography>}
+          />
+          <TextField
+            size="small"
+            label="Timeout (ms)"
+            type="number"
+            value={config.timeout_ms ?? config.timeoutMs ?? 5000}
+            onChange={(e) =>
+              handlePipelineChange("timeout_ms", Number(e.target.value))
+            }
+            sx={{ width: 120 }}
+          />
+        </Stack>
+      </Section>
 
       {/* AI-powered / model-based checks */}
       <Typography variant="subtitle1">AI-Powered Checks</Typography>

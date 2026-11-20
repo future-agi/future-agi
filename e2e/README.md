@@ -2,7 +2,7 @@
 
 End-to-end flows that drive the whole product as one running system: a Chromium browser against the
 production frontend image, the real Django API, the real fi-collector, the real agentcc-gateway, and
-the real datastores (Postgres, ClickHouse, Temporal, Redis, RabbitMQ, MinIO) plus the PeerDB CDC
+the real datastores (Postgres, ClickHouse, Temporal, Redis, MinIO) plus the PeerDB CDC
 mirrors that carry eval and annotation data from Postgres into ClickHouse. Every flow asserts what
 the user sees **and** the backend state that must exist behind it. The only fake in the stack is the
 LLM provider, mocked at the HTTP boundary _behind_ the real gateway, so routing, streaming and cost
@@ -21,16 +21,35 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │                   └──────────────────────► Postgres   :25432                    │
 │                                                                                 │
 │  docker compose -p futureagi-e2e                                                │
-│    postgres · clickhouse · redis · rabbitmq · minio · temporal                   │
-│    backend · worker (ALL_QUEUES) · frontend · fi-collector                       │
+│    postgres · clickhouse · redis · minio · temporal                              │
+│    backend · worker (ALL_QUEUES) · frontend · fi-collector · observation consumer                       │
 │    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, no host port) │
+│    backend / worker ─► mock-slack (OAuth and chat, host :28081)                  │
 │    peerdb (catalog · temporal · flow-api · flow-workers · server · minio · init) │
 │      └── CDC mirrors PG→CH: tracer_eval_logger, model_hub_score, datasets,       │
 │          prompts, simulate, usage_apicalllog …                                   │
 │                                                                                 │
-│  deliberately NOT started: serving · code-executor · sized workers · peerdb-ui   │
+│  deliberately NOT started: serving · sized workers · peerdb-ui   │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The distributed harness starts the dedicated `code-executor` and sets
+`CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
+`EVAL-E2E-016` uses the shipped templates and an owned HTTP listener. The executor
+only joins internal Docker networks, with no default route. `allowed.example`
+resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
+not on the internet. `private.example` resolves to its private interface and is
+operator-listed to prove that admission cannot override the public-IP rule.
+The listener never makes outbound requests. Its loopback-only journal is at
+`http://127.0.0.1:28082/requests?prefix=...` (`E2E_LINK_CANARY_URL` in attach mode).
+Redirects point only to that owned private interface. No real third party is contacted.
+
+Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
+`http://localhost:28081/messages`. They seed issue transitions through the authenticated
+`POST /tracer/e2e/feed-issue/` route, which exists only in the distributed E2E backend image.
+That image also supplies its own Error Feed entitlement in E2E-only settings; neither fixture is
+present in the product image. The E2E API and worker share a test-only integration encryption key
+so the worker can decrypt the connection created during OAuth.
 
 Eval results, annotation scores and the dataset/simulation dashboards reach ClickHouse **only**
 through the PeerDB mirrors — Django writes those rows to Postgres alone. That is why PeerDB is part
@@ -46,19 +65,23 @@ yarn install
 npx playwright install chromium
 
 # from the repo root
+bin/e2e build backend        # include the E2E-only issue seeder and entitlement in a local image
 bin/e2e up                   # boot the isolated futureagi-e2e stack
 bin/e2e test                 # run the whole suite against it
 bin/e2e test flows/observe/  # or one area
 bin/e2e test --grep @smoke   # or one tag
+bin/e2e test flows/error-feed/  # Slack alert creation, delivery, and management
+E2E_RECORD_VIDEO=1 bin/e2e test flows/error-feed/  # save browser recordings in test-results
 ```
 
-`bin/e2e up` composes the root `docker-compose.yml` with `e2e/stack/docker-compose.e2e.yml`, using
-`e2e/stack/e2e.env` and the Compose project name `futureagi-e2e`. It starts an explicit service
+`bin/e2e up` composes `docker-compose.distributed.yml` (the distributed topology) with `e2e/stack/docker-compose.e2e.yml`, using
+`e2e/stack/e2e.env` and the Compose project name `futureagi-e2e` (override with
+`E2E_COMPOSE_PROJECT` to keep a separate test volume). It starts an explicit service
 list — kept in `SERVICES` in `bin/e2e` so the trimmed set is visible in one place, with
 `COMPOSE_PROFILES=peerdb` in the env file making the profile-gated PeerDB services startable by
-name. The overlay itself is thin: it adds the `mock-llm` service, caps ClickHouse at 3 GB (it is the
+name. The overlay itself is thin: it adds the `mock-llm` and `mock-slack` services, caps ClickHouse at 3 GB (it is the
 first thing an out-of-memory runner kills), sets `restart: "no"` on backend and worker so a crash
-loop fails the run loudly instead of hiding, and gives fi-collector its own image tag. `up` returns
+loop fails the run loudly instead of hiding, and gives collector and observation consumer the same image tag. `up` returns
 only after this readiness sequence passes:
 
 1. `docker compose up -d --wait --wait-timeout 300` — every datastore healthcheck, including
@@ -66,8 +89,9 @@ only after this readiness sequence passes:
 2. `GET http://localhost:8100/health/` — the backend is up **and** migrated (600 s budget).
 3. `SELECT count() FROM spans LIMIT 0` over ClickHouse HTTP — the Django ClickHouse boot hook
    logs-and-continues on failure, so `/health/` alone can pass with a missing CH schema.
-4. `GET http://localhost:3100/` — nginx is serving the frontend.
-5. `peerdb-init` is force-recreated, must exit 0, **and** its log must contain no unexpected
+4. Both observed-attribute indexes must exist in the isolated catalog database.
+5. `GET http://localhost:3100/` — nginx is serving the frontend.
+6. `peerdb-init` is force-recreated, must exit 0, **and** its log must contain no unexpected
    `ERROR:` lines (180 s budget). Ordering matters: mirrors can only be created once the backend's
    migrations have created the tables they replicate.
 
@@ -93,6 +117,7 @@ Ports come from `e2e/stack/e2e.env` and are chosen to collide with neither a nor
 | backend                       | 8100          | ClickHouse HTTP / native | 28123 / 29000 |
 | agentcc-gateway               | 28090         | Redis                    | 26379         |
 | fi-collector OTLP HTTP / gRPC | 24318 / 24317 | MinIO API / console      | 29005 / 29006 |
+| observation Kafka             | 29093         |                          |               |
 | fi-collector admin            | 29464         | Temporal                 | 27233         |
 | peerdb-server                 | 29900         | peerdb-ui (not started)  | 23001         |
 
@@ -132,18 +157,32 @@ E2E_COLLECTOR_URL=http://localhost:4318 \
 bin/e2e test flows/observe/trace-ingestion.spec.ts
 ```
 
-| Variable                   | Default                                                      | Needed for                              |
-| -------------------------- | ------------------------------------------------------------ | --------------------------------------- |
-| `E2E_APP_URL`              | `http://localhost:3100`                                      | every browser step (`baseURL`)          |
-| `E2E_API_URL`              | `http://localhost:8100`                                      | provisioning and the API assertion lane |
-| `E2E_COLLECTOR_URL`        | `http://localhost:24318`                                     | OTLP trace seeding                      |
-| `E2E_GATEWAY_URL`          | `http://localhost:28090`                                     | the mock-LLM harness self-test          |
-| `E2E_CH_URL` / `E2E_CH_DB` | `http://localhost:28123` / `default`                         | storage-lane ClickHouse assertions      |
-| `E2E_PG_URL`               | `postgresql://futureagi:futureagi@localhost:25432/futureagi` | storage-lane Postgres assertions        |
+| Variable                   | Default                                                      | Needed for                                |
+| -------------------------- | ------------------------------------------------------------ | ----------------------------------------- |
+| `E2E_APP_URL`              | `http://localhost:3100`                                      | every browser step (`baseURL`)            |
+| `E2E_API_URL`              | `http://localhost:8100`                                      | provisioning and the API assertion lane   |
+| `E2E_COLLECTOR_URL`        | `http://localhost:24318`                                     | OTLP trace seeding                        |
+| `E2E_GATEWAY_URL`          | `http://localhost:28090`                                     | the mock-LLM harness self-test            |
+| `E2E_CH_URL` / `E2E_CH_DB` | `http://localhost:28123` / `default`                         | storage-lane ClickHouse assertions        |
+| `E2E_CH_PASSWORD`          | `e2e-clickhouse-password`, the managed stacks' `CH_PASSWORD` | the same, as ClickHouse user `default`    |
+| `E2E_CATALOG_CH_URL`       | `E2E_CH_URL` (or its default above)                          | optional separate catalog ClickHouse host |
+| `E2E_CATALOG_CH_DB`        | `property_catalog`                                           | optional catalog database override        |
+| `E2E_PG_URL`               | `postgresql://futureagi:futureagi@localhost:25432/futureagi` | storage-lane Postgres assertions          |
 
 Any flow with storage-lane assertions needs `E2E_CH_URL` and `E2E_PG_URL` as well — pointed at the
 attached stack's stores. If you omit them the probe hits the managed stack's ports and the spec
 fails at the probe, by design: there is no silent skip.
+
+The existing-customer `test` (see Fixtures below) dates its org through `E2E_PG_URL`, so any flow on
+it needs `E2E_PG_URL` too. Once the Simulate restriction (#3502) is in, the attached backend must also
+set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=2026-10-01T00:00:00Z`, as both overlays and the root
+`docker-compose.dev.yml` do, or SIM-E2E-001 and `harness/provisioning.spec.ts` fail.
+
+For split-store attachments, set `E2E_CATALOG_CH_URL` and/or `E2E_CATALOG_CH_DB`
+for catalog assertions (`probe.catalogCh()`). Source assertions (`probe.ch()`)
+continue to use `E2E_CH_URL` / `E2E_CH_DB`. Catalog queries use unqualified table
+names so the selected catalog database applies; neither override is required for
+the managed stack.
 
 Attach mode is for **iteration**, not for verdicts. It never exercises the nginx artifact or the
 runtime `window.__FUTURE_AGI_CONFIG__` injection that the shipped frontend image performs, and the
@@ -158,7 +197,8 @@ production images CI and users run:
 bin/e2e build backend     # futureagi/future-agi:e2e-local   (futureagi/Dockerfile.oss, context futureagi/)
 bin/e2e build frontend    # futureagi/frontend:e2e-local     (context frontend/)
 bin/e2e build collector   # futureagi/fi-collector:e2e-local (context fi-collector/)
-bin/e2e build all         # all three
+bin/e2e build executor    # futureagi/code-executor:e2e-local (futureagi/code-executor/)
+bin/e2e build all         # all four
 ```
 
 Each build prints the line to run next; the stack picks the images up through these variables:
@@ -167,17 +207,17 @@ Each build prints the line to run next; the stack picks the images up through th
 | ------------ | ------------------------------------ | ---------------------- |
 | `backend`    | `FUTURE_AGI_VERSION=e2e-local`       | the `worker` container |
 | `frontend`   | `FRONTEND_VERSION=e2e-local`         | —                      |
-| `collector`  | `E2E_FI_COLLECTOR_VERSION=e2e-local` | —                      |
+| `collector`  | `E2E_FI_COLLECTOR_VERSION=e2e-local` | observation consumer   |
+| `executor`   | `CODE_EXECUTOR_VERSION=e2e-local`    | —                      |
 
 ```bash
 bin/e2e build all
-FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up
+FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local CODE_EXECUTOR_VERSION=e2e-local bin/e2e up
 bin/e2e test
 ```
 
-The root compose reuses `FUTURE_AGI_VERSION` for fi-collector's image too; the E2E overlay decouples
-it behind `E2E_FI_COLLECTOR_VERSION` so a backend-only build never forces a collector build (and so
-CI can retag the backend alone).
+The E2E overlay sets the collector and observation consumer image together through
+`E2E_FI_COLLECTOR_VERSION`, so both run the same observation protocol.
 
 **Which one to use when.**
 
@@ -189,16 +229,67 @@ CI can retag the backend alone).
   `COPY . .` layer — and the production image keeps the readiness contract honest by running
   migrations. (The collector is a cached Go build, the cheapest of the three; the frontend re-runs
   the full Vite production build every time and is the slowest by far.)
-- _Before pushing_: `bin/e2e build all` on fresh volumes (`bin/e2e down -v` first) — exactly the
-  artifacts a user receives.
+- _Before pushing_: `bin/e2e build all`, then validate fresh installation and retained-data
+  upgrade behavior. Only reset volumes belonging to your explicitly disposable test project.
 
-**Why not the dev overlay.** `docker-compose.dev.yml` looks like the obvious vehicle for local code
+**Why not the dev overlay.** `docker-compose.distributed.dev.yml` looks like the obvious vehicle for local code
 and is not one. It hardcodes `FAST_STARTUP: "true"` in `environment:`, which cannot be overridden
 from an env file and which _skips migrations_ — on fresh volumes the stack comes up unmigrated. It
 serves a Vite dev server instead of the nginx artifact the product ships, it shares the `:dev` image
 tags with any dev stack you are running, and its `--reload` watcher restarts the backend mid-test.
 Attach mode covers the hot-reload need without any of that. In CI none of this applies: the workflow
 builds `:e2e-ci` images from the PR's own code.
+
+### The Standalone stack (`E2E_STACK=standalone`)
+
+With `E2E_STACK=standalone`, every `bin/e2e` subcommand targets the Standalone setup instead:
+`docker-compose.yml` (one `app` container that runs the API, the workers, the gateway, the collector
+and the UI, next to Postgres and ClickHouse) plus `e2e/stack/docker-compose.standalone-e2e.yml`,
+with `e2e/stack/standalone-e2e.env`, as Compose project `futureagi-e2e-standalone`. The harness
+ports are the same, so run only one of the two stacks at a time. Its images are built from this
+checkout by `bin/lib/build-local.sh`, the recipe of `./bin/install --from-source`, tagged with
+that env file's `FUTURE_AGI_VERSION` (`e2esa`) instead of `local`:
+
+```bash
+bin/e2e build standalone             # slim backend, frontend, fi-collector, agentcc-gateway, then futureagi/standalone
+E2E_STACK=standalone bin/e2e up
+E2E_STACK=standalone bin/e2e test
+E2E_STACK=standalone bin/e2e down -v
+```
+
+`bin/e2e build standalone-app` is the last step on its own: it assembles `futureagi/standalone`
+from the four component images already built with that tag. The managed-mock inspection
+(`lib/managed-mock.ts`) checks the Standalone stack against its own spec
+(`lib/managed-mock-standalone.ts`). The Distributed-only background attestation is skipped there.
+
+### The live observed-catalog backfill harness (`harness/catalog-backfill.spec.ts`)
+
+`lib/catalog-lifecycle.ts` drives the real `fi-observed-catalog-backfill` binary against a running
+stack. Because it starts containers, it refuses to run against anything it was not explicitly
+pointed at: nothing here has a default, and every guard fails closed.
+
+| Variable                  | Required for              | Meaning                                                                                                                                                                                     |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E2E_H5_LIVE`             | the live run              | Must be `1`. Without it only the offline `@h5-guard` assertions run.                                                                                                                        |
+| `E2E_H5_DOCKER_CONTEXT`   | the live run              | The Docker context of your approved local runtime. `DOCKER_CONTEXT` must equal it.                                                                                                          |
+| `E2E_H5_DOCKER_SOCKET`    | the live run              | That context's `unix:///` socket. The manifest and the live context must both match it.                                                                                                     |
+| `E2E_H5_RUNTIME_MANIFEST` | the live run              | Absolute path to a run manifest **outside the checkout** holding the machine pins.                                                                                                          |
+| `E2E_H5_CH_USER`          | the live run              | A SELECT-only ClickHouse user. `default`/`admin`/the catalog writer are rejected.                                                                                                           |
+| `E2E_H5_CH_PASSWORD`      | the live run              | That user's password. There is no credential fallback.                                                                                                                                      |
+| `E2E_H5_AUDIT_CONTAINER`  | Kafka images without CLIs | `1` to allow the task-owned audit container when the broker lacks the shell tools.                                                                                                          |
+| `E2E_H5_EXPECT_WRONG`     | fallibility proofs only   | Injects one deliberate defect so a passing assertion can be shown to fail. One of `source-id`, `preview-count`, `checkpoint`, `index-value`, `api-type`, `late-time`; unset for a real run. |
+
+`E2E_H5_DOCKER_CONTEXT` names the context; it does not create one. Declare the context you actually
+run this stack under, and export the same value as `DOCKER_CONTEXT` so the harness and the `docker`
+CLI cannot drift apart. `DOCKER_HOST` and `DOCKER_TLS_VERIFY` must be unset — the harness only ever
+attaches to a local runtime.
+
+`E2E_H5_DOCKER_SOCKET` is the endpoint that context resolves to — read it from
+`docker context inspect "$E2E_H5_DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}'`. It must be an
+absolute `unix:///` path, so a TCP daemon can never be an approved runtime, and it is compared for
+exact equality twice: the run manifest's `socket` must equal it, and so must the endpoint the live
+context reports at preflight. Any container runtime that exposes a Unix socket works — the harness
+has no preference between Colima, Docker Desktop, OrbStack, Rancher or a plain dockerd.
 
 ---
 
@@ -245,13 +336,24 @@ test(
 
 ### Fixtures (`lib/fixtures.ts`)
 
-- **`actor`** — _worker-scoped_. Signs up a brand-new user on a brand-new org
+- **`actor`** — _worker-scoped_. Provisions a clean account through the test-image-only
+  `/accounts/e2e/clean-signup/` endpoint (no demo rows or pending seed request).
+  The public `/accounts/signup/` still seeds demos and is exercised by AUTH-E2E-004.
+  Creates a brand-new user on a brand-new org
   (`e2e-w<workerIndex>-<runId>@futureagi.com`), logs in, resolves the organization and default
-  workspace, and mints the org API/secret key pair. The `futureagi.com` domain is deliberate: it is
-  the signup path's reCAPTCHA special case, the belt to the `localhost` Host suspenders. One org per
-  worker is what makes full parallelism safe without truncating anything. It carries
+  workspace, and mints the org API/secret key pair. The `futureagi.com` domain keeps
+  organization naming consistent. One org per worker makes full parallelism safe
+  without truncating anything. It carries
   `actor.api` — an `ApiClient` already sending `Authorization`, `X-Organization-Id` and
-  `X-Workspace-Id`.
+  `X-Workspace-Id`. Both stacks set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF` to
+  2026-10-01T00:00:00Z, so once the Simulate restriction (#3502) is in, this org is a new
+  customer's: in Simulate it sees only Environments.
+- **The existing-customer `test`** (`lib/existing-customer.ts`) — the same fixtures, but `actor`'s org
+  is dated 2026-09-30, before the cutoff, so it keeps every Simulate page. Import `test` and `expect`
+  from it instead of `lib/fixtures` only for a flow that needs something new orgs lose (Agent
+  Definition, Scenarios, Run Simulation, a prompt's Simulation tab, Observe's Replay actions), in a
+  spec file of its own: `flows/observe/agent-call-log-pager.spec.ts` is the example.
+  `harness/existing-customer.spec.ts` pins it.
 - **`page`** — the built-in fixture, but its `context` is overridden to run `authInitScript` before
   any app code: it seeds `localStorage.accessToken/refreshToken/rememberMe` and
   `sessionStorage.organizationId/workspaceId`, so specs start already signed in. A spec that tests
@@ -322,6 +424,14 @@ The per-test timeout is 120 s, so a flow whose budgets can outrun it raises its 
 case in point: it waits out `EVAL_RESULT` (90 s) for the task to complete and then `CDC_VISIBLE`
 (180 s) for the row to reach ClickHouse — 270 s worst case before seeding and the UI step — so it
 sets `test.setTimeout(300_000)`.
+
+`UI_READY` (60 s in the observe flows) is **one browser action's** first-paint budget, not a
+stage's. A stage that chains many actions — a property picker exercised for twenty searches, an
+inspection that loads several pages — must be split so that each action (or each short chain
+that shares one page load) is its own `test.step(..., { timeout: UI_READY })`; the stage itself
+is then bounded by the flow's `test.setTimeout` ceiling, which counts every such step in its
+arithmetic. One 60 s budget over twenty actions fails on the shared CI runner at exactly 60.0 s,
+at whichever action happens to be running, and reads as three different bugs on three runs.
 
 ### Locators
 
@@ -470,9 +580,103 @@ catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uplo
 HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
 `E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
 
+After the Playwright suite, the same job runs the SDK live suites from
+[futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
+PR and push: `python/tests/platform` calls every operation of the generated Python client and
+`src/platform/__tests__/live.test.ts` covers the TypeScript transport, so a backend change that
+breaks the SDKs fails here before it ships. The SDK checkout is the branch named like the PR's
+branch when the SDK repository has one, else the base branch (`dev` or `main`); a manual run can
+name any ref with the `sdk-ref` input. The account comes from `sdkgen/local_api_key.py --signup`
+(signup, token, user-info, keys — the same calls as `lib/provisioning.ts`). The suites take about a
+minute; they are skipped only when the stack never booted.
+
+The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
+the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
+only if the PR has it when the run starts, so add it and then push: a re-run keeps the labels of
+the run it repeats. The Standalone leg builds the four component images with the layer cache,
+assembles the app image with `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
+The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
+request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
+with its own `./bin/install` and sends a trace. Then it re-runs `./bin/install` at the head commit
+and checks four things: the install stays on the Distributed setup
+(`COMPOSE_FILE=docker-compose.distributed.yml` in `.env`), its backend, worker, frontend and gateway
+run the head commit's `:local` images, the first account still signs in, and the trace is still
+there.
+
 **Wall time in CI has not been measured yet** — the job has never run on a real PR. Record it on the
-first run and put the number here; the hard timeout is 60 minutes and the boot budgets above are the
+first run and put the number here; the hard timeout is 90 minutes and the boot budgets above are the
 laptop-measured ones.
+
+---
+
+## Host update assertion fallibility (opt-in CI tool)
+
+`scripts/host-update-fallibility.mjs` proves the existing **SET-E2E-002** assertions can fail.
+It does not add a flow, change its five `backendChecks`, boot a stack, or qualify the host updater's
+apply/rollback lifecycle. Authoring or unit-testing this driver is **not** a real fallibility proof.
+Only a retained `proof-report.json` with `qualified: true`, its real child reports, and the restored
+final green establish that proof.
+
+After the branch has been reviewed and pushed, a separately authorized operator can request it:
+
+```bash
+gh workflow run e2e-ci.yml --repo future-agi/future-agi --ref <reviewed-branch> \
+  -f stack=distributed -f host_update_fallibility=true
+```
+
+The boolean defaults to `false`. Enabling it with any other stack fails in `changes`, before
+builds. The workflow still runs the **unchanged normal suite first**; only a successful distributed
+manual dispatch can then run the proof. PR/push/schedule behavior, dispatch's default `standalone`,
+`bin/e2e`'s default distributed stack, permissions and push-only cache publication are unchanged.
+The driver itself refuses non-opted-in/non-dispatch/non-CI execution, another checkout, quarantine
+or live-provider overrides, and debug/extra-reporter overrides. It accepts only `--output-dir` with
+a new absolute directory outside the checkout and public status directory; there is no arbitrary
+command, spec, grep, retry or timeout passthrough.
+
+The sequence is serial: original green, **six mutants covering five checks**, exact-byte restoration,
+original green again. Every mutant starts from the same SHA256-pinned source, temporarily written
+at the original spec path so relative fixtures/contracts still resolve. All anchors are checked
+for uniqueness before edits. The spec's annotation, `@flow`, seeding, authentication, 240s timeout
+and ordinary `UI_READY=60s` remain unchanged.
+
+| Check | One-sided perturbation                                             | Required failure evidence                                                                                            |
+| ----- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| 1     | First API candidate expectation A → B; seed stays A                | Expected minted B / received minted A at that assertion                                                              |
+| 2     | Only first available-version UI expected array A → B               | Exact locator and expected B / displayed A array diff; only this mutant expect uses 1s, below its unchanged 60s step |
+| 3     | Second API candidate expectation B → A; atomic replacement stays B | Expected minted A / received minted B after replacement                                                              |
+| 4     | Omit owned report deletion; keep `ownsStatus=true`                 | Unchanged unavailable API expectation rejects available snapshot B; original `finally` still cleans its own file     |
+| 5a    | Only POST's expected status 405 → 200                              | POST expected 200 / received 405                                                                                     |
+| 5b    | Anonymous GET's expected status 401 → 200                          | Expected 200 / received 401, after unchanged method checks                                                           |
+
+Each child invokes the installed Playwright CLI on only the original file, with one worker,
+zero retries, one repetition, `--forbid-only`, the existing config and JSON-only reporting. It
+never replaces the config's quarantine filter. JSON, stdout/stderr, seed attachment, source copy,
+trace/screenshot attachments and a plain expected-failure summary live in distinct per-run
+subdirectories. The separately named `host-update-fallibility-distributed` artifact retains these
+and the machine-readable source/output hashes and runtime versions for seven days. It never writes
+expected mutant failures into the ordinary `playwright-report`, blob report or `test-results`.
+
+A child has a **360s deadline**. The eight-run sequence has a **20-minute aggregate cap**, not eight
+independent six-minute allowances: each launch gets the lesser of 360s and the remaining aggregate
+budget. At either deadline the process group receives TERM then KILL (5s + at most 2s grace), the
+proof stops unqualified, and source restoration/evidence writing run in `finally`. The CI step's
+22-minute limit leaves headroom for that cleanup; the existing job limit is unchanged. The driver
+handles SIGINT/SIGTERM the same way; SIGKILL or runner loss cannot execute JavaScript cleanup, so the
+private original backup is retained and no proof is valid without its restoration hash and final
+green. It refuses concurrent source edits rather than overwriting them.
+
+A nonzero child exit alone is **never** evidence. The parser requires precisely the original test,
+retry zero, matching flow annotation, seed A/B identities, the intended source assertion and step,
+concrete expected/received values, and no global, earlier-stage or teardown errors. Missing or
+malformed JSON, skips, flakes, retries, launch/connection/step/test deadlines, an absent page, and
+failure at any other assertion all stop the sequence. The script only inspects the public status
+slot: it never removes an existing report, flow lock or temporary, and never clears state after a
+crash to force a later pass. Only the original flow owns report cleanup.
+
+Offline validation (no Docker or browser) is included in `yarn selftest` through
+`scripts/host-update-fallibility.test.mjs`. Unit test doubles are explicitly labelled and can never
+produce `qualified: true`; real CI proof still must be run and reviewed separately.
 
 ---
 
@@ -522,8 +726,9 @@ a CDC-sized budget to run out. Confirm by re-running the flow by itself
 not a product regression. That is a reason to run fewer workers locally, never a reason to add a
 retry.
 
-**Everything is strange after a product change.** Wipe and rebuild:
-`bin/e2e down -v && bin/e2e up`. The stack keeps no state worth preserving.
+**Everything is strange after a product change.** Inspect the failing service's
+logs and the source/image versions first. Keep retained fixtures, Kafka offsets
+and failed-bootstrap state for diagnosis; do not wipe volumes as a retry strategy.
 
 ---
 
@@ -534,16 +739,15 @@ E2E setup; each is worked around here so the suite can run, and each needs its o
 list with evidence lives in
 [`../../internal-docs/e2e-testing-setup/05-findings-log.md`](../../internal-docs/e2e-testing-setup/05-findings-log.md).
 
-- **`peerdb-setup-mirrors.sh` is fail-open** — peer and mirror failures are printed and swallowed,
-  then it reports "Done!" and exits 0. `bin/e2e` inspects the log and fails closed instead.
-- **`peerdb-init` races the backend's migrations** — its `depends_on` never includes the backend, so
-  on fresh volumes every `CREATE MIRROR` fails. `bin/e2e up` orders readiness before mirror setup.
-- **ClickHouse mirror DDL is behind the Postgres models** — `model_hub_score` and
-  `simulate_agent_definition` cannot be mirrored on a fresh install, which means **annotation scores
-  never reach ClickHouse on a fresh stack** (annotation columns and graphs stay empty). Warned about,
-  not silenced.
-- **`peerdb-init` is not given `CH25_DROP_LEGACY_CDC_CHAIN`** by the root compose, so it recreates a
-  retired mirror. The E2E overlay passes the flag.
+- The current root startup graph replaces the old shell/log-inspection workaround:
+  PG migrations and native ClickHouse initialization precede PeerDB setup, then
+  CDC readiness gates the backend/workers. The new setup does not create the
+  retired PG span mirror. The harness no longer force-recreates mirror jobs or
+  accepts `model_hub_score`/`simulate_agent_definition` failures as warnings.
+  Source columns are owned by PeerDB and checked against PostgreSQL metadata;
+  existing incompatible destinations stop startup instead of being overwritten.
+  Qualify both fresh and retained installations using the updated images before
+  treating this source/configuration change as a successful runtime release.
 - **Unfiltered eval graphs read a table the drop flag removes** (`eval_metrics_hourly`), so they are
   likely to 500 on any local or OSS stack. **Flows must not assert on unfiltered eval graphs.**
 - **The backend `:latest` image is ~15 GB uncompressed** (CUDA/NVIDIA wheels the OSS backend never

@@ -25,12 +25,17 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
-    build_literal_text_predicate,
+    boolean_meta_presence_condition,
+    build_annotation_value_predicate,
     normalize_filter_op,
+    parse_boolean_meta_filter,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
     compile_span_attribute_row_predicate,
+    is_internal_simulator_call_filter,
+    is_internal_trace_root_filter,
+    simulator_call_root_predicate,
 )
 from tracer.utils.filter_operators import normalize_span_attribute_filter_type
 
@@ -72,6 +77,10 @@ class ExactGraphRowPredicatePlan:
     # excluded range and then incorrectly aggregate the excluded sibling too.
     contribution_predicates: tuple[str, ...]
     params: dict[str, Any]
+    # The private trace-root leaf (a voice call) restricts contributions to the
+    # trace's root. Until ClickHouse merges them, a re-polled root has several
+    # live physical versions, and a raw read must count that call once.
+    root_contribution: bool = False
 
 
 def _filter_parts(item: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -122,18 +131,6 @@ def _local_param(params: dict[str, Any], prefix: str, value: Any) -> str:
         name = f"{prefix}_{index}"
     params[name] = value
     return name
-
-
-def _parse_boolean_filter(column_id: str, value: Any, operator: str | None) -> bool:
-    if normalize_filter_op(operator) != "equals":
-        raise UnsupportedFilterShapeError(
-            f"{column_id} supports only the equals operation"
-        )
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-        return value.strip().lower() == "true"
-    raise UnsupportedFilterShapeError(f"{column_id} requires a boolean value")
 
 
 def _validated_uuid(value: Any, *, field: str) -> str:
@@ -234,188 +231,15 @@ def _annotation_value_condition(
 ) -> str:
     """Compile the value portion of one annotation relation filter."""
 
-    normalized_type = str(filter_type or "").strip().lower()
-    normalized_op = normalize_filter_op(filter_op)
-    value_expr = "s.value"
-
-    if normalized_type == "number":
-        number_expr = (
-            "if(JSONHas(s.value, 'rating'), "
-            "JSONExtractFloat(s.value, 'rating'), "
-            "JSONExtractFloat(s.value, 'value'))"
+    try:
+        return build_annotation_value_predicate(
+            filter_type,
+            filter_op,
+            filter_value,
+            bind=lambda prefix, value: _local_param(params, prefix, value),
         )
-        if normalized_op in {"between", "not_between"}:
-            if not isinstance(filter_value, (list, tuple)) or len(filter_value) != 2:
-                raise UnsupportedFilterShapeError(
-                    f"annotation {normalized_op} requires two values"
-                )
-            try:
-                lower = float(filter_value[0])
-                upper = float(filter_value[1])
-            except (TypeError, ValueError) as exc:
-                raise UnsupportedFilterShapeError(
-                    "annotation number filter requires numeric values"
-                ) from exc
-            lower_param = _local_param(params, "annotation_lower", lower)
-            upper_param = _local_param(params, "annotation_upper", upper)
-            sql_op = "NOT BETWEEN" if normalized_op == "not_between" else "BETWEEN"
-            return f"{number_expr} {sql_op} %({lower_param})s AND %({upper_param})s"
-        if normalized_op in {"in", "not_in"}:
-            raw_values = (
-                filter_value
-                if isinstance(filter_value, (list, tuple))
-                else [filter_value]
-            )
-            try:
-                values = tuple(float(value) for value in raw_values)
-            except (TypeError, ValueError) as exc:
-                raise UnsupportedFilterShapeError(
-                    "annotation number filter requires numeric values"
-                ) from exc
-            if not values:
-                return "1 = 1" if normalized_op == "not_in" else "0 = 1"
-            param = _local_param(params, "annotation_numbers", values)
-            sql_op = "NOT IN" if normalized_op == "not_in" else "IN"
-            return f"{number_expr} {sql_op} %({param})s"
-        comparison = {
-            "equals": "=",
-            "not_equals": "!=",
-            "greater_than": ">",
-            "greater_than_or_equal": ">=",
-            "less_than": "<",
-            "less_than_or_equal": "<=",
-        }.get(normalized_op)
-        if comparison is None:
-            raise UnsupportedFilterShapeError(
-                f"unsupported annotation number operation: {normalized_op!r}"
-            )
-        try:
-            value = float(filter_value)
-        except (TypeError, ValueError) as exc:
-            raise UnsupportedFilterShapeError(
-                "annotation number filter requires a numeric value"
-            ) from exc
-        param = _local_param(params, "annotation_number", value)
-        return f"{number_expr} {comparison} %({param})s"
-
-    if normalized_type in {"boolean", "thumbs"}:
-        raw_values = (
-            filter_value if isinstance(filter_value, (list, tuple)) else [filter_value]
-        )
-        token_map = {
-            "true": "up",
-            "false": "down",
-            "thumbs up": "up",
-            "thumbs down": "down",
-            "thumbs_up": "up",
-            "thumbs_down": "down",
-            "up": "up",
-            "down": "down",
-        }
-        tokens: list[str] = []
-        for value in raw_values:
-            if isinstance(value, bool):
-                token = "up" if value else "down"
-            else:
-                token = token_map.get(str(value).strip().lower())
-            if token is not None and token not in tokens:
-                tokens.append(token)
-        if not tokens:
-            raise UnsupportedFilterShapeError("annotation thumbs value is invalid")
-        param = _local_param(params, "annotation_thumbs", tuple(tokens))
-        sql_op = "NOT IN" if normalized_op in {"not_equals", "not_in"} else "IN"
-        if normalized_op not in {"equals", "not_equals", "in", "not_in"}:
-            raise UnsupportedFilterShapeError(
-                f"unsupported annotation thumbs operation: {normalized_op!r}"
-            )
-        return f"JSONExtractString({value_expr}, 'value') {sql_op} %({param})s"
-
-    if normalized_type == "text":
-        text_expr = f"JSONExtractString({value_expr}, 'text')"
-        if normalized_op in {"contains", "not_contains", "starts_with", "ends_with"}:
-            param = _local_param(params, "annotation_text", str(filter_value))
-            literal = build_literal_text_predicate(
-                text_expr,
-                param,
-                normalized_op,
-                case_insensitive=True,
-            )
-            return f"{text_expr} != '' AND {literal}"
-        if normalized_op in {"equals", "not_equals"}:
-            param = _local_param(params, "annotation_text", str(filter_value).lower())
-            comparison = "!=" if normalized_op == "not_equals" else "="
-            return (
-                f"{text_expr} != '' AND lowerUTF8(toString({text_expr})) "
-                f"{comparison} %({param})s"
-            )
-        if normalized_op in {"in", "not_in"}:
-            raw_values = (
-                filter_value
-                if isinstance(filter_value, (list, tuple))
-                else [filter_value]
-            )
-            values = tuple(
-                str(value).lower() for value in raw_values if value not in (None, "")
-            )
-            if not values:
-                return "1 = 1" if normalized_op == "not_in" else "0 = 1"
-            param = _local_param(params, "annotation_texts", values)
-            sql_op = "NOT IN" if normalized_op == "not_in" else "IN"
-            return (
-                f"{text_expr} != '' AND lowerUTF8(toString({text_expr})) "
-                f"{sql_op} %({param})s"
-            )
-        raise UnsupportedFilterShapeError(
-            f"unsupported annotation text operation: {normalized_op!r}"
-        )
-
-    if normalized_type in {"array", "categorical"}:
-        values = (
-            list(filter_value)
-            if isinstance(filter_value, (list, tuple))
-            else [filter_value]
-        )
-        if not values:
-            return (
-                "1 = 1"
-                if normalized_op in {"not_equals", "not_in", "not_contains"}
-                else "0 = 1"
-            )
-        selected_expr = "JSONExtract(s.value, 'selected', 'Array(String)')"
-        conditions: list[str] = []
-        legacy_thumbs = {
-            "thumbs up": "up",
-            "thumbs down": "down",
-            "thumbs_up": "up",
-            "thumbs_down": "down",
-        }
-        for value in values:
-            param = _local_param(params, "annotation_choice", value)
-            condition = f"has({selected_expr}, %({param})s)"
-            thumb = (
-                legacy_thumbs.get(value.strip().lower())
-                if isinstance(value, str)
-                else None
-            )
-            if thumb is not None:
-                thumb_param = _local_param(params, "annotation_thumb", thumb)
-                condition = (
-                    f"({condition} OR JSONExtractString(s.value, 'value') "
-                    f"= %({thumb_param})s)"
-                )
-            conditions.append(condition)
-        combined = "(" + " OR ".join(conditions) + ")"
-        if normalized_op in {"not_equals", "not_in", "not_contains"}:
-            return f"NOT {combined}"
-        if normalized_op not in {"equals", "in", "contains"}:
-            raise UnsupportedFilterShapeError(
-                f"unsupported annotation categorical operation: {normalized_op!r}"
-            )
-        return combined
-
-    raise UnsupportedFilterShapeError(
-        f"unsupported annotation filter type: {normalized_type!r}"
-    )
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
 
 
 def _compile_annotation_filter(
@@ -434,7 +258,10 @@ def _compile_annotation_filter(
     params: dict[str, Any] = {}
 
     if column_id == "has_annotation":
-        required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return [(presence, True, {})]
+        required = parse_boolean_meta_filter(column_id, filter_value, filter_op)
         if annotation_label_ids is not None:
             if not annotation_label_ids:
                 # Completeness across an authoritative empty label set is
@@ -466,7 +293,10 @@ def _compile_annotation_filter(
         return [(predicate, required, relation_params)]
 
     if column_id == "my_annotations":
-        required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return [(presence, True, {})]
+        required = parse_boolean_meta_filter(column_id, filter_value, filter_op)
         user_id = config.get("user_id") or config.get("userId")
         if not user_id:
             return [("0 = 1", True, {})]
@@ -641,10 +471,14 @@ def _compile_has_eval_filter(
         eval_logger_version_column,
     )
 
-    required = _parse_boolean_filter(
+    filter_op = config.get("filter_op") or config.get("filterOp")
+    presence = boolean_meta_presence_condition(filter_op)
+    if presence is not None:
+        return presence, True, {}
+    required = parse_boolean_meta_filter(
         "has_eval",
         config.get("filter_value", config.get("filterValue")),
-        config.get("filter_op") or config.get("filterOp"),
+        filter_op,
     )
     try:
         config_ids = tuple(
@@ -816,11 +650,12 @@ def compile_exact_graph_row_predicates(
     required_matches: list[bool] = []
     match_condition_groups: list[tuple[tuple[int, bool], ...]] = []
     contribution_predicates: list[str] = []
+    root_contribution = False
     bound_params: dict[str, Any] = {}
     for filter_index, original_item in enumerate(filters or []):
         column_id, config_key, config = _filter_parts(original_item)
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
-        if column_id in {"created_at", "start_time"} and filter_type in {
+        if BaseQueryBuilder.is_datetime_filter(original_item) and filter_type in {
             "datetime",
             "date",
             "timestamp",
@@ -833,14 +668,26 @@ def compile_exact_graph_row_predicates(
         structured_attribute = False
         relation_requirements: list[tuple[str, bool, dict[str, Any]]] | None = None
         normalized_col_type = str(col_type or "").strip().upper()
-        if column_id == "has_eval":
+        # Explicit property provenance wins over legacy name aliases here,
+        # before the native relation adapters bypass the shared compiler.
+        is_raw_attribute = normalized_col_type == "SPAN_ATTRIBUTE"
+        if is_internal_simulator_call_filter(original_item):
+            if normalized_observe_type != "trace":
+                raise UnsupportedFilterShapeError(
+                    "the simulator-call leaf requires a trace graph"
+                )
+            # The Voice list's simulator toggle: no live root of the trace is
+            # a simulator call, a negative any-sibling requirement.
+            simulator_root, simulator_params = simulator_call_root_predicate()
+            relation_requirements = [(simulator_root, False, simulator_params)]
+        elif not is_raw_attribute and column_id == "has_eval":
             relation_predicate, required, relation_params = _compile_has_eval_filter(
                 config=config,
                 project_id=project_id,
                 observe_type=normalized_observe_type,
             )
             relation_requirements = [(relation_predicate, required, relation_params)]
-        elif (
+        elif not is_raw_attribute and (
             column_id in {"has_annotation", "my_annotations", "annotator"}
             or normalized_col_type == "ANNOTATION"
         ):
@@ -855,7 +702,7 @@ def compile_exact_graph_row_predicates(
                     else tuple(annotation_label_ids)
                 ),
             )
-        elif column_id in {"user", "user_id", "user_id_type"}:
+        elif not is_raw_attribute and column_id in {"user", "user_id", "user_id_type"}:
             relation_predicate, required, relation_params = _compile_end_user_filter(
                 column_id=column_id,
                 config=config,
@@ -895,15 +742,19 @@ def compile_exact_graph_row_predicates(
                 predicates.append(predicate)
                 output_window_only.append(False)
                 required_matches.append(required)
+            annotation_filter_op = config.get("filter_op") or config.get("filterOp")
             if (
                 column_id == "has_annotation"
                 and annotation_label_ids
                 and requirement_predicate_indexes
+                # A presence operator compiles to one constant predicate, not
+                # to the per-label completeness fan-out below.
+                and boolean_meta_presence_condition(annotation_filter_op) is None
             ):
-                wants_complete = _parse_boolean_filter(
+                wants_complete = parse_boolean_meta_filter(
                     column_id,
                     raw_value,
-                    config.get("filter_op") or config.get("filterOp"),
+                    annotation_filter_op,
                 )
                 if wants_complete:
                     match_condition_groups.extend(
@@ -981,11 +832,18 @@ def compile_exact_graph_row_predicates(
                 f"graph filter {column_id!r} produced an unsupported relation"
             )
 
+        # The private conversation-root invariant (voice calls) is a root leaf
+        # exactly like the root-only system metrics.
         if (
             normalized_observe_type == "trace"
             and builder is not None
-            and normalized_col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}
-            and _is_root_only_system_metric(builder, column_id)
+            and (
+                (
+                    normalized_col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}
+                    and _is_root_only_system_metric(builder, column_id)
+                )
+                or is_internal_trace_root_filter(original_item)
+            )
         ):
             predicate = (
                 f"(parent_span_id IS NULL OR parent_span_id = '') AND ({predicate})"
@@ -1000,6 +858,14 @@ def compile_exact_graph_row_predicates(
         if duplicate_params:  # pragma: no cover - namespace invariant
             raise AssertionError(f"duplicate graph bind params: {duplicate_params}")
         bound_params.update(predicate_params)
+        if normalized_observe_type == "trace" and is_internal_trace_root_filter(
+            original_item
+        ):
+            # A voice call is its conversation root: only that row
+            # contributes, so traffic counts calls and latency/cost/tokens/
+            # errors are the call's own, as list_voice_calls reports them.
+            contribution_predicates.append(predicate)
+            root_contribution = True
         predicates.append(predicate)
         output_window_only.append(structured_attribute)
         required_matches.append(True)
@@ -1026,6 +892,7 @@ def compile_exact_graph_row_predicates(
         match_condition_groups=tuple(match_condition_groups),
         contribution_predicates=tuple(contribution_predicates),
         params=bound_params,
+        root_contribution=root_contribution,
     )
 
 

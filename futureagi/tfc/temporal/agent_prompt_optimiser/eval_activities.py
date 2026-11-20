@@ -15,6 +15,7 @@ from django.db import close_old_connections
 
 from tfc.temporal.common.client import get_workflow_result_sync
 from tfc.temporal.drop_in.decorator import temporal_activity
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_evaluation_denied
 
 logger = structlog.get_logger(__name__)
 
@@ -59,8 +60,8 @@ def serialize_evaluator_config(
     eval_configs: List[Any],
     issues: List[Dict[str, Any]],
     use_synthetic: bool = True,
-    simulator_model: str = "gemini-2.5-flash",
-    customer_model: str = "gemini-2.5-flash",
+    simulator_model: str = "gemini-3.7-flash",
+    customer_model: str = "gemini-3.7-flash",
     max_parallel_evals: int = 5,
     use_issues: bool = True,
     use_evals: bool = True,
@@ -148,7 +149,10 @@ def _reconstruct_evaluator(config: Dict[str, Any]):
         from ee.agenthub.fix_your_agent.fix_your_agent import SimulationEvaluator
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.fix_your_agent.fix_your_agent",
+                exc_info=True,
+            )
         return None
 
     # Convert serialized eval configs to proxy objects
@@ -176,8 +180,8 @@ def _reconstruct_evaluator(config: Dict[str, Any]):
         user_eval_configs=eval_config_proxies,
         issues=config.get("issues", []),
         use_synthetic=config.get("use_synthetic", True),
-        simulator_model=config.get("simulator_model", "gemini-2.5-flash"),
-        customer_model=config.get("customer_model", "gemini-2.5-flash"),
+        simulator_model=config.get("simulator_model", "gemini-3.7-flash"),
+        customer_model=config.get("customer_model", "gemini-3.7-flash"),
         max_parallel_evals=config.get("max_parallel_evals", 5),
         use_issues=config.get("use_issues", True),
         use_evals=config.get("use_evals", True),
@@ -248,6 +252,14 @@ def evaluate_scenario_task(
             "component_evals": result.metadata.get("component_evals", {}),
         }
 
+    except EvaluationDenied as denial:
+        # Return a serializable refusal, never a numeric failed grading. The
+        # parent terminates optimization before aggregating/persisting trials.
+        return {
+            "call_execution_id": scenario.get("call_execution_id", ""),
+            "agent_prompt": scenario.get("agent_prompt", ""),
+            "denial": denial.as_dict(),
+        }
     except Exception as e:
         logger.exception(f"[EVAL_TASK] Scenario evaluation failed: {e}")
         return {
@@ -374,6 +386,11 @@ def evaluate_scenarios_parallel(
                     f"[EVAL_PARALLEL] Scenario {i} score: {actual_result.get('score', 'N/A')}"
                 )
                 results.append(actual_result)
+                raise_if_evaluation_denied(actual_result)
+            except EvaluationDenied:
+                # Keep the denial out of the generic zero-score fallback. The
+                # finally block cancels any uncollected scenario workflows.
+                raise
             except Exception as e:
                 logger.error(
                     f"[EVAL_PARALLEL] Failed to get result for scenario {i}: {e}"

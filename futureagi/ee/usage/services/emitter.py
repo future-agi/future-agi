@@ -23,7 +23,6 @@ from tfc.logging.sentry import capture_message
 logger = structlog.get_logger(__name__)
 
 STREAM_KEY = "usage:events"
-STREAM_MAXLEN = 1_000_000
 
 _redis_client: Optional[redis.Redis] = None
 _consumer_started: bool = False
@@ -46,7 +45,13 @@ def emit(event: UsageEvent) -> None:
 
     On Redis failure: logs the error, does NOT raise.
     The user's action must not fail because metering failed.
+
+    A no-op unless settings.USAGE_EVENTS_ENABLED: without the consumer that
+    drains the stream, it would only grow until Redis is full.
     """
+    if not settings.USAGE_EVENTS_ENABLED:
+        return
+
     # Lazy-start the consumer workflow on first emit (singleton, non-blocking)
     global _consumer_started
     if not _consumer_started:
@@ -84,7 +89,7 @@ def emit(event: UsageEvent) -> None:
             elif value is not None:
                 data[key] = str(value)
 
-        get_redis().xadd(STREAM_KEY, data, maxlen=STREAM_MAXLEN)
+        get_redis().xadd(STREAM_KEY, data, maxlen=settings.USAGE_EVENTS_MAX_LEN)
     except Exception:
         # Fire-and-forget billing: a failure here is permanently lost usage,
         # otherwise invisible. The structured log already reaches Sentry via the

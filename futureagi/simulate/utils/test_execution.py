@@ -2,7 +2,6 @@ import traceback
 
 import structlog
 
-logger = structlog.get_logger(__name__)
 from simulate.models import (
     CallExecution,
     Scenarios,
@@ -10,6 +9,39 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.utils.eval_summary import UNSCORED_OUTPUTS
+
+logger = structlog.get_logger(__name__)
+
+
+def _eval_average_fields(
+    eval_scores: dict[tuple[str, str], list[float]], reserved: set[str]
+) -> dict[str, float]:
+    """Average each evaluation binding's scores under its own ``avg_<name>`` key.
+
+    ``eval_scores`` is keyed by (binding id, display name). Keys in ``reserved``
+    stay with the built-in metrics. When a binding's key is already taken, it
+    gets the next free ``_2``, ``_3`` suffix, skipping any key another binding's
+    name produces on its own. Ties go to the lower binding id.
+    """
+    entries = sorted(
+        (f"avg_{name.lower().replace(' ', '_')}", binding_id, name, scores)
+        for (binding_id, name), scores in eval_scores.items()
+        if scores
+    )
+    natural_fields = {field for field, *_ in entries}
+    averages: dict[str, float] = {}
+    for field, _binding_id, _name, scores in entries:
+        key, suffix = field, 1
+        while (
+            key in reserved
+            or key in averages
+            or (key != field and key in natural_fields)
+        ):
+            suffix += 1
+            key = f"{field}_{suffix}"
+        averages[key] = round(sum(scores) / len(scores), 1)
+    return averages
 
 
 def calculate_aggregate_metrics(call_executions):
@@ -35,9 +67,6 @@ def calculate_aggregate_metrics(call_executions):
         failed_calls = call_executions.filter(
             status=CallExecution.CallStatus.FAILED
         ).count()
-        cancelled_calls = call_executions.filter(
-            status=CallExecution.CallStatus.CANCELLED
-        ).count()
         calls_attempted = total_calls - pending_calls - queued_calls
         connected_calls = call_executions.filter(duration_seconds__gt=0).count()
         calls_connected_percentage = (
@@ -49,7 +78,7 @@ def calculate_aggregate_metrics(call_executions):
         valid_scores, valid_response_times = [], []
         valid_agent_latencies, valid_user_interruption_counts = [], []
         valid_talk_ratios = []
-        eval_scores = {}
+        eval_scores: dict[tuple[str, str], list[float]] = {}
 
         for call_execution in call_executions:
             if call_execution.overall_score is not None:
@@ -72,18 +101,20 @@ def calculate_aggregate_metrics(call_executions):
                 for metric_id, metric_data in call_execution.eval_outputs.items():
                     if isinstance(metric_data, dict) and "output" in metric_data:
                         metric_name = metric_data.get("name", f"metric_{metric_id}")
-                        if metric_name not in eval_scores:
-                            eval_scores[metric_name] = []
+                        scores = eval_scores.setdefault(
+                            (str(metric_id), metric_name), []
+                        )
                         output_type = metric_data.get("output_type")
                         output_value = metric_data.get("output")
                         if output_type == "Pass/Fail":
-                            eval_scores[metric_name].append(
-                                100.0 if output_value == "Passed" else 0.0
-                            )
+                            if output_value not in UNSCORED_OUTPUTS:
+                                scores.append(
+                                    100.0 if output_value == "Passed" else 0.0
+                                )
                         elif output_type == "score" and isinstance(
                             output_value, (int, float)
                         ):
-                            eval_scores[metric_name].append(float(output_value) * 100)
+                            scores.append(float(output_value) * 100)
 
         avg_score = (
             round(sum(valid_scores) / len(valid_scores), 1) if valid_scores else 0
@@ -121,12 +152,6 @@ def calculate_aggregate_metrics(call_executions):
             round((1 / (avg_talk_ratio + 1)) * 100, 1) if avg_talk_ratio > 0 else 0
         )
 
-        eval_averages = {}
-        for metric_name, scores in eval_scores.items():
-            if scores:
-                field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
-                eval_averages[field_name] = round(sum(scores) / len(scores), 1)
-
         aggregate_metrics_data = {
             "total_calls": total_calls,
             "success_rate": success_rate,
@@ -140,8 +165,10 @@ def calculate_aggregate_metrics(call_executions):
             "agent_talk_percentage": agent_talk_percentage,
             "customer_talk_percentage": customer_talk_percentage,
             "failed_calls": failed_calls,
-            **eval_averages,
         }
+        aggregate_metrics_data.update(
+            _eval_average_fields(eval_scores, reserved=set(aggregate_metrics_data))
+        )
         return aggregate_metrics_data
     except Exception as e:
         logger.exception(f"Failed to calculate aggregate metrics: {str(e)}")
@@ -215,9 +242,9 @@ DEFAULT_VOICE_SIM_COL = [
         "visible": True,
     },
     {
-        "column_name": "Overall Score",
+        "column_name": "CSAT",
         "id": "overall_score",
-        "visible": False,
+        "visible": True,
     },
     {
         "column_name": "Agent interruption",
@@ -255,9 +282,9 @@ DEFAULT_CHAT_SIM_COL = [
         "visible": True,
     },
     {
-        "column_name": "Overall Score",
+        "column_name": "CSAT",
         "id": "overall_score",
-        "visible": False,
+        "visible": True,
     },
     {
         "column_name": "Total Tokens",

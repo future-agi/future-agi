@@ -76,9 +76,11 @@ def eval_logger_source(
 
     ``include_cdc_tombstone_guard`` adds the legacy CDC tombstone guard
     (``_peerdb_is_deleted = 0``) alongside the app ``deleted`` soft-delete
-    filter. Only rewrite-EXCLUDED callers may pass True: the v2 rewriter renames
-    ``_peerdb_is_deleted`` → ``is_deleted`` (which the legacy table lacks), so
-    rewritten fragments must keep the ``deleted``-only predicate (default).
+    filter. Only rewrite-EXCLUDED callers, or rewritten callers whose alias is
+    listed in the v2 rewriter's ``_EVAL_LEGACY_COLUMN_MARKERS``, may pass True:
+    the v2 rewriter renames ``_peerdb_is_deleted`` → ``is_deleted`` (which the
+    legacy table lacks), so other rewritten fragments must keep the
+    ``deleted``-only predicate (default).
     Residual tombstone visibility is accepted there. The version-only legacy
     engine's ``FINAL`` does not drop CDC tombstones, so unrewritten eval reads
     need this guard to match the display queries. No-op on the v2 table (no CDC
@@ -98,3 +100,62 @@ def eval_logger_source(
         if include_cdc_tombstone_guard:
             predicate = f"{p}_peerdb_is_deleted = 0 AND {predicate}"
     return table, predicate
+
+
+# A completed, non-errored eval row. Legacy rows mirrored with an empty status
+# stay completed.
+EVAL_COMPLETED_PREDICATE = (
+    "error = 0 AND ifNull(output_str, '') != 'ERROR' "
+    "AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')"
+)
+
+
+def count_mode_choice_array(prefix: str = "") -> str:
+    """Array-valued choices for count tiles, without reclassifying scores.
+
+    The percentage path keeps its raw JSON projection. Count tiles additionally
+    accept scalar choice labels, but numeric/string score outputs must not gain
+    synthetic choice columns just because ``output_str`` is populated.
+    """
+
+    values = f"JSONExtract({prefix}output_str_list, 'Array(String)')"
+    scalar = f"{prefix}output_str"
+    return (
+        f"if(notEmpty({values}), {values}, "
+        f"if(ifNull({scalar}, '') != '' "
+        f"AND isNull({prefix}output_bool) AND isNull({prefix}output_float) "
+        f"AND isNull(toFloat64OrNull({scalar})), "
+        f"[ifNull({scalar}, '')], []))"
+    )
+
+
+def latest_completed_eval_rows(
+    collapsed_sql: str,
+    live_predicate: str,
+    partition_by: str,
+    *,
+    completed_predicate: str = EVAL_COMPLETED_PREDICATE,
+    newest_first: str = "created_at DESC, toString(id) DESC",
+) -> str:
+    """FROM-source keeping only the newest completed row per *partition_by*.
+
+    *collapsed_sql* is a parenthesised per-``id`` version-collapse subquery
+    that projects the columns the predicates and ordering read. The live
+    predicate still applies outside that collapse. Non-completed rows all pass
+    through, so lifecycle and error markers keep their precedence. Ties break
+    on ``(created_at, id)``, as in the trace-detail rollup's
+    ``select_latest_completed``; readers whose collapse renames those columns
+    pass their own *completed_predicate* and *newest_first*.
+    """
+
+    return f"""(
+            SELECT
+                *,
+                row_number() OVER (
+                    PARTITION BY {partition_by}, ({completed_predicate})
+                    ORDER BY {newest_first}
+                ) AS completed_rank
+            FROM {collapsed_sql}
+            WHERE {live_predicate}
+        )
+        WHERE NOT ({completed_predicate}) OR completed_rank = 1"""

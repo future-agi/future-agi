@@ -9,6 +9,7 @@ from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
+from tracer.tests.test_trace_root_physical_replay import complete_root_row
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000527"
 
@@ -115,8 +116,12 @@ def test_generic_trace_exact_zero_probe_skips_broad_long_window_union():
     )
 
     assert builder.supports_filter_exact_zero_probe() is False
-    assert builder.prefer_filter_candidate_witness_probe_first() is True
-    assert builder.recommended_filter_candidate_witness_probe_strata() == 1
+    # The CH25 exact coordinate classifier now incorporates the all-history
+    # witness, avoiding a redundant separate prefilter. It is still not a
+    # request-window-only zero proof.
+    assert builder._uses_attribute_coordinate_replay() is True
+    assert builder.prefer_filter_candidate_witness_probe_first() is False
+    assert builder.recommended_filter_candidate_witness_probe_strata() is None
     with pytest.raises(ValueError, match="exact-zero probe is unavailable"):
         builder.build_filter_exact_zero_probe()
 
@@ -126,12 +131,17 @@ def test_generic_trace_temporal_anchor_never_prunes_global_child_match():
     end = datetime(2026, 8, 8, tzinfo=UTC)
     filters = _filters(end, window=timedelta(minutes=5))
     candidates = [
-        {
-            "project_id": PROJECT_ID,
-            "trace_id": f"trace-{index:02d}",
-            "root_span_id": f"root-{index:02d}",
-            "start_time": end - timedelta(seconds=index + 1),
-        }
+        # Match the real classifier wire: full physical key plus the observed
+        # version must survive the subsequent exact hydration check.
+        complete_root_row(
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": f"trace-{index:02d}",
+                "root_span_id": f"root-{index:02d}",
+                "start_time": end - timedelta(seconds=index + 1),
+            },
+            project_id=PROJECT_ID,
+        )
         for index in range(26)
     ]
     hydrated = [
@@ -151,9 +161,7 @@ def test_generic_trace_temporal_anchor_never_prunes_global_child_match():
                 # classifier represents its all-history child replay.
                 [],
                 candidates,
-                candidates[:10],
-                candidates[10:20],
-                candidates[20:],
+                candidates,
                 hydrated,
             ]
 
@@ -180,15 +188,18 @@ def test_generic_trace_temporal_anchor_never_prunes_global_child_match():
     assert [row["trace_id"] for row in page.rows] == [
         row["trace_id"] for row in hydrated
     ]
+    assert page.rows == hydrated
+    assert page.error_code is None
     assert [attempt.kind for attempt in page.attempts] == [
         "anchor",
         "seed",
         "classify",
-        "classify",
-        "classify",
         "hydrate",
     ]
-    assert len(executor.calls) == 6
+    assert len(executor.calls) == 4
+    assert "candidate_trace_ids" in executor.calls[2][1]
+    assert "candidate_witness_start_date_us" not in executor.calls[2][1]
+    assert "toStartOfHour(start_time)" in executor.calls[2][0]
 
 
 @pytest.mark.unit

@@ -17,7 +17,7 @@ export default function Loading({ title, description }) {
         flexDirection: "column",
         border: "1px solid",
         borderColor: "background.neutral",
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
     >
       <Loader />

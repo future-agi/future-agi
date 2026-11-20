@@ -21,10 +21,7 @@ const CustomHeader = (props) => {
             alignItems: "center",
           }}
         >
-          <Iconify
-            icon="material-symbols:check-circle-outline"
-            color="green.500"
-          />
+          <Iconify icon="solar:check-circle-linear" color="status.success.fg" />
         </Box>
       );
     } else if (props?.displayName === "Node Type") {
@@ -35,7 +32,7 @@ const CustomHeader = (props) => {
             alignItems: "center",
           }}
         >
-          <Iconify icon="ph:tree-view" color="text.secondary" />
+          <Iconify icon="solar:graph-linear" color="text.secondary" />
         </Box>
       );
     } else if (props?.displayName === "User Email") {
@@ -46,7 +43,7 @@ const CustomHeader = (props) => {
             alignItems: "center",
           }}
         >
-          <Iconify icon="mage:email" color="text.primary" />
+          <Iconify icon="solar:letter-linear" color="text.primary" />
         </Box>
       );
     } else if (props?.displayName === "User Phone Number") {
@@ -57,7 +54,7 @@ const CustomHeader = (props) => {
             alignItems: "center",
           }}
         >
-          <Iconify icon="line-md:phone" color="text.primary" />
+          <Iconify icon="solar:phone-linear" color="text.primary" />
         </Box>
       );
     } else if (isScheduleIcon) {
@@ -69,7 +66,7 @@ const CustomHeader = (props) => {
           }}
         >
           <Iconify
-            icon="material-symbols:schedule-outline"
+            icon="solar:clock-circle-linear"
             width="16px"
             height="16px"
             color="text.secondary"
@@ -84,7 +81,10 @@ const CustomHeader = (props) => {
             alignItems: "center",
           }}
         >
-          <Iconify icon="system-uicons:coins" color="text.disabled" />
+          <Iconify
+            icon="solar:dollar-minimalistic-linear"
+            color="text.disabled"
+          />
         </Box>
       );
     } else if (props?.displayName === "Total Cost") {
@@ -110,7 +110,7 @@ const CustomHeader = (props) => {
             alignItems: "center",
           }}
         >
-          <Iconify icon="tabler:list-tree" color="text.disabled" />
+          <Iconify icon="solar:folder-tree-linear" color="text.disabled" />
         </Box>
       );
     }
@@ -164,7 +164,7 @@ const CustomHeader = (props) => {
         aria-label={`Show menu for ${displayName} column`}
         title={`Column menu for ${displayName}`}
       >
-        <Iconify icon="mdi:dots-vertical" />
+        <Iconify icon="solar:menu-dots-vertical-linear" />
       </IconButton>
     </Box>
   );

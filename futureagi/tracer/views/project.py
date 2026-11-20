@@ -2,19 +2,22 @@ from datetime import timedelta
 from functools import wraps
 
 import structlog
+from django.conf import settings
 from django.db import models
 from django.db.models import Count
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from tfc.ee_loader import is_cloud_env
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.routers import uses_db
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -43,6 +46,7 @@ from tracer.serializers.project import (
     ProjectUserGraphDataResponseSerializer,
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
+    ProjectViewSetListQuerySerializer,
 )
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
@@ -58,8 +62,14 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_user_system_metric_graph_ch,
     graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    chart_bundle_statistics,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
+)
+from tracer.services.clickhouse.query_builders.time_series import (
+    graph_cost_coverage_series,
 )
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -77,11 +87,16 @@ from tracer.services.filter_principal_context import (
     bind_request_my_annotations_principal,
 )
 from tracer.services.project_deletion import soft_delete_projects
+from tracer.services.simulation_project import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    agent_id_in_simulation_project_name,
+)
 from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
     OBSERVE_CODEBLOCK,
     ORG_KEYS,
+    ORG_SELF_HOSTED_URLS,
     PROTOTYPE_CODEBLOCK,
 )
 from tracer.utils.graphs_optimized import (
@@ -96,6 +111,28 @@ from tracer.utils.helper import (
 from tracer.utils.property_registry import validate_property_graph_namespace
 
 logger = structlog.get_logger(__name__)
+
+
+def sdk_key_snippets():
+    """The keys block of the in-app SDK snippet, per language, with placeholder
+    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's API
+    (FI_API_PUBLIC_URL) and FI_TRACES_URL to its trace collector
+    (FI_COLLECTOR_PUBLIC_URL): the SDKs default to Cloud, and without them the
+    spans (prompts and completions included) would leave for
+    api.futureagi.com."""
+    snippets = {
+        lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
+        for lang, code in ORG_KEYS.items()
+    }
+    if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
+        urls = {
+            "api_url": settings.FI_API_PUBLIC_URL.rstrip("/"),
+            "traces_url": settings.FI_COLLECTOR_PUBLIC_URL.rstrip("/"),
+        }
+        for lang, lines in ORG_SELF_HOSTED_URLS.items():
+            snippets[lang] += lines.format(**urls)
+    return snippets
+
 
 # The Observe landing page is a latency-critical navigation path. Never replay
 # raw span versions here: the dedicated rollup has one aggregate state per
@@ -137,6 +174,57 @@ _PROJECT_USER_GRAPH_READ_SETTINGS = {
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
+
+
+# ProjectView.list's trace_count uses the same rollup and default window as the
+# Observe trace list's count (TraceListQueryBuilderV2.build_count_query): distinct
+# traces in the last 30 days. Traces ingested through the collector live only in
+# ClickHouse, so a PostgreSQL count misses them; that count is kept only as a
+# fallback when the rollup cannot be read.
+_PROJECT_TRACE_COUNT_WINDOW_DAYS = 30
+
+
+def _project_trace_counts(project_ids):
+    """Return {project_id: distinct traces in the last 30 days}, or None."""
+    if not project_ids:
+        return {}
+    try:
+        service = V2AnalyticsQueryService()
+        if not service.supports_per_query_read_settings:
+            raise RuntimeError("trace counts require enforced per-query limits")
+        now = timezone.now()
+        result = service.execute_ch_query(
+            """
+            SELECT
+                toString(project_id) AS project_id_text,
+                uniqExactMerge(uniq_traces_state) AS trace_count
+            FROM trace_count_rollup
+            PREWHERE project_id IN %(pids)s
+              AND hour >= toStartOfHour(toDateTime(%(start)s, 'UTC'))
+              AND hour < toStartOfHour(toDateTime(%(end)s, 'UTC')) + INTERVAL 1 HOUR
+            GROUP BY project_id
+            """,
+            {
+                "pids": list(project_ids),
+                "start": (
+                    now - timedelta(days=_PROJECT_TRACE_COUNT_WINDOW_DAYS)
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+                "end": now.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            timeout_ms=ReadDeadline.start(_PROJECT_ACTIVITY_TIMEOUT_MS).remaining_ms(),
+            settings=_PROJECT_ACTIVITY_READ_SETTINGS,
+        )
+        counts = dict.fromkeys(project_ids, 0)
+        for row in result.data:
+            pid = row["project_id_text"]
+            if pid in counts:
+                counts[pid] = int(row["trace_count"])
+        return counts
+    except Exception:
+        # Best effort at the ClickHouse boundary: the caller keeps the
+        # PostgreSQL count when the rollup cannot be read.
+        logger.warning("project_trace_counts_unavailable", exc_info=True)
+        return None
 
 
 def _bounded_project_user_action(*, log_event: str, unavailable_message: str):
@@ -243,7 +331,12 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return queryset.order_by(sort_query)
 
     def perform_update(self, serializer):
-        """Override to invalidate PII cache when project metadata changes."""
+        """Refuse a reserved name; invalidate the PII cache on a metadata change."""
+        if (
+            agent_id_in_simulation_project_name(serializer.validated_data.get("name"))
+            is not None
+        ):
+            raise ValidationError({"name": [RESERVED_PROJECT_NAME_MESSAGE]})
         instance = serializer.save()
         try:
             from tracer.utils.pii_settings import invalidate_pii_cache
@@ -252,6 +345,10 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except Exception:
             logger.warning("pii_cache_invalidation_failed", exc_info=True)
 
+    @validated_request(
+        query_serializer=ProjectViewSetListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     def list(self, request, *args, **kwargs):
         """
         Get a paginated list of all projects for the organization.
@@ -264,8 +361,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             total_count = queryset.count()
 
             # Apply pagination
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 20))
+            page_number = request.validated_query_data["page_number"]
+            page_size = request.validated_query_data["page_size"]
             start = page_number * page_size
             end = start + page_size
 
@@ -291,9 +388,18 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Serialize data
             serializer = self.get_serializer(paginated_queryset, many=True)
 
-            # Add trace_count and run_count to serialized data
+            # trace_count: distinct traces in the last 30 days, as the Observe
+            # trace list counts them; the PostgreSQL count only if ClickHouse
+            # cannot be read.
+            ch_counts = _project_trace_counts(
+                [str(project.id) for project in paginated_queryset]
+            )
             for data, project in zip(serializer.data, paginated_queryset, strict=False):
-                data["trace_count"] = project.trace_count
+                data["trace_count"] = (
+                    ch_counts[str(project.id)]
+                    if ch_counts is not None
+                    else project.trace_count
+                )
                 data["run_count"] = project.run_count or 0
 
             return self._gm.success_response(
@@ -315,6 +421,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             serializer = self.get_serializer(data=request.data)
 
             if serializer.is_valid():
+                if (
+                    agent_id_in_simulation_project_name(
+                        serializer.validated_data.get("name")
+                    )
+                    is not None
+                ):
+                    return self._gm.bad_request(RESERVED_PROJECT_NAME_MESSAGE)
                 serializer.save(
                     organization=getattr(self.request, "organization", None)
                     or self.request.user.organization,
@@ -424,6 +537,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
 
     @action(detail=False, methods=["post"])
+    @validated_request(request_serializer=ProjectNameUpdateSerializer)
     def update_project_name(self, request, *args, **kwargs):
         try:
             serializer = ProjectNameUpdateSerializer(data=request.data)
@@ -433,6 +547,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 new_name = validated_data["name"]
                 sampling_rate = validated_data.get("sampling_rate")
 
+                if agent_id_in_simulation_project_name(new_name) is not None:
+                    return self._gm.bad_request(RESERVED_PROJECT_NAME_MESSAGE)
+
                 project = self._get_project_in_scope(project_id)
 
                 if not project:
@@ -440,7 +557,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
                 # Update project name
                 project.name = new_name
-                project.save(update_fields=["name"])
+                update_fields = ["name"]
+                if "sampling_contact_attribute" in validated_data:
+                    project.sampling_contact_attribute = validated_data[
+                        "sampling_contact_attribute"
+                    ]
+                    update_fields.append("sampling_contact_attribute")
+                project.save(update_fields=update_fields)
 
                 response_message = "Project name updated successfully"
                 response_data = {
@@ -882,8 +1005,29 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "Graph data is temporarily unavailable. Please retry.",
                     code="service_unavailable",
                 )
+            cost_points = response_data.get("cost", [])
+            cost_coverage = [
+                {"timestamp": point["timestamp"], **point["cost_coverage"]}
+                for point in cost_points
+                if "cost_coverage" in point
+            ]
+            # The typed companion lives beside the legacy JSON bundle, not in it.
+            if cost_coverage:
+                response_data = {
+                    **response_data,
+                    "cost": [
+                        {
+                            key: value
+                            for key, value in point.items()
+                            if key != "cost_coverage"
+                        }
+                        for point in cost_points
+                    ],
+                }
             graph_data = {
+                **({"cost_coverage": cost_coverage} if cost_coverage else {}),
                 "system_metrics": response_data,
+                "system_metric_statistics": chart_bundle_statistics(),
                 "evaluations": {},
             }
             return self._gm.success_response(graph_data)
@@ -1327,9 +1471,22 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         value_keys=[output_key],
                     )
 
+                cost_coverage = graph_cost_coverage_series(
+                    builder=builder,
+                    rows=rows,
+                    columns=list(result.columns or []),
+                    interval=interval,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
                 return finish(
                     self._gm.success_response(
                         {
+                            **(
+                                {"cost_coverage": cost_coverage}
+                                if cost_coverage
+                                else {}
+                            ),
                             "session": _series("session_count", "session"),
                             "trace": _series("trace_count", "trace"),
                             "cost": _series("cost", "cost"),
@@ -1408,10 +1565,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         response = {
             "installation_guide": INSTALLATION_GUIDE,
             "project_add_code": sdk_code,
-            "keys": {
-                lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
-                for lang, code in ORG_KEYS.items()
-            },
+            "keys": sdk_key_snippets(),
             "instruments": INSTRUMENTORS,
         }
         return self._gm.success_response(response)

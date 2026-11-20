@@ -5,6 +5,7 @@ import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
 } from "src/config/runtime_limits";
 import { isGridApiLive } from "src/utils/gridApi";
+import { awaitAggregationRequestWithDeadline } from "src/utils/queryReadState";
 
 const CURSOR_MODE = "cursor";
 const NUMBERED_MODE = "numbered";
@@ -24,28 +25,16 @@ const requestWithinDeadline = async ({
   cancellationSignal,
   remainingMs,
 }) => {
-  const requestController = new AbortController();
-  const cancelRequest = () => requestController.abort();
-  cancellationSignal?.addEventListener("abort", cancelRequest, {
-    once: true,
-  });
-  if (cancellationSignal?.aborted) cancelRequest();
-
-  let timer;
   try {
-    const result = await Promise.race([
-      Promise.resolve()
-        .then(() => request(requestController.signal))
-        .then((response) => ({ completed: true, response })),
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve({ completed: false }), remainingMs);
-      }),
-    ]);
-    if (!result.completed) requestController.abort();
-    return result;
-  } finally {
-    clearTimeout(timer);
-    cancellationSignal?.removeEventListener("abort", cancelRequest);
+    // Settle cancellation even if the transport does not acknowledge abort.
+    const response = await awaitAggregationRequestWithDeadline(request, {
+      timeoutMs: remainingMs,
+      signal: cancellationSignal,
+    });
+    return { completed: true, response };
+  } catch (error) {
+    if (error?.code !== "aggregation_request_timeout") throw error;
+    return { completed: false };
   }
 };
 
@@ -586,6 +575,26 @@ export const createListCursorPagination = ({
     };
   };
 
+  /**
+   * Whether page `pageNumber` (0-indexed, same convention as `requestParams`)
+   * can be requested right now without `requestParams` throwing "Continuation
+   * cursor is unavailable for this page". Mirrors that throw condition
+   * exactly rather than approximating it: cursor mode needs a remembered
+   * checkpoint for anything past page 0; numbered/unknown mode addresses
+   * pages directly by number and never needs one.
+   *
+   * Checkpoints are LRU-pruned (`maxCursorCheckpoints`) and reset()/
+   * fallbackToNumbered() clear them entirely, so a page proven reachable once
+   * can stop being reachable later. Callers must re-check on every render,
+   * never cache this across a generation change.
+   */
+  const canReachPage = (pageNumber) => {
+    if (!Number.isInteger(pageNumber) || pageNumber < 0) return false;
+    if (pageNumber === 0) return true;
+    if (mode === CURSOR_MODE) return Boolean(cursorForPage(pageNumber));
+    return true;
+  };
+
   const recordResponse = (pageNumber, metadata) => {
     const hasCursorContract =
       hasOwn(metadata, "has_more") && hasOwn(metadata, "next_cursor");
@@ -814,6 +823,7 @@ export const createListCursorPagination = ({
     disableCursor,
     fallbackToNumbered,
     requestParams,
+    canReachPage,
     recordResponse,
     recordEmptyContinuation,
     bufferedVisiblePage,

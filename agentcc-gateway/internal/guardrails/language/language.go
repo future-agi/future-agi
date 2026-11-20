@@ -13,12 +13,13 @@ import (
 
 // LanguageGuardrail detects language mismatches and blocks non-allowed languages.
 type LanguageGuardrail struct {
-	allowedScripts []string // e.g., ["latin", "common"]
+	allowedScripts []string // e.g., ["latin", "cyrillic"]
+	configErr      error
 }
 
 // New creates a LanguageGuardrail from rule config.
 func New(cfg map[string]interface{}) *LanguageGuardrail {
-	g := &LanguageGuardrail{}
+	g := &LanguageGuardrail{configErr: validateConfig(cfg)}
 	if cfg != nil {
 		if v, ok := cfg["allowed_scripts"]; ok {
 			if list, ok := v.([]interface{}); ok {
@@ -33,8 +34,33 @@ func New(cfg map[string]interface{}) *LanguageGuardrail {
 	return g
 }
 
-func (g *LanguageGuardrail) Name() string           { return "language-detection" }
+// ValidateConfig reports constructor-time selector shape errors for selected
+// policies. Empty or omitted scripts intentionally mean no restriction; legacy
+// Check and the constructor's lowercase normalization are unchanged.
+func (g *LanguageGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}) error {
+	value, present := cfg["allowed_scripts"]
+	if !present {
+		return nil
+	}
+	list, ok := value.([]interface{})
+	if !ok {
+		return fmt.Errorf("language-detection allowed_scripts must be an array of strings")
+	}
+	for _, item := range list {
+		if _, ok := item.(string); !ok {
+			return fmt.Errorf("language-detection allowed_scripts must contain only strings")
+		}
+	}
+	return nil
+}
+
+func (g *LanguageGuardrail) Name() string            { return "language-detection" }
 func (g *LanguageGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// ChecksRequestTextOnly marks that Check reads only request messages.
+func (g *LanguageGuardrail) ChecksRequestTextOnly() {}
 
 // Check detects non-Latin/non-allowed scripts that might indicate language mismatch attacks.
 func (g *LanguageGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {

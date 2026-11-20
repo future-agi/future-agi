@@ -102,6 +102,11 @@ const PRIORITY_PREFIXES = [
   "tool_outputs",
 ];
 
+const matchesFieldSelection = (option, selection) =>
+  !!selection &&
+  option.field === selection.field &&
+  (selection.saveKey === undefined || option.saveKey === selection.saveKey);
+
 // Walk a nested object to its leaves, emitting [dotPath, value] pairs.
 // Used for both the display table and fieldNames so the mapping
 // dropdown and the Columns/Value table share the same leaf set.
@@ -191,6 +196,7 @@ const SimulationTestMode = React.forwardRef(
       model = "turing_large",
       variables = [],
       codeParams = {},
+      runConfig,
       onTestResult,
       onColumnsLoaded,
       onClearResult,
@@ -198,6 +204,7 @@ const SimulationTestMode = React.forwardRef(
       errorLocalizerEnabled = false,
       initialMapping = null,
       initialRunTestId = "",
+      sourceColumns,
       isComposite = false,
       compositeAdhocConfig = null,
       initialExecutionId = null,
@@ -272,14 +279,14 @@ const SimulationTestMode = React.forwardRef(
       lastFetchedCallsKey !== selectedCallsSourceKey;
 
     // Call detail
-    const [callDetail, setCallDetail] = useState(null);
+    const [preview, setPreview] = useState(null);
+    const callDetail = preview?.detail;
     const [loadingDetail, setLoadingDetail] = useState(false);
     const [callDetailError, setCallDetailError] = useState(null);
     const [callDetailReloadToken, setCallDetailReloadToken] = useState(0);
 
     // Per-call cache so toggling calls doesn't refetch or re-walk the same
-    // payload. Keyed by call id. Each entry is `{ detail, fieldNames? }`
-    // — fieldNames fills on first walk and is reused on repeat toggles.
+    // payload. Keep scenario identities with their own call, including on cache hits.
     const detailCacheRef = useRef(new Map());
 
     // Columns/Value table — user-resizable key column. Drag the divider
@@ -300,26 +307,58 @@ const SimulationTestMode = React.forwardRef(
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
-    // Variable mapping (stores display keys internally; scenario fields are
-    // translated to their UUID via scenarioKeyMap when emitted to the parent).
-    // Seeded from `initialMapping` when editing an existing eval (TH-4302).
-    const [mapping, setMapping] = useState(
+    // A displayed path can refer to different fields on different calls.
+    // Keep each selection's saved identity separate from its display path.
+    const [selections, setSelections] = useState(() =>
       initialMapping && typeof initialMapping === "object"
-        ? { ...initialMapping }
+        ? Object.fromEntries(
+            Object.entries(initialMapping).map(([variable, field]) => [
+              variable,
+              { field },
+            ]),
+          )
         : {},
+    );
+    const mapping = useMemo(
+      () =>
+        Object.fromEntries(
+          Object.entries(selections).map(([variable, { field }]) => [
+            variable,
+            field,
+          ]),
+        ),
+      [selections],
+    );
+    const resolveSelection = useCallback(
+      (field) => {
+        const columnId = preview?.scenarioIdsByPath.get(field);
+        return {
+          field,
+          columnId,
+          saveKey:
+            columnId ??
+            (preview && translateDeepScenarioColumn(field)) ??
+            field,
+        };
+      },
+      [preview],
+    );
+    const assignField = useCallback(
+      (variable, field) => {
+        const selection = resolveSelection(field);
+        setSelections((prev) => ({ ...prev, [variable]: selection }));
+      },
+      [resolveSelection],
     );
 
     // Shared click-to-map behaviour for the Columns/Value table rows.
     const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
       variables,
       mapping,
-      setMapping,
+      onAssign: assignField,
+      isAssigned: (variable, field) =>
+        matchesFieldSelection(resolveSelection(field), selections[variable]),
     });
-    // displayKey ("scenario_<col_name>") -> scenario column UUID. The backend
-    // resolver at run time only accepts scenario column UUIDs, not names, so
-    // we persist the UUID while the dropdown still shows the friendly label.
-    const scenarioKeyMap = useRef({});
-
     // Eval result
     const [, setIsRunning] = useState(false);
     const [result, setResult] = useState(null);
@@ -467,7 +506,7 @@ const SimulationTestMode = React.forwardRef(
           if (requestVersion !== executionRequestVersionRef.current) return;
           const page = mergeSimulationPreviewPage(execRes.data);
           detailCacheRef.current.clear();
-          setCallDetail(null);
+          setPreview(null);
           setCallDetailError(null);
           setRunTestContext(detailRes.data || null);
           setExecutions(page.items);
@@ -569,7 +608,7 @@ const SimulationTestMode = React.forwardRef(
         setCallsSnapshotAt(null);
         setCallsError(null);
         setCurrentCallIndex(0);
-        setCallDetail(null);
+        setPreview(null);
         setLastFetchedCallsKey(null);
         callsSourceRef.current = null;
         return undefined;
@@ -583,7 +622,7 @@ const SimulationTestMode = React.forwardRef(
         setCallsCursor(null);
         setCallsSnapshotAt(null);
         setCurrentCallIndex(0);
-        setCallDetail(null);
+        setPreview(null);
       }
       setLoadingCalls(true);
       setCallsError(null);
@@ -604,7 +643,7 @@ const SimulationTestMode = React.forwardRef(
           if (requestVersion !== callsRequestVersionRef.current) return;
           const page = mergeSimulationPreviewPage(data);
           detailCacheRef.current.clear();
-          setCallDetail(null);
+          setPreview(null);
           setCallDetailError(null);
           setCalls(page.items);
           setTotalCalls(page.snapshotTotal);
@@ -696,7 +735,7 @@ const SimulationTestMode = React.forwardRef(
     // 4. Fetch call detail, resolve all IDs, flatten into one table
     useEffect(() => {
       if (!currentCall) {
-        setCallDetail(null);
+        setPreview(null);
         setCallDetailError(null);
         return undefined;
       }
@@ -704,7 +743,7 @@ const SimulationTestMode = React.forwardRef(
       const cacheKey = currentCall.id || "";
       const cached = cacheKey && detailCacheRef.current.get(cacheKey);
       if (cached) {
-        setCallDetail(cached.detail);
+        setPreview(cached);
         setCallDetailError(null);
         setLoadingDetail(false);
         return undefined;
@@ -713,7 +752,7 @@ const SimulationTestMode = React.forwardRef(
       let cancelled = false;
       const fetchDetail = async () => {
         setLoadingDetail(true);
-        setCallDetail(null);
+        setPreview(null);
         setCallDetailError(null);
         try {
           const callId = currentCall.id;
@@ -835,13 +874,19 @@ const SimulationTestMode = React.forwardRef(
           // column name, so read the UUID from each entry's dataset_column_id
           // rather than the map key.
           const sc = callData.scenario_columns;
-          scenarioKeyMap.current = {};
+          const scenarioIdsByPath = new Map();
+          const scenarioValuesById = new Map();
           if (sc && typeof sc === "object") {
             for (const [, col] of Object.entries(sc)) {
               if (col?.column_name && col?.value !== undefined) {
                 flat.scenario.columns[col.column_name] = col.value;
-                scenarioKeyMap.current[`scenario.columns.${col.column_name}`] =
-                  col.dataset_column_id;
+                if (col.dataset_column_id) {
+                  scenarioIdsByPath.set(
+                    `scenario.columns.${col.column_name}`,
+                    col.dataset_column_id,
+                  );
+                  scenarioValuesById.set(col.dataset_column_id, col.value);
+                }
               }
             }
           }
@@ -1013,13 +1058,12 @@ const SimulationTestMode = React.forwardRef(
           }
 
           if (cancelled) return;
-          if (cacheKey) {
-            detailCacheRef.current.set(cacheKey, { detail: flat });
-          }
-          setCallDetail(flat);
+          const entry = { detail: flat, scenarioIdsByPath, scenarioValuesById };
+          if (cacheKey) detailCacheRef.current.set(cacheKey, entry);
+          setPreview(entry);
         } catch (requestError) {
           if (cancelled) return;
-          setCallDetail(null);
+          setPreview(null);
           setCallDetailError(simulationPreviewRequestError(requestError));
         } finally {
           if (!cancelled) setLoadingDetail(false);
@@ -1031,10 +1075,55 @@ const SimulationTestMode = React.forwardRef(
       };
     }, [currentCall, runTestContext, callDetailReloadToken]);
 
+    const isConfirmedEmpty =
+      !!selectedExecutionId &&
+      totalCalls === 0 &&
+      !loadingCalls &&
+      !isPendingCallsFetch &&
+      !callsError;
+    const hasNoExecutions =
+      !!selectedRunTestId &&
+      executionsFetched &&
+      executionsTotal === 0 &&
+      !executionsError;
+
+    // A simulation can be configured before its first call. Use its declared
+    // columns only for an empty preview, never in place of a pending/failed read.
+    // Key scenario columns by UUID for the saved mapping, not by display name.
+    const declaredFields = useMemo(() => {
+      const fields = new Map();
+      for (const col of sourceColumns || []) {
+        const key = col.field || col.id;
+        if (key) fields.set(key, col.headerName || col.name || key);
+      }
+      const counts = new Map();
+      for (const label of fields.values())
+        counts.set(label, (counts.get(label) || 0) + 1);
+      for (const [key, label] of fields) {
+        if (counts.get(label) > 1) fields.set(key, `${label} (${key})`);
+      }
+      return fields;
+    }, [sourceColumns]);
+    // Declared scenario columns carry only a dataset column UUID (`id`);
+    // built-ins such as `call.assistant_chat_transcript` declare a `field`
+    // path and are read from the call detail like any other path.
+    const declaredColumnIds = useMemo(
+      () =>
+        new Set(
+          (sourceColumns || [])
+            .filter((col) => !col.field && col.id)
+            .map((col) => col.id),
+        ),
+      [sourceColumns],
+    );
+
     // Field names for variable mapping. Expand nested object keys into
     // dot-notation paths; drop non-leaf intermediates so groups aren't picked.
     const fieldNames = useMemo(() => {
-      if (!callDetail) return [];
+      if (!callDetail)
+        return hasNoExecutions || isConfirmedEmpty
+          ? [...declaredFields.keys()]
+          : [];
       const keys = [];
       // Don't recurse into known-heavy Vapi dumps — the key stays
       // selectable but the walker finishes in tens of ms instead of
@@ -1087,7 +1176,7 @@ const SimulationTestMode = React.forwardRef(
       });
 
       return leaves;
-    }, [callDetail]);
+    }, [callDetail, declaredFields, hasNoExecutions, isConfirmedEmpty]);
 
     // Notify parent of available fields for autocomplete
     useEffect(() => {
@@ -1101,27 +1190,39 @@ const SimulationTestMode = React.forwardRef(
       }
     }, [fieldNames.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Auto-map variables to fields when names match
+    const fieldOptions = useMemo(
+      () => fieldNames.map(resolveSelection),
+      [fieldNames, resolveSelection],
+    );
+
+    // Resolve seeded paths once a preview is available, and auto-map variables
+    // when names match. Navigation must not replace an already bound save key.
     useEffect(() => {
-      if (!fieldNames.length || !variables.length) return;
-      setMapping((prev) => {
+      setSelections((prev) => {
         const next = { ...prev };
         let changed = false;
+        if (preview) {
+          for (const [variable, { field, saveKey }] of Object.entries(prev)) {
+            if (saveKey !== undefined || !fieldNames.includes(field)) continue;
+            next[variable] = resolveSelection(field);
+            changed = true;
+          }
+        }
         variables.forEach((v) => {
-          if (next[v]) return;
+          if (next[v]?.field) return;
           const exact = fieldNames.find((f) => f === v);
           const ci =
             !exact &&
             fieldNames.find((f) => f.toLowerCase() === v.toLowerCase());
-          const match = exact || ci;
-          if (match) {
-            next[v] = match;
+          const field = exact || ci;
+          if (field) {
+            next[v] = resolveSelection(field);
             changed = true;
           }
         });
         return changed ? next : prev;
       });
-    }, [variables, fieldNames]);
+    }, [variables, fieldNames, preview, resolveSelection]);
 
     // Notify parent EvalPickerConfigFull when the mapping is complete so the
     // "Add Evaluation" button can enable. Without this bridge, sourceReady
@@ -1134,23 +1235,16 @@ const SimulationTestMode = React.forwardRef(
       [selectedRunTestId, variables, mapping],
     );
 
-    // Translate scenario column keys: top-level -> UUID; deep path -> walker form.
-    const persistedMapping = useMemo(() => {
-      const out = {};
-      for (const [variable, field] of Object.entries(mapping)) {
-        if (scenarioKeyMap.current[field]) {
-          out[variable] = scenarioKeyMap.current[field];
-          continue;
-        }
-        out[variable] = translateDeepScenarioColumn(field) ?? field;
-      }
-      return out;
-    }, [mapping, callDetail]);
-
     useEffect(() => {
+      const persistedMapping = Object.fromEntries(
+        Object.entries(selections).map(([variable, { field, saveKey }]) => [
+          variable,
+          saveKey ?? field,
+        ]),
+      );
       onReadyChange?.(isReady, persistedMapping);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isReady, persistedMapping]);
+    }, [isReady, selections]);
 
     // Run test
     const handleRunTest = useCallback(async () => {
@@ -1181,12 +1275,25 @@ const SimulationTestMode = React.forwardRef(
       try {
         const evalMapping = {};
         for (const variable of variables) {
-          const mappedField = mapping[variable];
+          const selection = selections[variable];
+          const mappedField = selection?.field;
           if (mappedField && callDetail) {
-            // Resolve dot-notation paths (e.g. "scenario_outcome", "eval_data_privacy.score")
-            const val = mappedField.includes(".")
-              ? mappedField.split(".").reduce((obj, k) => obj?.[k], callDetail)
-              : callDetail[mappedField];
+            // Test literal columns by their saved UUID, not an identically
+            // named field from the current preview.
+            const columnId = selection.columnId ?? mappedField;
+            const isScenarioColumn =
+              selection.columnId ||
+              declaredColumnIds.has(mappedField) ||
+              preview.scenarioValuesById.has(mappedField);
+            const val = isScenarioColumn
+              ? preview.scenarioValuesById.get(columnId)
+              : mappedField.split(".").reduce((obj, k) => obj?.[k], callDetail);
+            if (val === undefined && isScenarioColumn) {
+              const message = `The mapped field for ${variable} is not available on this call.`;
+              setError(message);
+              onTestResult?.(false, message);
+              return;
+            }
             if (val !== undefined) {
               evalMapping[variable] =
                 typeof val === "object"
@@ -1231,9 +1338,10 @@ const SimulationTestMode = React.forwardRef(
               }
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
-              model,
+              ...(model ? { model } : {}),
               error_localizer: errorLocalizerEnabled,
               config: {
+                ...(runConfig ? { run_config: runConfig } : {}),
                 mapping: evalMapping,
                 ...(Object.keys(codeParams || {}).length > 0
                   ? { params: codeParams }
@@ -1278,7 +1386,9 @@ const SimulationTestMode = React.forwardRef(
     }, [
       templateId,
       variables,
-      mapping,
+      selections,
+      declaredColumnIds,
+      preview,
       callDetail,
       currentCall,
       onTestResult,
@@ -1287,6 +1397,7 @@ const SimulationTestMode = React.forwardRef(
       compositeAdhocConfig,
       startErrorLocalizerPoll,
       codeParams,
+      runConfig,
       model,
       executeComposite,
       executeCompositeAdhoc,
@@ -1326,17 +1437,6 @@ const SimulationTestMode = React.forwardRef(
     // when switching calls via the navigator, where `callDetail` still
     // holds stale data until the new fetch resolves). We only hide it once
     // we either have fresh callDetail or confirm an empty execution.
-    const isConfirmedEmpty =
-      !!selectedExecutionId &&
-      totalCalls === 0 &&
-      !loadingCalls &&
-      !isPendingCallsFetch &&
-      !callsError;
-    const hasNoExecutions =
-      !!selectedRunTestId &&
-      executionsFetched &&
-      executionsTotal === 0 &&
-      !executionsError;
     const isMappingPending =
       !isConfirmedEmpty &&
       !hasNoExecutions &&
@@ -1354,7 +1454,14 @@ const SimulationTestMode = React.forwardRef(
             !!selectedExecutionId)));
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Simulation (Run Test) selector */}
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
@@ -1370,7 +1477,7 @@ const SimulationTestMode = React.forwardRef(
               setSelectedRunTestId(val?.id || "");
               setLoadingMoreExecutions(false);
               setLoadingMoreCalls(false);
-              setMapping({});
+              setSelections({});
               setRunTestContext(null);
               setExecutions([]);
               setExecutionsTotal(0);
@@ -1385,7 +1492,7 @@ const SimulationTestMode = React.forwardRef(
               setCallsSnapshotAt(null);
               setCallsError(null);
               setCurrentCallIndex(0);
-              setCallDetail(null);
+              setPreview(null);
               setCallDetailError(null);
               setLastFetchedCallsKey(null);
               detailCacheRef.current.clear();
@@ -1399,7 +1506,7 @@ const SimulationTestMode = React.forwardRef(
                 placeholder="Search simulations..."
                 InputProps={{
                   ...params.InputProps,
-                  sx: { ...params.InputProps.sx, fontSize: "13px" },
+                  sx: { ...params.InputProps.sx, fontSize: "12px" },
                   endAdornment: loadingRunTests ? (
                     <InputAdornment position="end">
                       <CircularProgress size={14} />
@@ -1421,7 +1528,7 @@ const SimulationTestMode = React.forwardRef(
                   {...rest}
                   sx={{
                     ...rest.sx,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     display: "flex",
                     gap: 1,
                     alignItems: "center",
@@ -1430,16 +1537,16 @@ const SimulationTestMode = React.forwardRef(
                   <Iconify
                     icon={
                       type === "voice"
-                        ? "mdi:phone-outline"
+                        ? "solar:phone-linear"
                         : type === "chat"
-                          ? "mdi:chat-outline"
-                          : "mdi:play-circle-outline"
+                          ? "solar:chat-round-line-linear"
+                          : "solar:play-circle-linear"
                     }
                     width={16}
                     sx={{
                       color:
                         type === "voice"
-                          ? "warning.main"
+                          ? "status.warning.fg"
                           : type === "chat"
                             ? "info.main"
                             : "primary.main",
@@ -1449,7 +1556,7 @@ const SimulationTestMode = React.forwardRef(
                   <Box sx={{ minWidth: 0 }}>
                     <Typography
                       variant="body2"
-                      sx={{ fontSize: "13px" }}
+                      sx={{ fontSize: "12px" }}
                       noWrap
                     >
                       {option.name || option.id}
@@ -1457,7 +1564,7 @@ const SimulationTestMode = React.forwardRef(
                     <Typography
                       variant="caption"
                       color="text.disabled"
-                      sx={{ fontSize: "11px" }}
+                      sx={{ fontSize: "12px" }}
                       noWrap
                     >
                       {[
@@ -1489,7 +1596,7 @@ const SimulationTestMode = React.forwardRef(
               role="alert"
               sx={{ mt: 0.75, display: "flex", alignItems: "center", gap: 1 }}
             >
-              <Typography variant="caption" color="error.main">
+              <Typography variant="caption" color="status.danger.fg">
                 {runTestsError.message}
               </Typography>
               <Button
@@ -1519,22 +1626,17 @@ const SimulationTestMode = React.forwardRef(
                 setCalls([]);
                 setTotalCalls(0);
                 setCurrentCallIndex(0);
-                setCallDetail(null);
+                setPreview(null);
               }}
               disabled={!!initialExecutionId}
-              sx={{ fontSize: "13px" }}
+              sx={{ fontSize: "12px" }}
             >
               {selectedExecutionId &&
                 !executions.some((ex) => ex.id === selectedExecutionId) && (
-                  <MenuItem
-                    value={selectedExecutionId}
-                    sx={{ fontSize: "13px" }}
-                  >
-                    Selected run
-                  </MenuItem>
+                  <MenuItem value={selectedExecutionId}>Selected run</MenuItem>
                 )}
               {executions.map((ex, i) => (
-                <MenuItem key={ex.id} value={ex.id} sx={{ fontSize: "13px" }}>
+                <MenuItem key={ex.id} value={ex.id}>
                   Run {i + 1} — {ex.status || "completed"}{" "}
                   {ex.created_at
                     ? `(${new Date(ex.created_at).toLocaleDateString()})`
@@ -1567,7 +1669,7 @@ const SimulationTestMode = React.forwardRef(
             role="alert"
             sx={{ display: "flex", alignItems: "center", gap: 1 }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {executionsError.message}
             </Typography>
             {!executionsError.terminal && (
@@ -1601,7 +1703,7 @@ const SimulationTestMode = React.forwardRef(
             }}
           >
             <Iconify
-              icon="mdi:table-off"
+              icon="solar:table-linear"
               width={28}
               sx={{ color: "text.disabled" }}
             />
@@ -1633,7 +1735,7 @@ const SimulationTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -1669,9 +1771,8 @@ const SimulationTestMode = React.forwardRef(
                   setError(null);
                   onClearResult?.();
                 }}
-                sx={{ width: 24, height: 24 }}
               >
-                <Iconify icon="mdi:chevron-left" width={16} />
+                <Iconify icon="solar:alt-arrow-left-linear" width={16} />
               </IconButton>
               <IconButton
                 size="small"
@@ -1682,9 +1783,8 @@ const SimulationTestMode = React.forwardRef(
                   setError(null);
                   onClearResult?.();
                 }}
-                sx={{ width: 24, height: 24 }}
               >
-                <Iconify icon="mdi:chevron-right" width={16} />
+                <Iconify icon="solar:alt-arrow-right-linear" width={16} />
               </IconButton>
               {callsCursor && !callsError && (
                 <Button
@@ -1703,7 +1803,7 @@ const SimulationTestMode = React.forwardRef(
             role="alert"
             sx={{ display: "flex", alignItems: "center", gap: 1 }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {callsError.message}
             </Typography>
             {!callsError.terminal && (
@@ -1727,7 +1827,7 @@ const SimulationTestMode = React.forwardRef(
             role="alert"
             sx={{ display: "flex", alignItems: "center", gap: 1 }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {callDetailError.message}
             </Typography>
             <Button
@@ -1770,7 +1870,7 @@ const SimulationTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -1785,10 +1885,7 @@ const SimulationTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "#fafafa",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -1869,7 +1966,7 @@ const SimulationTestMode = React.forwardRef(
                       startAdornment: (
                         <InputAdornment position="start">
                           <Iconify
-                            icon="mdi:magnify"
+                            icon="solar:magnifier-linear"
                             width={14}
                             sx={{ color: "text.disabled" }}
                           />
@@ -1885,10 +1982,7 @@ const SimulationTestMode = React.forwardRef(
                     display: "flex",
                     px: 1.5,
                     py: 0.5,
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.03)"
-                        : "#fafafa",
+                    backgroundColor: "background.neutral",
                     borderBottom: "1px solid",
                     borderColor: "divider",
                   }}
@@ -2039,7 +2133,7 @@ const SimulationTestMode = React.forwardRef(
                                       whiteSpace: "pre-wrap",
                                       wordBreak: "break-all",
                                       fontFamily: "monospace",
-                                      fontSize: 11,
+                                      fontSize: 12,
                                       maxWidth: 520,
                                     }}
                                   >
@@ -2111,34 +2205,52 @@ const SimulationTestMode = React.forwardRef(
             </Typography>
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
               {variables.map((variable) => {
-                const currentValue = mapping[variable];
+                const selection = selections[variable];
+                const currentValue = selection?.field;
                 // Fail-closed on null callDetail (loading): treat as text-call.
                 const isTextCallSafe = callDetail
                   ? isTextCallDetail(callDetail)
                   : true;
+                const liveOption = fieldOptions.find(
+                  ({ field }) => field === currentValue,
+                );
+                const identityChanged =
+                  liveOption && !matchesFieldSelection(liveOption, selection);
                 const showCurrent =
                   currentValue &&
-                  !fieldNames.includes(currentValue) &&
+                  (!liveOption || identityChanged) &&
                   !isHiddenPickerPath(currentValue, isTextCallSafe);
+                const fieldLabel = (key) =>
+                  !callDetail || (showCurrent && key === currentValue)
+                    ? declaredFields.get(key) || key
+                    : key;
                 const autocomplete = (
                   <Autocomplete
                     size="small"
                     disabled={isMappingPending}
                     options={
-                      showCurrent ? [currentValue, ...fieldNames] : fieldNames
+                      showCurrent ? [selection, ...fieldOptions] : fieldOptions
                     }
-                    value={mapping[variable] || null}
+                    getOptionLabel={({ field }) => fieldLabel(field)}
+                    getOptionKey={(option) =>
+                      option === selection
+                        ? `saved:${option.field}`
+                        : option.field
+                    }
+                    getOptionDisabled={(option) =>
+                      !!identityChanged && option === selection
+                    }
+                    // Distinct option objects let MUI emit onChange when the
+                    // user picks a live field with the same displayed path.
+                    value={currentValue ? selection : null}
                     onChange={(_, val) =>
-                      setMapping((prev) => ({
-                        ...prev,
-                        [variable]: val || "",
-                      }))
+                      assignField(variable, val?.field || "")
                     }
                     openOnFocus
                     autoHighlight
                     selectOnFocus
                     handleHomeEndKeys
-                    isOptionEqualToValue={(opt, val) => opt === val}
+                    isOptionEqualToValue={matchesFieldSelection}
                     sx={{ flex: 1 }}
                     ListboxProps={{ style: { maxHeight: 260 } }}
                     renderInput={(params) => (
@@ -2168,7 +2280,8 @@ const SimulationTestMode = React.forwardRef(
                         }}
                       />
                     )}
-                    renderOption={(props, col) => {
+                    renderOption={(props, option) => {
+                      const { field: col } = option;
                       const { key, ...rest } = props;
                       return (
                         <Box
@@ -2191,7 +2304,10 @@ const SimulationTestMode = React.forwardRef(
                             textOverflow: "ellipsis",
                           }}
                         >
-                          {col}
+                          {fieldLabel(col)}
+                          {identityChanged && option === selection
+                            ? " (saved selection)"
+                            : null}
                         </Box>
                       );
                     }}
@@ -2216,7 +2332,7 @@ const SimulationTestMode = React.forwardRef(
                       }}
                     >
                       <Iconify
-                        icon="mdi:code-braces"
+                        icon="solar:code-linear"
                         width={14}
                         sx={{ color: "text.secondary" }}
                       />
@@ -2229,7 +2345,7 @@ const SimulationTestMode = React.forwardRef(
                       </Typography>
                     </Box>
                     <Iconify
-                      icon="mdi:arrow-right"
+                      icon="solar:arrow-right-linear"
                       width={14}
                       sx={{ color: "text.disabled" }}
                     />
@@ -2289,11 +2405,11 @@ const SimulationTestMode = React.forwardRef(
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: "error.main",
-              backgroundColor: "error.lighter",
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
             }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" color="status.danger.fg">
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>
@@ -2309,11 +2425,13 @@ SimulationTestMode.propTypes = {
   templateId: PropTypes.string,
   variables: PropTypes.array,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,
   initialMapping: PropTypes.object,
   initialRunTestId: PropTypes.string,
+  sourceColumns: PropTypes.arrayOf(PropTypes.object),
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
   initialExecutionId: PropTypes.string,

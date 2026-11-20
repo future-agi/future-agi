@@ -135,9 +135,7 @@ class TestNonVapiProviderComparison:
     @staticmethod
     def _patch_call_transcript(rows):
         # rows: list of (speaker_role, content)
-        transcript_rows = [
-            SimpleNamespace(speaker_role=r, content=c) for r, c in rows
-        ]
+        transcript_rows = [SimpleNamespace(speaker_role=r, content=c) for r, c in rows]
 
         class _SpeakerRole:
             ASSISTANT = "assistant"
@@ -167,9 +165,7 @@ class TestNonVapiProviderComparison:
         with self._patch_call_transcript(
             [("assistant", "Hello"), ("user", "Hi there")]
         ):
-            out = session_comparison._extract_transcripts_from_provider_call_data(
-                call
-            )
+            out = session_comparison._extract_transcripts_from_provider_call_data(call)
         assert out == [
             {"role": "assistant", "messages": ["Hello"]},
             {"role": "user", "messages": ["Hi there"]},
@@ -187,9 +183,7 @@ class TestNonVapiProviderComparison:
         with self._patch_call_transcript(
             [("assistant", "a"), ("user", "b"), ("assistant", "c")]
         ):
-            metrics = session_comparison._extract_metrics_from_provider_call_data(
-                call
-            )
+            metrics = session_comparison._extract_metrics_from_provider_call_data(call)
         assert metrics["duration"] == 66
         assert metrics["total_turns"] == 3
         # None per-turn metrics degrade to 0 for a provider with no timing.
@@ -294,8 +288,14 @@ class TestFetchSimulatedCallRecordings:
             stereo_recording_url="https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3",
         )
         result = session_comparison.fetch_simulated_call_recordings(call_exec)
-        assert result["mono_combined"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3"
-        assert result["stereo"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3"
+        assert (
+            result["mono_combined"]
+            == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3"
+        )
+        assert (
+            result["stereo"]
+            == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3"
+        )
 
 
 @pytest.mark.unit

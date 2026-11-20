@@ -87,7 +87,7 @@ const ChipCellRenderer = ({ value, data, colDef }) => {
           gap: 0.5,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.25,
+          borderRadius: "4px",
           padding: (theme) => theme.spacing(0.25, 1.5),
         }}
       >

@@ -150,16 +150,7 @@ export default function PromptNodePopper({
         <Paper
           elevation={3}
           data-prompt-popper
-          sx={{
-            ml: 2,
-            minWidth: 320,
-            maxWidth: 320,
-            backgroundColor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 1,
-            overflow: "hidden",
-          }}
+          sx={{ ml: 2, minWidth: 320, maxWidth: 320, overflow: "hidden" }}
         >
           <Box sx={{ p: 1.5, pb: 0.5 }}>
             <FormSearchField
@@ -194,18 +185,11 @@ export default function PromptNodePopper({
             sx={{
               justifyContent: "flex-start",
               textAlign: "left",
-              px: 1.5,
-              py: 1,
             }}
             size="small"
             variant="text"
             color="primary"
-            startIcon={
-              <SvgColor
-                src="/assets/icons/ic_add.svg"
-                sx={{ width: 16, height: 16 }}
-              />
-            }
+            startIcon={<SvgColor src="/assets/icons/ic_add.svg" width={16} />}
           >
             Add Blank Prompt
           </Button>
@@ -243,10 +227,7 @@ export default function PromptNodePopper({
                         py: 1,
                         px: 2,
                         "&:hover": {
-                          bgcolor: (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "action.hover"
-                              : "whiteScale.200",
+                          bgcolor: "action.hover",
                         },
                       }}
                     >
