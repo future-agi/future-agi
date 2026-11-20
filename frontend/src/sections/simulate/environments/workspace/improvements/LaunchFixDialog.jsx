@@ -52,16 +52,6 @@ const selectSx = {
   typography: "s2",
   "& .MuiSelect-select": { typography: "s2", py: 0.75 },
 };
-const linkSx = {
-  typography: "s2",
-  color: "text.secondary",
-  cursor: "pointer",
-  border: 0,
-  p: 0,
-  bgcolor: "transparent",
-  "&:hover": { color: "text.primary" },
-};
-
 function Row({ k, center = false, children }) {
   return (
     <Stack
@@ -340,14 +330,24 @@ export default function LaunchFixDialog({
                   {variations}
                 </Typography>
               )}
-              <Typography
-                component="button"
-                type="button"
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
                 onClick={() => setPicking((v) => !v)}
-                sx={{ ...linkSx, mt: 0.75 }}
+                aria-expanded={picking}
+                endIcon={
+                  <Iconify
+                    icon={
+                      picking ? "eva:chevron-up-fill" : "eva:chevron-down-fill"
+                    }
+                    width={16}
+                  />
+                }
+                sx={{ typography: "s2", alignSelf: "flex-start", mt: 1 }}
               >
                 {picking ? "Hide cases" : "Choose cases"}
-              </Typography>
+              </Button>
               {picking && (
                 <ScenarioPicker
                   options={options}
