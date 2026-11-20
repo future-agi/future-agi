@@ -909,7 +909,7 @@ export default function CompareRuns() {
                 )}
               </Box>
               {/* Scenario pass with its fraction, from the same helper as the
-                  Runs table's Scenario pass cell (runStatsOf). An improvement's
+                  Runs table's Scenario pass cell (runStatsOf). An epoch's
                   run that scored only its target scenarios says so — "0% 0/1"
                   is a real result on one scenario, not an empty run. */}
               <Tooltip

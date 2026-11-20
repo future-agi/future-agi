@@ -88,7 +88,7 @@ export default function PrVerifyCheck({ pr, now }) {
             <Tooltip
               arrow
               placement="top"
-              title="The improvement's scenarios, re-run on the PR's head commit and compared with its proof."
+              title="The epoch's scenarios, re-run on the PR's head commit and compared with its proof."
             >
               <Typography
                 sx={{

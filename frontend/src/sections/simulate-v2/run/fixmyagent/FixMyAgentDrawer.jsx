@@ -335,8 +335,8 @@ export default function FixMyAgentDrawer({
     navigate(improvementPath(env.id, record.id), {
       state: {
         back: {
-          /* Back lands where it's listed: the run's Improvements tab. */
-          to: `${paths.dashboard.simulate.simulationRun(env.id, sourceRunId)}?tab=improvements`,
+          /* Back lands on the run it started from. */
+          to: `${paths.dashboard.simulate.simulationRun(env.id, sourceRunId)}`,
           label: from?.ordinal ? `Run ${from.ordinal}` : "the run",
         },
       },
@@ -368,7 +368,7 @@ export default function FixMyAgentDrawer({
         ? measureTodayRun(env, esOn, {
             key: `coder-${env.id}-${Date.now().toString(36)}`,
             measuredFor: { kind: "run", runId: sourceRunId },
-            startedBy: "Improvement · Debug failures",
+            startedBy: "Epoch · Debug failures",
           })
         : null;
     const base = today ? measuredSummaryOf(env, esOn, today) : null;
@@ -418,8 +418,8 @@ export default function FixMyAgentDrawer({
       href: improvementPath(env.id, record.id),
       state: {
         back: {
-          /* Back lands where it's listed: the run's Improvements tab. */
-          to: `${paths.dashboard.simulate.simulationRun(env.id, sourceRunId)}?tab=improvements`,
+          /* Back lands on the run it started from. */
+          to: `${paths.dashboard.simulate.simulationRun(env.id, sourceRunId)}`,
           label: from?.ordinal ? `Run ${from.ordinal}` : "the run",
         },
       },
@@ -475,7 +475,7 @@ export default function FixMyAgentDrawer({
       env?.id,
       envState?.agent,
       changes || [],
-      `From improvement ${key}, in ${version.label}`,
+      `From epoch ${key}, in ${version.label}`,
     );
     const at = new Date().toISOString();
     patch({
@@ -555,6 +555,7 @@ export default function FixMyAgentDrawer({
   const close = () => {
     setView("diagnosis");
     setActiveId(null);
+    setSetupOpen(false);
     onClose();
   };
 
@@ -567,12 +568,17 @@ export default function FixMyAgentDrawer({
         scenario grid, at roughly 950px, sets the real requirement.
       */
       width={
-        view === "optimization"
+        view === "optimization" && !setupOpen
           ? { xs: "100%", md: 960 }
           : { xs: "100%", sm: 640 }
       }
     >
-      {view === "diagnosis" && (
+      {/*
+        Improve swaps this drawer's body for the setup, so one drawer shows
+        at a time. Cancel comes back to the diagnosis, or closes the drawer
+        when it was opened straight onto the setup.
+      */}
+      {!setupOpen && view === "diagnosis" && (
         <DiagnosisPane
           tasks={tasks}
           picked={picked}
@@ -627,7 +633,7 @@ export default function FixMyAgentDrawer({
         />
       )}
 
-      {view === "optimization" && active && (
+      {!setupOpen && view === "optimization" && active && (
         <OptimizationRunView
           record={active}
           name={improvementRunName(envState, active)}
@@ -666,20 +672,23 @@ export default function FixMyAgentDrawer({
           onDone={finish}
         />
       )}
-      <ImprovementSetup
-        open={setupOpen}
-        onClose={() => setSetupOpen(false)}
-        preset={{
-          agentKey: runAgentKey,
-          envId: env?.id,
-          runId: sourceRunId || undefined,
-          agentVersion: runAgentVersion || undefined,
-          envVersion: sourceRun?.envVersion || undefined,
-        }}
-        tasks={tasks}
-        included={included}
-        onStart={startFromSetup}
-      />
+      {setupOpen && (
+        <ImprovementSetup
+          bare
+          open
+          onClose={openSetup ? close : () => setSetupOpen(false)}
+          preset={{
+            agentKey: runAgentKey,
+            envId: env?.id,
+            runId: sourceRunId || undefined,
+            agentVersion: runAgentVersion || undefined,
+            envVersion: sourceRun?.envVersion || undefined,
+          }}
+          tasks={tasks}
+          included={included}
+          onStart={startFromSetup}
+        />
+      )}
     </SideDrawer>
   );
 }

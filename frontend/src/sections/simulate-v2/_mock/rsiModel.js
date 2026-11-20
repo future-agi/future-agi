@@ -96,7 +96,7 @@ export const fixDepthOf = (agent) => {
     return {
       depth: "suggestion",
       label: "Diagnosis and a suggested fix",
-      note: "We can only call this agent, so an improvement reproduces the failure and ends with a suggested fix. Once you apply it and mark the new version released, a re-run on the same environment version proves it.",
+      note: "We can only call this agent, so an epoch reproduces the failure and ends with a suggested fix. Once you apply it and mark the new version released, a re-run on the same environment version proves it.",
     };
   }
   /* Local code through our SDK: it runs on their machine, so their own

@@ -198,7 +198,7 @@ export default function CasePicker({ pickable, pick, onChange }) {
     <Stack spacing={2}>
       <CaseList
         title="Targets"
-        note="Failing cases this improvement works on."
+        note="Failing cases this epoch works on."
         items={targets}
         chosen={fix}
         onChange={(ids) => onChange({ fix: [...ids, ...heldIds], protect })}

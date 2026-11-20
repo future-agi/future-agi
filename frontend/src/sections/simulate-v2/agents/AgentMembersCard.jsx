@@ -356,7 +356,7 @@ export default function AgentMembersCard({
           >
             Constraints
           </Box>
-          {" to keep improvements off it."}
+          {" to keep epochs off it."}
         </Typography>
       )}
     </PanelCard>

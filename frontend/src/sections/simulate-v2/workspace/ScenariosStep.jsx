@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SHOW_TAGS } from "./scenarios/scenarioOrgFlags";
 import {
   Fragment,
   useCallback,
@@ -187,6 +188,9 @@ import useVersionChange from "./useVersionChange";
  * by side on the derived axes, which is the view you want when the question is
  * what is in here rather than what is this.
  */
+/* The "No baseline yet" strip on the Scenarios tab (user, 20 Nov: off). */
+const SHOW_BASELINE_STRIP = false;
+
 export default function ScenariosStep({
   env,
   envState,
@@ -743,23 +747,34 @@ export default function ScenariosStep({
         type: "enum",
         choices: orgGroups.map((g) => g.name),
       },
-      {
-        value: "tag",
-        label: "Tag — any of",
-        type: "enum",
-        choices: orgTags.map((t) => t.name),
-      },
-      {
-        value: "tagAll",
-        label: "Tag — all of",
-        type: "enum",
-        choices: orgTags.map((t) => t.name),
-      },
+      ...(SHOW_TAGS
+        ? [
+            {
+              value: "tag",
+              label: "Tag — any of",
+              type: "enum",
+              choices: orgTags.map((t) => t.name),
+            },
+            {
+              value: "tagAll",
+              label: "Tag — all of",
+              type: "enum",
+              choices: orgTags.map((t) => t.name),
+            },
+          ]
+        : []),
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ],
     [personaChoices, subActorChoices, subgoalChoices, orgTags, orgGroups],
   );
 
+  /* A search or a filter other than the suite picker narrows the list — what
+     Save as suite keeps when nothing is selected. */
+  const narrowing = () =>
+    !!q ||
+    Object.entries(filters).some(
+      ([k, v]) => k !== "group" && Array.isArray(v) && v.length,
+    );
   const shown = selected.filter((r) => {
     if (pendingScn?.has(r.id)) return false;
     if (!matchesFilters(r)) return false;
@@ -768,6 +783,7 @@ export default function ScenariosStep({
       `${r.name || ""} ${r.summary || ""} ${r.title || ""} ${r.task || ""} ${r.useCase || ""}`.toLowerCase();
     return hay.includes(q);
   });
+  const narrowedIds = narrowing() ? shown.map((r) => r.id) : [];
   /* Groups first, then apply the hide list. Row-level narrowing lives in
      `shown` (search) and everything else — hiding — is expressed as
      "which groups to show" so the interaction stays purely visual. */
@@ -1304,7 +1320,7 @@ export default function ScenariosStep({
     enqueueSnackbar(
       targets.length === 1
         ? on
-          ? `"${one}" is must-pass — an improvement that breaks it is rejected`
+          ? `"${one}" is must-pass — an epoch that breaks it is rejected`
           : `"${one}" is no longer must-pass`
         : on
           ? `${targets.length} scenarios marked must-pass`
@@ -1632,8 +1648,8 @@ export default function ScenariosStep({
       id: "improvements",
       icon: "solar:magic-stick-3-linear",
       attention: true,
-      title: `${improvementTotal} scenario${improvementTotal === 1 ? "" : "s"} from improvements ${improvementTotal === 1 ? "isn't" : "aren't"} in this environment`,
-      sub: "Improvements wrote these to reproduce what they were fixing. They stay with the improvement until you add them.",
+      title: `${improvementTotal} scenario${improvementTotal === 1 ? "" : "s"} from epochs ${improvementTotal === 1 ? "isn't" : "aren't"} in this environment`,
+      sub: "Epochs wrote these to reproduce what they were fixing. They stay with the epoch until you add them.",
       actions: [{ label: "Review", onClick: () => setImprovOpen(true) }],
     },
     qualityReview &&
@@ -1845,7 +1861,14 @@ export default function ScenariosStep({
                         variant="outlined"
                         onClick={() => setOrgOpen(true)}
                         startIcon={
-                          <Iconify icon="solar:tag-linear" width={14} />
+                          <Iconify
+                            icon={
+                              SHOW_TAGS
+                                ? "solar:tag-linear"
+                                : "solar:folder-2-linear"
+                            }
+                            width={14}
+                          />
                         }
                         sx={{
                           flexShrink: 0,
@@ -1854,13 +1877,16 @@ export default function ScenariosStep({
                           borderColor: "divider",
                         }}
                       >
-                        Tags &amp; suites
+                        {SHOW_TAGS ? "Tags & suites" : "Suites"}
                       </Button>
                     ) : barFit === "compact" ? (
-                      <Tooltip arrow title="Tags & suites">
+                      <Tooltip
+                        arrow
+                        title={SHOW_TAGS ? "Tags & suites" : "Suites"}
+                      >
                         <IconButton
                           size="small"
-                          aria-label="Tags & suites"
+                          aria-label={SHOW_TAGS ? "Tags & suites" : "Suites"}
                           onClick={() => setOrgOpen(true)}
                           sx={{
                             flexShrink: 0,
@@ -1869,7 +1895,14 @@ export default function ScenariosStep({
                             color: "text.primary",
                           }}
                         >
-                          <Iconify icon="solar:tag-linear" width={14} />
+                          <Iconify
+                            icon={
+                              SHOW_TAGS
+                                ? "solar:tag-linear"
+                                : "solar:folder-2-linear"
+                            }
+                            width={14}
+                          />
                         </IconButton>
                       </Tooltip>
                     ) : null}
@@ -1898,23 +1931,6 @@ export default function ScenariosStep({
                   <>
                     {barFit !== "narrow" && (
                       <>
-                        <Tooltip
-                          arrow
-                          title="A case counts as proved only when its solution really ran on this environment version. Kept as written: saved as written, never proved. Not proved: its proof failed or no longer holds."
-                        >
-                          <Typography
-                            noWrap
-                            sx={{
-                              typography: "s3",
-                              color: "text.secondary",
-                              flexShrink: 0,
-                              cursor: "default",
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {`${proofCounts.proved} proved · ${proofCounts.kept} kept as written · ${proofCounts.notProved} not proved`}
-                          </Typography>
-                        </Tooltip>
                         {/* Coverage — the three numbers on hover, the full breakdown
                     (axes, forced overlays, pairwise grid) in the drawer. */}
                         <Tooltip
@@ -2006,8 +2022,10 @@ export default function ScenariosStep({
                         >
                           {[
                             [
-                              "Tags & suites",
-                              "solar:tag-linear",
+                              SHOW_TAGS ? "Tags & suites" : "Suites",
+                              SHOW_TAGS
+                                ? "solar:tag-linear"
+                                : "solar:folder-2-linear",
                               () => setOrgOpen(true),
                             ],
                             [
@@ -2081,74 +2099,80 @@ export default function ScenariosStep({
           </Box>
         )}
 
-        {needsBaseline && selectedIds.length === 0 && mode === "scenarios" && (
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
-            sx={{
-              mb: 1.25,
-              px: 2,
-              py: 1.25,
-              borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "divider",
-              bgcolor: "background.neutral",
-            }}
-          >
-            <Iconify
-              icon="solar:flag-linear"
-              width={16}
-              sx={{ color: "text.tertiary", flexShrink: 0 }}
-            />
-            <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                No baseline yet
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                The first run is the baseline improvements are measured against.
-              </Typography>
-            </Box>
-            <AlsoRunIn
-              candidates={groupCandidates}
-              value={baselineAlso}
-              onChange={setBaselineAlso}
-              agentVersion={currentAgentVersion(envState)?.label}
-            />
-            <Tooltip
-              arrow
-              title={
-                readiness.ready
-                  ? `${baselineScope?.sitOut ? `Runs ${baselineScope.count} of ${baselineScope.runnable} runnable scenarios (${baselineScope.sitOut} wait on Needs input)` : `Runs all ${baselineScope?.count ?? live.length} scenarios`}, 3 times each`
-                  : readiness.reason
-              }
+        {/* Hidden: the first run is the baseline anyway, so a "No baseline
+            yet" strip asked for something that happens by itself. */}
+        {SHOW_BASELINE_STRIP &&
+          needsBaseline &&
+          selectedIds.length === 0 &&
+          mode === "scenarios" && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                mb: 1.25,
+                px: 2,
+                py: 1.25,
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.neutral",
+              }}
             >
-              <span>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  size="small"
-                  disabled={!readiness.ready}
-                  onClick={() =>
-                    onStartRun(
-                      baselineScope?.sitOut && !baselineWith.length
-                        ? baselineScope.ids
-                        : undefined,
-                      3,
-                      { also: baselineWith },
-                    )
-                  }
-                  startIcon={<Iconify icon="solar:play-bold" width={14} />}
-                  sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
-                >
-                  {baselineWith.length
-                    ? `Run baseline in ${baselineWith.length + 1} environments`
-                    : "Run baseline"}
-                </Button>
-              </span>
-            </Tooltip>
-          </Stack>
-        )}
+              <Iconify
+                icon="solar:flag-linear"
+                width={16}
+                sx={{ color: "text.tertiary", flexShrink: 0 }}
+              />
+              <Box flex={1} minWidth={0}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  No baseline yet
+                </Typography>
+                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                  The first run is the baseline epochs are measured
+                  against.
+                </Typography>
+              </Box>
+              <AlsoRunIn
+                candidates={groupCandidates}
+                value={baselineAlso}
+                onChange={setBaselineAlso}
+                agentVersion={currentAgentVersion(envState)?.label}
+              />
+              <Tooltip
+                arrow
+                title={
+                  readiness.ready
+                    ? `${baselineScope?.sitOut ? `Runs ${baselineScope.count} of ${baselineScope.runnable} runnable scenarios (${baselineScope.sitOut} wait on Needs input)` : `Runs all ${baselineScope?.count ?? live.length} scenarios`}, 3 times each`
+                    : readiness.reason
+                }
+              >
+                <span>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    disabled={!readiness.ready}
+                    onClick={() =>
+                      onStartRun(
+                        baselineScope?.sitOut && !baselineWith.length
+                          ? baselineScope.ids
+                          : undefined,
+                        3,
+                        { also: baselineWith },
+                      )
+                    }
+                    startIcon={<Iconify icon="solar:play-bold" width={14} />}
+                    sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+                  >
+                    {baselineWith.length
+                      ? `Run baseline in ${baselineWith.length + 1} environments`
+                      : "Run baseline"}
+                  </Button>
+                </span>
+              </Tooltip>
+            </Stack>
+          )}
       </Box>
 
       {/* The shared definitions the suite grades with, one entry per meaning. */}
@@ -2359,9 +2383,18 @@ export default function ScenariosStep({
                           })
                         }
                         onCreate={(name) => {
-                          patch(groupPatch(envState, selectedIds, name));
-                          setFilters((f) => ({ ...f, group: [name] }));
+                          /* A selection wins; otherwise a filtered list is saved
+                             as it stands — filter, then Save as suite. */
+                          const ids = selectedIds.length
+                            ? selectedIds
+                            : narrowedIds;
+                          patch(groupPatch(envState, ids, name));
+                          setFilters({ group: [name] });
+                          setQuery("");
                         }}
+                        filteredCount={
+                          selectedIds.length ? 0 : narrowedIds.length
+                        }
                         onRun={(ids) =>
                           onStartRun?.(ids, Number(selectionRun?.repeats) || 3)
                         }
@@ -2372,7 +2405,31 @@ export default function ScenariosStep({
                       />
                     </Box>
                   )}
-                  {!asOfBatch && <ProtectionLine tally={protection} />}
+                  {/* The proof counts sit on this line, not in the toolbar,
+                      so the toolbar's Add scenarios stays on screen. */}
+                  {!asOfBatch && (
+                    <ProtectionLine
+                      tally={protection}
+                      trailing={
+                        <Tooltip
+                          arrow
+                          title="A case counts as proved only when its solution really ran on this environment version. Kept as written: saved as written, never proved. Not proved: its proof failed or no longer holds."
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s3",
+                              color: "text.secondary",
+                              cursor: "default",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {`${proofCounts.proved} proved · ${proofCounts.kept} kept as written · ${proofCounts.notProved} not proved`}
+                          </Typography>
+                        </Tooltip>
+                      }
+                    />
+                  )}
                   {containers}
                   {/* Opens from the right edge like Figma's version history, and
                     stays open while you scroll and click the batches. */}
@@ -2499,8 +2556,7 @@ export default function ScenariosStep({
               {[
                 staleCount > 0 &&
                   ` · ${staleCount} blocked on agent ${agentLabel}`,
-                backCount > 0 &&
-                  ` · ${backCount} back on agent ${agentLabel}`,
+                backCount > 0 && ` · ${backCount} back on agent ${agentLabel}`,
                 archivedCount > 0 && ` · ${archivedCount} archived`,
                 viewing && ` · viewing environment ${envDisplay}, read-only`,
               ]
@@ -2865,7 +2921,7 @@ const SCENARIO_GROUPINGS = [
   { id: "source", label: "Source", icon: "solar:magic-stick-3-linear" },
   { id: "addedBy", label: "Added by", icon: "solar:user-plus-linear" },
   { id: "group", label: "Suite", icon: "solar:folder-2-linear" },
-  { id: "tag", label: "Tag", icon: "solar:tag-linear" },
+  ...(SHOW_TAGS ? [{ id: "tag", label: "Tag", icon: "solar:tag-linear" }] : []),
 ];
 
 const groupScenarios = (rows, mode = "goal", env) => {

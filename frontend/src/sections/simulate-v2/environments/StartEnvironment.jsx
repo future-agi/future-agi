@@ -1722,7 +1722,7 @@ function PanelRunningAgent() {
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-        We can only call it, so improvements end in a suggested fix.
+        We can only call it, so epochs end in a suggested fix.
       </Typography>
       <Box>
         <Label>Agent type</Label>
@@ -2368,7 +2368,7 @@ function PanelPhoneNumber() {
         sx={{ typography: "s3", color: "text.subtitle" }}
       >
         <HintLine hint="We can only call it, so we can't change it ourselves.">
-          Test only — improvements end in a suggested fix.
+          Test only — epochs end in a suggested fix.
         </HintLine>
       </Typography>
       <Box>

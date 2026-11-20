@@ -220,8 +220,12 @@ export const toolOutputOf = (tool, effect) => {
 };
 
 /* Which seeded table a tool is about: [tool name, table name]. */
+/* Each rule's tables are tried in order — a refund is money, so a world with
+   no refunds table puts it on payments before returns. */
 const TABLE_OF = [
-  [/refund/, /refund/],
+  [/refund/, [/refund/, /payment/, /return/]],
+  [/replacement/, [/return/, /order/]],
+  [/credit|goodwill/, [/payment/, /account|customer/]],
   [/return/, /return/],
   [/shipment|shipping/, /shipment|order/],
   [/order|cancel/, /order/],
@@ -236,10 +240,16 @@ const stem = (name) => String(name || "").replace(/s$/, "");
 /* The seeded table (of `tables`, a list of names) a tool is about, or null. */
 const primaryTableOf = (name, tables) => {
   const n = String(name || "").toLowerCase();
-  for (const [toolRe, tableRe] of TABLE_OF) {
+  /* A tool named after a table uses it — freeze_card → cards — before the
+     broader rules, which sent most tools to the first table they matched. */
+  const named = tables.find((t) => n.includes(stem(t.toLowerCase())));
+  if (named) return named;
+  for (const [toolRe, tableRes] of TABLE_OF) {
     if (!toolRe.test(n)) continue;
-    const hit = tables.find((t) => tableRe.test(t.toLowerCase()));
-    if (hit) return hit;
+    for (const tableRe of [].concat(tableRes)) {
+      const hit = tables.find((t) => tableRe.test(t.toLowerCase()));
+      if (hit) return hit;
+    }
   }
   return tables.find((t) => n.includes(stem(t.toLowerCase()))) || null;
 };

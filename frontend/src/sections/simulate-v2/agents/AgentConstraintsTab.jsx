@@ -109,8 +109,8 @@ export default function AgentConstraintsTab({
           >
             <HintLine hint="A proposed change that breaks one is rejected, however much it helps — from the Error Feed, Debug failures or a goal.">
               {embedded
-                ? `${agent.name || "This agent"}'s rules — every improvement for it is held to these. A change here applies to all of them.`
-                : "Every improvement is held to these. Nothing ships without approval."}
+                ? `${agent.name || "This agent"}'s rules — every epoch for it is held to these. A change here applies to all of them.`
+                : "Every epoch is held to these. Nothing ships without approval."}
             </HintLine>
           </Typography>
           <Typography
@@ -278,7 +278,7 @@ export default function AgentConstraintsTab({
           <>
             <SettingsSection
               title="Run budget"
-              sub="The most one improvement run may use."
+              sub="The most one epoch run may use."
             >
               <Card>
                 <Row
@@ -330,7 +330,7 @@ export default function AgentConstraintsTab({
             </SettingsSection>
 
             <SettingsSection
-              title="Automatic improvements"
+              title="Automatic epochs"
               sub="When one starts without anyone starting it."
             >
               <AutomaticCard
@@ -540,7 +540,7 @@ function ProtectedMembers({ agent, value, onChange }) {
         <Typography
           sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
         >
-          Every member is protected — improvements can only change the parts
+          Every member is protected — epochs can only change the parts
           they share.
         </Typography>
       )}
@@ -677,8 +677,8 @@ function AutomaticCard({ agent, schedule, onChange, onBuildEnv }) {
     {
       id: "propose",
       title: "Propose only",
-      body: "Waits in Improvements for a review",
-      hint: "Runs and waits — the proven change sits in Improvements until someone reviews it.",
+      body: "Waits in Epochs for a review",
+      hint: "Runs and waits — the proven change sits in Epochs until someone reviews it.",
     },
     {
       id: "drafts",

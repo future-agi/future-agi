@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SHOW_TAGS } from "./scenarioOrgFlags";
 import { useState } from "react";
 import {
   Autocomplete,
@@ -56,7 +57,7 @@ export function TagsGroupsManager({
     >
       <Stack direction="row" alignItems="center" sx={{ mb: 1.5 }}>
         <Typography sx={{ typography: "m2", fontWeight: 600, flex: 1 }}>
-          Tags and suites
+          {SHOW_TAGS ? "Tags and suites" : "Suites"}
         </Typography>
         <IconButton size="small" onClick={onClose} aria-label="Close">
           <Iconify
@@ -66,149 +67,161 @@ export function TagsGroupsManager({
           />
         </IconButton>
       </Stack>
-      <Typography
-        sx={{
-          typography: "s3",
-          fontWeight: 600,
-          color: "text.tertiary",
-          mb: 0.5,
-        }}
-      >
-        Tags — describe and filter
-      </Typography>
-      <Box
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 1,
-          mb: 2,
-        }}
-      >
-        {tags.length === 0 && (
+      {SHOW_TAGS && (
+        <>
           <Typography
             sx={{
-              typography: "s2",
-              color: "text.secondary",
-              px: 1.5,
-              py: 1.25,
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              mb: 0.5,
             }}
           >
-            {`No tags yet. Add one from a scenario or a selection — e.g. ${SUGGESTED_TAGS.slice(0, 3).join(", ")}.`}
+            Tags — describe and filter
           </Typography>
-        )}
-        {tags.map((t) => (
-          <Stack
-            key={t.id}
-            direction="row"
-            spacing={1}
-            alignItems="center"
+          <Box
             sx={{
-              px: 1.5,
-              py: 0.75,
-              "& + &": { borderTop: "1px solid", borderColor: "divider" },
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              mb: 2,
             }}
           >
-            <Select
-              size="small"
-              value={t.color}
-              disabled={readOnly}
-              onChange={(e) =>
-                patch(editTagPatch(envState, t.id, { color: e.target.value }))
-              }
-              sx={{ width: 60 }}
-              renderValue={(c) => (
-                <Box
-                  sx={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    bgcolor: c,
-                  }}
-                />
-              )}
-            >
-              {TAG_COLORS.map((c) => (
-                <MenuItem key={c} value={c}>
-                  <Box
-                    sx={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: "50%",
-                      bgcolor: c,
-                    }}
-                  />
-                </MenuItem>
-              ))}
-            </Select>
-            <TextField
-              size="small"
-              defaultValue={t.name}
-              disabled={readOnly}
-              onBlur={(e) =>
-                e.target.value.trim() &&
-                e.target.value !== t.name &&
-                patch(
-                  editTagPatch(envState, t.id, { name: e.target.value.trim() }),
-                )
-              }
-              sx={{ width: 170 }}
-            />
-            <Select
-              size="small"
-              value={t.category}
-              disabled={readOnly}
-              onChange={(e) =>
-                patch(
-                  editTagPatch(envState, t.id, { category: e.target.value }),
-                )
-              }
-              sx={{ width: 130, typography: "s2" }}
-            >
-              {TAG_CATEGORIES.map((c) => (
-                <MenuItem key={c.id} value={c.id} sx={{ typography: "s2" }}>
-                  {c.label}
-                </MenuItem>
-              ))}
-            </Select>
-            <TextField
-              size="small"
-              placeholder="Description"
-              defaultValue={t.description}
-              disabled={readOnly}
-              onBlur={(e) =>
-                e.target.value !== t.description &&
-                patch(
-                  editTagPatch(envState, t.id, { description: e.target.value }),
-                )
-              }
-              sx={{ flex: 1 }}
-            />
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                width: 28,
-                textAlign: "right",
-              }}
-            >
-              {count(t.id)}
-            </Typography>
-            {!readOnly && (
-              <IconButton
-                size="small"
-                onClick={() => patch(deleteTagPatch(envState, t.id))}
-                aria-label={`Delete ${t.name}`}
+            {tags.length === 0 && (
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  px: 1.5,
+                  py: 1.25,
+                }}
               >
-                <Iconify
-                  icon="solar:trash-bin-trash-linear"
-                  width={16}
-                  sx={{ color: "text.tertiary" }}
-                />
-              </IconButton>
+                {`No tags yet. Add one from a scenario or a selection — e.g. ${SUGGESTED_TAGS.slice(0, 3).join(", ")}.`}
+              </Typography>
             )}
-          </Stack>
-        ))}
-      </Box>
+            {tags.map((t) => (
+              <Stack
+                key={t.id}
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                sx={{
+                  px: 1.5,
+                  py: 0.75,
+                  "& + &": { borderTop: "1px solid", borderColor: "divider" },
+                }}
+              >
+                <Select
+                  size="small"
+                  value={t.color}
+                  disabled={readOnly}
+                  onChange={(e) =>
+                    patch(
+                      editTagPatch(envState, t.id, { color: e.target.value }),
+                    )
+                  }
+                  sx={{ width: 60 }}
+                  renderValue={(c) => (
+                    <Box
+                      sx={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: "50%",
+                        bgcolor: c,
+                      }}
+                    />
+                  )}
+                >
+                  {TAG_COLORS.map((c) => (
+                    <MenuItem key={c} value={c}>
+                      <Box
+                        sx={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: "50%",
+                          bgcolor: c,
+                        }}
+                      />
+                    </MenuItem>
+                  ))}
+                </Select>
+                <TextField
+                  size="small"
+                  defaultValue={t.name}
+                  disabled={readOnly}
+                  onBlur={(e) =>
+                    e.target.value.trim() &&
+                    e.target.value !== t.name &&
+                    patch(
+                      editTagPatch(envState, t.id, {
+                        name: e.target.value.trim(),
+                      }),
+                    )
+                  }
+                  sx={{ width: 170 }}
+                />
+                <Select
+                  size="small"
+                  value={t.category}
+                  disabled={readOnly}
+                  onChange={(e) =>
+                    patch(
+                      editTagPatch(envState, t.id, {
+                        category: e.target.value,
+                      }),
+                    )
+                  }
+                  sx={{ width: 130, typography: "s2" }}
+                >
+                  {TAG_CATEGORIES.map((c) => (
+                    <MenuItem key={c.id} value={c.id} sx={{ typography: "s2" }}>
+                      {c.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+                <TextField
+                  size="small"
+                  placeholder="Description"
+                  defaultValue={t.description}
+                  disabled={readOnly}
+                  onBlur={(e) =>
+                    e.target.value !== t.description &&
+                    patch(
+                      editTagPatch(envState, t.id, {
+                        description: e.target.value,
+                      }),
+                    )
+                  }
+                  sx={{ flex: 1 }}
+                />
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    width: 28,
+                    textAlign: "right",
+                  }}
+                >
+                  {count(t.id)}
+                </Typography>
+                {!readOnly && (
+                  <IconButton
+                    size="small"
+                    onClick={() => patch(deleteTagPatch(envState, t.id))}
+                    aria-label={`Delete ${t.name}`}
+                  >
+                    <Iconify
+                      icon="solar:trash-bin-trash-linear"
+                      width={16}
+                      sx={{ color: "text.tertiary" }}
+                    />
+                  </IconButton>
+                )}
+              </Stack>
+            ))}
+          </Box>
+        </>
+      )}
       <Typography
         sx={{
           typography: "s3",
@@ -285,8 +298,9 @@ export function TagsGroupsManager({
         ))}
       </Box>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}>
-        Deleting a suite keeps its scenarios. Renaming a tag updates it
-        everywhere; runs keep the scenarios they ran.
+        {SHOW_TAGS
+          ? "Deleting a suite keeps its scenarios. Renaming a tag updates it everywhere; runs keep the scenarios they ran."
+          : "A suite is an exact set of scenarios, so every run of it tests the same cases. Deleting a suite keeps its scenarios; runs keep the scenarios they ran."}
       </Typography>
     </Dialog>
   );

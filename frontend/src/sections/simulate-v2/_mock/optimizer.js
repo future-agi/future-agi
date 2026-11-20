@@ -2422,7 +2422,7 @@ export const improvementRunName = (envState, record) => {
   const i = (envState?.optimizations || []).findIndex(
     (o) => o.id === record?.id,
   );
-  return `Improvement ${i >= 0 ? i + 1 : (envState?.optimizations || []).length + 1}`;
+  return `Epoch ${i >= 0 ? i + 1 : (envState?.optimizations || []).length + 1}`;
 };
 
 /**

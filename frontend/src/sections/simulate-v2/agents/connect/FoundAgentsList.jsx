@@ -39,6 +39,26 @@ export default function FoundAgentsList({
 }) {
   const [query, setQuery] = useState("");
   const inputRef = useRef(null);
+  const rootRef = useRef(null);
+  /* After a pick, bring the next step into view: preflight (and the build
+     fields above it) sits below a long list, and people didn't know to
+     scroll down to it. Only on a pick, never on load. */
+  const pick = (a) => {
+    onPick(a);
+    /* The picked agent's details (where it starts, its values) render
+       below the list after the pick and push preflight down, so scroll once
+       they're in, and again in case they grew while it scrolled. */
+    const toPreflight = () => {
+      const scope =
+        rootRef.current?.closest(".MuiDrawer-paper, [role='dialog']") ||
+        document;
+      scope
+        .querySelector("[data-connect-preflight]")
+        ?.scrollIntoView({ behavior: "smooth", block: "end" });
+    };
+    setTimeout(toPreflight, 200);
+    setTimeout(toPreflight, 700);
+  };
   const many = agents.length >= SCROLL_FROM;
   const q = query.trim().toLowerCase();
   const shown = useMemo(
@@ -51,11 +71,11 @@ export default function FoundAgentsList({
 
   const onKey = (e) => {
     if (e.key === "Escape") setQuery("");
-    if (e.key === "Enter" && shown.length === 1) onPick(shown[0]);
+    if (e.key === "Enter" && shown.length === 1) pick(shown[0]);
   };
 
   return (
-    <Box>
+    <Box ref={rootRef}>
       <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>
         {heading ||
           (agents.length === 1
@@ -173,7 +193,7 @@ export default function FoundAgentsList({
               key={a.id}
               agent={a}
               on={a.id === agentId}
-              onPick={onPick}
+              onPick={pick}
               connected={connectedOf?.(a) || null}
               onOpenConnected={onOpenConnected}
               describe={describe}

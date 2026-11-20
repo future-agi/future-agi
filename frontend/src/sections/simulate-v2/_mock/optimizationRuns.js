@@ -171,7 +171,7 @@ export const optimizationsFromRun = (envState, runId) =>
   optimizationList(envState).filter((o) => o.fromRunId === runId);
 
 export const nextOptimizationName = (envState) =>
-  `Improvement ${optimizations(envState).length + 1}`;
+  `Epoch ${optimizations(envState).length + 1}`;
 
 /* One past the highest id, never the count — a deleted improvement's id is
    never handed to a new one (its drafts and links still name it). */
@@ -306,7 +306,7 @@ export const optimizationVerdict = (record) => {
   }
   return {
     tone: "#DC2626",
-    title: "No improvement on held-back scenarios",
+    title: "No epoch on held-back scenarios",
     body: "Whatever the training split gained did not survive contact with scenarios the search had not seen. The reasoned changes are the better route here.",
   };
 };

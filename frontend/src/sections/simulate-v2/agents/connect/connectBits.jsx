@@ -515,7 +515,7 @@ MembersPreview.propTypes = {
 export function FrameworkTuning({ tuning, structure }) {
   if (!tuning) return null;
   const rows = [
-    ["Improvements edit", tuning.edits],
+    ["Epochs edit", tuning.edits],
     ...(structure
       ? [
           [

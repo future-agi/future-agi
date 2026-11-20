@@ -148,7 +148,7 @@ export default function ClosedPlatformFlow({
   return (
     <ConnectSteps
       title={title}
-      subtitle="Their configuration is closed, so we test the agent the way a customer reaches it. Improvements end in a suggested fix."
+      subtitle="Their configuration is closed, so we test the agent the way a customer reaches it. Epochs end in a suggested fix."
       steps={STEPS}
       active={0}
       next={next}
@@ -314,7 +314,7 @@ export default function ClosedPlatformFlow({
           <HintLine
             hint={`${platform.label} doesn't expose its agents' settings, so nothing is imported and nothing is changed there.`}
           >
-            Test only — improvements end in a diagnosis and a suggested fix.
+            Test only — epochs end in a diagnosis and a suggested fix.
           </HintLine>
         </Typography>
       </Stack>

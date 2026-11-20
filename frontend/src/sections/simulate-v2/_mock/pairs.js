@@ -1375,6 +1375,6 @@ export const verdictWithMustPass = (label, mustPass = []) =>
     ? {
         id: "regressed",
         label: "Regressed on must-pass",
-        note: `${mustPass.length} must-pass scenario${mustPass.length === 1 ? "" : "s"} regressed — a better average doesn't make this an improvement.`,
+        note: `${mustPass.length} must-pass scenario${mustPass.length === 1 ? "" : "s"} regressed — a better average doesn't make this an epoch.`,
       }
     : label;

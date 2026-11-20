@@ -157,6 +157,7 @@ import AttachmentsCard from "./data/AttachmentsCard";
 import DataProposalCard from "./data/DataProposalCard";
 import ActorsPanel from "./ActorsPanel";
 import HistoryPage from "./HistoryPage";
+import ImprovementSourcesList from "../improvements/ImprovementSourcesList";
 import { envOf } from "../_mock/runGroup";
 import { RUN_PLAN_PARAMS, runPlanRequestOf } from "../_mock/runPlanLink";
 import { withPinnedWorld, worldToolsFor } from "../_mock/toolFit";
@@ -264,6 +265,12 @@ const TABS = [
     icon: "solar:play-circle-linear",
     badge: "runs",
   },
+  {
+    id: "improvements",
+    label: "Epochs",
+    icon: "solar:magic-stick-3-linear",
+    badge: "improvements",
+  },
   { id: "analytics", label: "Analytics", icon: "solar:chart-2-linear" },
   { id: "history", label: "History", icon: "solar:history-linear" },
   { id: "settings", label: "Settings", icon: "solar:settings-linear" },
@@ -286,6 +293,8 @@ const tabHintOf = (id, env) =>
     evals:
       "Sub-goals decide pass or fail. Mark an evaluation required to let it fail a conversation; the rest score it.",
     runs: "Every simulation of this environment and how it scored. Select two or more runs to compare them scenario by scenario.",
+    improvements:
+      "Every epoch this environment scored, wherever it started: a run, an Error Feed issue or a goal.",
     actors:
       "The other people in a conversation, such as a manager or colleague, each with their own goal.",
     analytics:
@@ -1354,6 +1363,7 @@ export default function EnvironmentWorkspace() {
        the queued one — counted by the same rules the list uses. Counting only
        the manual runs put "2" on the tab above a list of 11. */
     runs: runListCount(env, envState) || null,
+    improvements: (envState.optimizations || []).length || null,
   };
   /*
     Setup gaps are shown as amber dots on the rail items that own them
@@ -4627,6 +4637,10 @@ export default function EnvironmentWorkspace() {
                   />
                 ) : panel === "runs" ? (
                   <RunsPanel env={worldEnv} envState={envState} onGo={go} />
+                ) : panel === "improvements" ? (
+                  <ImprovementSourcesList
+                    env={{ envId: env.id, label: env.name }}
+                  />
                 ) : panel === "world" ? (
                   <WorldPanel
                     env={worldEnv}

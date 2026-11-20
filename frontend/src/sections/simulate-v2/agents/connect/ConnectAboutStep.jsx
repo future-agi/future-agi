@@ -607,7 +607,7 @@ export function AgentAboutFields({
       <AboutRow
         label="Owner"
         first
-        hint="Asked about its issues and improvements."
+        hint="Asked about its issues and epochs."
       >
         <Box sx={{ maxWidth: 360 }}>
           <Field

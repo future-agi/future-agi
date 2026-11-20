@@ -24,13 +24,17 @@ export default function ToolArgsGrid({
   changedIn,
   onEdit,
   rowGap = 0.25,
+  /* Name and type only as wide as they need, the allowed values take the
+     rest, and a note sits on its own line — for a narrow drawer. */
+  compact = false,
 }) {
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns:
-          "minmax(140px, 260px) minmax(90px, 170px) 1fr auto",
+        gridTemplateColumns: compact
+          ? "max-content max-content minmax(0, 1fr) auto"
+          : "minmax(140px, 260px) minmax(90px, 170px) 1fr auto",
         columnGap: 1.5,
         rowGap,
         alignItems: "baseline",
@@ -42,6 +46,7 @@ export default function ToolArgsGrid({
           arg={a}
           changedIn={changedIn}
           onEdit={onEdit ? () => onEdit(a) : null}
+          compact={compact}
         />
       ))}
     </Box>
@@ -52,9 +57,10 @@ ToolArgsGrid.propTypes = {
   changedIn: PropTypes.func,
   onEdit: PropTypes.func,
   rowGap: PropTypes.number,
+  compact: PropTypes.bool,
 };
 
-function ArgCells({ arg, changedIn, onEdit }) {
+function ArgCells({ arg, changedIn, onEdit, compact = false }) {
   const chips = arg.type === "enum" ? arg.values || [] : null;
   return (
     <>
@@ -118,12 +124,22 @@ function ArgCells({ arg, changedIn, onEdit }) {
             {allowedLine(arg)}
           </Typography>
         )}
-        {arg.note && (
-          <Typography
-            component="span"
-            sx={{ typography: "s3", color: "text.tertiary" }}
-          >{`· ${arg.note}`}</Typography>
-        )}
+        {arg.note &&
+          (compact ? (
+            /* Its own line under the values, capitalised as a sentence. */
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", width: 1 }}
+            >
+              {arg.note
+                .replace(/^per call — /, "Per call. ")
+                .replace(/^\w/, (c) => c.toUpperCase())}
+            </Typography>
+          ) : (
+            <Typography
+              component="span"
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >{`· ${arg.note}`}</Typography>
+          ))}
         {arg.editedIn && changedIn && (
           <Typography
             component="span"
@@ -144,6 +160,7 @@ function ArgCells({ arg, changedIn, onEdit }) {
   );
 }
 ArgCells.propTypes = {
+  compact: PropTypes.bool,
   arg: PropTypes.object.isRequired,
   changedIn: PropTypes.func,
   onEdit: PropTypes.func,

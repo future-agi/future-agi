@@ -996,7 +996,7 @@ function SetMarks({ row, onMustPass }) {
           Must-pass
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          An improvement that breaks it is rejected, however much else it lifts.
+          An epoch that breaks it is rejected, however much else it lifts.
         </Typography>
       </Box>
       <Switch

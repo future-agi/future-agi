@@ -909,7 +909,7 @@ export const testSummaryOf = (test, skill, scenarios) => {
 export const VERDICTS = {
   helps: { label: "Helps, no side effects found", tone: "passed" },
   tradeoff: { label: "Helps, with a regression", tone: "needs_input" },
-  no_gain: { label: "No improvement", tone: "cancelled" },
+  no_gain: { label: "No epoch", tone: "cancelled" },
   rejected: { label: "Rejected: carries the test's answers", tone: "failed" },
 };
 
@@ -993,7 +993,7 @@ export const skillCandidatesPatch = (
           by: by || currentUser().name,
           source: { kind: "improvement", note },
           files,
-          note: note || "From an improvement",
+          note: note || "From an epoch",
         },
       ],
     };

@@ -20,6 +20,8 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { toolSettingOf } from "../_mock/toolEnv";
+import { toolTablesOf } from "../_mock/toolArgSpec";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../components/SideDrawer";
 import AddSourceMenu from "../workspace/data/AddSourceMenu";
@@ -389,90 +391,222 @@ export default function DesignReview({
     <>
       <Stack spacing={page ? 0 : 2.5}>
         <>
-          <PlanRow
-            label="Records"
-            pending={!shown("Records")}
-            reading={readingNames}
-          >
-            {tables.length || fileTables.length ? (
-              [
-                ...tables.map((t) => (
-                  <PlanLine key={t.name} src={tableSrc(t)}>
-                    <Box component="span" sx={{ fontWeight: 500 }}>
-                      {t.name}
-                    </Box>
-                    <Box
-                      component="span"
-                      sx={{ color: "text.secondary", ml: 0.75 }}
-                    >
-                      {`${(t.rows || 0).toLocaleString()} rows${t.note ? ` · ${t.note}` : ""}`}
-                    </Box>
-                  </PlanLine>
-                )),
-                ...fileTables.map((t) => (
-                  <PlanLine key={`file-${t.name}`} src={`From ${t.src}`}>
-                    <Box component="span" sx={{ fontWeight: 500 }}>
-                      {t.name}
-                    </Box>
-                    <Box
-                      component="span"
-                      sx={{ color: "text.secondary", ml: 0.75 }}
-                    >
-                      {`${(t.rows || 0).toLocaleString()} rows`}
-                    </Box>
-                  </PlanLine>
-                )),
-              ]
-            ) : (
-              <PlanLine empty>
-                {files.length
-                  ? "None proposed — neither your files nor a description name any"
-                  : "No records — the description named none"}
-              </PlanLine>
-            )}
-          </PlanRow>
-          <PlanRow
-            label="Tools"
-            pending={!shown("Tools")}
-            reading={readingNames}
-          >
-            {tools.length ? (
-              tools.map((t) => (
-                <PlanLine
-                  key={t.name}
-                  src={t.designSrc || t.source || origin}
-                  onRemove={onChange && (() => removeTool(t))}
+          {shown("Records") &&
+          shown("Tools") &&
+          (tables.length || fileTables.length) &&
+          tools.length ? (
+            (() => {
+              /* Records and tools as one map, like World & tools: each
+                 table with the tools that use it. */
+              const all = [
+                ...tables.map((t) => ({ ...t, src: tableSrc(t) })),
+                ...fileTables.map((t) => ({
+                  ...t,
+                  key: `file-${t.name}`,
+                  src: `From ${t.src}`,
+                })),
+              ];
+              const names = all.map((t) => t.name);
+              const toolSrc = (t) => t.designSrc || t.source || origin;
+              const tableCommon = commonSrcOf(all.map((t) => t.src));
+              const toolCommon = commonSrcOf(tools.map(toolSrc));
+              const byTable = new Map(names.map((n) => [n, []]));
+              const none = [];
+              tools.forEach((t) => {
+                const effect = envState
+                  ? toolSettingOf(t, envState).effect
+                  : undefined;
+                const { reads, changes } = toolTablesOf(t.name, effect, names);
+                const at = changes[0] || reads[0];
+                const entry = { tool: t, writes: !!changes[0] };
+                if (at && byTable.has(at)) byTable.get(at).push(entry);
+                else none.push(entry);
+              });
+              const chips = (list) =>
+                list.map(({ tool: t, writes }) => (
+                  <ToolChip
+                    key={t.name}
+                    tool={t}
+                    writes={writes}
+                    src={toolSrc(t) !== toolCommon ? toolSrc(t) : null}
+                    onRemove={onChange ? () => removeTool(t) : null}
+                  />
+                ));
+              return (
+                <PlanRow
+                  label="Records and tools"
+                  countText={`${all.length} tables · ${tools.length} tools`}
+                  src={[
+                    tableCommon && `records ${srcWords(tableCommon)}`,
+                    toolCommon && `tools ${srcWords(toolCommon)}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 >
-                  <Box component="span" sx={{ fontWeight: 500 }}>
-                    {t.name}
-                  </Box>
-                  {t.desc && (
-                    <Box
-                      component="span"
-                      sx={{ color: "text.secondary", ml: 0.75 }}
+                  {all.map((t) => (
+                    <Stack
+                      key={t.key || t.name}
+                      direction="row"
+                      alignItems="flex-start"
+                      spacing={2}
+                      sx={{ px: 1.5, py: 1 }}
                     >
-                      {t.desc}
-                    </Box>
+                      <Box sx={{ width: 240, flexShrink: 0, minWidth: 0 }}>
+                        <Typography
+                          noWrap
+                          sx={{ typography: "s1", fontWeight: 500 }}
+                        >
+                          {t.name}
+                        </Typography>
+                        <Typography
+                          noWrap
+                          title={t.note}
+                          sx={{ typography: "s3", color: "text.tertiary" }}
+                        >
+                          {[
+                            `${(t.rows || 0).toLocaleString()} rows`,
+                            t.note,
+                            t.src !== tableCommon ? t.src : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </Typography>
+                      </Box>
+                      <Stack
+                        direction="row"
+                        flexWrap="wrap"
+                        sx={{ gap: 0.75, flex: 1, minWidth: 0, pt: 0.25 }}
+                      >
+                        {(byTable.get(t.name) || []).length ? (
+                          chips(byTable.get(t.name))
+                        ) : (
+                          <Typography
+                            sx={{ typography: "s3", color: "text.tertiary" }}
+                          >
+                            No tool uses it
+                          </Typography>
+                        )}
+                      </Stack>
+                    </Stack>
+                  ))}
+                  {none.length > 0 && (
+                    <Stack direction="row" spacing={2} sx={{ px: 1.5, py: 1 }}>
+                      <Typography
+                        sx={{
+                          typography: "s1",
+                          color: "text.secondary",
+                          width: 240,
+                          flexShrink: 0,
+                        }}
+                      >
+                        No table
+                      </Typography>
+                      <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.75 }}>
+                        {chips(none)}
+                      </Stack>
+                    </Stack>
                   )}
-                </PlanLine>
-              ))
-            ) : (
-              <PlanLine empty>None yet</PlanLine>
-            )}
-            {deps
-              .filter((d) => choiceOf(d) === "skip")
-              .map((d) => (
-                <PlanLine key={d.id}>
-                  <Box component="span" sx={{ color: "text.secondary" }}>
-                    {`${d.request} — can't be built here, left out`}
-                  </Box>
-                </PlanLine>
-              ))}
-          </PlanRow>
+                  {deps
+                    .filter((d) => choiceOf(d) === "skip")
+                    .map((d) => (
+                      <PlanLine key={d.id}>
+                        <Box component="span" sx={{ color: "text.secondary" }}>
+                          {`${d.request} — can't be built here, left out`}
+                        </Box>
+                      </PlanLine>
+                    ))}
+                </PlanRow>
+              );
+            })()
+          ) : (
+            <>
+              <PlanRow
+                label="Records"
+                pending={!shown("Records")}
+                reading={readingNames}
+              >
+                {tables.length || fileTables.length ? (
+                  [
+                    ...tables.map((t) => (
+                      <PlanLine key={t.name} src={tableSrc(t)}>
+                        <Box component="span" sx={{ fontWeight: 500 }}>
+                          {t.name}
+                        </Box>
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", ml: 0.75 }}
+                        >
+                          {`${(t.rows || 0).toLocaleString()} rows${t.note ? ` · ${t.note}` : ""}`}
+                        </Box>
+                      </PlanLine>
+                    )),
+                    ...fileTables.map((t) => (
+                      <PlanLine key={`file-${t.name}`} src={`From ${t.src}`}>
+                        <Box component="span" sx={{ fontWeight: 500 }}>
+                          {t.name}
+                        </Box>
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", ml: 0.75 }}
+                        >
+                          {`${(t.rows || 0).toLocaleString()} rows`}
+                        </Box>
+                      </PlanLine>
+                    )),
+                  ]
+                ) : (
+                  <PlanLine empty>
+                    {files.length
+                      ? "None proposed — neither your files nor a description name any"
+                      : "No records — the description named none"}
+                  </PlanLine>
+                )}
+              </PlanRow>
+              <PlanRow
+                label="Tools"
+                pending={!shown("Tools")}
+                reading={readingNames}
+              >
+                {tools.length ? (
+                  tools.map((t) => (
+                    <PlanLine
+                      key={t.name}
+                      src={t.designSrc || t.source || origin}
+                      onRemove={onChange && (() => removeTool(t))}
+                    >
+                      <Box component="span" sx={{ fontWeight: 500 }}>
+                        {t.name}
+                      </Box>
+                      {t.desc && (
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", ml: 0.75 }}
+                        >
+                          {t.desc}
+                        </Box>
+                      )}
+                    </PlanLine>
+                  ))
+                ) : (
+                  <PlanLine empty>None yet</PlanLine>
+                )}
+                {deps
+                  .filter((d) => choiceOf(d) === "skip")
+                  .map((d) => (
+                    <PlanLine key={d.id}>
+                      <Box component="span" sx={{ color: "text.secondary" }}>
+                        {`${d.request} — can't be built here, left out`}
+                      </Box>
+                    </PlanLine>
+                  ))}
+              </PlanRow>
+            </>
+          )}
           <PlanRow
             label="Rules"
             pending={!shown("Rules")}
             reading={readingNames}
+            src={rules.length ? srcWords(ruleSrc) : null}
           >
             {rules.length ? (
               rules.map((r, i) =>
@@ -526,7 +660,7 @@ export default function DesignReview({
                     src={
                       (env?.requestRules || []).includes(r)
                         ? "From your change"
-                        : ruleSrc
+                        : null
                     }
                     onEdit={
                       onChange &&
@@ -1168,15 +1302,98 @@ const linkSx = {
    correct it; approving doesn't need any of them open. */
 const PlanCollapse = createContext(false);
 
-function PlanRow({ label, count, children, pending = false, reading = "" }) {
+/* The source most rows share — said once in the section's header; a row
+   shows its own only when it differs. */
+/* "Generated" → "generated", "From the agent's code" → "from the agent's code". */
+const srcWords = (src) => src.charAt(0).toLowerCase() + src.slice(1);
+
+const commonSrcOf = (srcs) => {
+  const n = new Map();
+  srcs.filter(Boolean).forEach((x) => n.set(x, (n.get(x) || 0) + 1));
+  return [...n.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+};
+
+/* A tool as a chip: its description on hover, Remove on the chip. */
+function ToolChip({ tool, writes, src, onRemove }) {
+  return (
+    <Tooltip
+      arrow
+      title={
+        [tool.desc, writes ? "changes this table" : null, src]
+          .filter(Boolean)
+          .join(" · ") || tool.name
+      }
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.25}
+        sx={{
+          pl: 0.875,
+          pr: onRemove ? 0.25 : 0.875,
+          py: 0.125,
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "6px",
+          "& .chip-x": { opacity: 0.5 },
+          "&:hover .chip-x, &:focus-within .chip-x": { opacity: 1 },
+        }}
+      >
+        <Typography component="span" sx={{ typography: "s3" }}>
+          {tool.name}
+        </Typography>
+        {/* No pencil for "changes the table" — it read as Edit; it's on hover. */}
+        {onRemove && (
+          <IconButton
+            className="chip-x"
+            size="small"
+            aria-label={`Remove ${tool.name}`}
+            onClick={onRemove}
+            sx={{ p: 0.25, color: "text.tertiary" }}
+          >
+            <Iconify icon="mingcute:close-line" width={12} />
+          </IconButton>
+        )}
+      </Stack>
+    </Tooltip>
+  );
+}
+ToolChip.propTypes = {
+  tool: PropTypes.object.isRequired,
+  writes: PropTypes.bool,
+  src: PropTypes.string,
+  onRemove: PropTypes.func,
+};
+
+function PlanRow({
+  label,
+  count,
+  countText = null,
+  src = null,
+  children,
+  pending = false,
+  reading = "",
+}) {
   const collapsible = useContext(PlanCollapse) && !pending;
-  const [open, setOpen] = useState(false);
+  /* Open by default — the proposal is what this page is for. */
+  const [open, setOpen] = useState(true);
   const n = pending
     ? ""
-    : count ??
+    : countText ??
+      count ??
       Children.toArray(children).filter(
         (c) => isValidElement(c) && !c.props.empty,
       ).length;
+  /* Where the section's rows came from, said once here, not on every row. */
+  const srcText =
+    !pending && src ? (
+      <Typography
+        component="span"
+        sx={{ typography: "s3", color: "text.tertiary", ml: 1 }}
+      >
+        {src}
+      </Typography>
+    ) : null;
   /* Design system list rows: the heading carries the count; rows sit on the
      page with a hairline under each one and no box around them. */
   if (collapsible)
@@ -1216,6 +1433,7 @@ function PlanRow({ label, count, children, pending = false, reading = "" }) {
           >
             {n}
           </Typography>
+          {srcText}
         </ButtonBase>
         <Collapse in={open} unmountOnExit>
           <Box
@@ -1247,6 +1465,7 @@ function PlanRow({ label, count, children, pending = false, reading = "" }) {
         >
           {n}
         </Box>
+        {srcText}
       </Typography>
       <Box
         sx={{
@@ -1277,6 +1496,10 @@ function PlanRow({ label, count, children, pending = false, reading = "" }) {
 PlanRow.propTypes = {
   label: PropTypes.string,
   count: PropTypes.number,
+  /* In place of the count, e.g. "5 tables · 13 tools". */
+  countText: PropTypes.string,
+  /* The source most of its rows share. */
+  src: PropTypes.string,
   children: PropTypes.node,
   /* Still being read from the files. */
   pending: PropTypes.bool,
@@ -1291,9 +1514,14 @@ function LineAction({ icon, label, onClick }) {
         size="small"
         aria-label={label}
         onClick={onClick}
-        sx={{ color: "text.tertiary", "&:hover": { color: "text.primary" } }}
+        /* The size of a tool chip's ✕, so a row's actions stay quiet. */
+        sx={{
+          p: 0.375,
+          color: "text.tertiary",
+          "&:hover": { color: "text.primary" },
+        }}
       >
-        <Iconify icon={icon} width={16} />
+        <Iconify icon={icon} width={12} />
       </IconButton>
     </Tooltip>
   );
@@ -1305,19 +1533,14 @@ LineAction.propTypes = {
 };
 
 function PlanLine({ children, onEdit, onRemove, src, empty = false }) {
+  /* The actions sit right after the text and always show — hidden until
+     hover, nobody found them. */
   return (
     <Stack
       direction="row"
       alignItems="center"
       spacing={0.5}
-      sx={{
-        px: 1.5,
-        minHeight: 36,
-        /* Actions stay quiet until the row is pointed at or focused. */
-        "& .pl-actions": { opacity: 0 },
-        "&:hover": { bgcolor: "action.hover" },
-        "&:hover .pl-actions, &:focus-within .pl-actions": { opacity: 1 },
-      }}
+      sx={{ px: 1.5, minHeight: 36, "&:hover": { bgcolor: "action.hover" } }}
     >
       <Typography
         component="div"
@@ -1325,12 +1548,27 @@ function PlanLine({ children, onEdit, onRemove, src, empty = false }) {
         sx={{
           typography: "s1",
           color: empty ? "text.tertiary" : "text.primary",
-          flex: 1,
+          flex: "0 1 auto",
           minWidth: 0,
         }}
       >
         {children}
       </Typography>
+      {(onEdit || onRemove) && (
+        <Stack direction="row" sx={{ flexShrink: 0 }}>
+          {onEdit && (
+            <LineAction icon="solar:pen-linear" label="Edit" onClick={onEdit} />
+          )}
+          {onRemove && (
+            <LineAction
+              icon="solar:trash-bin-minimalistic-linear"
+              label="Remove"
+              onClick={onRemove}
+            />
+          )}
+        </Stack>
+      )}
+      <Box sx={{ flex: 1 }} />
       {src && (
         <Typography
           noWrap
@@ -1344,25 +1582,6 @@ function PlanLine({ children, onEdit, onRemove, src, empty = false }) {
           {src}
         </Typography>
       )}
-      {/* A fixed slot on every row, so the source column lines up whether
-          or not the row can be edited. */}
-      <Stack
-        direction="row"
-        justifyContent="flex-end"
-        className="pl-actions"
-        sx={{ flexShrink: 0, width: 64 }}
-      >
-        {onEdit && (
-          <LineAction icon="solar:pen-linear" label="Edit" onClick={onEdit} />
-        )}
-        {onRemove && (
-          <LineAction
-            icon="solar:trash-bin-minimalistic-linear"
-            label="Remove"
-            onClick={onRemove}
-          />
-        )}
-      </Stack>
     </Stack>
   );
 }

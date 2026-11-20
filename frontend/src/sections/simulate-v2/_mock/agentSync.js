@@ -125,7 +125,7 @@ export const isOutsideChange = (v) => !!v && !v.applied?.length && (v.outsideCha
  * Pure: the caller records the version. Re-reading again after recording it
  * finds nothing new.
  */
-export const rereadAgent = (agent, state, { now = new Date().toISOString(), reason: why = "an improvement starting", force = false } = {}) => {
+export const rereadAgent = (agent, state, { now = new Date().toISOString(), reason: why = "an epoch starting", force = false } = {}) => {
   if (!agent) return { changed: false, version: null, reason: "no-agent" };
   /* A merged record carries every environment's versions; a raw one doesn't. */
   const full = agent.versions ? agent : connectedAgentsFrom(state).find((a) => a.key === agent.key) || agent;

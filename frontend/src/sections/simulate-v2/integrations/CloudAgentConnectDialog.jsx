@@ -245,7 +245,7 @@ export default function CloudAgentConnectDialog({ open, onClose, agent }) {
               </Stack>
             )}
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {`Everyone in the workspace can now dispatch issues, diagnoses and improvements to ${agent.label}.`}
+              {`Everyone in the workspace can now dispatch issues, diagnoses and epochs to ${agent.label}.`}
             </Typography>
           </Stack>
         )}

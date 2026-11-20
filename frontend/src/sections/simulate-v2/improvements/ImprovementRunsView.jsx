@@ -382,7 +382,7 @@ export default function ImprovementRunsView({
         state: {
           back: {
             to: `${location.pathname}${location.search}`,
-            label: row?.name || "the improvement",
+            label: row?.name || "the epoch",
             state: location.state,
           },
         },
@@ -526,7 +526,7 @@ export default function ImprovementRunsView({
             <Tooltip
               arrow
               placement="bottom-start"
-              title="The improvement's ID — the same in the CLI and API. Starting the same improvement again opens this one."
+              title="The epoch's ID — the same in the CLI and API. Starting the same epoch again opens this one."
             >
               <Typography
                 noWrap

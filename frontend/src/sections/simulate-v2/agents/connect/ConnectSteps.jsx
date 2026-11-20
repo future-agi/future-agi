@@ -188,13 +188,20 @@ export default function ConnectSteps({
               <BuildFilesField files={build.files} onChange={build.setFiles} />
             )}
             {preflight && (
-              <ConnectPreflight
-                preflight={preflight.state}
-                required={!!build}
-                canRun={preflight.canRun !== false}
-                blockedReason={preflight.blockedReason}
-                summary={preflight.summary}
-              />
+              /* FoundAgentsList scrolls here once an agent is picked. */
+              <Box
+                data-connect-preflight
+                /* Clear of the drawer's sticky footer when scrolled to. */
+                sx={{ scrollMarginBottom: 96 }}
+              >
+                <ConnectPreflight
+                  preflight={preflight.state}
+                  required={!!build}
+                  canRun={preflight.canRun !== false}
+                  blockedReason={preflight.blockedReason}
+                  summary={preflight.summary}
+                />
+              </Box>
             )}
           </Stack>
         )}

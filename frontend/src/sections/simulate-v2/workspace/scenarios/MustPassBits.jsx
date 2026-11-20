@@ -9,8 +9,8 @@ const num = { fontVariantNumeric: "tabular-nums" };
   the batches. Most of a large set is protected because it passes today;
   marking is for what must never break.
 */
-export function ProtectionLine({ tally }) {
-  if (!tally?.total) return null;
+export function ProtectionLine({ tally, trailing = null }) {
+  if (!tally?.total) return trailing;
   const held = tally.marked + tally.memory + tally.passing;
   const parts = [
     tally.marked && `${tally.marked} must-pass`,
@@ -36,7 +36,7 @@ export function ProtectionLine({ tally }) {
         <Box
           component="span"
           sx={{ color: "text.primary", fontWeight: 600 }}
-        >{`Improvements can't break ${held} of ${tally.total}`}</Box>
+        >{`Epochs can't break ${held} of ${tally.total}`}</Box>
         {parts.length > 0 && ` — ${parts.join(" · ")}`}
       </Typography>
       {tally.open > 0 && (
@@ -58,7 +58,12 @@ export function ProtectionLine({ tally }) {
           </Typography>
         </Tooltip>
       )}
+      {/* Right of the line: the proof counts, moved out of the toolbar. */}
+      {trailing && <Box sx={{ ml: "auto !important" }}>{trailing}</Box>}
     </Stack>
   );
 }
-ProtectionLine.propTypes = { tally: PropTypes.object };
+ProtectionLine.propTypes = {
+  tally: PropTypes.object,
+  trailing: PropTypes.node,
+};

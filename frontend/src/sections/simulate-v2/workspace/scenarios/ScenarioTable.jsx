@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SHOW_TAGS } from "./scenarioOrgFlags";
 import { Fragment, useContext, useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -117,9 +118,11 @@ const COLUMNS = [
   { id: "persona", label: "Persona", w: 170 },
   {
     id: "org",
-    label: "Tags · suites",
-    w: 180,
-    tip: "Tags describe and filter; groups select scenarios for a run",
+    label: SHOW_TAGS ? "Tags · suites" : "Suites",
+    w: SHOW_TAGS ? 180 : 140,
+    tip: SHOW_TAGS
+      ? "Tags describe and filter; groups select scenarios for a run"
+      : "The suites this scenario is in — a suite is an exact set to run",
   },
   {
     id: "subgoals",
@@ -133,7 +136,7 @@ const COLUMNS = [
     label: "Must-pass",
     w: 84,
     align: "center",
-    tip: "An improvement that breaks a must-pass scenario is rejected",
+    tip: "An epoch that breaks a must-pass scenario is rejected",
   },
   {
     id: "runs",
@@ -171,7 +174,9 @@ function BackMark({ back }) {
       arrow
       title={
         <Stack spacing={0.375} sx={{ py: 0.25, maxWidth: 300 }}>
-          <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
+          <Typography
+            sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
+          >
             {`Back — ${back.capability} returned in ${back.backIn}`}
           </Typography>
           <Typography sx={{ typography: "s3", color: "inherit" }}>
@@ -180,8 +185,16 @@ function BackMark({ back }) {
         </Stack>
       }
     >
-      <Box role="img" aria-label="Back" sx={{ display: "inline-flex", flexShrink: 0 }}>
-        <Iconify icon="solar:history-linear" width={16} sx={{ color: "text.secondary" }} />
+      <Box
+        role="img"
+        aria-label="Back"
+        sx={{ display: "inline-flex", flexShrink: 0 }}
+      >
+        <Iconify
+          icon="solar:history-linear"
+          width={16}
+          sx={{ color: "text.secondary" }}
+        />
       </Box>
     </Tooltip>
   );
@@ -882,7 +895,7 @@ export default function ScenarioTable({
                     <TableCell sx={cellSx}>
                       <OneLine
                         text={[
-                          ...(envState?.scenarioTags || [])
+                          ...(SHOW_TAGS ? envState?.scenarioTags || [] : [])
                             .filter((t) => (row.tagIds || []).includes(t.id))
                             .map((t) => t.name),
                           ...(envState?.scenarioGroups || [])

@@ -335,7 +335,7 @@ export default function AgentSetupCard({
       title: "Switch versioning on",
       body:
         elevenlabsVersioningOn(agent) || v.versioningOnAt
-          ? "On — improvements can ship their change as a branch."
+          ? "On — epochs can ship their change as a branch."
           : `In ${PROVIDER_LABELS[v.provider] || "the platform"}: Agent → Settings → Versioning. Can't be undone.`,
       action:
         elevenlabsVersioningOn(agent) || v.versioningOnAt
@@ -527,7 +527,7 @@ export default function AgentSetupCard({
         : "Simulated tools, data and callers to run scenarios against.",
       unlocks: envDone
         ? null
-        : "Test changes, and let improvements try fixes before they ship.",
+        : "Test changes, and let epochs try fixes before they ship.",
       done: envDone,
       action: envDone
         ? { label: "View", onClick: () => onTab("environments") }
@@ -880,7 +880,7 @@ export default function AgentSetupCard({
           }}
         >
           {customLimits
-            ? "Constraints set on the Constraints tab — every improvement is held to them."
+            ? "Constraints set on the Constraints tab — every epoch is held to them."
             : "Constraints: safe defaults — prompts and tool descriptions only, model locked, no cost increase."}
         </Typography>
         <Button

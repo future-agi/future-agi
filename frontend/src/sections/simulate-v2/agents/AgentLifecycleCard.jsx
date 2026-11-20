@@ -136,8 +136,8 @@ export function LifecycleCard({
           title={archived ? "Restore" : "Archive"}
           body={
             archived
-              ? "Runs and improvements can start again"
-              : "Stops new runs and improvements"
+              ? "Runs and epochs can start again"
+              : "Stops new runs and epochs"
           }
           hint={
             archived
@@ -163,7 +163,7 @@ export function LifecycleCard({
           }
           hint={
             blocked ||
-            "Its versions, and the runs, improvements and proofs that name it, are kept — they still open its history."
+            "Its versions, and the runs, epochs and proofs that name it, are kept — they still open its history."
           }
         >
           <Tooltip arrow title={blocked || ""}>
@@ -231,7 +231,7 @@ export function PrototypeControlsCard({ agent, onSaveValues }) {
                   reason: disconnectReasonFor(agent, "key"),
                 },
               },
-              `${agent.name} is disconnected — runs and improvements stop until it's reconnected.`,
+              `${agent.name} is disconnected — runs and epochs stop until it's reconnected.`,
             )
           }
         >
@@ -257,7 +257,7 @@ export function PrototypeControlsCard({ agent, onSaveValues }) {
           onClick={() =>
             onSaveValues(
               { pendingOutsideChange: { at: new Date().toISOString() } },
-              "An outside edit is waiting — the next improvement syncs it.",
+              "An outside edit is waiting — the next epoch syncs it.",
             )
           }
         >
@@ -343,8 +343,8 @@ export function ArchiveDialog({
           sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}
         >
           {archived
-            ? "Runs and improvements can start again. Its versions, environments, runs and proofs are as they were."
-            : `New runs and improvements stop. Its history stays. Restore it any time.`}
+            ? "Runs and epochs can start again. Its versions, environments, runs and proofs are as they were."
+            : `New runs and epochs stop. Its history stays. Restore it any time.`}
         </Typography>
         {!archived && copies.length > 0 && (
           <Box

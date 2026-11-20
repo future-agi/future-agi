@@ -24,4 +24,4 @@ export const ALK_NETWORK =
 
 /** What stays in the cloud product. */
 export const ALK_CLOUD_ONLY =
-  "Improvements, Insights and shared run history stay here.";
+  "Epochs, Insights and shared run history stay here.";

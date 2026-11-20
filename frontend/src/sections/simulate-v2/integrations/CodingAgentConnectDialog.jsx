@@ -296,7 +296,7 @@ export default function CodingAgentConnectDialog({ open, onClose, agent }) {
               </Stack>
             )}
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {`Open in ${agent.label} now shows on issues, diagnoses and improvements, for you.`}
+              {`Open in ${agent.label} now shows on issues, diagnoses and epochs, for you.`}
             </Typography>
           </Stack>
         )}

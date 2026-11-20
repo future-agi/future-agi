@@ -401,7 +401,7 @@ export const fixGateOf = (agent, env, es = null) => {
       title: `${agent.name} is archived`,
       body:
         status.reason ||
-        "New runs and improvements are stopped. Restore the agent to fix this issue.",
+        "New runs and epochs are stopped. Restore the agent to fix this issue.",
     };
   }
   if (status.key === "disconnected") {

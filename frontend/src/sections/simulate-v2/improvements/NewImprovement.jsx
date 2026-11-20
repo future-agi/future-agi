@@ -221,7 +221,7 @@ export default function NewImprovement({
     const real = agents.filter((a) => !a.placeholder);
     if (!real.length)
       return "No agents connected yet — connect one from Agents first.";
-    return "None of your agents can be improved yet — improvements don't run on their type yet.";
+    return "None of your agents can be improved yet — epochs don't run on their type yet.";
   }, [agents]);
   const agentField = (
     <Box>
@@ -272,7 +272,7 @@ export default function NewImprovement({
       {pickedChoice && (
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
           {needsEnv
-            ? `${picked.name} has no environment yet — an improvement is scored in one, so it's built first.`
+            ? `${picked.name} has no environment yet — an epoch is scored in one, so it's built first.`
             : agentPickerHelper(pickedChoice, main?.envName)}
         </Typography>
       )}
@@ -514,7 +514,7 @@ function NotConnectedYet({ onConnect }) {
         </Typography>
         <Typography sx={{ typography: "s1", color: "text.tertiary", mb: 1 }}>
           Not connected yet? Bring it in — you come back here with it picked,
-          and its environment is built before the improvement starts.
+          and its environment is built before the epoch starts.
         </Typography>
         <Box
           sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
@@ -561,7 +561,7 @@ function NotConnectedYet({ onConnect }) {
       </Box>
       <Box>
         <Typography sx={{ typography: "m3", fontWeight: 500, mb: 1 }}>
-          How an improvement runs
+          How an epoch runs
         </Typography>
         <Stack spacing={1}>
           {steps.map((t, i) => (

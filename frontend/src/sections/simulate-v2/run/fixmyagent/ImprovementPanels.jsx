@@ -690,7 +690,7 @@ export function IssueScenariosNotice({ rows, envName, onAdd }) {
         />
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {`${rows.length} ${rows.length === 1 ? "scenario" : "scenarios"} from this improvement`}
+            {`${rows.length} ${rows.length === 1 ? "scenario" : "scenarios"} from this epoch`}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {`${[fromTraces ? `${fromTraces} from the issue's traces` : null, fresh ? `${fresh} fresh ${fresh === 1 ? "variation" : "variations"} from the held-back check` : null].filter(Boolean).join(", ")}. They stay with the improvement until you add them${envName ? ` to ${envName}` : ""} — as proposed scenarios.`}

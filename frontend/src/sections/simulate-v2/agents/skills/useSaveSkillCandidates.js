@@ -54,7 +54,7 @@ export default function useSaveSkillCandidates() {
             "";
           const out = newVersion(settings, lib.id, {
             text,
-            note: note || "From an improvement",
+            note: note || "From an epoch",
           });
           settings = { ...settings, ...out };
           dispatch({

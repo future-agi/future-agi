@@ -102,7 +102,7 @@ export default function SourceBadge({
               : link.source.id === "error-feed"
                 ? "Click to open the issue."
                 : link.source.id === "improvement"
-                  ? "Click to open the improvement."
+                  ? "Click to open the epoch."
                   : "Click to open the run."}
         </Typography>
       )}

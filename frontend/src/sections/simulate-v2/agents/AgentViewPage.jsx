@@ -144,7 +144,7 @@ const TABS = [
   { id: "constraints", label: "Constraints" },
   { id: "environments", label: "Environments" },
   /* The improvement runs that tried to make this agent better. */
-  { id: "improvements", label: "Improvements" },
+  { id: "improvements", label: "Epochs" },
   { id: "connections", label: "Connections" },
 ];
 
@@ -527,7 +527,7 @@ export default function AgentViewPage() {
     if (archived) {
       saveValues(
         { archived: null },
-        `${agent.name} restored — runs and improvements can start again.`,
+        `${agent.name} restored — runs and epochs can start again.`,
       );
     } else {
       saveValues(
@@ -1057,7 +1057,7 @@ export default function AgentViewPage() {
                   : t.id === "environments"
                     ? `Environments ${agent.usedIn.length}`
                     : t.id === "improvements" && improvementCount
-                      ? `Improvements ${improvementCount}`
+                      ? `Epochs ${improvementCount}`
                       : t.label
               }
             />
@@ -1265,7 +1265,7 @@ export default function AgentViewPage() {
           onMakeMain={(envId, envName) =>
             saveValues(
               { mainEnvId: envId },
-              `${envName} is now the main environment — improvements run there, including fixes for Error Feed issues.`,
+              `${envName} is now the main environment — epochs run there, including fixes for Error Feed issues.`,
             )
           }
           onBuild={buildEnvironment}
@@ -1286,8 +1286,8 @@ export default function AgentViewPage() {
           />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             {deleted
-              ? "Improvements are off — this agent is deleted. Its past improvements stay listed."
-              : "Improvements are off — this agent is archived. Restore it from the menu at the top to start one."}
+              ? "Epochs are off — this agent is deleted. Its past epochs stay listed."
+              : "Epochs are off — this agent is archived. Restore it from the menu at the top to start one."}
           </Typography>
         </Stack>
       )}
@@ -1637,7 +1637,7 @@ function EnvironmentsTab({
                     {u.envId === mainEnvId && (
                       <Tooltip
                         arrow
-                        title="Every fix from the Error Feed runs here. Other improvements start here unless you pick another environment."
+                        title="Every fix from the Error Feed runs here. Other epochs start here unless you pick another environment."
                       >
                         <Box component="span">
                           <QuietTag>Main</QuietTag>
@@ -2274,7 +2274,7 @@ function ConnectionTab({
               {uploaded ? "Upload" : "Sync"}
               {source.syncable && (
                 <InfoTip
-                  text={`Starting an improvement syncs it too. A change found is marked "${OUTSIDE_CHANGE_LABEL}".`}
+                  text={`Starting an epoch syncs it too. A change found is marked "${OUTSIDE_CHANGE_LABEL}".`}
                 />
               )}
             </>
@@ -2499,7 +2499,7 @@ DisconnectDialog.propTypes = {
 /* When Agents re-reads the agent (RSI PRD, Changes made outside Future AGI). */
 function reReadLine(source) {
   const branch = source.kind === "repo" || source.viaApp;
-  return `When an improvement starts, when you Sync, ${branch ? "when the release branch moves " : ""}and once a day`;
+  return `When an epoch starts, when you Sync, ${branch ? "when the release branch moves " : ""}and once a day`;
 }
 
 function KvLine({ label, children }) {

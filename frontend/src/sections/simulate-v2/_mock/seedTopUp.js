@@ -297,7 +297,7 @@ export const withRsiSeed = (state) => {
       byEnv[id] = withImprovementScenarioSeed(id, byEnv[id], env);
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn("[store] improvement scenarios skipped", id, err);
+      console.warn("[store] epoch scenarios skipped", id, err);
     }
   });
   return { ...state, byEnv };
@@ -517,7 +517,7 @@ const topUpSeedVersions = (stored) => {
         byEnv[id] = withImprovementScenarioSeed(id, byEnv[id], env);
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.warn("[store] improvement scenarios skipped", id, err);
+        console.warn("[store] epoch scenarios skipped", id, err);
       }
     });
   }

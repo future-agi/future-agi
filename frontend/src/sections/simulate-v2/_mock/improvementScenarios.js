@@ -41,7 +41,7 @@ export const pendingImprovementScenarios = (envState) => (envState?.optimization
 
 export const pendingImprovementCount = (envState) => pendingImprovementScenarios(envState).reduce((n, g) => n + g.rows.length, 0);
 
-const nameOf = (record) => record?.name || record?.trigger?.issueTitle || record?.id || "an improvement";
+const nameOf = (record) => record?.name || record?.trigger?.issueTitle || record?.id || "an epoch";
 
 /**
  * The envState patch that adds some of an improvement's scenarios to the

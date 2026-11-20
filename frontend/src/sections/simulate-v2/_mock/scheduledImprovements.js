@@ -48,7 +48,7 @@ export const agentImprovementFor = (agent, state, trigger, { now = Date.now() } 
   const today = measureTodayRun(env, es, {
     key: seed, now: new Date(now),
     measuredFor: { kind: trigger.kind === "schedule" ? "schedule" : "goal" },
-    startedBy: trigger.kind === "schedule" ? "Scheduled improvement" : trigger.by || "Improvement",
+    startedBy: trigger.kind === "schedule" ? "Scheduled epoch" : trigger.by || "Epoch",
   });
   const base = measuredSummaryOf(env, es, today) || baseRunOf(env, es, prod) || baseRunOf(env, es);
   if (!base?.tasks) return null;

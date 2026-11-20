@@ -1849,7 +1849,7 @@ function RunFixButton({
   }
   const blocked = candidate || !tracing?.traced;
   const why = candidate
-    ? "Improvement runs aren't fixed from here — open the improvement that made this run."
+    ? "Epoch runs aren't fixed from here — open the epoch that made this run."
     : !tracing?.traced
       ? tracing?.reason
       : "";

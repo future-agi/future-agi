@@ -323,8 +323,8 @@ export function SourceCard({ agent, source, onSave }) {
           label="Git host"
           hint={`${
             repo
-              ? `Improvements open draft pull requests on ${repo.replace(/^https?:\/\//, "")}.`
-              : "Where improvements open draft pull requests once the agent's code or config is in a repository."
+              ? `Epochs open draft pull requests on ${repo.replace(/^https?:\/\//, "")}.`
+              : "Where epochs open draft pull requests once the agent's code or config is in a repository."
           }`}
         >
           <ToggleButtonGroup

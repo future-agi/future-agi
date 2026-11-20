@@ -69,7 +69,7 @@ export const agentStatusOf = (agent) => {
       status: "archived",
       label: AGENT_STATUS_LABELS.archived,
       at: v.archived.at,
-      reason: "Archived — new runs and improvements are stopped. Its versions, environments, runs and proofs stay; restore it to start again.",
+      reason: "Archived — new runs and epochs are stopped. Its versions, environments, runs and proofs stay; restore it to start again.",
     };
   }
   if (v.disconnected && (v.disconnected.at || v.disconnected.reason)) {
@@ -194,7 +194,7 @@ export const CLOSED_PLATFORMS = [
   { id: "intercom_fin", label: "Intercom Fin" },
   { id: "zendesk", label: "Zendesk" },
 ];
-export const CLOSED_PLATFORM_NOTE = "Closed platforms don't expose their agents' settings, so they're test only — through their phone number, chat channel, or a conversation API where one exists. Improvements end in a suggested fix.";
+export const CLOSED_PLATFORM_NOTE = "Closed platforms don't expose their agents' settings, so they're test only — through their phone number, chat channel, or a conversation API where one exists. Epochs end in a suggested fix.";
 
 /* ── framework-aware tuning, by phase ─────────────────────────────────────── */
 
@@ -233,7 +233,7 @@ export const FRAMEWORK_TUNING = [
     },
   },
 ];
-export const FRAMEWORK_TUNING_NOTE = "Any framework the environment can run works. Where its structure is tuned, improvements also learn its graph, handoffs or crew and can change them.";
+export const FRAMEWORK_TUNING_NOTE = "Any framework the environment can run works. Where its structure is tuned, epochs also learn its graph, handoffs or crew and can change them.";
 
 const FRAMEWORK_PHASE_BY_KEY = [
   [/langgraph|langchain/i, "1"], [/openai[- ]agents/i, "1"], [/livekit/i, "1"], [/direct|openai|anthropic|gemini/i, "1"],

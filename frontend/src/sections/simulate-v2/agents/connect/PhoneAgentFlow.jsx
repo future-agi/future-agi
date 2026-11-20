@@ -424,7 +424,7 @@ export default function PhoneAgentFlow({ title, onSave, initial = null }) {
           sx={{ typography: "s3", color: "text.subtitle" }}
         >
           <HintLine hint="We only call it (or answer it), so we can't change it ourselves.">
-            Test only — improvements end in a suggested fix.
+            Test only — epochs end in a suggested fix.
           </HintLine>
         </Typography>
       </Stack>

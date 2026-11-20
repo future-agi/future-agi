@@ -172,7 +172,7 @@ export default function ImproverAttempts({
                   : repo
                     ? "It's opening its PR with this proof."
                     : "This agent isn't in a repository it can open a PR on — ship the change below; each verdict carries its proof."
-                : "Ship this improvement's own winner, or hand it over again with a fresh brief."}
+                : "Ship this epoch's own winner, or hand it over again with a fresh brief."}
           </Typography>
         </Box>
         <Tooltip
@@ -180,7 +180,7 @@ export default function ImproverAttempts({
           title={
             attempts.length
               ? `Scored by Future AGI and counted against the improvement's budget. ${attempts.map((a) => `Attempt ${a.n}: ${a.gate ? "rejected before running — not run, not charged" : `${TIERS[a.where]?.label || a.where} · ${creditsLabel(a.spend)}`}`).join(" · ")}.`
-              : "Every attempt is scored by Future AGI and counts against the improvement's budget — each says where it ran."
+              : "Every attempt is scored by Future AGI and counts against the epoch's budget — each says where it ran."
           }
         >
           <Typography

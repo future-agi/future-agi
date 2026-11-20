@@ -143,7 +143,7 @@ export const REPLICATION_MODES = {
   },
   phone_call: {
     label: "Called on its number",
-    how: "We dial the number with the instructions you pasted as the reference. It can't be copied, so simulations call your live agent and its real tools run. Test only — an improvement ends with a suggested fix.",
+    how: "We dial the number with the instructions you pasted as the reference. It can't be copied, so simulations call your live agent and its real tools run. Test only — an epoch ends with a suggested fix.",
     untouched: "Nothing is copied — your agent answers every call.",
     fidelity: "observed-only",
   },

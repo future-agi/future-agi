@@ -26,7 +26,7 @@ export default function BlockerFlag({
   const action = canToggle
     ? on
       ? "Click to un-mark."
-      : "Click to mark must-pass — an improvement that breaks it is rejected."
+      : "Click to mark must-pass — an epoch that breaks it is rejected."
     : locked
       ? "Fork this environment to change it."
       : null;

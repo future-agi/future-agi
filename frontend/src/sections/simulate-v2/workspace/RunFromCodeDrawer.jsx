@@ -363,7 +363,7 @@ await release.waitForChecks();`;
     },
     {
       title: "Save release",
-      body: "Saves a private release, visible to this workspace. It doesn't start a run or an improvement.",
+      body: "Saves a private release, visible to this workspace. It doesn't start a run or an epoch.",
       cmd: "fi sim env save --job <job-id>",
       after: (
         <Box sx={{ mt: 1 }}>
@@ -636,7 +636,7 @@ await release.waitForChecks();`;
                     color: "text.secondary",
                   }}
                 >
-                  The same fix run as on the Improvements page — copy its ID
+                  The same fix run as on the Epochs page — copy its ID
                   there to follow or act on it from here.
                 </Typography>
                 <LocalSteps steps={mark(improveSteps)} />

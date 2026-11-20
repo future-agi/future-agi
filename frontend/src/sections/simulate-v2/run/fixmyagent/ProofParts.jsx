@@ -498,7 +498,7 @@ export function ReceiptButton({
               sx={{ typography: "s1", fontWeight: 600 }}
             >{`Receipt · ${record.id}`}</Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              Every check this improvement made, in order. Written by Future AGI
+              Every check this epoch made, in order. Written by Future AGI
               — the model proposing the changes never writes to it.
             </Typography>
             {/* Sealed: a fingerprint of every entry — any edit breaks it. */}

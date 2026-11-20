@@ -37,7 +37,7 @@ export const instructionsFileFor = (agentId) => INSTRUCTIONS_FILE[agentId] || "A
 export const INSTRUCTIONS = [
   "## Fixing issues from Future AGI",
   "",
-  "When asked to fix a Future AGI issue or improvement:",
+  "When asked to fix a Future AGI issue or epoch:",
   "1. Call `get_brief` with the id you were given. Read the root cause, evidence and constraints before changing anything.",
   "2. Make the smallest change that addresses the root cause. Stay inside the constraints in the brief.",
   "3. Call `submit_candidate` the way the brief's \"Submit a candidate\" step says — a commit for code in a repository, a settings patch for a hosted agent (Vapi, Retell), a draft version for an agent built in Future AGI. Never edit the live agent.",
@@ -49,7 +49,7 @@ export const GUARDRAILS = [
   { title: "Edit scenarios or evaluations", body: "They are read-only to it. It changes your agent, never what your agent is measured against." },
   { title: "Grade its own candidate", body: "Future AGI runs every candidate and computes the verdict. The agent only reads it." },
   { title: "Create a version that activates itself", body: "A candidate that passes becomes a version. Someone on your team switches to it." },
-  { title: "Spend beyond the attempt budget", body: "Each improvement has an attempt budget. Submissions past it are refused." },
+  { title: "Spend beyond the attempt budget", body: "Each epoch has an attempt budget. Submissions past it are refused." },
 ];
 
 /*
@@ -66,6 +66,6 @@ export const targetLabel = (target) => {
   if (!target) return "Brief";
   if (target.kind === "issue") return "Error Feed issue";
   if (target.kind === "run") return "Run diagnosis";
-  if (target.kind === "improvement") return "Improvement";
+  if (target.kind === "improvement") return "Epoch";
   return "Brief";
 };

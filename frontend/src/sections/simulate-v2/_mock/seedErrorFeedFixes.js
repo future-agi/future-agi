@@ -131,7 +131,7 @@ export const seededFixFor = (cfg, env, es, agentLimits = {}) => {
   const record = {
     ...built,
     id: nextId(es.optimizations || []),
-    name: `Improvement ${(es.optimizations || []).length + 1}`,
+    name: `Epoch ${(es.optimizations || []).length + 1}`,
     status: built.status === OPT_STATUS.RUNNING ? OPT_STATUS.COMPLETED : built.status,
     createdAt: at,
     completedAt: new Date(Date.parse(at) + cfg.minutes * 60000).toISOString(),

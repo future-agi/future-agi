@@ -33,6 +33,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { statusStyles } from "src/sections/common/simulation";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
+import { improvementPath } from "../improvements/improvementNav";
 import {
   runSummaries,
   evalSeries,
@@ -255,10 +256,22 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     });
     return m;
   }, [improvementRows]);
-  const openImprovements = (r) =>
-    navigate(
-      `${paths.dashboard.simulate.simulationRun(env.id, r.id)}?tab=improvements`,
-    );
+  const openImprovements = (r) => {
+    const list = improvementsByRun.get(r.id) || [];
+    if (list.length === 1)
+      navigate(improvementPath(env.id, list[0].recordId), {
+        state: {
+          back: {
+            to: paths.dashboard.simulate.environmentStep(env.id, "runs"),
+            label: "Runs",
+          },
+        },
+      });
+    else
+      navigate(
+        paths.dashboard.simulate.environmentStep(env.id, "improvements"),
+      );
+  };
 
   /* Newest first for display — the run someone just finished is the top row. */
   const rows = useMemo(() => [...listed].reverse(), [listed]);
@@ -1593,7 +1606,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         title={`Delete ${selectedManualOnly.length} run${selectedManualOnly.length === 1 ? "" : "s"}?`}
         content={
           selectedHasTrials
-            ? `${selectedManualOnly.length} run${selectedManualOnly.length === 1 ? "" : "s"} will be deleted. ${selected.length - selectedManualOnly.length} improvement run${selected.length - selectedManualOnly.length === 1 ? "" : "s"} will be left alone — they belong to their improvement and go when it does.`
+            ? `${selectedManualOnly.length} run${selectedManualOnly.length === 1 ? "" : "s"} will be deleted. ${selected.length - selectedManualOnly.length} epoch run${selected.length - selectedManualOnly.length === 1 ? "" : "s"} will be left alone — they belong to their epoch and go when it does.`
             : selectedQueued && selectedFinished.length === 0
               ? "It hasn't started, so it comes off the queue and there are no results to lose."
               : `Their results go with them, and any baseline or winner measured against them is cleared.${selectedQueued ? " The queued run comes off the queue." : ""}`
@@ -1961,14 +1974,14 @@ function StatusCell({ status, improvements, onOpenImprovements }) {
       {n > 0 && (
         <Tooltip
           arrow
-          title={`${n} ${n === 1 ? "improvement" : "improvements"} from this run${latest?.status?.label ? ` · latest ${latest.status.label.toLowerCase()}` : ""}. Opens the run's Improvements tab.`}
+          title={`${n} ${n === 1 ? "epoch" : "epochs"} from this run${latest?.status?.label ? ` · latest ${latest.status.label.toLowerCase()}` : ""}. ${n === 1 ? "Opens it." : "Opens the environment's Epochs tab."}`}
         >
           <ButtonBase
             onClick={(e) => {
               e.stopPropagation();
               onOpenImprovements();
             }}
-            aria-label={`${n} improvements from this run`}
+            aria-label={`${n} epochs from this run`}
             sx={{
               gap: 0.375,
               px: 0.5,

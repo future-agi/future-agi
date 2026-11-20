@@ -67,7 +67,7 @@ export default function ImprovementRunPage() {
     else if (location.key !== "default") navigate(-1);
     else navigate(paths.dashboard.simulate.improvements);
   };
-  const backLabel = fromIssue || from?.label || "Improvements";
+  const backLabel = fromIssue || from?.label || "Epochs";
   /* The view closes itself after it navigates somewhere (a trial's run, the
      issue, the scenarios) — only a close that stays here goes back. */
   const here = typeof window !== "undefined" ? window.location.pathname : null;
@@ -115,7 +115,7 @@ export default function ImprovementRunPage() {
         />
         <Typography sx={{ typography: "s1", color: "text.secondary", mt: 1 }}>
           {env
-            ? "Improvement not found — it may have been deleted."
+            ? "Epoch not found — it may have been deleted."
             : "Environment not found."}
         </Typography>
         <Button
@@ -124,7 +124,7 @@ export default function ImprovementRunPage() {
           startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
           sx={{ mt: 2 }}
         >
-          Back to Improvements
+          Back to Epochs
         </Button>
       </Box>
     );
@@ -164,7 +164,7 @@ export default function ImprovementRunPage() {
       envId,
       envState?.agent,
       changes,
-      `From improvement ${record.id}, in ${version.label}`,
+      `From epoch ${record.id}, in ${version.label}`,
     );
     patch({
       omegaExpectation: {
@@ -297,7 +297,7 @@ export default function ImprovementRunPage() {
     return (
       <Box sx={{ height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
         <Helmet>
-          <title>{`${improvementRunName(envState, record)} · Improvements`}</title>
+          <title>{`${improvementRunName(envState, record)} · Epochs`}</title>
         </Helmet>
         <CodingAgentImprovementView
           env={env}
@@ -330,7 +330,7 @@ export default function ImprovementRunPage() {
     return (
       <Box sx={{ height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
         <Helmet>
-          <title>{`${improvementRunName(envState, record)} · Improvements`}</title>
+          <title>{`${improvementRunName(envState, record)} · Epochs`}</title>
         </Helmet>
         <ImprovementRunsView
           env={env}
@@ -417,7 +417,7 @@ export default function ImprovementRunPage() {
       }}
     >
       <Helmet>
-        <title>Improvement · Future AGI</title>
+        <title>Epoch · Future AGI</title>
       </Helmet>
       {search(false)}
     </Box>

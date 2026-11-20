@@ -216,7 +216,7 @@ export default function ConnectAgentPage() {
               improvement opens with it picked. GitHub and Upload a folder can
               be changed and proven; the others end in a suggested change.
             </Typography>
-            <TextLink onClick={leave}>Back to Improvements</TextLink>
+            <TextLink onClick={leave}>Back to Epochs</TextLink>
           </Stack>
         )}
       {prefill && traced && (

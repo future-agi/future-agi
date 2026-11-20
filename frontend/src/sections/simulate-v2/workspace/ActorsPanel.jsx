@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { alpha } from "@mui/material/styles";
 import {
   Box,
   Stack,
@@ -22,7 +21,6 @@ import { enqueueSnackbar } from "notistack";
 import { personaFor } from "../_mock/scenarios";
 import { stampNewBatch } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
-import { textTone } from "../components/textTone";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { envChangePatch } from "../_mock/versions";
@@ -322,6 +320,27 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         subtitle={
           unreviewed.length ? `${unreviewed.length} to review` : "In every run"
         }
+        action={
+          !locked && unreviewed.length > 1 ? (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() =>
+                patch({
+                  actorsReviewed: [
+                    ...new Set([
+                      ...(envState.actorsReviewed || []),
+                      ...unreviewed,
+                    ]),
+                  ],
+                })
+              }
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              {`Accept all ${unreviewed.length}`}
+            </Button>
+          ) : null
+        }
         sx={{ mb: 2 }}
       >
         {loadState === "loading" && (
@@ -366,18 +385,13 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               alignItems="center"
               sx={{
                 px: 2.5,
-                py: 1.25,
+                py: 1,
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
             >
-              <Iconify
-                icon="solar:user-speak-rounded-linear"
-                width={16}
-                sx={{ color: "text.secondary", flexShrink: 0 }}
-              />
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                <Typography sx={{ typography: "s2_1", fontWeight: 500 }}>
                   Customer
                 </Typography>
                 <Typography
@@ -562,31 +576,17 @@ function ActorRow({
 
   return (
     <Box>
+      {/* One quiet line of facts: the icon box, the coloured kind chip and
+          "New" made every row shout. */}
       <Stack
         direction="row"
         alignItems="center"
         spacing={1.5}
-        sx={{ px: 2.5, py: 1 }}
+        sx={{
+          px: 2.5,
+          py: 1,
+        }}
       >
-        <Tooltip arrow title={pressure.blurb}>
-          <Box
-            onClick={() => setOpen((o) => !o)}
-            sx={{
-              width: 28,
-              height: 28,
-              borderRadius: "6px",
-              flexShrink: 0,
-              cursor: "pointer",
-              display: "grid",
-              placeItems: "center",
-              color: "text.tertiary",
-              bgcolor: "background.neutral",
-            }}
-          >
-            <Iconify icon="solar:users-group-two-rounded-linear" width={16} />
-          </Box>
-        </Tooltip>
-
         <Box
           flex={1}
           minWidth={0}
@@ -606,17 +606,6 @@ function ActorRow({
                 sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
               >
                 · {roleOf(actor)}
-              </Typography>
-            )}
-            {proposed && (
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "status.warning.fg",
-                  flexShrink: 0,
-                }}
-              >
-                · New
               </Typography>
             )}
             {actor.kind === "external-agent" && (
@@ -683,75 +672,63 @@ function ActorRow({
           </Typography>
         </Box>
 
-        <Chip
-          size="small"
-          label={pressure.label}
-          sx={{
-            flexShrink: 0,
-            color: textTone(pressure.color, "text.secondary"),
-            border: "1px solid",
-            borderColor: alpha(pressure.color, 0.4),
-            bgcolor: "transparent",
-            display: { xs: "none", md: "flex" },
-          }}
-        />
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            flexShrink: 0,
-            display: { xs: "none", lg: "block" },
-            width: 150,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {comes.charAt(0).toUpperCase() + comes.slice(1)}
-        </Typography>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            flexShrink: 0,
-            display: { xs: "none", sm: "block" },
-          }}
-        >
-          {scenarioCount == null
-            ? `Used by ${actor.usedBy}`
-            : `${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`}
-        </Typography>
+        <Tooltip arrow title={pressure.blurb}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              flexShrink: 0,
+              display: { xs: "none", md: "block" },
+            }}
+          >
+            {[
+              pressure.label,
+              comes.charAt(0).toUpperCase() + comes.slice(1),
+              scenarioCount == null
+                ? `Used by ${actor.usedBy}`
+                : `${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`,
+            ].join(" · ")}
+          </Typography>
+        </Tooltip>
 
-        {onEdit && (
-          <Tooltip arrow title="Edit — saving creates a new version">
-            <IconButton size="small" onClick={onEdit} sx={{ flexShrink: 0 }}>
-              <Iconify
-                icon="solar:pen-new-square-linear"
-                width={16}
-                sx={{ color: "text.tertiary" }}
-              />
-            </IconButton>
-          </Tooltip>
+        {proposed && onAccept && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onAccept}
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            Accept
+          </Button>
         )}
-        <Box sx={{ flexShrink: 0 }}>
-          {proposed && onAccept && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={onAccept}
-              sx={{
-                color: "text.primary",
-                borderColor: "divider",
-                flexShrink: 0,
-              }}
-            >
-              Accept
-            </Button>
+        <Stack
+          className="row-tools"
+          direction="row"
+          alignItems="center"
+          sx={{ flexShrink: 0 }}
+        >
+          {onEdit && (
+            <Tooltip arrow title="Edit — saving creates a new version">
+              <IconButton size="small" onClick={onEdit}>
+                <Iconify
+                  icon="solar:pen-new-square-linear"
+                  width={16}
+                  sx={{ color: "text.tertiary" }}
+                />
+              </IconButton>
+            </Tooltip>
           )}
           {action}
-        </Box>
+        </Stack>
       </Stack>
 
       <Collapse in={open} unmountOnExit>
-        <Stack spacing={1.5} sx={{ px: 2.5, pb: 2, pl: 7 }}>
+        <Stack spacing={1.5} sx={{ px: 2.5, pb: 2 }}>
           <ActorSees view={view} name={actor.name} />
           <Box>
             <Label>What they do</Label>

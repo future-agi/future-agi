@@ -16,10 +16,10 @@ export default function ImprovementMetricsStrip({ rows }) {
           label: "Acceptance rate",
           value: m.acceptance ? `${m.acceptance.rate}%` : "—",
           hint: m.acceptance
-            ? `${m.acceptance.n} of ${m.acceptance.of} finished improvements accepted`
-            : "No improvement has finished yet",
+            ? `${m.acceptance.n} of ${m.acceptance.of} finished epochs accepted`
+            : "No epoch has finished yet",
           tooltip:
-            "Finished improvements whose proposal someone accepted — shipped as a pull request, a draft or a new version.",
+            "Finished epochs whose proposal someone accepted — shipped as a pull request, a draft or a new version.",
         },
         {
           label: "Time to a fix to review",
@@ -33,7 +33,7 @@ export default function ImprovementMetricsStrip({ rows }) {
                   ? "Median · prompt fixes"
                   : "No proposal yet",
           tooltip:
-            "Median time from starting an improvement to a proposal ready for review, for prompt-level and code-level changes.",
+            "Median time from starting an epoch to a proposal ready for review, for prompt-level and code-level changes.",
         },
         {
           label: "Fix survival at 30 days",

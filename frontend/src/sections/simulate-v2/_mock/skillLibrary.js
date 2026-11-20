@@ -639,7 +639,7 @@ export const verdictOf = (t) => {
           ? "Regression"
           : t.result === "same"
             ? "No change"
-            : "Improvement",
+            : "Epoch",
       tone: t.result === "worse" ? "bad" : "neutral",
     };
   const regressed = t.cases.filter(
@@ -653,6 +653,6 @@ export const verdictOf = (t) => {
   if (regressed)
     return { word: "Regression", tone: "bad", improved, regressed };
   if (improved)
-    return { word: "Improvement", tone: "good", improved, regressed };
+    return { word: "Epoch", tone: "good", improved, regressed };
   return { word: "No change", tone: "neutral", improved, regressed };
 };

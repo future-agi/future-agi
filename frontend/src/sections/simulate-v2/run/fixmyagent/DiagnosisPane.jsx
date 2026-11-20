@@ -186,7 +186,7 @@ function ScopeLine({ scope, available, onChangeConstraints }) {
       placement="top-start"
       title={
         blocked
-          ? "An improvement only tries changes this agent's constraints allow — it will skip this one."
+          ? "An epoch only tries changes this agent's constraints allow — it will skip this one."
           : ""
       }
     >
@@ -698,7 +698,7 @@ export default function DiagnosisPane({
               "&:hover": { bgcolor: "transparent", color: "text.primary" },
             }}
           >
-            {`Improvements (${previous.length})`}
+            {`Epochs (${previous.length})`}
           </Button>
         )}
         <Menu
@@ -1590,7 +1590,7 @@ export default function DiagnosisPane({
             {checksFirst && !running && (
               <>
                 <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {`${checksLine}, so an improvement scored by ${toFix?.check ? "it" : "them"} can win without getting better. Fix ${toFix?.check ? "it" : "that"} first.`}
+                  {`${checksLine}, so an epoch scored by ${toFix?.check ? "it" : "them"} can win without getting better. Fix ${toFix?.check ? "it" : "that"} first.`}
                 </Typography>
                 {fixChecks && (
                   <Button
@@ -1654,7 +1654,7 @@ export default function DiagnosisPane({
                   arrow
                   title={
                     running
-                      ? "Available once every call is read — the improvement searches over the full diagnosis."
+                      ? "Available once every call is read — the epoch searches over the full diagnosis."
                       : included.length
                         ? ""
                         : "The diagnosis found no change to try."

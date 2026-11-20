@@ -46,6 +46,8 @@ export default function GroupsBar({
   onRun,
   onUpdate,
   selectedCount = 0,
+  /* Scenarios a search or filter shows, when nothing is selected. */
+  filteredCount = 0,
   readOnly = false,
   repeats = 3,
   envId,
@@ -107,7 +109,9 @@ export default function GroupsBar({
             "& .MuiButton-startIcon": { mr: 0.5 },
           }}
         >
-          New suite
+          {!selectedCount && filteredCount
+            ? `Save ${filteredCount} as suite`
+            : "New suite"}
         </Button>
       )}
       <Box flex={1} />
@@ -167,7 +171,9 @@ export default function GroupsBar({
         <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
           {selectedCount
             ? `Starts with the ${selectedCount} selected scenario${selectedCount === 1 ? "" : "s"}.`
-            : "Starts empty — select scenarios and choose Organise → Add to suite."}
+            : filteredCount
+              ? `Saves the ${filteredCount} scenario${filteredCount === 1 ? "" : "s"} your filter shows, as they are now. Scenarios that match later don't join by themselves.`
+              : "Starts empty — select scenarios and choose Organise → Add to suite, or filter the list first."}
         </Typography>
         <Stack
           direction="row"
@@ -295,6 +301,7 @@ GroupsBar.propTypes = {
   onRun: PropTypes.func.isRequired,
   onUpdate: PropTypes.func,
   selectedCount: PropTypes.number,
+  filteredCount: PropTypes.number,
   readOnly: PropTypes.bool,
   repeats: PropTypes.number,
   envId: PropTypes.string,

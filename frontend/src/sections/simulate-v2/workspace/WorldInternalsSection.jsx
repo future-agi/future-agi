@@ -9,9 +9,12 @@ import {
   IconButton,
   Tooltip,
   Button,
+  Menu,
+  MenuItem,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import SideDrawer from "../components/SideDrawer";
 import { SectionCard } from "../components/primitives";
 import { schemaFor, toolImplFor } from "../_mock/envInternals";
 import { PROOF_CHECKS } from "../_mock/proofs";
@@ -20,6 +23,7 @@ import {
   needsSafeTarget,
   safeTargetPatch,
   tierOf,
+  TIERS,
   toolEnvPatch,
   toolEnvSummaryWords,
   toolSettingOf,
@@ -115,13 +119,14 @@ export default function WorldInternalsSection({
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
-      {schema.length > 0 && (
-        <SchemaCard
-          schema={schema}
-          totalRows={totalRows}
-          change={tableChange}
-        />
-      )}
+      {!(WORLD_MAP && tools.length > 0 && schema.length > 0) &&
+        schema.length > 0 && (
+          <SchemaCard
+            schema={schema}
+            totalRows={totalRows}
+            change={tableChange}
+          />
+        )}
       {agentServers.map(({ server, tools: missing }) => (
         <AgentMcpNotice
           key={server.id}
@@ -152,6 +157,9 @@ export default function WorldInternalsSection({
         <ToolImplsCard
           env={env}
           tools={tools}
+          schema={WORLD_MAP && schema.length > 0 ? schema : null}
+          totalRows={totalRows}
+          tableChange={tableChange}
           envState={envState}
           patch={locked ? null : patch}
           onAddMcp={editable ? () => openMcp() : null}
@@ -214,50 +222,56 @@ function SchemaCard({ schema, totalRows, change = null }) {
         </Typography>
       }
     >
-      <Stack
-        divider={
-          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
-        }
-      >
-        {schema.map((t) => {
-          const open = openTable === t.name;
-          return (
-            <Box key={t.name}>
+      {/* One compact row per table: name, rows, columns, then the note —
+          the numbers sit beside the name, the free text runs last. */}
+      {schema.map((t, i) => {
+        const open = openTable === t.name;
+        return (
+          <Box
+            key={t.name}
+            sx={{ borderTop: i ? "1px solid" : "none", borderColor: "divider" }}
+          >
+            <Box
+              {...clickable(() => setOpenTable(open ? null : t.name), {
+                expanded: open,
+              })}
+              sx={{
+                ...focusRing,
+                display: "grid",
+                gridTemplateColumns: "12px 220px 120px 90px minmax(0, 1fr)",
+                columnGap: 1.5,
+                alignItems: "center",
+                px: 2,
+                minHeight: 36,
+                cursor: "pointer",
+                bgcolor: open ? "action.selected" : "transparent",
+                "&:hover": {
+                  bgcolor: open ? "action.selected" : "action.hover",
+                },
+              }}
+            >
+              <Iconify
+                icon={
+                  open
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
+                width={12}
+                sx={{ color: "text.tertiary" }}
+              />
               <Stack
                 direction="row"
                 alignItems="center"
-                spacing={1.5}
-                {...clickable(() => setOpenTable(open ? null : t.name), {
-                  expanded: open,
-                })}
-                sx={{
-                  ...focusRing,
-                  px: 2.5,
-                  py: 1.375,
-                  cursor: "pointer",
-                  "&:hover": { bgcolor: "action.hover" },
-                }}
+                spacing={0.75}
+                sx={{ minWidth: 0 }}
               >
-                <Iconify
-                  icon={
-                    open
-                      ? "solar:alt-arrow-down-linear"
-                      : "solar:alt-arrow-right-linear"
-                  }
-                  width={14}
-                  sx={{ color: "text.tertiary", flexShrink: 0 }}
-                />
-                <Iconify
-                  icon="solar:database-linear"
-                  width={16}
-                  sx={{ color: "status.info.fg", flexShrink: 0 }}
-                />
                 <Typography
+                  noWrap
                   sx={{
                     typography: "s2",
-                    fontWeight: 600,
+                    fontWeight: 500,
                     fontFamily: "ui-monospace, Menlo, monospace",
-                    minWidth: 140,
+                    minWidth: 0,
                   }}
                 >
                   {t.name}
@@ -265,62 +279,67 @@ function SchemaCard({ schema, totalRows, change = null }) {
                 {fresh?.ids.includes(t.name) && (
                   <QuietChip>{`New in ${fresh.label}`}</QuietChip>
                 )}
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                  noWrap
-                >
-                  {t.cols.length} columns · {t.note}
-                </Typography>
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: live?.ids.includes(t.name)
-                      ? "text.primary"
-                      : "text.tertiary",
-                    fontVariantNumeric: "tabular-nums",
-                    flexShrink: 0,
-                  }}
-                >
-                  {live?.ids.includes(t.name)
-                    ? live.state === "next"
-                      ? `Seeds in ${live.label}`
-                      : `Seeding · ${live.rowsOf(t.name).toLocaleString()} of ${(t.rows || 0).toLocaleString()} rows`
-                    : `${(t.rows || 0).toLocaleString()} rows`}
-                </Typography>
               </Stack>
-              <Collapse in={open}>
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s3",
+                  color: live?.ids.includes(t.name)
+                    ? "text.primary"
+                    : "text.secondary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {live?.ids.includes(t.name)
+                  ? live.state === "next"
+                    ? `Seeds in ${live.label}`
+                    : `Seeding · ${live.rowsOf(t.name).toLocaleString()} of ${(t.rows || 0).toLocaleString()}`
+                  : `${(t.rows || 0).toLocaleString()} rows`}
+              </Typography>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.secondary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {`${t.cols.length} columns`}
+              </Typography>
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.tertiary" }}
+              >
+                {t.note}
+              </Typography>
+            </Box>
+            {open && (
+              <Box
+                sx={{
+                  px: 2,
+                  pl: 5,
+                  py: 1.5,
+                  bgcolor: "background.neutral",
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
                 <Box
                   sx={{
-                    px: 2.5,
-                    py: 1.5,
-                    bgcolor: "background.neutral",
-                    borderTop: "1px solid",
-                    borderColor: "divider",
+                    display: "grid",
+                    gridTemplateColumns: "20px 1fr 1fr",
+                    rowGap: 0.5,
+                    columnGap: 1.5,
                   }}
                 >
-                  <Box
-                    sx={{
-                      display: "grid",
-                      gridTemplateColumns: "20px 1fr 1fr",
-                      rowGap: 0.5,
-                      columnGap: 1.5,
-                    }}
-                  >
-                    {t.cols.map((c) => (
-                      <SchemaColumnRow key={c.name} col={c} />
-                    ))}
-                  </Box>
+                  {t.cols.map((c) => (
+                    <SchemaColumnRow key={c.name} col={c} />
+                  ))}
                 </Box>
-              </Collapse>
-            </Box>
-          );
-        })}
-      </Stack>
+              </Box>
+            )}
+          </Box>
+        );
+      })}
     </SectionCard>
   );
 }
@@ -374,7 +393,22 @@ SchemaColumnRow.propTypes = { col: PropTypes.object };
   how the tool answers in a run, and what goes wrong with it on purpose. A
   change to either is a world edit — the next run is on a new minor version.
 */
-function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
+/* Tables and tools as one map: each table with the tools that use it
+   (user, 20 Nov). Off restores the two separate cards. */
+const WORLD_MAP = true;
+
+function ToolImplsCard({
+  env,
+  tools,
+  schema = null,
+  totalRows = 0,
+  tableChange = null,
+  envState,
+  patch,
+  onAddMcp,
+  onRemove,
+}) {
+  const [openTable, setOpenTable] = useState(null);
   const [openTool, setOpenTool] = useState(null);
   /* Tools the agent calls — an added tool it doesn't call is offered to it, or it can't see it. */
   const agent = envState?.agent || null;
@@ -409,6 +443,33 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
       ),
     );
   };
+  /* Tools grouped by tier, in the tier list's order. */
+  const groups = TIERS.map((t) => ({
+    tier: t.id,
+    tools: tools.filter((tool) => toolSettingOf(tool, envState).tier === t.id),
+  })).filter((g) => g.tools.length);
+  /* Every tool in a group to one tier — one pending change, not one each. */
+  const setGroupTier = (group, tier) => {
+    if (!patch || !group.length) return;
+    const all = { ...(envState?.toolEnv || {}) };
+    group.slice(0, -1).forEach((t) => {
+      all[t.name] = {
+        ...(all[t.name] || {}),
+        tier,
+        safeTarget: null,
+        confirmed: true,
+      };
+    });
+    const last = group[group.length - 1];
+    patch(
+      toolEnvPatch(
+        { ...envState, toolEnv: all },
+        last.name,
+        { tier, safeTarget: null },
+        `${group.length} ${group.length === 1 ? "tool" : "tools"} set to ${tierOf(tier).word}`,
+      ),
+    );
+  };
   const setFaults = (setting, faults, word) => {
     if (!patch) return;
     patch(
@@ -420,6 +481,464 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
       ),
     );
   };
+
+  /* The tool a chip opened, in the side drawer. */
+  const drawerTool = tools.find((t) => t.name === openTool) || null;
+  const toolDetail = (tool) => {
+    const impl = toolImplFor(tool);
+    const setting = toolSettingOf(tool, envState);
+    const unsafe = needsSafeTarget(setting);
+    return (
+      <Box>
+        {liveAdvisoryOf(setting) && (
+          <Box sx={{ px: 2.5, pt: 1.5 }}>
+            <LiveAdvisory
+              setting={setting}
+              onSwitch={
+                patch
+                  ? (tier) =>
+                      patch(downgradeTierPatch(envState, setting.name, tier))
+                  : null
+              }
+            />
+          </Box>
+        )}
+        {unsafe && (
+          <Box sx={{ px: 2.5, pt: 1.5 }}>
+            <SafeTargetPrompt
+              setting={setting}
+              onConfirm={
+                patch
+                  ? (url) => patch(safeTargetPatch(envState, setting.name, url))
+                  : null
+              }
+              onDowngrade={
+                patch
+                  ? (tier) =>
+                      patch(downgradeTierPatch(envState, setting.name, tier))
+                  : null
+              }
+            />
+          </Box>
+        )}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ px: 2.5, py: 1.25 }}
+        >
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Answered by
+          </Typography>
+          <TierDial
+            setting={setting}
+            onChange={patch ? (tier) => setTier(setting, tier, tool) : null}
+            onAllowLive={patch ? () => allowLive(setting, tool) : null}
+          />
+          <Typography sx={{ typography: "s3", color: "text.tertiary", pl: 1 }}>
+            Faults
+          </Typography>
+          <FaultsControl
+            setting={setting}
+            onApply={
+              patch ? (faults, word) => setFaults(setting, faults, word) : null
+            }
+          />
+        </Stack>
+        <ToolArgs tool={tool} env={env} envState={envState} setting={setting} />
+        <ToolTryPanel tool={tool} env={env} envState={envState} />
+        <CodeBlock file={impl.file} code={impl.code} />
+        {tool.via?.kind === "mcp" && onRemove && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{
+              px: 2.5,
+              py: 1,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
+            >
+              {`From ${tool.via.label}${tool.mcpName ? `, where it's ${tool.mcpName}` : ""}. Scenarios that call it can't run as proved once it's gone.`}
+            </Typography>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => {
+                setOpenTool(null);
+                onRemove(tool);
+              }}
+            >
+              Remove from the world
+            </Button>
+          </Stack>
+        )}
+      </Box>
+    );
+  };
+
+  if (schema) {
+    /* Which table each tool uses — the same reading the tool's details show. */
+    const names = schema.map((t) => t.name);
+    const byTable = new Map(names.map((n) => [n, []]));
+    const none = [];
+    tools.forEach((tool) => {
+      const setting = toolSettingOf(tool, envState);
+      const { reads, changes } = toolTablesOf(tool.name, setting.effect, names);
+      const table = changes[0] || reads[0];
+      const entry = { tool, writes: !!changes[0], setting };
+      if (table && byTable.has(table)) byTable.get(table).push(entry);
+      else none.push(entry);
+    });
+    const live = tableChange?.live;
+    const fresh = tableChange?.fresh;
+    const GRID = "12px minmax(160px, 220px) 90px 80px minmax(0, 1fr)";
+    const chip = ({ tool, writes, setting }) => (
+      <Tooltip
+        key={tool.name}
+        arrow
+        title={`${tool.desc || tool.name}${writes ? " · changes this table" : " · reads this table"}`}
+      >
+        <Box
+          component="button"
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenTool(tool.name);
+          }}
+          sx={{
+            ...focusRing,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            px: 0.875,
+            py: 0.25,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "6px",
+            bgcolor: openTool === tool.name ? "action.selected" : "transparent",
+            color: "text.primary",
+            cursor: "pointer",
+            font: "inherit",
+            "&:hover": { bgcolor: "action.hover" },
+          }}
+        >
+          <Typography
+            component="span"
+            sx={{
+              typography: "s3",
+              fontFamily: "ui-monospace, Menlo, monospace",
+            }}
+          >
+            {tool.name}
+          </Typography>
+          {/* "Changes this table" is on hover; a pencil read as Edit. */}
+          {(setting.faults || tool.via?.kind === "mcp") && (
+            <Box
+              component="span"
+              sx={{
+                width: 5,
+                height: 5,
+                borderRadius: "50%",
+                bgcolor: setting.faults ? "status.warning.fg" : "text.tertiary",
+              }}
+            />
+          )}
+        </Box>
+      </Tooltip>
+    );
+    const headCell = { typography: "s3", color: "text.tertiary" };
+    return (
+      <SectionCard
+        title={`World · ${schema.length} tables · ${tools.length} tools`}
+        subtitle={`${totalRows.toLocaleString()} rows. Each table with the tools that use it; a tool opens its details.`}
+        action={
+          patch && onAddMcp ? (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={onAddMcp}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+              sx={{
+                color: "text.primary",
+                borderColor: "divider",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Add tools
+            </Button>
+          ) : null
+        }
+      >
+        {/* How the tools answer — one line per tier, one Change each. */}
+        {groups.map((g) => (
+          <Stack
+            key={g.tier}
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{
+              px: 2,
+              py: 0.75,
+              bgcolor: "background.neutral",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+              {`${groups.length === 1 ? "All tools" : `${g.tools.length} tools`}: ${tierOf(g.tier).word}`}
+            </Typography>
+            <Typography
+              noWrap
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {tierOf(g.tier).note}
+            </Typography>
+            {patch && (
+              <GroupTierMenu
+                current={g.tier}
+                onPick={(tier) => setGroupTier(g.tools, tier)}
+              />
+            )}
+          </Stack>
+        ))}
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: GRID,
+            columnGap: 1.5,
+            px: 2,
+            py: 0.75,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Box />
+          <Typography sx={headCell}>Table</Typography>
+          <Typography sx={headCell}>Rows</Typography>
+          <Typography sx={headCell}>Columns</Typography>
+          <Typography sx={headCell}>Tools that use it</Typography>
+        </Box>
+        {schema.map((t, i) => {
+          const open = openTable === t.name;
+          const used = byTable.get(t.name) || [];
+          return (
+            <Box
+              key={t.name}
+              sx={{
+                borderTop: i ? "1px solid" : "none",
+                borderColor: "divider",
+              }}
+            >
+              <Box
+                {...clickable(() => setOpenTable(open ? null : t.name), {
+                  expanded: open,
+                })}
+                sx={{
+                  ...focusRing,
+                  display: "grid",
+                  gridTemplateColumns: GRID,
+                  columnGap: 1.5,
+                  alignItems: "start",
+                  px: 2,
+                  py: 1,
+                  cursor: "pointer",
+                  bgcolor: open ? "action.selected" : "transparent",
+                  "&:hover": {
+                    bgcolor: open ? "action.selected" : "action.hover",
+                  },
+                }}
+              >
+                <Iconify
+                  icon={
+                    open
+                      ? "solar:alt-arrow-down-linear"
+                      : "solar:alt-arrow-right-linear"
+                  }
+                  width={12}
+                  sx={{ color: "text.tertiary", mt: 0.5 }}
+                />
+                <Box sx={{ minWidth: 0 }}>
+                  <Stack direction="row" alignItems="center" spacing={0.75}>
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s2",
+                        fontWeight: 500,
+                        fontFamily: "ui-monospace, Menlo, monospace",
+                        minWidth: 0,
+                      }}
+                    >
+                      {t.name}
+                    </Typography>
+                    {fresh?.ids.includes(t.name) && (
+                      <QuietChip>{`New in ${fresh.label}`}</QuietChip>
+                    )}
+                  </Stack>
+                  <Typography
+                    noWrap
+                    title={t.note}
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    {t.note}
+                  </Typography>
+                </Box>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: live?.ids.includes(t.name)
+                      ? "text.primary"
+                      : "text.secondary",
+                    fontVariantNumeric: "tabular-nums",
+                    pt: 0.25,
+                  }}
+                >
+                  {live?.ids.includes(t.name)
+                    ? live.state === "next"
+                      ? `Seeds in ${live.label}`
+                      : `Seeding · ${live.rowsOf(t.name).toLocaleString()}`
+                    : (t.rows || 0).toLocaleString()}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    fontVariantNumeric: "tabular-nums",
+                    pt: 0.25,
+                  }}
+                >
+                  {t.cols.length}
+                </Typography>
+                <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.75 }}>
+                  {used.length ? (
+                    used.map(chip)
+                  ) : (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.tertiary",
+                        pt: 0.25,
+                      }}
+                    >
+                      No tool uses it
+                    </Typography>
+                  )}
+                </Stack>
+              </Box>
+              {open && (
+                <Box
+                  sx={{
+                    px: 2,
+                    pl: 5,
+                    py: 1.5,
+                    bgcolor: "background.neutral",
+                    borderTop: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: "20px 1fr 1fr",
+                      rowGap: 0.5,
+                      columnGap: 1.5,
+                    }}
+                  >
+                    {t.cols.map((c) => (
+                      <SchemaColumnRow key={c.name} col={c} />
+                    ))}
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+        {none.length > 0 && (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: GRID,
+              columnGap: 1.5,
+              alignItems: "start",
+              px: 2,
+              py: 1,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Box />
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              No table
+            </Typography>
+            <Box />
+            <Box />
+            <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.75 }}>
+              {none.map(chip)}
+            </Stack>
+          </Box>
+        )}
+        <SideDrawer
+          open={!!drawerTool}
+          onClose={() => setOpenTool(null)}
+          width={{ xs: "100%", sm: 640 }}
+        >
+          {drawerTool && (
+            <Stack sx={{ height: "100%", minHeight: 0 }}>
+              <Stack
+                direction="row"
+                alignItems="flex-start"
+                spacing={1.5}
+                sx={{
+                  px: 2.5,
+                  py: 2,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
+              >
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography
+                    sx={{
+                      typography: "s1",
+                      fontWeight: 600,
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}
+                  >
+                    {drawerTool.name}
+                  </Typography>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {drawerTool.desc}
+                  </Typography>
+                </Box>
+                <IconButton
+                  size="small"
+                  aria-label="Close"
+                  onClick={() => setOpenTool(null)}
+                  sx={{ mt: -0.25 }}
+                >
+                  <Iconify icon="solar:close-linear" width={18} />
+                </IconButton>
+              </Stack>
+              <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                {toolDetail(drawerTool)}
+              </Box>
+            </Stack>
+          )}
+        </SideDrawer>
+      </SectionCard>
+    );
+  }
 
   return (
     <SectionCard
@@ -481,60 +1000,117 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
         </Stack>
       }
     >
-      <Stack
-        divider={
-          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
-        }
-      >
-        {tools.map((tool) => {
-          const open = openTool === tool.name;
-          const impl = toolImplFor(tool);
-          const setting = toolSettingOf(tool, envState);
-          const unsafe = needsSafeTarget(setting);
-          return (
-            <Box key={tool.name}>
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={1.5}
-                {...clickable(() => setOpenTool(open ? null : tool.name), {
-                  expanded: open,
-                })}
+      {/* Grouped by how each tool is answered: one header and one Change
+          per group, so thirteen identical "Simulated" menus became one. A
+          tool's own tier and faults are set when it's opened. */}
+      {groups.map((g, gi) => (
+        <Box key={g.tier}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{
+              px: 2,
+              py: 0.75,
+              bgcolor: "background.neutral",
+              borderTop: gi ? "1px solid" : "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+              {tierOf(g.tier).word}
+            </Typography>
+            <Typography
+              noWrap
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {`${tierOf(g.tier).note} · ${g.tools.length} ${g.tools.length === 1 ? "tool" : "tools"}`}
+            </Typography>
+            {patch && (
+              <GroupTierMenu
+                current={g.tier}
+                onPick={(tier) => setGroupTier(g.tools, tier)}
+              />
+            )}
+          </Stack>
+          {g.tools.map((tool, ti) => {
+            const open = openTool === tool.name;
+            const impl = toolImplFor(tool);
+            const setting = toolSettingOf(tool, envState);
+            const unsafe = needsSafeTarget(setting);
+            const gw = gatewayToolStatusOf(tool);
+            const reach =
+              tool.via?.kind === "mcp" && !gw
+                ? toolReachOf(tool, { agent, calls })
+                : null;
+            return (
+              <Box
+                key={tool.name}
                 sx={{
-                  ...focusRing,
-                  px: 2.5,
-                  py: 1.125,
-                  cursor: "pointer",
-                  "&:hover": { bgcolor: "action.hover" },
+                  borderTop: ti ? "1px solid" : "none",
+                  borderColor: "divider",
                 }}
               >
-                <Iconify
-                  icon={
-                    open
-                      ? "solar:alt-arrow-down-linear"
-                      : "solar:alt-arrow-right-linear"
-                  }
-                  width={14}
-                  sx={{ color: "text.tertiary", flexShrink: 0 }}
-                />
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s2",
-                    fontWeight: 600,
-                    fontFamily: "ui-monospace, Menlo, monospace",
-                    width: 220,
-                    flexShrink: 0,
-                  }}
-                >
-                  {tool.name}
-                </Typography>
                 <Stack
                   direction="row"
                   alignItems="center"
-                  spacing={0.75}
-                  sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}
+                  spacing={1.5}
+                  {...clickable(() => setOpenTool(open ? null : tool.name), {
+                    expanded: open,
+                  })}
+                  sx={{
+                    ...focusRing,
+                    px: 2,
+                    minHeight: 36,
+                    cursor: "pointer",
+                    bgcolor: open ? "action.selected" : "transparent",
+                    "&:hover": {
+                      bgcolor: open ? "action.selected" : "action.hover",
+                    },
+                  }}
                 >
+                  <Iconify
+                    icon={
+                      open
+                        ? "solar:alt-arrow-down-linear"
+                        : "solar:alt-arrow-right-linear"
+                    }
+                    width={12}
+                    sx={{ color: "text.tertiary", flexShrink: 0 }}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 500,
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      width: 220,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {tool.name}
+                  </Typography>
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    {setting.safeTarget && setting.tier === "live"
+                      ? `Live at ${setting.safeTarget}`
+                      : setting.approval
+                        ? `Waits for ${setting.approval.by} above $${setting.approval.above} · ${tool.desc || ""}`
+                        : tool.desc}
+                  </Typography>
                   {tool.via?.kind === "mcp" && (
                     <Tooltip
                       arrow
@@ -549,146 +1125,169 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
                       </Box>
                     </Tooltip>
                   )}
-                  {(() => {
-                    /* What the Gateway says now — it can change after the tool was added. */
-                    const gw = gatewayToolStatusOf(tool);
-                    return gw ? (
-                      <Tooltip arrow title={gw.tip}>
-                        <Box component="span" sx={{ display: "inline-flex" }}>
-                          <QuietChip warn>{gw.label}</QuietChip>
-                        </Box>
-                      </Tooltip>
-                    ) : null;
-                  })()}
-                  {/* Two labels at most: a Gateway warning takes the place of reach. */}
-                  {tool.via?.kind === "mcp" &&
-                    !gatewayToolStatusOf(tool) &&
-                    (() => {
-                      const reach = toolReachOf(tool, { agent, calls });
-                      return reach ? (
-                        <Tooltip arrow title={reach.tip}>
-                          <Box component="span" sx={{ display: "inline-flex" }}>
-                            <QuietChip warn={reach.kind === "blocked"}>
-                              {reach.label}
-                            </QuietChip>
-                          </Box>
-                        </Tooltip>
-                      ) : null;
-                    })()}
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.tertiary",
-                      minWidth: 0,
-                    }}
-                    noWrap
-                  >
-                    {setting.safeTarget && setting.tier === "live"
-                      ? `Live at ${setting.safeTarget}`
-                      : setting.approval
-                        ? `Waits for ${setting.approval.by} above $${setting.approval.above} · ${tool.desc || ""}`
-                        : tool.desc}
-                  </Typography>
+                  {gw && (
+                    <Tooltip arrow title={gw.tip}>
+                      <Box component="span" sx={{ display: "inline-flex" }}>
+                        <QuietChip warn>{gw.label}</QuietChip>
+                      </Box>
+                    </Tooltip>
+                  )}
+                  {reach && (
+                    <Tooltip arrow title={reach.tip}>
+                      <Box component="span" sx={{ display: "inline-flex" }}>
+                        <QuietChip warn={reach.kind === "blocked"}>
+                          {reach.label}
+                        </QuietChip>
+                      </Box>
+                    </Tooltip>
+                  )}
+                  {setting.faults && <QuietChip warn>Faults on</QuietChip>}
                 </Stack>
-                <TierDial
-                  setting={setting}
-                  onChange={
-                    patch ? (tier) => setTier(setting, tier, tool) : null
-                  }
-                  onAllowLive={patch ? () => allowLive(setting, tool) : null}
-                />
-                <FaultsControl
-                  setting={setting}
-                  onApply={
-                    patch
-                      ? (faults, word) => setFaults(setting, faults, word)
-                      : null
-                  }
-                />
-              </Stack>
-              {liveAdvisoryOf(setting) && (
-                <Box sx={{ px: 2.5, pb: 1.25, pl: 7.25 }}>
-                  <LiveAdvisory
-                    setting={setting}
-                    onSwitch={
-                      patch
-                        ? (tier) =>
-                            patch(
-                              downgradeTierPatch(envState, setting.name, tier),
-                            )
-                        : null
-                    }
-                  />
-                </Box>
-              )}
-              {unsafe && (
-                <Box sx={{ px: 2.5, pb: 1.25, pl: 7.25 }}>
-                  <SafeTargetPrompt
-                    setting={setting}
-                    onConfirm={
-                      patch
-                        ? (url) =>
-                            patch(safeTargetPatch(envState, setting.name, url))
-                        : null
-                    }
-                    onDowngrade={
-                      patch
-                        ? (tier) =>
-                            patch(
-                              downgradeTierPatch(envState, setting.name, tier),
-                            )
-                        : null
-                    }
-                  />
-                </Box>
-              )}
-              <Collapse in={open} unmountOnExit>
-                <ToolArgs
-                  tool={tool}
-                  env={env}
-                  envState={envState}
-                  setting={setting}
-                />
-                <ToolTryPanel tool={tool} env={env} envState={envState} />
-                <CodeBlock file={impl.file} code={impl.code} />
-                {tool.via?.kind === "mcp" && onRemove && (
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
+                {liveAdvisoryOf(setting) && (
+                  <Box sx={{ px: 2, pb: 1.25, pl: 5 }}>
+                    <LiveAdvisory
+                      setting={setting}
+                      onSwitch={
+                        patch
+                          ? (tier) =>
+                              patch(
+                                downgradeTierPatch(
+                                  envState,
+                                  setting.name,
+                                  tier,
+                                ),
+                              )
+                          : null
+                      }
+                    />
+                  </Box>
+                )}
+                {unsafe && (
+                  <Box sx={{ px: 2, pb: 1.25, pl: 5 }}>
+                    <SafeTargetPrompt
+                      setting={setting}
+                      onConfirm={
+                        patch
+                          ? (url) =>
+                              patch(
+                                safeTargetPatch(envState, setting.name, url),
+                              )
+                          : null
+                      }
+                      onDowngrade={
+                        patch
+                          ? (tier) =>
+                              patch(
+                                downgradeTierPatch(
+                                  envState,
+                                  setting.name,
+                                  tier,
+                                ),
+                              )
+                          : null
+                      }
+                    />
+                  </Box>
+                )}
+                {open && (
+                  <Box
                     sx={{
-                      px: 2.5,
-                      pl: 7.25,
-                      py: 1,
                       borderTop: "1px solid",
                       borderColor: "divider",
+                      bgcolor: "background.neutral",
                     }}
                   >
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
+                    {/* This tool's own tier and faults. */}
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1.5}
+                      sx={{ px: 2, pl: 5, py: 1 }}
                     >
-                      {`From ${tool.via.label}${tool.mcpName ? `, where it's ${tool.mcpName}` : ""}. Scenarios that call it can't run as proved once it's gone.`}
-                    </Typography>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => onRemove(tool)}
-                    >
-                      Remove from the world
-                    </Button>
-                  </Stack>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        Answered by
+                      </Typography>
+                      <TierDial
+                        setting={setting}
+                        onChange={
+                          patch ? (tier) => setTier(setting, tier, tool) : null
+                        }
+                        onAllowLive={
+                          patch ? () => allowLive(setting, tool) : null
+                        }
+                      />
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary", pl: 1 }}
+                      >
+                        Faults
+                      </Typography>
+                      <FaultsControl
+                        setting={setting}
+                        onApply={
+                          patch
+                            ? (faults, word) => setFaults(setting, faults, word)
+                            : null
+                        }
+                      />
+                    </Stack>
+                    <ToolArgs
+                      tool={tool}
+                      env={env}
+                      envState={envState}
+                      setting={setting}
+                    />
+                    <ToolTryPanel tool={tool} env={env} envState={envState} />
+                    <CodeBlock file={impl.file} code={impl.code} />
+                    {tool.via?.kind === "mcp" && onRemove && (
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={1}
+                        sx={{
+                          px: 2.5,
+                          pl: 7.25,
+                          py: 1,
+                          borderTop: "1px solid",
+                          borderColor: "divider",
+                        }}
+                      >
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: "text.tertiary",
+                            flex: 1,
+                          }}
+                        >
+                          {`From ${tool.via.label}${tool.mcpName ? `, where it's ${tool.mcpName}` : ""}. Scenarios that call it can't run as proved once it's gone.`}
+                        </Typography>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => onRemove(tool)}
+                        >
+                          Remove from the world
+                        </Button>
+                      </Stack>
+                    )}
+                  </Box>
                 )}
-              </Collapse>
-            </Box>
-          );
-        })}
-      </Stack>
+              </Box>
+            );
+          })}
+        </Box>
+      ))}
     </SectionCard>
   );
 }
 ToolImplsCard.propTypes = {
   env: PropTypes.object,
   tools: PropTypes.array,
+  /* With the schema: tables and tools as one map. */
+  schema: PropTypes.array,
+  totalRows: PropTypes.number,
+  tableChange: PropTypes.object,
   envState: PropTypes.object,
   patch: PropTypes.func,
   onAddMcp: PropTypes.func,
@@ -985,6 +1584,60 @@ ToolSourcesCard.propTypes = {
 };
 
 /* A quiet label on a tool row — where it came from, whether the agent has it. */
+/* A group's Change: every tool in it to another tier. Live is per tool
+   (it's allowed one read-only tool at a time), so it isn't offered here. */
+function GroupTierMenu({ current, onPick }) {
+  const [anchor, setAnchor] = useState(null);
+  const options = TIERS.filter((t) => t.id !== "live");
+  return (
+    <>
+      <Button
+        size="small"
+        color="inherit"
+        onClick={(e) => setAnchor(e.currentTarget)}
+        endIcon={<Iconify icon="eva:chevron-down-fill" width={14} />}
+        sx={{
+          typography: "s3",
+          color: "text.secondary",
+          minWidth: 0,
+          px: 0.75,
+        }}
+      >
+        Change
+      </Button>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        {options.map((t) => (
+          <MenuItem
+            key={t.id}
+            disabled={!!t.unavailable || t.id === current}
+            onClick={() => {
+              setAnchor(null);
+              onPick(t.id);
+            }}
+            sx={{ typography: "s2" }}
+          >
+            <Box>
+              <Typography
+                sx={{ typography: "s2" }}
+              >{`All to ${t.word}`}</Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {t.unavailable || t.note}
+              </Typography>
+            </Box>
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
+}
+GroupTierMenu.propTypes = { current: PropTypes.string, onPick: PropTypes.func };
+
 function QuietChip({ children, warn = false }) {
   return (
     <Typography
@@ -1140,62 +1793,44 @@ function ToolArgs({ tool, env, envState, setting }) {
         ]
       : []),
   ];
+  /* One spec table: every label in the same column, Arguments first. */
+  const label = { typography: "s3", color: "text.tertiary" };
   return (
     <Box
       sx={{
         borderTop: "1px solid",
         borderColor: "divider",
         px: 2.5,
-        pl: 7.25,
-        py: 1.25,
+        py: 1.5,
+        display: "grid",
+        gridTemplateColumns: "84px minmax(0, 1fr)",
+        columnGap: 2,
+        rowGap: 0.75,
+        alignItems: "baseline",
       }}
     >
-      <Typography
-        sx={{
-          typography: "s3",
-          fontWeight: 600,
-          color: "text.tertiary",
-          mb: 0.5,
-        }}
-      >
-        Arguments
-      </Typography>
+      <Typography sx={label}>Arguments</Typography>
       {args.length === 0 ? (
-        <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           None
         </Typography>
       ) : (
-        <ToolArgsGrid args={args} />
+        <ToolArgsGrid args={args} compact rowGap={0.5} />
       )}
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "72px 1fr",
-          columnGap: 1.5,
-          rowGap: 0.25,
-          mt: 1.25,
-          alignItems: "baseline",
-        }}
-      >
-        {rows.map(([label, value, mono]) => (
-          <React.Fragment key={label}>
-            <Typography
-              sx={{ typography: "s3", fontWeight: 600, color: "text.tertiary" }}
-            >
-              {label}
-            </Typography>
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.secondary",
-                ...(mono && { fontFamily: "ui-monospace, Menlo, monospace" }),
-              }}
-            >
-              {value}
-            </Typography>
-          </React.Fragment>
-        ))}
-      </Box>
+      {rows.map(([name, value, mono]) => (
+        <React.Fragment key={name}>
+          <Typography sx={label}>{name}</Typography>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.secondary",
+              ...(mono && { fontFamily: "ui-monospace, Menlo, monospace" }),
+            }}
+          >
+            {value}
+          </Typography>
+        </React.Fragment>
+      ))}
     </Box>
   );
 }
@@ -1212,66 +1847,95 @@ ToolArgs.propTypes = {
    one home for them, one versioning rule. */
 function ProofChecksCard({ onGo }) {
   const [openCheck, setOpenCheck] = useState(null);
-  /* The same eight checks in every environment — folded to one line until asked for. */
+  /* The same eight checks in every environment — folded to one line until
+     asked for. Open or folded, the header is the same line, so it closes
+     where it opened. */
   const [shown, setShown] = useState(false);
+  const header = (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      {...clickable(() => setShown((v) => !v), { expanded: shown })}
+      sx={{
+        ...focusRing,
+        px: 2,
+        py: 1.25,
+        cursor: "pointer",
+        "&:hover": { bgcolor: "action.hover" },
+      }}
+    >
+      <Iconify
+        icon="solar:shield-check-linear"
+        width={16}
+        sx={{ color: "text.tertiary" }}
+      />
+      <Typography
+        sx={{ typography: "s2", fontWeight: 600 }}
+      >{`Scenario checks · ${PROOF_CHECKS.length}`}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
+        What proves each scenario before it runs
+      </Typography>
+      <Iconify
+        icon={
+          shown ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+        }
+        width={14}
+        sx={{ color: "text.tertiary" }}
+      />
+    </Stack>
+  );
   if (!shown) {
     return (
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1}
-        {...clickable(() => setShown(true), { expanded: false })}
-        sx={{
-          ...focusRing,
-          px: 2,
-          py: 1.25,
-          borderRadius: 1,
-          border: "1px solid",
-          borderColor: "divider",
-          cursor: "pointer",
-          "&:hover": { bgcolor: "action.hover" },
-        }}
+      <Box
+        sx={{ borderRadius: 1, border: "1px solid", borderColor: "divider" }}
       >
-        <Iconify
-          icon="solar:shield-check-linear"
-          width={16}
-          sx={{ color: "text.tertiary" }}
-        />
-        <Typography
-          sx={{ typography: "s2", fontWeight: 600 }}
-        >{`Scenario checks · ${PROOF_CHECKS.length}`}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          What proves each scenario before it runs
-        </Typography>
-        <Iconify
-          icon="solar:alt-arrow-down-linear"
-          width={14}
-          sx={{ color: "text.tertiary" }}
-        />
-      </Stack>
+        {header}
+      </Box>
     );
   }
   return (
-    <SectionCard
-      title="Scenario checks"
-      subtitle="What proves each scenario before it runs. On a run, sub-goals decide pass or fail; evaluations score each conversation"
-      action={
-        onGo && (
-          <Typography
-            {...clickable(() => onGo("evals"), { role: "link" })}
-            sx={{
-              ...focusRing,
-              typography: "s3",
-              color: "primary.main",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Evaluations
-          </Typography>
-        )
-      }
+    <Box
+      sx={{
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: "divider",
+        overflow: "hidden",
+      }}
     >
+      {header}
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.tertiary",
+          px: 2,
+          pb: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        On a run, sub-goals decide pass or fail and evaluations score each
+        conversation
+        {onGo && (
+          <>
+            {" — "}
+            <Box
+              component="span"
+              {...clickable(() => onGo("evals"), { role: "link" })}
+              sx={{
+                ...focusRing,
+                color: "text.primary",
+                textDecoration: "underline",
+                textUnderlineOffset: "2px",
+                cursor: "pointer",
+              }}
+            >
+              see Evaluations
+            </Box>
+          </>
+        )}
+        .
+      </Typography>
       <Stack
         divider={
           <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
@@ -1339,7 +2003,7 @@ function ProofChecksCard({ onGo }) {
           );
         })}
       </Stack>
-    </SectionCard>
+    </Box>
   );
 }
 ProofChecksCard.propTypes = { onGo: PropTypes.func };

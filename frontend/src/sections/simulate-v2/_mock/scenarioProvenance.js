@@ -164,8 +164,8 @@ export const SOURCES = {
      to the environment by a person (RSI PRD). */
   improvement: {
     id: "improvement",
-    label: "From an improvement",
-    short: "Improvement",
+    label: "From an epoch",
+    short: "Epoch",
     icon: "solar:magic-stick-3-linear",
     actor: CURRENT_USER,
     formKind: "user",
@@ -479,7 +479,7 @@ function baseSourceLinkOf(scenario, ctx = {}) {
       source: SOURCES.improvement,
       label: SOURCES.improvement.label,
       ref: s.fromImprovement.id,
-      title: `From an improvement · ${s.fromImprovement.name || s.fromImprovement.id}`,
+      title: `From an epoch · ${s.fromImprovement.name || s.fromImprovement.id}`,
       detail: `${by} · ${when}`,
       to: record && envId ? improvementUrl(envId, record, ctx.envState) : null,
     };

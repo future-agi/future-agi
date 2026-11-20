@@ -751,7 +751,7 @@ export default function GithubIntegrationPage() {
                   color: "text.subtitle",
                 }}
               >
-                None yet — fixes from Improvements and the Error Feed open here
+                None yet — fixes from Epochs and the Error Feed open here
                 as draft pull requests.
               </Typography>
             ) : (

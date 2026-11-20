@@ -557,7 +557,7 @@ export const SIM_ATTRIBUTES = [
     id: "run_kind",
     name: "Run type",
     category: "run",
-    get: (r) => (r.__trialCopy ? "Improvement run" : "Run"),
+    get: (r) => (r.__trialCopy ? "Epoch run" : "Run"),
   },
   {
     id: "tool_name",

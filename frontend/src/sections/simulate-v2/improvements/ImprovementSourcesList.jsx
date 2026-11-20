@@ -45,8 +45,10 @@ const HEADER_HEIGHT = 40;
  * its run page (level 3).
  *
  * With `agent` it's the agent page's Improvements tab: only that agent's.
+ * With `env` it's the environment's Improvements tab: every improvement this
+ * environment scored, wherever it started (a run, an issue, a goal).
  */
-export default function ImprovementSourcesList({ agent, run }) {
+export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
   const runEnvId = run?.envId;
   const runId = run?.runId;
   const navigate = useNavigate();
@@ -94,9 +96,11 @@ export default function ImprovementSourcesList({ agent, run }) {
       ? improvements.filter(
           (r) => r.envId === runEnvId && r.fromRunId === runId,
         )
-      : agent
-        ? improvements.filter((r) => r.agentKey === agent.key)
-        : improvements;
+      : inEnv
+        ? improvements.filter((r) => r.envId === inEnv.envId)
+        : agent
+          ? improvements.filter((r) => r.agentKey === agent.key)
+          : improvements;
     const envRows = mine.map((r) => {
       const env = (state.myEnvironments || []).find((e) => e.id === r.envId);
       const record = (state.byEnv?.[r.envId]?.optimizations || []).find(
@@ -136,6 +140,7 @@ export default function ImprovementSourcesList({ agent, run }) {
       );
   }, [
     improvements,
+    inEnv,
     agent,
     runEnvId,
     runId,
@@ -203,7 +208,13 @@ export default function ImprovementSourcesList({ agent, run }) {
     to: runId
       ? `${location.pathname}?tab=improvements`
       : `${location.pathname}${location.search}`,
-    label: run ? run.label : agent ? agent.name : "Improvements",
+    label: run
+      ? run.label
+      : inEnv
+        ? inEnv.label
+        : agent
+          ? agent.name
+          : "Epochs",
   };
   const openRow = (r) => navigate(r.href, { state: { back } });
 
@@ -283,7 +294,7 @@ export default function ImprovementSourcesList({ agent, run }) {
                 r.agentName || r.modality?.label,
                 r.duplicate && r.agentId,
                 r.trigger && `${r.trigger.source} · ${r.trigger.label}`,
-                `in ${r.envName}`,
+                !inEnv && `in ${r.envName}`,
               ]
                 .filter(Boolean)
                 .join(" · ");
@@ -395,7 +406,7 @@ export default function ImprovementSourcesList({ agent, run }) {
       renderHeader: () => (
         <HeaderTip
           label="Hand-off"
-          tip="What the improvement handed over and where it is now."
+          tip="What the epoch handed over and where it is now."
         />
       ),
       size: 170,
@@ -441,7 +452,7 @@ export default function ImprovementSourcesList({ agent, run }) {
     },
   ];
 
-  const embedded = !!agent || !!run;
+  const embedded = !!agent || !!run || !!inEnv;
   return (
     <Box
       sx={
@@ -461,8 +472,8 @@ export default function ImprovementSourcesList({ agent, run }) {
       {!embedded && (
         <PageHeader
           sx={{ mb: 0, flexShrink: 0 }}
-          title="Improvements"
-          description="Every improvement across your environments."
+          title="Epochs"
+          description="Every epoch across your environments."
         />
       )}
 
@@ -476,7 +487,11 @@ export default function ImprovementSourcesList({ agent, run }) {
           size="small"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by name, environment or issue"
+          placeholder={
+            inEnv
+              ? "Search by name or issue"
+              : "Search by name, environment or issue"
+          }
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
@@ -520,7 +535,7 @@ export default function ImprovementSourcesList({ agent, run }) {
             startIcon={<Iconify icon="solar:add-linear" width={16} />}
             onClick={() => setNewOpen(true)}
           >
-            New improvement
+            New epoch
           </Button>
         )}
         <NewImprovement
@@ -534,7 +549,7 @@ export default function ImprovementSourcesList({ agent, run }) {
       </Stack>
 
       {/* Acceptance rate, time to proposal, fix survival — over what's listed. */}
-      {!run && <ImprovementMetricsStrip rows={rows} />}
+      {!run && !inEnv && <ImprovementMetricsStrip rows={rows} />}
 
       <ObjectFilterPanel
         anchorEl={filterAnchorEl}
@@ -570,8 +585,8 @@ export default function ImprovementSourcesList({ agent, run }) {
             </Box>
             <Box component="span" sx={{ color: "text.secondary" }}>
               {selectedIds.length === 1
-                ? " improvement selected"
-                : " improvements selected"}
+                ? " epoch selected"
+                : " epochs selected"}
             </Box>
           </Typography>
           <Box flex={1} />
@@ -629,9 +644,11 @@ export default function ImprovementSourcesList({ agent, run }) {
               ? "Nothing matches."
               : run
                 ? `Nothing has been improved from ${run.label} yet. Debug failures starts one from its failing scenarios.`
-                : agent
-                  ? `${agent.name} hasn't been improved yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue.`
-                  : "No improvements yet. Start one with New improvement."
+                : inEnv
+                  ? "Nothing has been improved in this environment yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue."
+                  : agent
+                    ? `${agent.name} hasn't been improved yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue.`
+                    : "No epochs yet. Start one with New epoch."
           }
         />
       </Box>
@@ -647,10 +664,10 @@ export default function ImprovementSourcesList({ agent, run }) {
           {!deletable.length
             ? keptRows.length === 1
               ? `${keptRows[0].name} can't be deleted`
-              : "These improvements can't be deleted"
+              : "These epochs can't be deleted"
             : deletable.length === 1
               ? `Delete ${deletable[0].name}?`
-              : `Delete ${deletable.length} improvements?`}
+              : `Delete ${deletable.length} epochs?`}
         </DialogTitle>
         <DialogContent>
           {deletable.length > 0 && (
@@ -664,7 +681,7 @@ export default function ImprovementSourcesList({ agent, run }) {
             <DialogContentText
               sx={{ typography: "s2", mt: deletable.length ? 1.5 : 0 }}
             >
-              {`${keptRows.length === 1 ? `${keptRows[0].name} stays` : `${keptRows.length} stay`} — ${keptRows.map((r) => r.output.label).join(", ")}. A shipped change is still followed: the Error Feed watches it and the agent's versions point back to the improvement that made it.`}
+              {`${keptRows.length === 1 ? `${keptRows[0].name} stays` : `${keptRows.length} stay`} — ${keptRows.map((r) => r.output.label).join(", ")}. A shipped change is still followed: the Error Feed watches it and the agent's versions point back to the epoch that made it.`}
             </DialogContentText>
           )}
         </DialogContent>
@@ -691,6 +708,10 @@ ImprovementSourcesList.propTypes = {
   run: PropTypes.shape({
     envId: PropTypes.string,
     runId: PropTypes.string,
+    label: PropTypes.string,
+  }),
+  env: PropTypes.shape({
+    envId: PropTypes.string,
     label: PropTypes.string,
   }),
 };

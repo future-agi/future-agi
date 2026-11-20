@@ -40,7 +40,7 @@ export const ORIGIN_LABEL = (v, source) => {
     return v.status === "draft"
       ? `Draft PR${v.prNumber ? ` #${v.prNumber}` : ""} on ${v.commit?.branch || "its branch"}`
       : `Merged PR #${v.prNumber}`;
-  if (v.applied?.length) return "From an improvement";
+  if (v.applied?.length) return "From an epoch";
   if (v.origin === "connect") return "Connected";
   return versionNumber(v.label) === 1 ? "Connected" : "Added manually";
 };
@@ -150,7 +150,7 @@ export const REACHED_AT_OPTIONS =
 export const fixDepthLine = (agent) => {
   const f = fixDepthOf(agent);
   return f.depth === "suggestion"
-    ? "We can only call this agent, so improvements end in a suggested fix"
+    ? "We can only call this agent, so epochs end in a suggested fix"
     : f.label;
 };
 

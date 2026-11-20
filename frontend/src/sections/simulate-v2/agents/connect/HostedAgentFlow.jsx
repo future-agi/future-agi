@@ -638,7 +638,7 @@ export default function HostedAgentFlow({
                     hint={
                       platform?.id === "retell"
                         ? imported.retellKind === "conversation_flow"
-                          ? "Each node's instructions come in as a member, and improvements can propose changes node by node."
+                          ? "Each node's instructions come in as a member, and epochs can propose changes node by node."
                           : "One prompt for the whole call."
                         : null
                     }

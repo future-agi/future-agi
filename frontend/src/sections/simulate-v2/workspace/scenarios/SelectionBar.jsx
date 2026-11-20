@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SHOW_TAGS } from "./scenarioOrgFlags";
 import { alpha } from "@mui/material/styles";
 import { useState } from "react";
 import {
@@ -136,7 +137,7 @@ export default function SelectionBar({
             onClose={() => setMoreAnchor(null)}
           >
             {[
-              ["tag", "Add tag…", "solar:tag-linear"],
+              ...(SHOW_TAGS ? [["tag", "Add tag…", "solar:tag-linear"]] : []),
               ["group", "Add to suite…", "solar:folder-2-linear"],
               ["duplicate", "Duplicate to edit", "solar:copy-linear"],
               ["validate", "Validate", "solar:shield-check-linear"],

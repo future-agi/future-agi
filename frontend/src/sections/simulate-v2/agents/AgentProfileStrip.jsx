@@ -129,7 +129,7 @@ export function AgentStatusBanner({
     >
       <AlertTitle>{s.label}</AlertTitle>
       {red
-        ? `${s.reason} Runs and improvements are stopped until it's reconnected.`
+        ? `${s.reason} Runs and epochs are stopped until it's reconnected.`
         : s.reason}
     </Alert>
   );

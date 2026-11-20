@@ -53,7 +53,7 @@ function PastLimitLine({ agentName, field, value, limit, onSave }) {
   if (limit == null || value <= limit) return null;
   return (
     <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}>
-      {`Past ${agentName}'s limit of ${LABEL[field](limit)} — this improvement only. `}
+      {`Past ${agentName}'s limit of ${LABEL[field](limit)} — this epoch only. `}
       <Link
         component="button"
         type="button"
@@ -225,7 +225,7 @@ export default function ImprovementConstraints({
       {showTime && (
         <Box>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            This improvement
+            This epoch
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}>
             What this one may spend. The budget is beside the goal.

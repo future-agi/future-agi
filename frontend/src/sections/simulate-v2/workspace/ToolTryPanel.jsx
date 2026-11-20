@@ -78,7 +78,7 @@ export default function ToolTryPanel({ tool, env, envState }) {
     <Box
       sx={{
         px: 2.5,
-        pl: 7.25,
+        pl: 2.5,
         py: 1.25,
         borderTop: "1px solid",
         borderColor: "divider",

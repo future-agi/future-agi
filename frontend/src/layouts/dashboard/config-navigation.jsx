@@ -285,7 +285,7 @@ export function useNavData() {
           ...(improving
             ? [
                 {
-                  title: "Improvements",
+                  title: "Epochs",
                   path: paths.dashboard.simulate.improvements,
                   icon: ICONS.improvements,
                 },

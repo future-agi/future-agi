@@ -843,7 +843,7 @@ export const buildImprovement = ({
   const createdAt = new Date().toISOString();
   return {
     id: optimizationId(es),
-    name: `Improvement ${records.length + 1}`,
+    name: `Epoch ${records.length + 1}`,
     optimizerId: result.optimizer?.id || "protegi",
     model: "claude-opus-5",
     status: pendingEnding ? OPT_STATUS.RUNNING : ending,

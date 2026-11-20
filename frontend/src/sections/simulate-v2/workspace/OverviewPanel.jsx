@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useTheme } from "@mui/material/styles";
 import {
   Box,
@@ -138,6 +138,26 @@ export default function OverviewPanel({
   const showWorld = !inBuild || (prog.stores || 0) > 0;
   const showSummary = !inBuild;
 
+  const releasePanel = (
+    <ReleasePanel
+      env={env}
+      envState={envState}
+      patch={viewAs || (locked && !envState.lockedRelease) ? null : patch}
+      onCopy={onFork}
+      onGo={go}
+    />
+  );
+  const showMap =
+    !envState?.twinBacking &&
+    (showRichOverview || !!contractProgress?.streaming);
+  const sourceMap = (
+    <SourceToSandboxMap
+      env={env}
+      envState={envState}
+      progress={contractProgress}
+    />
+  );
+
   return (
     <Box sx={{ p: 2 }}>
       {/* TwinSandboxSection + CapabilityGraph moved to the Contract tab.
@@ -248,6 +268,13 @@ export default function OverviewPanel({
             sx={{
               my: 1.5,
               rowGap: 1,
+              /* In a card, like the sections below it. */
+              px: 2,
+              py: 1.25,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              bgcolor: "background.paper",
             }}
           >
             <Fact label="Channel" value={surface.label} />
@@ -313,15 +340,7 @@ export default function OverviewPanel({
       {/* The release: checks that gate Ready, Lock, and RL access once locked.
           A template or an older version can't change it; a locked release
           still takes RL keys. */}
-      {showSummary && !buildMode && (
-        <ReleasePanel
-          env={env}
-          envState={envState}
-          patch={viewAs || (locked && !envState.lockedRelease) ? null : patch}
-          onCopy={onFork}
-          onGo={go}
-        />
-      )}
+      {showSummary && !buildMode && releasePanel}
 
       {/*
         Getting-started checklist for envs that haven't been seeded
@@ -363,13 +382,7 @@ export default function OverviewPanel({
         back to three weeks later to see which decisions a human
         made and which the reader made itself.
       */}
-          {(showRichOverview || contractProgress?.streaming) && (
-            <SourceToSandboxMap
-              env={env}
-              envState={envState}
-              progress={contractProgress}
-            />
-          )}
+          {showMap && sourceMap}
           {showUseCases && (
             <FadeIn>
               <Grid
@@ -2384,131 +2397,144 @@ function SourceToSandboxMap({ env, envState, progress }) {
         >
           {streaming
             ? "Filling in as the builder reads your agent: tools, then rules, then data."
-            : "Where each tool, rule and store came from. Open a group to see it."}
+            : "Where each tool, rule and store came from. The details are on World & tools and Contract."}
         </Typography>
       </Box>
 
-      {/* Groups */}
-      <MapGroup
-        defaultOpen={streaming}
-        label="Tools"
-        hint={`${fromDescription ? (envState?.toolsRead ? `read from ${envState.toolsRead.from} when it was connected` : "read when your agent is connected") : "from the agent config & call-graph"}${viaMcp ? ` · ${viaMcp} added from MCP` : ""}`}
-        right={found(tools.length, allTools.length, `${tools.length} mapped`)}
-        first
-      >
-        {streaming && tools.length < allTools.length && (
-          <ReadingRow what="tool signatures" />
-        )}
-        {toolRows.map((r, i) => (
-          <MapRow
-            key={r.key}
-            index={i}
-            name={r.name}
-            origin={r.origin}
-            target={r.target}
-            mono
-            trailing={r.confirmed && <ConfirmedChip />}
-          />
-        ))}
-      </MapGroup>
-
-      <MapGroup
-        defaultOpen={streaming}
-        label="Rules"
-        hint={
-          fromDescription
-            ? "from your description"
-            : "from policy.yaml, enforced"
-        }
-        right={found(
-          ruleProv.length,
-          allRules.length,
-          `${ruleProv.length} mapped`,
-        )}
-      >
-        {streaming && ruleProv.length < allRules.length && (
-          <ReadingRow
-            what={
-              tools.length < allTools.length
-                ? "after the tools"
-                : "rules from the code and prompt"
-            }
-            waiting={tools.length < allTools.length}
-          />
-        )}
-        {ruleProv.map((r, i) => (
-          <MapRow
-            key={r.id}
-            index={i}
-            name={r.subject}
-            origin={
-              fromDescription
-                ? "description"
-                : r.origin === "code"
-                  ? "policy"
-                  : r.origin
-            }
-            target={ruleTarget(r.subject, r.origin, connectOnly)}
-          />
-        ))}
-      </MapGroup>
-
-      <MapGroup
-        defaultOpen={streaming}
-        label="Stores"
-        hint={
-          fromDescription
-            ? "none yet — the world starts with no data"
-            : "from your fixtures"
-        }
-        right={found(
-          tables.length,
-          allTables.length,
-          `${tables.length} mapped`,
-        )}
-      >
-        {streaming && tables.length < allTables.length && (
-          <ReadingRow
-            what={
-              ruleProv.length < allRules.length
-                ? "once the rules are in"
-                : "the data the world is seeded with"
-            }
-            waiting={ruleProv.length < allRules.length}
-          />
-        )}
-        {tables.map((t, i) => (
-          <MapRow
-            key={t.name}
-            index={i}
-            name={`${t.name} · ${t.rows.toLocaleString()}`}
-            origin="fixture"
-            target={`${t.name} (${t.rows.toLocaleString()})`}
-            mono
-          />
-        ))}
-      </MapGroup>
-
-      {!streaming && !fromDescription && (
+      {/* Groups — side by side as one strip; the open one's rows below. */}
+      <MapStrip streaming={streaming} count={fromDescription ? 3 : 4}>
         <MapGroup
           defaultOpen={streaming}
-          label="Other parties"
-          hint="from the call-graph & prompt"
-          right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
+          label="Tools"
+          hint={`${fromDescription ? (envState?.toolsRead ? `read from ${envState.toolsRead.from} when it was connected` : "read when your agent is connected") : "from the agent config & call-graph"}${viaMcp ? ` · ${viaMcp} added from MCP` : ""}`}
+          right={found(tools.length, allTools.length, `${tools.length} mapped`)}
+          first
         >
-          {actors.map((a, i) => (
+          {streaming && tools.length < allTools.length && (
+            <ReadingRow what="tool signatures" />
+          )}
+          {toolGroupsOf(toolRows).map((g, i) =>
+            g.rows.length > 1 ? (
+              <MapRow
+                key={g.key}
+                index={i}
+                names={g.rows.map((r) => r.name)}
+                origin={g.origin}
+                target={g.target}
+              />
+            ) : (
+              <MapRow
+                key={g.key}
+                index={i}
+                name={g.rows[0].name}
+                origin={g.origin}
+                target={g.target}
+                mono
+                trailing={g.rows[0].confirmed && <ConfirmedChip />}
+              />
+            ),
+          )}
+        </MapGroup>
+
+        <MapGroup
+          defaultOpen={streaming}
+          label="Rules"
+          hint={
+            fromDescription
+              ? "from your description"
+              : "from policy.yaml, enforced"
+          }
+          right={found(
+            ruleProv.length,
+            allRules.length,
+            `${ruleProv.length} mapped`,
+          )}
+        >
+          {streaming && ruleProv.length < allRules.length && (
+            <ReadingRow
+              what={
+                tools.length < allTools.length
+                  ? "after the tools"
+                  : "rules from the code and prompt"
+              }
+              waiting={tools.length < allTools.length}
+            />
+          )}
+          {ruleProv.map((r, i) => (
             <MapRow
-              key={a.key}
+              key={r.id}
               index={i}
-              name={a.name}
-              origin={a.origin}
-              target={a.target}
-              mono={!!a.name}
-              derived={!a.mapped}
+              name={r.subject}
+              origin={
+                fromDescription
+                  ? "description"
+                  : r.origin === "code"
+                    ? "policy"
+                    : r.origin
+              }
+              target={ruleTarget(r.subject, r.origin, connectOnly)}
+              wrap
             />
           ))}
         </MapGroup>
-      )}
+
+        <MapGroup
+          defaultOpen={streaming}
+          label="Stores"
+          hint={
+            fromDescription
+              ? "none yet — the world starts with no data"
+              : "from your fixtures"
+          }
+          right={found(
+            tables.length,
+            allTables.length,
+            `${tables.length} mapped`,
+          )}
+        >
+          {streaming && tables.length < allTables.length && (
+            <ReadingRow
+              what={
+                ruleProv.length < allRules.length
+                  ? "once the rules are in"
+                  : "the data the world is seeded with"
+              }
+              waiting={ruleProv.length < allRules.length}
+            />
+          )}
+          {tables.map((t, i) => (
+            <MapRow
+              key={t.name}
+              index={i}
+              name={`${t.name} · ${t.rows.toLocaleString()}`}
+              origin="fixture"
+              target={`${t.name} (${t.rows.toLocaleString()})`}
+              mono
+            />
+          ))}
+        </MapGroup>
+
+        {!streaming && !fromDescription && (
+          <MapGroup
+            defaultOpen={streaming}
+            label="Other parties"
+            hint="from the call-graph & prompt"
+            right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
+          >
+            {actors.map((a, i) => (
+              <MapRow
+                key={a.key}
+                index={i}
+                name={a.name}
+                origin={a.origin}
+                target={a.target}
+                mono={!!a.name}
+                derived={!a.mapped}
+              />
+            ))}
+          </MapGroup>
+        )}
+      </MapStrip>
     </Box>
   );
 }
@@ -2602,9 +2628,63 @@ function ruleTarget(subject, origin, live = false) {
   return "enforced at the sandbox boundary";
 }
 
+/*
+  The groups as one strip of counts. The rows themselves are on the World &
+  tools and Contract tabs. While the build streams, the groups stay a list,
+  all open, so the reading shows.
+*/
+const MapStripContext = createContext(null);
+
+function MapStrip({ streaming, count, children }) {
+  if (streaming) return children;
+  return (
+    <MapStripContext.Provider value>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(2, minmax(0, 1fr))",
+            md: `repeat(${count}, minmax(0, 1fr))`,
+          },
+        }}
+      >
+        {children}
+      </Box>
+    </MapStripContext.Provider>
+  );
+}
+MapStrip.propTypes = {
+  streaming: PropTypes.bool,
+  count: PropTypes.number,
+  children: PropTypes.node,
+};
+
 function MapGroup({ label, hint, right, children, first, defaultOpen }) {
   /* Folded by default: the counts are the summary, rows are one click away. */
   const [open, setOpen] = useState(!!defaultOpen);
+  const strip = useContext(MapStripContext);
+  if (strip) {
+    /* Counts only — the rows live on the World & tools and Contract tabs. */
+    return (
+      <Box
+        title={hint}
+        sx={{
+          px: MAP_PX,
+          py: 1,
+          minWidth: 0,
+          borderLeft: first ? "none" : "1px solid",
+          borderLeftColor: "divider",
+        }}
+      >
+        <Typography sx={{ typography: "s2", fontWeight: 500 }} noWrap>
+          {label}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }} noWrap>
+          {right}
+        </Typography>
+      </Box>
+    );
+  }
   return (
     <Box>
       <Box
@@ -2657,7 +2737,44 @@ MapGroup.propTypes = {
   defaultOpen: PropTypes.bool,
 };
 
-function MapRow({ index, name, origin, target, mono, derived, trailing }) {
+/* Tools that came from the same place and became the same thing share one
+   row — thirteen identical "Config → Simulated" rows said one fact thirteen
+   times. A confirmed tool keeps its own row, for its chip. */
+function toolGroupsOf(rows) {
+  const groups = [];
+  const byKey = new Map();
+  rows.forEach((r) => {
+    if (r.confirmed) {
+      groups.push({
+        key: r.key,
+        origin: r.origin,
+        target: r.target,
+        rows: [r],
+      });
+      return;
+    }
+    const k = `${r.origin}|${r.target}`;
+    if (!byKey.has(k)) {
+      const g = { key: k, origin: r.origin, target: r.target, rows: [] };
+      byKey.set(k, g);
+      groups.push(g);
+    }
+    byKey.get(k).rows.push(r);
+  });
+  return groups;
+}
+
+function MapRow({
+  index,
+  name,
+  names,
+  origin,
+  target,
+  mono,
+  derived,
+  trailing,
+  wrap = false,
+}) {
   const rowBg = index % 2 === 1 ? "background.neutral" : "transparent";
   return (
     <Box sx={{ position: "relative", bgcolor: rowBg }}>
@@ -2666,15 +2783,37 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
           display: "grid",
           gridTemplateColumns: MAP_GRID,
           columnGap: 2.5,
-          alignItems: "center",
+          alignItems: names || wrap ? "start" : "center",
           minHeight: 32,
+          py: names || wrap ? 0.75 : 0,
           pl: MAP_PX,
           pr: MAP_PX,
         }}
       >
-        {name ? (
+        {names ? (
+          <Stack
+            direction="row"
+            flexWrap="wrap"
+            sx={{ columnGap: 1.25, rowGap: 0.25, minWidth: 0 }}
+          >
+            {names.map((n) => (
+              <Typography
+                key={n}
+                component="span"
+                sx={{
+                  fontSize: 12,
+                  lineHeight: "18px",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  color: "text.primary",
+                }}
+              >
+                {n}
+              </Typography>
+            ))}
+          </Stack>
+        ) : name ? (
           <Typography
-            noWrap
+            noWrap={!wrap}
             sx={{
               // Row title: 12px regular (mono for code identifiers), never bold.
               fontSize: 12,
@@ -2711,7 +2850,7 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
         >
           {target != null && (
             <Typography
-              noWrap
+              noWrap={!wrap && !names}
               sx={{
                 typography: "s2",
                 color: derived ? "text.tertiary" : "text.primary",
@@ -2731,6 +2870,10 @@ function MapRow({ index, name, origin, target, mono, derived, trailing }) {
 MapRow.propTypes = {
   index: PropTypes.number,
   name: PropTypes.node,
+  /* Several names that share the origin and target, listed in one row. */
+  names: PropTypes.arrayOf(PropTypes.string),
+  /* Long text (a rule) wraps instead of being cut off. */
+  wrap: PropTypes.bool,
   origin: PropTypes.string,
   target: PropTypes.node,
   mono: PropTypes.bool,

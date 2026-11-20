@@ -245,7 +245,7 @@ export const FAILURE_MODE_OPTIONS = FAILURE_MODES;
 
 export const SORTS = [
   { id: "movement", label: "Regressions first" },
-  { id: "improvement", label: "Improvements first" },
+  { id: "improvement", label: "Epochs first" },
   { id: "order", label: "Scenario order" },
   { id: "slowest", label: "Slowest first" },
   { id: "costliest", label: "Most tokens first" },

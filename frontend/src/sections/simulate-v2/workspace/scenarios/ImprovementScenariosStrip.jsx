@@ -71,11 +71,11 @@ export default function ImprovementScenariosStrip({
         />
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {`${total} scenario${total === 1 ? "" : "s"} from improvements ${total === 1 ? "isn't" : "aren't"} in this environment`}
+            {`${total} scenario${total === 1 ? "" : "s"} from epochs ${total === 1 ? "isn't" : "aren't"} in this environment`}
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             Improvements wrote these to reproduce what they were fixing. They
-            stay with the improvement until you add them.
+            stay with the epoch until you add them.
           </Typography>
         </Box>
         <Button
@@ -161,7 +161,7 @@ export function ImprovementScenariosDialog({
       fullWidth
     >
       <DialogTitle sx={{ typography: "m2", fontWeight: 600 }}>
-        Scenarios from improvements
+        Scenarios from epochs
       </DialogTitle>
       <DialogContent>
         <Typography sx={{ typography: "s2", color: "text.secondary", mb: 1.5 }}>

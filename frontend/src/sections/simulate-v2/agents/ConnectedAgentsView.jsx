@@ -713,7 +713,7 @@ export default function ConnectedAgentsView({ onConnect }) {
         </DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ typography: "s2" }}>
-            {`${deletable.length === 1 ? "It leaves" : "They leave"} Agents and every picker. ${deletable.length === 1 ? "Its" : "Their"} versions, and the runs, improvements and proofs that name ${deletable.length === 1 ? "it" : "them"}, are kept — they still open ${deletable.length === 1 ? "its" : "their"} history.`}
+            {`${deletable.length === 1 ? "It leaves" : "They leave"} Agents and every picker. ${deletable.length === 1 ? "Its" : "Their"} versions, and the runs, epochs and proofs that name ${deletable.length === 1 ? "it" : "them"}, are kept — they still open ${deletable.length === 1 ? "its" : "their"} history.`}
           </DialogContentText>
           {skipped.length > 0 && (
             <DialogContentText sx={{ typography: "s2", mt: 1.5 }}>

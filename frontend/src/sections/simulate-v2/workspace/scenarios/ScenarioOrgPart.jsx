@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { SHOW_TAGS } from "./scenarioOrgFlags";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -171,62 +172,72 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
     <Stack spacing={2}>
       {/* tags and groups */}
       <Box>
-        <Typography sx={HEAD}>Tags and suites</Typography>
+        <Typography sx={HEAD}>
+          {SHOW_TAGS ? "Tags and suites" : "Suites"}
+        </Typography>
         <Box sx={{ ...box, p: 1.25 }}>
+          {SHOW_TAGS && (
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ flexWrap: "wrap", rowGap: 0.75, alignItems: "center" }}
+            >
+              {myTags.map((t) => (
+                <Chip
+                  key={t.id}
+                  size="small"
+                  label={t.name}
+                  onDelete={
+                    ro
+                      ? undefined
+                      : () =>
+                          patch(tagPatch(envState, [live.id], t.name, false))
+                  }
+                  sx={{
+                    border: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: "transparent",
+                    "&::before": {
+                      content: '""',
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      bgcolor: t.color,
+                      ml: 1,
+                    },
+                  }}
+                />
+              ))}
+              {!ro && (
+                <Autocomplete
+                  freeSolo
+                  size="small"
+                  options={[
+                    ...new Set([...tags.map((t) => t.name), ...SUGGESTED_TAGS]),
+                  ].filter((n) => !myTags.some((t) => t.name === n))}
+                  inputValue={tagInput}
+                  onInputChange={(_, v) => setTagInput(v)}
+                  onChange={(_, v) => {
+                    if (v) patch(tagPatch(envState, [live.id], v, true));
+                    setTagInput("");
+                  }}
+                  renderInput={(p) => (
+                    <TextField {...p} placeholder="Add tag — risk=duplicate" />
+                  )}
+                  sx={{ width: 220 }}
+                />
+              )}
+            </Stack>
+          )}
           <Stack
             direction="row"
             spacing={0.75}
-            sx={{ flexWrap: "wrap", rowGap: 0.75, alignItems: "center" }}
-          >
-            {myTags.map((t) => (
-              <Chip
-                key={t.id}
-                size="small"
-                label={t.name}
-                onDelete={
-                  ro
-                    ? undefined
-                    : () => patch(tagPatch(envState, [live.id], t.name, false))
-                }
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: "transparent",
-                  "&::before": {
-                    content: '""',
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    bgcolor: t.color,
-                    ml: 1,
-                  },
-                }}
-              />
-            ))}
-            {!ro && (
-              <Autocomplete
-                freeSolo
-                size="small"
-                options={[
-                  ...new Set([...tags.map((t) => t.name), ...SUGGESTED_TAGS]),
-                ].filter((n) => !myTags.some((t) => t.name === n))}
-                inputValue={tagInput}
-                onInputChange={(_, v) => setTagInput(v)}
-                onChange={(_, v) => {
-                  if (v) patch(tagPatch(envState, [live.id], v, true));
-                  setTagInput("");
-                }}
-                renderInput={(p) => (
-                  <TextField {...p} placeholder="Add tag — risk=duplicate" />
-                )}
-                sx={{ width: 220 }}
-              />
-            )}
-          </Stack>
-          <Stack
-            direction="row"
-            spacing={0.75}
-            sx={{ flexWrap: "wrap", rowGap: 0.75, alignItems: "center", mt: 1 }}
+            sx={{
+              flexWrap: "wrap",
+              rowGap: 0.75,
+              alignItems: "center",
+              mt: SHOW_TAGS ? 1 : 0,
+            }}
           >
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               In suites:

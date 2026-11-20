@@ -1843,7 +1843,7 @@ function LiveRun() {
                   navigate(improvementPath(envId, watchTrial.opt.id), {
                     state: {
                       back: {
-                        to: `${paths.dashboard.simulate.simulationRun(envId, runId)}?tab=improvements`,
+                        to: `${paths.dashboard.simulate.simulationRun(envId, runId)}`,
                         label: recorded?.ordinal
                           ? `Run ${recorded.ordinal}`
                           : "the run",
@@ -1858,7 +1858,7 @@ function LiveRun() {
                   verticalAlign: "baseline",
                 }}
               >
-                Back to the improvement
+                Back to the epoch
               </Link>
             </Typography>
           )}

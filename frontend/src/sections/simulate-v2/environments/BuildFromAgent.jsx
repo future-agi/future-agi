@@ -2015,9 +2015,9 @@ function Header({
                           alignItems="center"
                           spacing={1}
                           sx={{
-                            px: 1.25,
-                            py: 0.625,
-                            borderRadius: 999,
+                            px: 0.75,
+                            height: 22,
+                            borderRadius: "4px",
                             border: "1px solid",
                             borderColor: "status.danger.border",
                             bgcolor: "status.danger.bg",
@@ -2030,7 +2030,7 @@ function Header({
                           />
                           <Typography
                             sx={{
-                              typography: "s2",
+                              typography: "s3",
                               fontWeight: 600,
                               color: "status.danger.fg",
                             }}
@@ -2047,9 +2047,9 @@ function Header({
                           alignItems="center"
                           spacing={0.75}
                           sx={{
-                            px: 1.125,
-                            py: 0.5,
-                            borderRadius: 999,
+                            px: 0.75,
+                            height: 22,
+                            borderRadius: "4px",
                             border: "1px solid",
                             borderColor: "divider",
                           }}
@@ -2061,7 +2061,7 @@ function Header({
                           />
                           <Typography
                             sx={{
-                              typography: "s2",
+                              typography: "s3",
                               fontWeight: 600,
                               color: "text.secondary",
                             }}
@@ -2081,11 +2081,14 @@ function Header({
                         <Stack
                           direction="row"
                           alignItems="center"
-                          spacing={0.75}
+                          spacing={0.5}
                           sx={{
-                            px: 1.125,
-                            py: 0.5,
-                            borderRadius: 999,
+                            /* The design system's status chip: square
+                               corners, 22px, like Ready / Awaiting approval. */
+                            px: 0.75,
+                            height: 22,
+                            borderRadius: "4px",
+                            whiteSpace: "nowrap",
                             border: "1px solid",
                             /* Waiting on the person, not on us: the list's
                                warning colour, and no pulse. */
@@ -2120,7 +2123,7 @@ function Header({
                           />
                           <Typography
                             sx={{
-                              typography: "s2",
+                              typography: "s3",
                               fontWeight: 600,
                               color: wait
                                 ? "status.warning.fg"
@@ -2253,9 +2256,9 @@ function Header({
                               ))}
                             sx={{
                               ...focusRing,
-                              px: 1.125,
-                              py: 0.5,
-                              borderRadius: 999,
+                              px: 0.75,
+                              height: 22,
+                              borderRadius: "4px",
                               border: "1px solid",
                               borderColor: "divider",
                               cursor: review ? "pointer" : "default",
@@ -2294,9 +2297,9 @@ function Header({
                         alignItems="center"
                         spacing={0.75}
                         sx={{
-                          px: 1.125,
-                          py: 0.5,
-                          borderRadius: 999,
+                          px: 0.75,
+                          height: 22,
+                          borderRadius: "4px",
                           border: "1px solid",
                           borderColor: "status.success.border",
                           bgcolor: "status.success.bg",
@@ -2312,7 +2315,7 @@ function Header({
                         />
                         <Typography
                           sx={{
-                            typography: "s2",
+                            typography: "s3",
                             fontWeight: 600,
                             color: "status.success.fg",
                           }}

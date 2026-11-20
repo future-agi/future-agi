@@ -130,7 +130,7 @@ export const usageEntries = (state, { since = null } = {}) => {
           agent: `${es.agent?.name || env.agentName || "Agent"} · ${o.baseAgentVersion || "—"}`,
           project: projectOf(env),
           user: o.startedBy || "Not recorded",
-          label: o.name || "Improvement",
+          label: o.name || "Epoch",
           finishedAt: at,
           calls: parts.reduce((n, p) => n + (p.conversations || 0), 0),
           sim: 0,
@@ -169,7 +169,7 @@ export const groupUsage = (entries, by) => {
         credits: entries.reduce((a, e) => a + (e.analysis || 0), 0),
       },
       {
-        key: "Improvement searches",
+        key: "Epoch searches",
         credits: entries.reduce((a, e) => a + (e.improvement || 0), 0),
       },
       { key: "Seeded world and tools", credits: 0, note: "included" },

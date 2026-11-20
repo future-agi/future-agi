@@ -10,7 +10,7 @@ import ImprovementSourcesList from "src/sections/simulate-v2/improvements/Improv
 export default function ImprovementsPage() {
   return (
     <SimStoreProvider>
-      <Helmet><title>Improvements · Future AGI</title></Helmet>
+      <Helmet><title>Epochs · Future AGI</title></Helmet>
       <ImprovementSourcesList />
     </SimStoreProvider>
   );

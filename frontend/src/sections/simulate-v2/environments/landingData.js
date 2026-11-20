@@ -230,7 +230,7 @@ export const detectPaste = (raw) => {
       label: "Phone number",
       detail: text,
       icon: "solar:phone-calling-rounded-linear",
-      note: "We call it like a customer would. Test only — improvements end in a suggested fix.",
+      note: "We call it like a customer would. Test only — epochs end in a suggested fix.",
       choice: "phone",
       prefill: { number: text },
     };

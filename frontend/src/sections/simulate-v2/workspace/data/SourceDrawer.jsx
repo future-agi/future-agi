@@ -876,7 +876,7 @@ export default function SourceDrawer({
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 1 }}
                   >
-                    {`${plan.rules.length} rule${plan.rules.length === 1 ? "" : "s"} and ${plan.affected.length} scenario${plan.affected.length === 1 ? "" : "s"} depend on what changed. Past runs keep v${source.version}; a run on the new version isn't the same test, so it isn't credited as an agent improvement.`}
+                    {`${plan.rules.length} rule${plan.rules.length === 1 ? "" : "s"} and ${plan.affected.length} scenario${plan.affected.length === 1 ? "" : "s"} depend on what changed. Past runs keep v${source.version}; a run on the new version isn't the same test, so it isn't credited as an agent epoch.`}
                   </Typography>
                   <Stack direction="row" spacing={1} sx={{ mt: 1.25 }}>
                     <Button

@@ -152,14 +152,14 @@ export default function RunsPanel({ env, envState, onGo }) {
 
   /* No runs yet: the tab stays, and offers the first run — the baseline
      every improvement is measured against (the same action as the
-     Scenarios tab's "No baseline yet" strip). */
+     Scenarios tab offered before its strip was hidden). */
   return (
     <Box sx={{ p: 2 }}>
       {runFitDialog}
       <EmptyState
         icon="solar:play-circle-linear"
         title="No runs yet"
-        body="The first run is the baseline improvements are measured against."
+        body="The first run is the baseline epochs are measured against."
         action={
           <Stack direction="row" alignItems="center" spacing={1}>
             <AlsoRunIn

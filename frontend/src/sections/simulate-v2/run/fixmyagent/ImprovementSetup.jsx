@@ -79,7 +79,6 @@ import ImprovementConstraints, {
 import { changedKeysOf, withEdits } from "../../improvements/constraintEdits";
 import CasePicker from "../../improvements/CasePicker";
 import { isCodeAgent } from "../../agents/foundFacts";
-import { TextLink } from "../../agents/connect/connectBits";
 import { limitsOf, surfaceAvailability } from "../../agents/agentLimits";
 import { reviewableOf } from "../../_mock/candidateReview";
 import ReviewChangesFirstDrawer from "./ReviewChangesFirstDrawer";
@@ -318,7 +317,7 @@ export default function ImprovementSetup({
         ? measureTodayRun(main, es, {
             key: seed,
             measuredFor: { kind: "goal" },
-            startedBy: "Improvement · goal",
+            startedBy: "Epoch · goal",
           })
         : null,
     [main, es, preset?.fromGoal, tasks, seed],
@@ -433,13 +432,13 @@ export default function ImprovementSetup({
      its prompt can be read. */
   const voiceFix = voiceFixOf(agent);
   const blocked = voiceFix
-    ? `${agent?.name || "This agent"} is built in ${voiceFix.where}, so an improvement can't change it. Use Debug failures on a run: it ${voiceFix.mode === "suggest" ? "shows what went wrong and suggests changes to copy in" : "shows what went wrong (diagnosis only — its prompt can't be read)"}.`
+    ? `${agent?.name || "This agent"} is built in ${voiceFix.where}, so an epoch can't change it. Use Debug failures on a run: it ${voiceFix.mode === "suggest" ? "shows what went wrong and suggests changes to copy in" : "shows what went wrong (diagnosis only — its prompt can't be read)"}.`
     : fixRunning
       ? `A fix is already running for ${agent?.name || "this agent"} — wait for it to finish or stop it first.`
       : fromRun && base?.status === "running"
         ? "This run hasn't finished — start a fix once its results are in."
         : swapped
-          ? `This run tested ${agent?.name || "an agent"}, no longer ${main?.name || "this environment"}'s agent. Improve it from Improvements.`
+          ? `This run tested ${agent?.name || "an agent"}, no longer ${main?.name || "this environment"}'s agent. Improve it from Epochs.`
           : preset?.agentKey && !agent
             ? "This agent can't be found — it may have been deleted."
             : status && status.status !== "connected"
@@ -590,8 +589,8 @@ export default function ImprovementSetup({
             ? { kind: "goal" }
             : { kind: "run", runId: base?.id || null },
           startedBy: preset?.fromGoal
-            ? "Improvement · goal"
-            : "Improvement · Debug failures",
+            ? "Epoch · goal"
+            : "Epoch · Debug failures",
         })
       : today;
     const from =
@@ -645,8 +644,8 @@ export default function ImprovementSetup({
         <Box flex={1}>
           <Typography sx={{ typography: "s1", fontWeight: 600 }}>
             {preset?.fromGoal
-              ? "New improvement"
-              : `Improve ${agent?.name || "the agent"}`}
+              ? "New epoch"
+              : `Run Epoch on ${agent?.name || "the agent"}`}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {main
@@ -728,14 +727,31 @@ export default function ImprovementSetup({
                 </Typography>
               )}
               {preview?.pickable && (
-                <Box sx={{ mt: 0.5 }}>
-                  <TextLink onClick={() => setShowCases((v) => !v)}>
+                <Box sx={{ mt: 1 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    onClick={() => setShowCases((v) => !v)}
+                    aria-expanded={showCases}
+                    endIcon={
+                      <Iconify
+                        icon={
+                          showCases
+                            ? "eva:chevron-up-fill"
+                            : "eva:chevron-down-fill"
+                        }
+                        width={16}
+                      />
+                    }
+                    sx={{ typography: "s2" }}
+                  >
                     {showCases
                       ? "Hide cases"
                       : pick
                         ? "Edit cases · your pick"
                         : "Choose cases"}
-                  </TextLink>
+                  </Button>
                 </Box>
               )}
               {showCases && preview?.pickable && (
@@ -1170,7 +1186,7 @@ export default function ImprovementSetup({
                         }}
                       >
                         {onlySuggests
-                          ? "We can only call this agent, so an improvement ends in a suggested change."
+                          ? "We can only call this agent, so an epoch ends in a suggested change."
                           : suggestOnly
                             ? "Nothing is tried or proven. Apply the suggestion yourself; a run on the new version proves it."
                             : "Either way, a winner comes back as a new version. You decide whether to make it the default."}
@@ -1352,7 +1368,7 @@ export default function ImprovementSetup({
                         sx={{ typography: "s3", color: "text.tertiary" }}
                       >
                         {edited
-                          ? `Constraints · ${edited} set for this improvement`
+                          ? `Constraints · ${edited} set for this epoch`
                           : `Constraints from ${agent?.name || "the agent"}`}
                       </Typography>
                     </Stack>
@@ -1404,7 +1420,7 @@ export default function ImprovementSetup({
                         label="Constraints"
                         value={
                           edited
-                            ? `From ${agent?.name || "the agent"} · ${edited} set for this improvement`
+                            ? `From ${agent?.name || "the agent"} · ${edited} set for this epoch`
                             : `From ${agent?.name || "the agent"}`
                         }
                         note={constraints}
@@ -1504,7 +1520,7 @@ export default function ImprovementSetup({
               />
             }
           >
-            {reviewFirst ? "Review the changes" : "Start improvement"}
+            {reviewFirst ? "Review the changes" : "Run Epoch"}
           </Button>
         )}
       </Stack>
