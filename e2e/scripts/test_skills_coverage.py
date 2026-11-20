@@ -130,5 +130,19 @@ class FailureSummaryTests(unittest.TestCase):
         self.assertEqual(lines[1], '(suite) | error | x.ts:7')
         self.assertNotIn('sk-live', '\n'.join(lines))
 
+    def test_summary_keeps_only_a_redacted_playwright_first_line(self):
+        token = 'A' * 32
+        message = ("TimeoutError: locator.click: Timeout 20000ms exceeded.\n"
+                   f"Call log:\n  waiting for getByText('Add custom columns')\n  received {token}")
+        report = {'suites': [{'specs': [{'title': 'SKILLS-E2E-117: F17', 'file': 'f.ts', 'tests': [{
+            'status': 'unexpected', 'results': [{'status': 'failed', 'errors': [{
+                'message': message, 'location': {'file': '/r/f.ts', 'line': 9}}]}]}]}]}]}
+        line, = coverage['failure_summary'](report)
+        self.assertEqual(line, 'SKILLS-E2E-117 | unexpected | failed | '
+                               'TimeoutError [TimeoutError: locator.click: Timeout 20000ms exceeded.] f.ts:9')
+        self.assertEqual(coverage['safe_detail'](f'Error: locator.fill: token {token}'),
+                         'Error: locator.fill: token [redacted]')
+        self.assertEqual(coverage['safe_detail']('Error: request to https://x?key=abc failed'), '')
+
 if __name__ == '__main__':
     unittest.main()

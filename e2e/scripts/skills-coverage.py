@@ -94,6 +94,18 @@ def passed(report, cohort):
 
 
 ERROR_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:Error|Exception)\b")
+# The first line of a Playwright locator/expect failure names the action and the
+# locator from the (public) spec; expected/received values follow on later lines.
+PLAYWRIGHT_LINE = re.compile(r"^(?:[A-Za-z]*Error: )?(?:locator\.|page\.|expect\(|Timed out \d+ms waiting for expect)")
+TOKENISH = re.compile(r"[A-Za-z0-9_\-]{24,}|eyJ[A-Za-z0-9_\-.]+|(?:sk|pk|fi)[-_][A-Za-z0-9_\-]{8,}")
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def safe_detail(message):
+    first = ANSI.sub("", str(message)).strip().splitlines()[0] if str(message).strip() else ""
+    if not PLAYWRIGHT_LINE.match(first):
+        return ""
+    return TOKENISH.sub("[redacted]", first)[:200]
 
 
 def failure_summary(report):
@@ -115,6 +127,9 @@ def failure_summary(report):
                     where = f"{Path(loc['file']).name}:{loc.get('line', '?')}"
                 found = ERROR_NAME.search(str(error.get("message", ""))[:120])
                 kind = found[0] if found else "Error"
+                detail = safe_detail(error.get("message", ""))
+                if detail:
+                    kind = f"{kind} [{detail}]"
                 break
             lines.append(f"{identity(spec)} | {status} | {last.get('status', 'not run')} | {kind} {where}".rstrip())
     for error in report.get("errors", []):
