@@ -11,7 +11,6 @@ from __future__ import annotations
 import copy
 import logging
 import re
-import uuid
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from django.conf import settings
@@ -2220,21 +2219,6 @@ class HostedHarnessProvider:
 
         asked = request.query_params.get("group_by")
         group_by = DEFAULT_GROUP_BY if asked is None else asked
-        flags = None
-        if request.query_params.get("readiness") in ("1", "true"):
-            from simulate.services.hosted_harness import HostedHarnessError
-
-            try:
-                flags = _scenario_readiness(
-                    job,
-                    request.query_params,
-                    [one.scenario_key for one in page or []],
-                )
-            except HostedHarnessError as exc:
-                # A build that failed or is still running has no versions to pair: its rows carry no flags.
-                if exc.code != "versioning_disabled":
-                    return Response(exc.as_dict(), status=exc.status_code)
-                flags = {}
         from simulate.services.harness_actor_rules import actor_rules
         from simulate.services.harness_environment import (
             environment_actor_side,
@@ -2257,11 +2241,7 @@ class HostedHarnessProvider:
             row = scenario_row(
                 one, targets=door, fault_targets=targets, actor_cast=actor_cast
             )
-            if drafted is not None:
-                row = {**row, "draft_change": one.draft_change}
-            if flags is not None:
-                row = {**row, "readiness": flags.get(one.scenario_key)}
-            return row
+            return row if drafted is None else {**row, "draft_change": one.draft_change}
 
         rows = grouped([row_of(one) for one in page], group_by)
         response = paginator.get_paginated_response(rows)
@@ -3338,23 +3318,3 @@ class SandboxHarnessProvider:
 
 class _SandboxMappingError(RuntimeError):
     pass
-
-
-def _scenario_readiness(job, params, keys: list[str]):
-    """Each listed scenario's readiness for the pairing the query names (an absent id
-    is the environment's default), by scenario key."""
-    from simulate.services.harness_readiness import resolve_pairing, scenario_readiness
-    from simulate.services.hosted_harness import HostedHarnessError
-
-    picks = {}
-    for name in ("agent_version_id", "environment_version_id", "suite_version_id"):
-        value = params.get(name)
-        if not value:
-            continue
-        try:
-            picks[name] = uuid.UUID(str(value))
-        except ValueError:
-            raise HostedHarnessError(
-                "invalid_version_id", f"{name} is not a valid id", status_code=400
-            ) from None
-    return scenario_readiness(resolve_pairing(job, **picks), keys=keys)

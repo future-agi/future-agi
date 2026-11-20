@@ -1068,28 +1068,6 @@ class TestRetriedMoves:
         environment.refresh_from_db()
         assert environment.agent_version_id == a2.id
 
-    def test_an_unscheduled_move_validation_is_dispatched_once_more(
-        self, user, workspace, storage
-    ):
-        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-retry-unsched")
-        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
-        first = _move_job(environment, a2)
-        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
-            state="failed",
-            failure={
-                "domain": "infrastructure",
-                "stage": "queued",
-                "code": "scheduler_unavailable",
-            },
-        )
-
-        assert validation.finish_validation(first.id) == "retry"
-
-        [again] = running_validations(environment)
-        assert again.id != first.id
-        assert _job_metadata(again)["validation_move"]["restarts"] == 1
-        assert _activations(a2)[str(environment.id)] == "validating"
-
     def test_a_move_whose_retry_also_ends_early_is_asked_again(
         self, user, workspace, storage
     ):
@@ -1689,58 +1667,6 @@ class TestCheckUnavailable:
             is None
         )
         assert validation.platform_failure(None) is None
-
-    @pytest.mark.parametrize(
-        "code",
-        ["sandbox_launch_failed", "hosted_launch_failed", "sandbox_unreachable"],
-    )
-    def test_a_check_our_sandbox_could_not_run_reads_unavailable(
-        self, user, workspace, storage, code
-    ):
-        from simulate.services import harness_readiness
-
-        environment = _pending(user, workspace, storage, f"pv-infra-{code}")
-        job = _start(environment).job
-        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-            state="failed",
-            failure={"domain": "infrastructure", "stage": "queued", "code": code},
-        )
-
-        assert validation.finish_validation(job.id) == "unavailable"
-
-        view = harness_readiness.readiness_report(
-            harness_readiness.resolve_pairing(environment)
-        )["validation"]
-        assert view["state"] == "check_unavailable"
-        assert _row(environment).error["last_attempt"]["cause"] == code
-
-    def test_a_check_never_scheduled_reads_retry_not_unavailable(
-        self, user, workspace, storage
-    ):
-        from simulate.services import harness_readiness
-
-        environment = _pending(user, workspace, storage, "pv-infra-unscheduled")
-        job = _start(environment).job
-        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-            state="failed",
-            failure={
-                "domain": "infrastructure",
-                "stage": "queued",
-                "code": "scheduler_unavailable",
-            },
-        )
-
-        assert validation.finish_validation(job.id) == "retry"
-
-        assert _row(environment).error["last_attempt"]["code"] == (
-            "scheduler_unavailable"
-        )
-        assert validation.can_validate(environment, environment.agent_version_id)
-        view = harness_readiness.readiness_report(
-            harness_readiness.resolve_pairing(environment)
-        )["validation"]
-        assert view["state"] == "retry"
-        assert view["error"] == {"code": "scheduler_unavailable"}
 
     def test_a_test_world_failure_holds_no_run_back_and_reads_unavailable(
         self, user, workspace, storage

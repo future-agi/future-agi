@@ -33,9 +33,8 @@ export default function useScenarioPage({
   ordering,
   page = 0,
   pageSize = PAGE_SIZE,
-  readiness = false,
 } = {}) {
-  const query = useHarnessScenarios({ jobId, page, pageSize, search, groupBy, ordering, filters, readiness });
+  const query = useHarnessScenarios({ jobId, page, pageSize, search, groupBy, ordering, filters });
   const data = query.data;
 
   const rows = useMemo(() => data?.rows ?? [], [data]);

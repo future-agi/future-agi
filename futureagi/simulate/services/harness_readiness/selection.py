@@ -10,9 +10,8 @@ refuses it and the check has not answered yet.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Literal, NotRequired, TypedDict, cast
 from uuid import UUID
 
@@ -318,236 +317,6 @@ def selection_report(
     from simulate.services.harness_readiness.fix_runs import with_progress
 
     return cast(SelectionReport, with_progress(pairing, selected))
-
-
-ProofState = Literal["proved", "failed", "not_proved"]
-
-
-class LastProved(TypedDict):
-    environment_version: int | None
-    suite_version: int | None
-
-
-class ProofView(TypedDict):
-    state: ProofState
-    last_proved: LastProved | None
-
-
-class ScenarioReadiness(TypedDict):
-    bucket: Bucket | None
-    by: list[str]
-    # Each readiness row in ``by`` and its reason code, e.g. ``environment_changed``.
-    reasons: dict[str, str | None]
-    dropped: str | None
-    proof: ProofView
-
-
-def scenario_readiness(
-    pairing: Pairing, *, keys: Collection[str] | None = None
-) -> dict[str, ScenarioReadiness]:
-    """Each scenario of the pairing's suite version, by key: its bucket and what put it
-    there, and where its proof stands. A dropped scenario has no bucket. One readiness
-    read for the whole suite. ``keys`` limits the answer and the proof reads to those
-    scenarios. No writes."""
-    if keys is not None and not keys:
-        return {}
-    wanted = None if keys is None else frozenset(keys)
-    bundle = pair_bundle(pairing)
-    evidence = read_evidence(pairing, bundle)
-    report = readiness_report(pairing, bundle=bundle, evidence=evidence)
-    placement = _place_all(
-        pairing,
-        report["rows"],
-        keys=None,
-        trials=1,
-        bundle=bundle,
-        evidence=evidence,
-        workers=report["workers"],
-    )
-    proof = _proof_views(pairing, bundle, wanted)
-    rows = {row["id"]: row for row in report["rows"]}
-    found: dict[str, ScenarioReadiness] = {
-        one.case.key: {
-            "bucket": one.bucket,
-            "by": list(one.by),
-            "reasons": {
-                name: rows[name]["reason_code"] for name in one.by if name in rows
-            },
-            "dropped": None,
-            "proof": proof(one.case.key),
-        }
-        for one in placement.placed
-        if wanted is None or one.case.key in wanted
-    }
-    for one in placement.dropped:
-        if wanted is not None and one["key"] not in wanted:
-            continue
-        found[one["key"]] = {
-            "bucket": None,
-            "by": [],
-            "reasons": {},
-            "dropped": one["code"],
-            "proof": proof(one["key"]),
-        }
-    return found
-
-
-def _proof_views(
-    pairing: Pairing,
-    bundle: HarnessAssembledBundle | None,
-    keys: frozenset[str] | None,
-) -> Callable[[str], ProofView]:
-    """Where each scenario's proof stands for this suite and environment version:
-    proved (or kept by a certificate for the pair), failed, or not proved; and, when
-    not proved here, the latest versions it was last proved on, by a proof or a
-    certified pairing. A certificate of another agent version for the pair counts, so
-    a scenario this pairing dropped can still read proved. With ``keys``, only those
-    scenarios are read, and the proof history stops once each has its newest holder.
-    Up to four queries."""
-    here = {
-        scenario_token(key): value
-        for key, value in _pair_proofs(pairing).items()
-        if isinstance(value, Mapping)
-    }
-    pair = (pairing.environment_version.id, pairing.suite_version.id)
-    # A certified pairing proved every scenario of its suite version that it did not
-    # drop, on its environment version, whichever agent version it was certified with.
-    certificates: list[frozenset[str]] = (
-        [_dropped_tokens(bundle)] if certified(bundle) else []
-    )
-    bundles: list[HarnessAssembledBundle] = []
-    for other in (
-        HarnessAssembledBundle._base_manager.filter(
-            job_id=pairing.environment.id, state=HarnessAssembledBundle.State.READY
-        )
-        .exclude(object_key="")
-        .exclude(object_key__isnull=True)
-        .select_related("environment_version", "suite_version")
-        .only(
-            "updated_at",
-            "warnings",
-            "environment_version",
-            "suite_version",
-            "environment_version__version_number",
-            "suite_version__version_number",
-        )
-    ):
-        if (other.environment_version_id, other.suite_version_id) == pair:
-            certificates.append(_dropped_tokens(other))
-        else:
-            bundles.append(other)
-    members_of = (
-        HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id__in={other.suite_version_id for other in bundles}
-        )
-        if keys is None
-        else HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version__job_id=pairing.environment.id, scenario_key__in=keys
-        )
-    )
-    members: dict[UUID, list[str]] = {}
-    for suite_id, key in members_of.values_list("suite_version_id", "scenario_key"):
-        members.setdefault(suite_id, []).append(key)
-
-    earlier: list[tuple[datetime, Mapping[str, Any], LastProved]] = []
-    tokens = None if keys is None else {scenario_token(key) for key in keys}
-    pending = (
-        None
-        if tokens is None
-        else {
-            token
-            for token in tokens
-            if (here.get(token) or {}).get("holds") is not True
-            and not any(token not in dropped for dropped in certificates)
-        }
-    )
-    if pending is None or pending:
-        history = HarnessSuiteValidation.no_workspace_objects.filter(
-            suite_version__job_id=pairing.environment.id
-        ).exclude(
-            suite_version=pairing.suite_version,
-            environment_version=pairing.environment_version,
-        )
-        if keys is not None:
-            # A scenario holds only in a validation of a suite version that has it.
-            history = history.filter(suite_version_id__in=set(members))
-        for proved_at, row_proofs, suite_number, environment_number in (
-            history.order_by("-proved_at")
-            .values_list(
-                "proved_at",
-                "proofs",
-                "suite_version__version_number",
-                "environment_version__version_number",
-            )
-            .iterator(chunk_size=50)
-        ):
-            proofs: dict[str, Mapping[str, Any]] = {}
-            for key, value in (row_proofs or {}).items():
-                if not isinstance(value, Mapping):
-                    continue
-                token = scenario_token(key)
-                if tokens is None or token in tokens:
-                    proofs[token] = value
-            earlier.append(
-                (
-                    proved_at,
-                    proofs,
-                    {
-                        "environment_version": environment_number,
-                        "suite_version": suite_number,
-                    },
-                )
-            )
-            if pending is not None:
-                # Rows come newest first: a token's first holder is its newest.
-                pending -= {
-                    token
-                    for token, value in proofs.items()
-                    if value.get("holds") is True
-                }
-                if not pending:
-                    break
-    for other in bundles:
-        dropped = _dropped_tokens(other)
-        earlier.append(
-            (
-                other.updated_at,
-                {
-                    token: {"holds": True}
-                    for key in members.get(other.suite_version_id, [])
-                    if (token := scenario_token(key)) not in dropped
-                },
-                {
-                    "environment_version": other.environment_version.version_number,
-                    "suite_version": other.suite_version.version_number,
-                },
-            )
-        )
-    earlier.sort(
-        key=lambda one: one[0] or datetime.min.replace(tzinfo=UTC),
-        reverse=True,
-    )
-
-    def view(key: str) -> ProofView:
-        token = scenario_token(key)
-        mine = here.get(token)
-        if (isinstance(mine, Mapping) and mine.get("holds") is True) or any(
-            token not in dropped for dropped in certificates
-        ):
-            return {"state": "proved", "last_proved": None}
-        last = next(
-            (
-                versions
-                for _, proofs, versions in earlier
-                if isinstance(proofs.get(token), Mapping)
-                and proofs[token].get("holds") is True
-            ),
-            None,
-        )
-        state: ProofState = "failed" if isinstance(mine, Mapping) else "not_proved"
-        return {"state": state, "last_proved": last}
-
-    return view
 
 
 def _worker_reasons(
@@ -973,8 +742,8 @@ def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
     )
 
 
-def _pair_proofs(pairing: Pairing) -> Mapping[str, Any]:
-    """The proofs of this suite and environment version's validation, by key."""
+def _proved_tokens(pairing: Pairing) -> frozenset[str]:
+    """Scenarios with a holding proof for this suite and environment version."""
     proofs = (
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=pairing.suite_version,
@@ -983,14 +752,9 @@ def _pair_proofs(pairing: Pairing) -> Mapping[str, Any]:
         .values_list("proofs", flat=True)
         .first()
     )
-    return proofs if isinstance(proofs, Mapping) else {}
-
-
-def _proved_tokens(pairing: Pairing) -> frozenset[str]:
-    """Scenarios with a holding proof for this suite and environment version."""
     return frozenset(
         scenario_token(key)
-        for key, proof in _pair_proofs(pairing).items()
+        for key, proof in (proofs or {}).items()
         if isinstance(proof, Mapping) and proof.get("holds")
     )
 

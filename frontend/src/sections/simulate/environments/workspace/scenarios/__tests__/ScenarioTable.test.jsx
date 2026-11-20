@@ -129,25 +129,3 @@ describe("ScenarioTable actors", () => {
     expect(screen.getAllByText("With Rowan")).toHaveLength(1);
   });
 });
-
-describe("ScenarioTable — proof that failed after the environment changed", () => {
-  it("marks a scenario whose proof failed, with where it last held", async () => {
-    const failed = {
-      ...rows[0],
-      readiness: {
-        bucket: "stale",
-        proof: {
-          state: "failed",
-          last_proved: { environment_version: 6, suite_version: 5 },
-        },
-      },
-    };
-    renderTable({ rows: [failed, rows[1]] });
-    const marks = screen.getAllByLabelText("Proof failed on this environment version");
-    expect(marks).toHaveLength(1);
-    fireEvent.mouseOver(marks[0]);
-    expect(
-      await screen.findByText(/Last proved on environment v6, scenarios v5/),
-    ).toBeInTheDocument();
-  });
-});
