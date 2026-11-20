@@ -53698,6 +53698,39 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/scenarios/validate/running/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_running_validation",
+                "description": "The default pair's validation still running, so a page opened after it started follows it; and how many\ncases a Validate of those not yet proved would prove.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioRunningValidation"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_archive_scenario",
@@ -151869,6 +151902,46 @@
                 },
                 "message": {
                     "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessScenarioRunningValidation": {
+            "required": [
+                "job_id",
+                "scenario_keys",
+                "to_prove",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "title": "Job id",
+                    "description": "The default pair's validation still running, the one a Validate press returns; null when none.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "scenario_keys": {
+                    "description": "The cases it proves; null when it proves every case.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "to_prove": {
+                    "title": "To prove",
+                    "description": "How many cases a Validate of the cases not yet proved would prove.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "message": {
+                    "title": "Message",
+                    "description": "Why there is nothing to prove, when there is nothing.",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

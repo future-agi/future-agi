@@ -471,3 +471,71 @@ def test_a_running_validation_counts_its_progress_once_per_interval(
         first["total"],
         1,
     )
+
+
+def _running(client, environment):
+    return client.get(f"{BASE}/{environment.id}/scenarios/validate/running/")
+
+
+def test_a_page_opened_after_a_validation_started_finds_it_until_it_ends(
+    auth_client, certified
+):
+    from simulate.tests.test_harness_affected_scenarios import REFUND_KEYS
+
+    idle = _running(auth_client, certified)
+    started = _post(auth_client, certified, {"keys": [REFUND_KEYS[0]]})
+    running = _running(auth_client, certified)
+    HostedHarnessJob.no_workspace_objects.filter(id=started.json()["job_id"]).update(
+        state=HostedHarnessJob.State.COMPLETED
+    )
+    ended = _running(auth_client, certified)
+
+    assert idle.status_code == 200, idle.content
+    assert (idle.json()["job_id"], idle.json()["to_prove"]) == (None, 10)
+    assert started.status_code == 202, started.content
+    assert (running.json()["job_id"], running.json()["scenario_keys"]) == (
+        started.json()["job_id"],
+        [REFUND_KEYS[0]],
+    )
+    assert ended.json()["job_id"] is None
+
+
+def test_nothing_to_validate_says_the_cases_not_proved_are_held_and_why(
+    auth_client, certified
+):
+    from simulate.tests.test_harness_affected_scenarios import (
+        LOOKUP_KEYS,
+        PROVED,
+        REFUND_KEYS,
+    )
+    from simulate.tests.test_harness_scenario_lifecycle import _proofs
+
+    unsolvable = {
+        "format": 2,
+        "holds": False,
+        "proved": False,
+        "ready": True,
+        "solvable": False,
+        "blocked_reason": "not_solvable",
+        "why": "refunded never held",
+    }
+    _proofs(
+        certified,
+        {
+            **dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED),
+            **dict.fromkeys(REFUND_KEYS[:2], unsolvable),
+        },
+    )
+
+    pressed = _post(auth_client, certified)
+    offered = _running(auth_client, certified).json()
+
+    assert pressed.status_code == 200, pressed.content
+    assert pressed.json()["state"] == "ready"
+    message = pressed.json()["message"]
+    assert message.startswith("Nothing to validate: the 2 cases not proved are held")
+    assert "refunded never held (2 cases)" in message
+    assert (offered["to_prove"], offered["message"]) == (0, message)
+    assert not HostedHarnessJob.no_workspace_objects.filter(
+        environment_id=certified.id, payload__metadata__scenario_proving="only"
+    ).exists()

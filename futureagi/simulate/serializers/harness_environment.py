@@ -2669,6 +2669,26 @@ class HarnessScenarioValidationStatusSerializer(serializers.Serializer):
     )
 
 
+class HarnessScenarioRunningValidationSerializer(serializers.Serializer):
+    job_id = serializers.CharField(
+        allow_null=True,
+        help_text="The default pair's validation still running, the one a Validate press returns; null when none.",
+    )
+    scenario_keys = serializers.ListField(
+        child=serializers.CharField(),
+        allow_null=True,
+        help_text="The cases it proves; null when it proves every case.",
+    )
+    to_prove = serializers.IntegerField(
+        min_value=0,
+        help_text="How many cases a Validate of the cases not yet proved would prove.",
+    )
+    message = serializers.CharField(
+        allow_null=True,
+        help_text="Why there is nothing to prove, when there is nothing.",
+    )
+
+
 class HarnessScenarioArchiveSerializer(serializers.Serializer):
     reason = serializers.CharField(
         required=False, allow_blank=True, default="", max_length=255

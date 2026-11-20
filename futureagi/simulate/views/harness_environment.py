@@ -98,6 +98,7 @@ from simulate.serializers.harness_environment import (
     HarnessScenarioRecordsResponseSerializer,
     HarnessScenarioRestoreSerializer,
     HarnessScenarioRevisionsSerializer,
+    HarnessScenarioRunningValidationSerializer,
     HarnessScenarioValidateResponseSerializer,
     HarnessScenarioValidateSerializer,
     HarnessScenarioValidationQuerySerializer,
@@ -956,6 +957,22 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if job is None:
             return self._not_found()
         return Response(validation_status(job, request.validated_query_data["job_id"]))
+
+    @validated_request(
+        responses={200: HarnessScenarioRunningValidationSerializer},
+        operation_id="simulate_api_harness-environments_running_validation",
+    )
+    @action(detail=True, methods=["get"], url_path="scenarios/validate/running")
+    def running_validation(self, request, pk=None):
+        """The default pair's validation still running, so a page opened after it started follows it; and how many
+        cases a Validate of those not yet proved would prove."""
+        from simulate.services.harness_scenario_actions import running_validation
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(running_validation(job))
 
     @validated_request(
         request_serializer=HarnessScenarioArchiveSerializer,

@@ -7,6 +7,7 @@ The views stay thin: each action resolves its environment, then calls one functi
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
@@ -190,6 +191,17 @@ def cases_to_prove(
     """The pair's cases without a proof of their own for this agent version, and how many cases it holds (archived
     ones aside). A case proved only the older way (a legacy proof, or one that is not format 2) counts as not proved,
     so a Validate brings it up to date; it keeps running as it does until then."""
+    needed, live = _to_prove(environment, agent, environment_version, suite_version)
+    return needed, len(live)
+
+
+def _to_prove(
+    environment: HostedHarnessJob,
+    agent: Any,
+    environment_version: Any,
+    suite_version: Any,
+) -> tuple[list[str], dict[str, LifecycleView]]:
+    """``cases_to_prove``'s cases, with the lifecycle of every case not archived."""
     from simulate.models import HarnessSuiteValidation
     from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
 
@@ -214,7 +226,38 @@ def cases_to_prove(
         or view.get("legacy")
         or (isinstance(proofs.get(key), dict) and proofs[key].get("format") != 2)
     )
-    return needed, len(live)
+    return needed, live
+
+
+# A Validate of the cases not yet proved that has none to prove says why, naming at most this many held reasons.
+HELD_REASONS_SHOWN = 2
+NOTHING_TO_PROVE = "Nothing to validate: every case is proved on these versions."
+
+
+def nothing_to_prove(live: Mapping[str, LifecycleView]) -> str:
+    """Why a Validate of the cases not yet proved has none: each case not proved is held for what its last check
+    found, or for a change, and validating it again as it is would not change that."""
+    from simulate.services.harness_scenario_lifecycle import UNKNOWN_REASON_TEXT
+
+    held = [view for view in live.values() if view["state"] == "draft"]
+    if not held:
+        return NOTHING_TO_PROVE
+    reasons = Counter(view["reason_text"] or UNKNOWN_REASON_TEXT for view in held)
+    shown = [
+        text if count == 1 else f"{text} ({count} cases)"
+        for text, count in reasons.most_common(HELD_REASONS_SHOWN)
+    ]
+    if len(reasons) > HELD_REASONS_SHOWN:
+        shown.append(f"And {len(reasons) - HELD_REASONS_SHOWN} other reasons.")
+    cases = (
+        "the case not proved is"
+        if len(held) == 1
+        else f"the {len(held)} cases not proved are"
+    )
+    return (
+        f"Nothing to validate: {cases} held for a reason validating again would not change. "
+        "Open a case to fix it, then validate it from there. " + " ".join(shown)
+    )
 
 
 class LifecycleAnswer(TypedDict):
@@ -317,12 +360,10 @@ def validate_scenarios(
             ), 200
     if keys is None and not body.get("reprove_all"):
         # Only what has no proof of its own yet: a check the window stopped carries on where it stopped.
-        needed, total = cases_to_prove(
-            environment, agent, environment_version, suite_version
-        )
+        needed, live = _to_prove(environment, agent, environment_version, suite_version)
         if not needed:
-            return ValidateAnswer(state="ready"), 200
-        keys = needed if len(needed) < total else None
+            return ValidateAnswer(state="ready", message=nothing_to_prove(live)), 200
+        keys = needed if len(needed) < len(live) else None
     started = validation.start_validation(
         environment,
         agent,
@@ -407,6 +448,47 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> ValidationS
         message=message,
         proved=counted[0],
         total=counted[1],
+    )
+
+
+class RunningValidation(TypedDict):
+    """The default pair's validation still running, and what a Validate of the cases not yet proved would do."""
+
+    job_id: str | None
+    # The cases it proves; None when it proves every case.
+    scenario_keys: list[str] | None
+    to_prove: int
+    message: str | None
+
+
+def running_validation(environment: HostedHarnessJob) -> RunningValidation:
+    """The validation still running on the default pair, the one a Validate press would return, so a page opened
+    after it started follows it; and how many cases a Validate of those not yet proved would prove, saying why when
+    none."""
+    from simulate.models import HarnessAssembledBundle
+    from simulate.services.harness_versioning import validation
+
+    agent, environment_version, suite_version = resolve_versions(environment, {})
+    if agent is None or environment_version is None or suite_version is None:
+        return RunningValidation(
+            job_id=None, scenario_keys=None, to_prove=0, message=None
+        )
+    bundles = HarnessAssembledBundle._base_manager.filter(
+        job_id=environment.id,
+        agent_version_id=agent.id,
+        environment_version_id=environment_version.id,
+        suite_version_id=suite_version.id,
+    ).values_list("id", flat=True)
+    job = next(
+        (one for one in map(validation.live_check, bundles) if one is not None), None
+    )
+    needed, live = _to_prove(environment, agent, environment_version, suite_version)
+    metadata = ((job.payload or {}).get("metadata") or {}) if job is not None else {}
+    return RunningValidation(
+        job_id=str(job.id) if job is not None else None,
+        scenario_keys=list(metadata.get("scenario_keys") or []) or None,
+        to_prove=len(needed),
+        message=None if needed else nothing_to_prove(live),
     )
 
 
