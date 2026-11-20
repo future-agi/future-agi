@@ -342,7 +342,11 @@ describe("ConsoleTurn new step kinds", () => {
       onSubmit: vi.fn(),
     });
     const args = JSON.stringify(
-      { judged: "Pass when: on topic\nFail when: invents arcs", scope: "x" },
+      {
+        judged: "Pass when: on topic\nFail when: invents arcs",
+        scope: "agent_response",
+        verifier: "llm",
+      },
       null,
       2,
     );
@@ -361,6 +365,8 @@ describe("ConsoleTurn new step kinds", () => {
       }),
     ).toBeInTheDocument();
     expect(container).not.toHaveTextContent("\\n");
+    expect(screen.getByText("Agent response")).toBeInTheDocument();
+    expect(screen.getByText("LLM")).toBeInTheDocument();
     expect(screen.getByText("Yes, make this change")).toBeInTheDocument();
 
     const broken = 'Confirm this change: add_rule { "rule": "cut off';
