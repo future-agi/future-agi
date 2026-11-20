@@ -17,6 +17,12 @@ from uuid import uuid4
 import django
 import psycopg
 import pytest
+
+if os.environ.get("ATT_SCHEMA_REVIEW_ISOLATED") != "1":
+    pytest.skip(
+        "isolated PostgreSQL schema qualification; run with ATT_SCHEMA_REVIEW_ISOLATED=1",
+        allow_module_level=True,
+    )
 from django.conf import settings
 from django.db import IntegrityError, OperationalError, connections, models
 from django.db.migrations.recorder import MigrationRecorder

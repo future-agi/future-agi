@@ -29,6 +29,35 @@ DEPLOY.md "Attachments: database fences".
 
 from django.db import migrations
 
+# Deliberately leaves human review fields blank until migration review.
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_attachmentscope",
+        "postgres:tracer_attachment",
+        "postgres:tracer_attachmentblob",
+        "postgres:tracer_attachmentoccurrence",
+        "postgres:tracer_attachmentupload",
+        "postgres:tracer_capturesession",
+        "postgres:tracer_uploadreservation",
+        "postgres:tracer_attachmentoutbox",
+        "postgres:tracer_attachmentwritegrant",
+    ],
+    "mitigation": (
+        "0136 creates these tables empty before this migration runs. This migration "
+        "only installs trigger functions and row triggers; it does not rewrite or "
+        "backfill existing data. The reverse operation drops those triggers and "
+        "functions, so rollback removes the fences without dropping the tables. "
+        "Run the migration with the attachment writers quiesced and rehearse the "
+        "trigger behavior on a representative large-volume database before rollout."
+    ),
+    "reviewer": "",
+    "review": "",
+    "large_volume_rehearsal": True,
+}
+
+
 FORWARD = r"""
 CREATE FUNCTION attachment_scope_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

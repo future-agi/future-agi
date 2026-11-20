@@ -690,6 +690,76 @@ jobs:
             *) echo "::error::Docker Hub answered HTTP ${code}; re-run the job"; exit 1 ;;
           esac
 
+
+  attachment-schema-isolated:
+    name: Attachment schema qualification
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_tfc"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      PG_HOST: 127.0.0.1
+      PG_PORT: "5432"
+      PG_USER: test_user
+      PG_PASSWORD: test_password
+      PG_DB: test_tfc
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install decoder sandbox and its per-app user namespace policy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap apparmor apparmor-utils
+          sudo tee /etc/apparmor.d/usr.bin.bwrap >/dev/null <<'EOF'
+          #include <tunables/global>
+          /usr/bin/bwrap flags=(attach_disconnected) {
+            userns,
+            /usr/bin/bwrap mr,
+            /usr/bin/prlimit rix,
+            /usr/bin/python3 rix,
+            /usr/** r,
+            /lib/** r,
+            /lib64/** r,
+            /proc/** r,
+            /tmp/** rw,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/usr.bin.bwrap
+      - name: Install backend dependencies
+        run: uv sync --frozen --all-extras
+      - name: Run isolated schema review module
+        env:
+          ATT_SCHEMA_REVIEW_ISOLATED: "1"
+          PG_TEST_DB_PREFIX: test_att_review_schema_ci_
+        run: uv run pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_simplify_review_schema_postgres.py -q
+      - name: Run completed import binding module
+        env:
+          ATT_SCHEMA_REVIEW_ISOLATED: "1"
+          PG_TEST_DB_PREFIX: test_att_import_binding_
+        run: uv run pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_completed_import_binding_postgres.py -q
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
     needs:
@@ -698,6 +768,7 @@ jobs:
         update-safety,
         plan,
         test,
+        attachment-schema-isolated,
         saml-multiworker,
         agentic-eval,
         slim-smoke,
