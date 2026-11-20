@@ -1,0 +1,5 @@
+# F6's outbound client can reach app:8000 and app:4318 on the internal network.
+# Do not configure callback URLs, advertise native tests or start native-runtime.
+services:
+  app:
+    networks: !override [default, link-public, native-net]

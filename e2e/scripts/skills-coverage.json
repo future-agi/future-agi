@@ -1,0 +1,85 @@
+{
+  "host": [
+    "OBS-E2E-063",
+    "OBS-E2E-064",
+    "SKILLS-E2E-001",
+    "SKILLS-E2E-002",
+    "SKILLS-E2E-003",
+    "SKILLS-E2E-010",
+    "SKILLS-E2E-011",
+    "SKILLS-E2E-012",
+    "SKILLS-E2E-013",
+    "SKILLS-E2E-014",
+    "SKILLS-E2E-020",
+    "SKILLS-E2E-021",
+    "SKILLS-E2E-030",
+    "SKILLS-E2E-040",
+    "SKILLS-E2E-041",
+    "SKILLS-E2E-050",
+    "SKILLS-E2E-060",
+    "SKILLS-E2E-062",
+    "SKILLS-E2E-101",
+    "SKILLS-E2E-103",
+    "SKILLS-E2E-104",
+    "SKILLS-E2E-105",
+    "SKILLS-E2E-107",
+    "SKILLS-E2E-109",
+    "SKILLS-E2E-110",
+    "SKILLS-E2E-111",
+    "SKILLS-E2E-112",
+    "SKILLS-E2E-113",
+    "SKILLS-E2E-114",
+    "SKILLS-E2E-115",
+    "SKILLS-E2E-116",
+    "SKILLS-E2E-117",
+    "SKILLS-E2E-118",
+    "SKILLS-E2E-119",
+    "harness/skills-r3/r7-contexts-capture.spec.ts › R7 context surface states"
+  ],
+  "typescript": [
+    "SKILLS-E2E-106",
+    "SKILLS-E2E-131"
+  ],
+  "campaign-executor": [
+    "SKILLS-E2E-051"
+  ],
+  "campaign-sdk": [
+    "SKILLS-E2E-052",
+    "SKILLS-E2E-053"
+  ],
+  "campaign-cold": [
+    "SKILLS-E2E-054"
+  ],
+  "campaign-configured": [
+    "SKILLS-E2E-055"
+  ],
+  "native": [
+    "SKILLS-E2E-022",
+    "SKILLS-E2E-108"
+  ],
+  "registered-recovery": [
+    "SKILLS-E2E-063"
+  ],
+  "private-harnesses": [
+    "harness/skills-r3/j3-driver-fixture.spec.ts › J3 driver initial condition: three v1 parents over a v7 shared policy",
+    "harness/skills-r3/j4-driver.spec.ts › J4 registered driver retains honest cold and configured reports"
+  ],
+  "install-turn": [
+    "SKILLS-E2E-130"
+  ],
+  "campaign-registered-056": [
+    "SKILLS-E2E-056"
+  ],
+  "campaign-registered-057": [
+    "SKILLS-E2E-057"
+  ],
+  "campaign-registered-058": [
+    "SKILLS-E2E-058"
+  ],
+  "campaign-registered-059": [
+    "SKILLS-E2E-059"
+  ],
+  "application": [
+    "SKILLS-E2E-061"
+  ]
+}

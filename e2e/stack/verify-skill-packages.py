@@ -46,8 +46,17 @@ def verify(dist, lock_sha, sources):
     return artifacts
 
 
-def stage(dist, root, artifacts):
+def verify_sums(dist, artifacts):
+    sums = dist / "SHA256SUMS"
+    expected = sorted(f"{record['sha256']}  {record['file']}" for record in artifacts.values())
+    if sums.is_symlink() or sorted(sums.read_text().splitlines()) != expected:
+        raise ValueError("SHA256SUMS does not match the verified pair")
+
+
+def stage(dist, root, artifacts, *, typescript_only=False):
     for directory in sorted({directory for directory, _ in ROLES.values()}):
+        if typescript_only and directory != ROLES["sdk_ts"][0]:
+            continue
         target = root / directory
         if target.is_symlink():
             raise ValueError(f"Use a real staging directory: {directory}")
@@ -78,9 +87,13 @@ if __name__ == "__main__":
     for component in ("product", "sdk", "traceai"):
         parser.add_argument(component)
     parser.add_argument("--stage", type=Path)
+    parser.add_argument("--typescript-only", action="store_true", help="stage only the verified npm archives")
+    parser.add_argument("--require-sums", action="store_true", help="require the source build SHA256SUMS")
     args = parser.parse_args()
     items = verify(args.dist, args.sha256, {k: getattr(args, k) for k in ("product", "sdk", "traceai")})
+    if args.require_sums:
+        verify_sums(args.dist, items)
     if args.stage is not None:
-        stage(args.dist, args.stage, items)
+        stage(args.dist, args.stage, items, typescript_only=args.typescript_only)
     for role in ("sdk_python", "traceai_python"):
         print(items[role]["file"])

@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Cloud-only. Prepare the standalone components BEFORE bin/e2e up; never source a developer .env.
+# Cloud-only. Prepare clients BEFORE bin/e2e up; never source a developer .env.
 # E2E_STACK=standalone bin/e2e build standalone
-# Both modes require the three expected component SHAs and the independent pair-lock digest.
+# All modes require the three expected component SHAs and the independent pair-lock digest.
 # `interpreters` prints the two interpreter exports for Playwright's Python flows.
 set -euo pipefail
-[[ $(uname -s) == Linux && ${E2E_STACK:-} == standalone ]] || { echo 'Requires a Linux standalone E2E lane' >&2; exit 2; }
+[[ $(uname -s) == Linux ]] || { echo 'Requires a Linux E2E lane' >&2; exit 2; }
+case "${1:-}:${E2E_STACK:-distributed}" in
+  interpreters:distributed|interpreters:standalone|packages:standalone|typescript:standalone) ;;
+  *) echo 'Expected interpreters (distributed or standalone), packages or typescript (standalone only)' >&2; exit 2 ;;
+esac
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
 stack=e2e/stack
@@ -18,14 +22,22 @@ case ${1:-} in
     [[ ! -e "$envdir" ]] || { echo 'Choose a new interpreter directory' >&2; exit 2; }
     wheels=$("${verify[@]}")
     mapfile -t names <<< "$wheels"
-    mkdir -m 700 -p "$envdir"
+    (umask 077; mkdir -p "$envdir")
     envdir=$(cd "$envdir" && pwd)
     for mode in traced plain; do uv venv --python 3.11 "$envdir/$mode"; done
     wheel="$dist/${names[0]}"
     uv pip install --python "$envdir/traced/bin/python" "${wheel}[otel]" "$dist/${names[1]}" httpx
     uv pip install --python "$envdir/plain/bin/python" "$wheel" httpx
     "$envdir/plain/bin/python" -I -c 'import importlib.util; assert importlib.util.find_spec("opentelemetry") is None'
+    "$envdir/traced/bin/python" -I -c 'from fi.telemetry import agent_scope; from fi_instrumentation.otel import HTTPSpanExporter, register'
+    if [[ -n ${GITHUB_ENV:-} ]]; then
+      printf 'SKILL_TRACES_PYTHON=%s\nSKILL_TRACES_NO_OTEL_PYTHON=%s\n' "$envdir/traced/bin/python" "$envdir/plain/bin/python" >> "$GITHUB_ENV"
+    fi
     printf 'export SKILL_TRACES_PYTHON=%q SKILL_TRACES_NO_OTEL_PYTHON=%q\n' "$envdir/traced/bin/python" "$envdir/plain/bin/python"
+    ;;
+  typescript)
+    "${verify[@]}" --stage "$root/$stack" --typescript-only >/dev/null
+    bin/e2e compose build skills-ts-runtime
     ;;
   packages)
     "${verify[@]}" --stage "$root/$stack" >/dev/null
