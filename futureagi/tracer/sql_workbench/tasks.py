@@ -16,7 +16,8 @@ from .catalog import (
     EvalConfigLimitExceeded,
     additional_table_filters,
 )
-from .compiler import compile_query
+from .compiler import UnsafeQuery, compile_query
+from .errors import clickhouse_code, user_message
 from .runner import QueryCancelled, QueryDeadlineExpired, QueryUnavailable, run
 from .service import (
     EXECUTION_SECONDS,
@@ -121,16 +122,27 @@ def execute_sql(job_id):
     except Exception as exc:
         # Driver exceptions may contain physical schema, SQL and literal values.
         # Do not return or log that text. Job ids provide safe audit correlation.
+        # Typed workbench errors carry reviewed text; a ClickHouse failure is
+        # classified by its integer code alone, naming at most an identifier
+        # the user typed (job.sql, never the compiled query).
         message = (
             str(exc)
             if isinstance(
-                exc, QueryUnavailable | CatalogUnavailable | EvalConfigLimitExceeded
+                exc,
+                QueryUnavailable
+                | CatalogUnavailable
+                | EvalConfigLimitExceeded
+                | UnsafeQuery,
             )
-            else "Query failed or reached a resource limit. Narrow the window or simplify the query."
+            else user_message(exc, job.sql)
         )
         logger.warning(
             "SQL job failed",
-            extra={"query_id": str(job.id), "error_type": type(exc).__name__},
+            extra={
+                "query_id": str(job.id),
+                "error_type": type(exc).__name__,
+                "clickhouse_code": clickhouse_code(exc),
+            },
         )
         SQLExecution.objects.filter(id=job_id, state="running").update(
             state="failed",
