@@ -34,9 +34,6 @@ from simulate.tests.test_harness_readiness import (
     _pairing,
     _rows,
 )
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixtures
-    readiness_on as readiness_on,
-)
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
@@ -45,7 +42,7 @@ from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
 )
 from simulate.tests.test_harness_readiness_fix import STATE_MESSAGE
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 ROUTING_MESSAGE = (
     "issue_refund failed its probe in the test world: fix issue_refund in the test"
@@ -228,7 +225,7 @@ class TestStart:
         fix = response.json()["fix"]
         assert (fix["state"], fix["rows"]) == ("queued", ["tool_routing", "state"])
         assert fix["queue"] == [
-            {"message": "Controlled tool routing, Seeded world state"}
+            {"message": "Tool calls stay in the test, Starting records"}
         ]
         assert (fix["saved"], fix["draft"], fix["error"]) == (None, False, None)
         run = _run(environment)
@@ -257,8 +254,8 @@ class TestStart:
         assert fix["rows"] == ["tool_routing", "state", "reset"]
         assert fix["queue"] == [
             {
-                "message": "Controlled tool routing, Seeded world state, World resets"
-                " between cases"
+                "message": "Tool calls stay in the test, Starting records, Starts fresh"
+                " for each case"
             }
         ]
         assert [one["state"] for one in fix["lines"]] == ["queued"] * 3
@@ -370,7 +367,7 @@ class TestAppend:
 
         fix = _post(auth_client, environment.id, rows=["tool_routing"]).json()["fix"]
 
-        assert fix["queue"] == [{"message": "Controlled tool routing"}]
+        assert fix["queue"] == [{"message": "Tool calls stay in the test"}]
 
     @pytest.mark.parametrize("state", ["saving", "checking"])
     def test_refused_while_the_run_saves(
@@ -482,7 +479,7 @@ class TestAppend:
         assert run.commands[1]["state"] == "settled"
         assert run.commands[1]["settled_at"] is None
         assert run.commands[1]["outcome"]["turn"] == "not_needed"
-        assert fix["queue"] == [{"message": "Seeded world state"}]
+        assert fix["queue"] == [{"message": "Starting records"}]
         assert fix["rows"] == ["state", "reset"]
 
     def test_a_gate_only_post_replays_unchanged(

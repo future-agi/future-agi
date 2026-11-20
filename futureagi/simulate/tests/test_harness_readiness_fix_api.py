@@ -15,9 +15,6 @@ from simulate.models import (
 )
 from simulate.services.harness_readiness import fix_driver, fix_save
 from simulate.tests.test_harness_readiness import _get
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixtures
-    readiness_on as readiness_on,
-)
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
@@ -45,7 +42,7 @@ from simulate.tests.test_harness_readiness_fix_save import (
     _write_and_settle,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 
 class TestFlow:

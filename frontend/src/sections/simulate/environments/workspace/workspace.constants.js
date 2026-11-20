@@ -15,6 +15,7 @@ export const WORKSPACE_TABS = [
     label: "Contract",
     icon: "solar:document-text-linear",
   },
+  { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
     label: "Scenarios",
@@ -36,7 +37,7 @@ export const WORKSPACE_TABS = [
   // Shown only once the environment has a fix (Fix my agent).
   {
     id: "improvements",
-    label: "Improvements",
+    label: "Epochs",
     icon: "solar:magic-stick-3-linear",
     badge: "improvements",
   },
@@ -180,6 +181,7 @@ export const WORKSPACE_COPY = {
 // environment, what changed in each, and which scenarios a suite version holds.
 export const VERSIONS_COPY = {
   title: "Versions",
+  savedWithoutCheck: "Saved without a check",
   subtitle:
     "Every change to the agent, the environment or its scenarios is kept as a version. Runs replay the default environment and scenario versions.",
   pieces: {
@@ -211,6 +213,7 @@ export const VERSIONS_COPY = {
     agent_payload: "Settings changed",
     credentials: "Credentials changed",
     provider_sync: "Synced from provider",
+    fix: "Epoch",
   },
   by: (name) => `by ${name}`,
   // Making a version the default; the move itself rebuilds nothing.
@@ -249,6 +252,9 @@ export const VERSIONS_COPY = {
     fields: "Contract fields changed",
     modality: "Modality",
     subGoals: "Sub-goals",
+    actors: "Actors",
+    actorsUnknown:
+      "Actors of one of these versions aren't known, so actor changes aren't shown.",
     files: "World files",
     filesUnknown:
       "World files of the earlier version aren't known, so file changes aren't shown.",
@@ -426,14 +432,22 @@ export const AGENT_VERSIONS_COPY = {
 
 export const RUN_DIALOG_COPY = {
   title: "Run simulation",
+  seed: "Seed (optional)",
+  seedLine: "Seed",
+  seedNew: "New seed",
+  edit: "Edit",
+  done: "Done",
+  seedHelp: "The same seed draws the same personas and variations again",
   default: "default",
   none: "None yet",
   unlabelled: "Unnumbered version",
   loading: "Loading versions…",
   loadError: "Couldn't load the versions. The run uses the current defaults.",
   disabled: "Versioning is switched off, so the run uses the current versions.",
-  checking: "Checking these versions…",
-  planError: "Couldn't check these versions for warnings.",
+  checking: "Checking these versions and what the run would block…",
+  planError:
+    "Couldn't check these versions and what the run would block. The run can still start; a blocked one is refused.",
+  retryPlan: "Try again",
   refused: "These versions can't run.",
   // Refusals whose words are ours, by code; any other shows the server's.
   errors: {
@@ -459,6 +473,17 @@ export const RUN_DIALOG_COPY = {
   notInSuite: (keys, suite) =>
     `${keys.length} selected scenario${keys.length === 1 ? " isn't" : "s aren't"} in ${suite} and will be skipped: ${keys.join(", ")}`,
   trials: (n) => `${n} repeat${n === 1 ? "" : "s"} each.`,
+  heldBack: (n, tools) =>
+    n
+      ? `${n} scenario${n === 1 ? "" : "s"} held back: ${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production`
+      : `${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production, so this test blocks ${tools.length === 1 ? "its" : "their"} calls`,
+  details: "Details",
+  hideDetails: "Hide details",
+  blockedTool: (tool) =>
+    `Blocked: ${tool} reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it.`,
+  usedBy: (names) => `Scenarios that use it: ${names.join(", ")}.`,
+  allBlocked: (tools) =>
+    `Every selected scenario needs ${tools.join(", ")}, which this test blocks. Serve it from the agent's tools service or remove it, then run again.`,
   cancel: "Cancel",
   run: "Run",
   runAnyway: "Run anyway",
@@ -488,6 +513,18 @@ export const DRAFTS_COPY = {
     `These unsaved changes started from ${piece} ${from || "an earlier version"}; it is now ${now || "a newer version"}. Discard them, or ask chat to make them again on the current version.`,
   busy: "Chat is working; save when it finishes",
   saveError: "Couldn't save the changes. Try again in a moment.",
+  validate: "Validate",
+  versionName: "Name this version",
+  validating: "Validating changes",
+  validateError: "Couldn't start validating. Try again in a moment.",
+  validation: {
+    retry: "Validation did not start. Try again",
+    superseded: "The environment changed while validating. Validate again",
+    failed: (n) =>
+      `Validation failed. ${plural(n, "scenario")} need${n === 1 ? "s" : ""} a change`,
+    check_unavailable:
+      "The check is unavailable on our side, so this saves without a check. Re-check the pairing once it is back.",
+  },
   discardError: "Couldn't discard the changes. Try again in a moment.",
   errors: {
     draft_changed:
@@ -502,6 +539,11 @@ export const DRAFTS_COPY = {
     draft_not_found: "These changes were already saved or discarded.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
+    validation_required: "Validate these reviewed changes, then save them.",
+    scenario_index_mismatch:
+      "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
+    change_depends_on_rejected:
+      "An accepted change needs one that was rejected. Accept both or reject both, then save again.",
   },
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",
@@ -575,6 +617,8 @@ export const COMPARE_COPY = {
     not_applicable: "n/a",
     criteria_changed: "criteria changed",
   },
+  notComparable: (count) =>
+    `${count} trial${count === 1 ? "" : "s"} left out: ${count === 1 ? "it" : "they"} did not start from the seeded records, so ${count === 1 ? "it" : "they"} cannot show whether results repeat.`,
 };
 
 // The run's agent is not the one its environment version was built with.

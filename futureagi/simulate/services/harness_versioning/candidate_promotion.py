@@ -30,7 +30,6 @@ from simulate.services.harness_versioning.candidate_sets import (
     unavailable_on_our_side,
     version_id_of,
 )
-from simulate.services.harness_versioning.candidates import edits_moved
 from simulate.services.harness_versioning.draft_pieces import (
     DRAFT_PIECES,
     active_twin,
@@ -40,24 +39,20 @@ from simulate.services.harness_versioning.draft_pieces import (
     version_error,
 )
 from simulate.services.harness_versioning.drafts import (
+    edits_moved,
+    make_defaults,
     remember_save,
     replayed_save,
-    require_chat_idle,
+    require_idle,
     require_no_fix_waiting,
-    require_no_rebuild,
     retire_chat_runtime,
     saved_body,
 )
 from simulate.services.harness_versioning.review_saved import name_saved
 from simulate.services.harness_versioning.versions import (
-    add_members,
     lock_environment,
-    member_rows,
     next_number,
-    note_revision,
     pair_archive,
-    require_not_busy,
-    set_defaults,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -96,13 +91,9 @@ def _promote(
     if version.status != VersionStatus.CANDIDATE:
         raise _not_validated()
     model = piece_model(piece)
-    twin = active_twin(model, locked, version)
+    twin = active_twin(model, locked, version.hash, version.hash_kind)
     if twin is not None:
-        version.status, version.discard_reason = (
-            VersionStatus.DISCARDED,
-            DiscardReason.SUPERSEDED,
-        )
-        version.save(update_fields=["status", "discard_reason", "updated_at"])
+        discard_version(version, reason=DiscardReason.SUPERSEDED)
         return twin, False
     version.status = VersionStatus.ACTIVE
     version.version_number = next_number(model, locked)
@@ -145,10 +136,8 @@ def promote_candidates(
         replayed = replayed_save(locked, idempotency_key, request=request)
         if replayed is not None:
             return replayed
-        require_not_busy(locked, "environment")
-        require_no_rebuild(locked, piece="environment")
+        require_idle(locked, "environment")
         require_no_fix_waiting(locked)
-        require_chat_idle(locked)
         entry = live_set(locked)
         if entry is None or any(
             str(candidates.get(f"{piece}_version_id") or "")
@@ -227,12 +216,6 @@ def _promote_set(
         environment_version=environment_version,
         uncertified=not certified,
     )
-    if created_suite:
-        # Paired while the old suite is still the default, as a recorded save pairs.
-        add_members(
-            suite_version,
-            member_rows(locked, (suite_version.documents or {}).get("scenarios") or []),
-        )
     targets = {"environment": environment_version, "suite": suite_version}
     moved = {
         piece
@@ -240,24 +223,26 @@ def _promote_set(
         if targets[piece].id != getattr(locked, f"{piece}_version_id")
     }
     if moved:
+        from simulate.services.harness_agent_versions import fill_agent_pin
+
+        # A save made before its environment was pinned is the pin's version.
+        fill_agent_pin(locked)
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
         metadata.pop(VALIDATION_KEY, None)
-        pair = pair_archive(
-            locked, metadata, environment_version, suite_version, sorted(moved)[0]
-        )
-        set_defaults(
+        # The validated bundle is this pair's runnable archive.
+        make_defaults(
             locked,
-            payload,
-            metadata,
-            environment_version,
-            suite_version,
-            pair,
-            pieces=moved,
+            targets,
+            pair=pair_archive(
+                locked, metadata, environment_version, suite_version, sorted(moved)[0]
+            ),
+            payload=payload,
+            metadata=metadata,
+            created_suite=suite_version if created_suite else None,
+            moved=moved,
             outgoing_agent_version_id=locked.agent_version_id,
         )
-        for version in targets.values():
-            note_revision(version, pair.revision)
     else:
         store_set(locked, None)
     created = {"environment": created_environment, "suite": created_suite}
@@ -303,7 +288,8 @@ def discard_expired_candidates(*, now: datetime | None = None) -> int:
             keep: set[str] = set()
             if entry is not None and datetime.fromisoformat(entry["at"]) >= cutoff:
                 keep = {entry["environment_version_id"], entry["suite_version_id"]}
-            elif entry is not None:
+            elif ((locked.payload or {}).get("metadata") or {}).get(VALIDATION_KEY):
+                # Expired, or not a whole set: either way nothing can be saved from it.
                 store_set(locked, None)
             for piece in DRAFT_PIECES:
                 expired += (

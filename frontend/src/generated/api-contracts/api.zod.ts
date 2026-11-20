@@ -44828,6 +44828,13 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
               .describe(
                 "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
               ),
+            message: zod
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "What a builder fix sends to the builder chat; null for the others.",
+              ),
           }),
           checked_at: zod.string().min(1),
         })
@@ -45435,6 +45442,13 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
                 })
                 .describe(
                   "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+                ),
+              message: zod
+                .string()
+                .min(1)
+                .optional()
+                .describe(
+                  "What a builder fix sends to the builder chat; null for the others.",
                 ),
             }),
             checked_at: zod.string().min(1),
@@ -66590,6 +66604,13 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                     })
                     .describe(
                       "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+                    ),
+                  message: zod
+                    .string()
+                    .min(1)
+                    .optional()
+                    .describe(
+                      "What a builder fix sends to the builder chat; null for the others.",
                     ),
                 }),
                 checked_at: zod.string().min(1),

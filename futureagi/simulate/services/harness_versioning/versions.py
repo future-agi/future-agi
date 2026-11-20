@@ -113,6 +113,10 @@ def versioning_enabled() -> bool:
     return bool(getattr(settings, "HARNESS_VERSIONING_ENABLED", False))
 
 
+def actors_enabled() -> bool:
+    return bool(getattr(settings, "HARNESS_ACTORS_ENABLED", False))
+
+
 def environment_head(job: HostedHarnessJob) -> HostedHarnessJob | None:
     """The environment a job belongs to, read fresh; ``None`` once it is deleted."""
     return (
@@ -199,14 +203,53 @@ def _stage_outputs(pair_body: bytes) -> list[dict[str, Any]]:
     return authoring_stage_outputs_from_archive(pair_body)
 
 
+def run_contract(
+    job: HostedHarnessJob,
+    split: archives.SplitArchive,
+    *,
+    built: bool,
+    full_build: bool = True,
+) -> dict[str, Any]:
+    """The contract a version runs with, as its readers show it; recorded beside the authored one, which diffs
+    compare.
+
+    A build can amend the authored contract while it builds (a tool served from the agent's tools service instead
+    of imported, say) and seals the amended one, so a version a full build sealed from this tree has the sealed
+    contract. A save (``full_build`` False) reseals, and any other version records, the author's entries again, so
+    each tool it did not change is reached as the default version runs it, recorded here so a later read stops at
+    this version instead of walking back through its ancestry.
+    """
+    from simulate.selectors.environment_documents import (
+        reach_as_built,
+        version_contract,
+    )
+
+    default = job.environment_version
+    authored = _json(split.environment, "contract.json")
+    authored = authored if isinstance(authored, dict) else {}
+    sealed = _json(split.sealed, archives.SEALED_CONTRACT) if built else None
+    if isinstance(sealed, dict) and sealed:
+        return sealed if full_build else reach_as_built(job, sealed, authored, default)
+    if default is not None and default.contract_hash_raw == hashing.contract_hash_raw(
+        split.environment
+    ):
+        inherited = version_contract(job)
+        if inherited:
+            return inherited
+    return reach_as_built(job, authored, authored, default)
+
+
 def prepare_pieces(
     job: HostedHarnessJob,
     split: archives.SplitArchive,
     *,
     outputs: list[dict[str, Any]],
     authoring_revision: str,
+    built: bool = False,
+    full_build: bool = True,
 ) -> Pieces:
-    """Pack, key and hash both pieces and their readable documents; stores nothing."""
+    """Pack, key and hash both pieces and their readable documents; stores nothing. ``built``: the archive's sealed
+    bundle was sealed from this tree, by a full build unless ``full_build`` is False (a save's reseal)."""
     payload = job.payload or {}
     connector = str((payload.get("agent") or {}).get("connector") or "")
     environment_body = archives.pack_archive(split.environment)
@@ -216,10 +259,13 @@ def prepare_pieces(
     )
     suite_key = archives.suite_key(job.organization_id, job.id, suite_body)
     contract = _json(split.environment, "contract.json") or {}
+    runs_with = run_contract(job, split, built=built, full_build=full_build)
     sub_goals = _sub_goals(split.environment)
     scenarios = suite_documents(split.suite)
     environment_documents = {
         "contract": contract,
+        # Only where it differs from the authored contract, so a version's diff still compares authored ones.
+        **({"run_contract": runs_with} if runs_with != contract else {}),
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
         "actor_digests": hashing.actor_digests(split.environment),
@@ -574,6 +620,16 @@ def suite_change(
     return diff, diffs.summarize_suite(diff)
 
 
+def proof_passes(entry: object) -> bool:
+    """Whether a saved proof counts as proved: only a format-2 proof that ran says so. An older entry's `holds` was
+    never a proof of the checks (its case reads Kept as written)."""
+    return (
+        isinstance(entry, Mapping)
+        and entry.get("format") == 2
+        and entry.get("proved") is True
+    )
+
+
 def _carried_proofs(
     environment_version: HarnessEnvironmentVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],
@@ -726,7 +782,12 @@ def record_authoring(
     pair_key = archives.pair_key(job.organization_id, job.id, pair_body)
     revision = authoring_content_digest(pair_body)
     pieces = prepare_pieces(
-        job, split, outputs=_stage_outputs(pair_body), authoring_revision=revision
+        job,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision=revision,
+        # Only a build seals this archive's own bundle; an edit carries an older one.
+        built=origin in PROVED_ORIGINS and SEALED_MANIFEST in split.sealed,
     )
     if origin in USER_ORIGINS:
         # Refused before anything is uploaded; checked again under the lock below.
@@ -1307,9 +1368,8 @@ def _move_agent_default(
     )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.validation import (
-        agent_move,
         drop_waiting_moves,
-        start_validation,
+        gate_agent_move,
     )
 
     # Locked, so a concurrent discard sees this move before its in-use check.
@@ -1327,15 +1387,8 @@ def _move_agent_default(
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
     version = AgentVersion.no_workspace_objects.get(id=version_id)
-    validation = start_validation(
-        locked,
-        version,
-        locked.environment_version,
-        locked.suite_version,
-        purpose="agent_move",
-        move=agent_move("hand", locked, version, user=user),
-    )
-    if validation is not None and not validation.ready:
+    validation = gate_agent_move("hand", locked, version, user=user)
+    if validation is not None:
         # Moved by the validation once the pairing passes; shown on the version.
         _record_activation(version.id, {str(locked.id): "validating"})
         return locked, validation
@@ -1546,7 +1599,7 @@ def move_default(
     """
     from simulate.services.harness_readiness import fix_runs
     from simulate.services.harness_versioning.drafts import require_no_rebuild
-    from simulate.services.hosted_harness import _not_pickable
+    from simulate.services.hosted_harness import not_pickable
 
     if piece == "agent":
         return move_agent_default(
@@ -1559,11 +1612,16 @@ def move_default(
         require_no_rebuild(locked, piece=piece)
         # Autosave moves defaults through set_defaults, not here.
         fix_runs.require_no_active_fix(locked)
-        version = model.no_workspace_objects.filter(
+        versions = model.no_workspace_objects.filter(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
-        ).first()
+        )
+        if piece == "suite":
+            # A suite version private to a fix never becomes the default. The model is
+            # HarnessSuiteVersion here; mypy checks the lookup on both models.
+            versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
+        version = versions.first()
         if version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         current = getattr(locked, f"{piece}_version")
         # A repeated click after the move succeeded is the same no-op.
         if current is not None and current.id == version.id:
@@ -1588,7 +1646,7 @@ def move_default(
                 details={"piece": piece},
             )
         if environment_version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
         pair = pair_archive(locked, metadata, environment_version, suite_version, piece)

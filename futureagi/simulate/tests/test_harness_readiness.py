@@ -21,9 +21,13 @@ from simulate.serializers.harness_environment import (
 )
 from simulate.services import harness_readiness
 from simulate.services.agent_setup import store_agent
+from simulate.services.harness_readiness import catalogue as catalogue_module
 from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import report as report_module
+from simulate.services.harness_readiness import selection as selection_module
+from simulate.services.harness_tool_reach import production_only_reason
 from simulate.services.harness_versioning import archives, assembly
+from simulate.services.harness_versioning import validation as validation_module
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import (
@@ -44,7 +48,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
 )
 from simulate.tests.test_harness_versioning_runs import _run
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 BASE = "/simulate/api/harness-environments"
 PASSED = {
@@ -68,7 +72,12 @@ ACTIONS = [
 PRODUCTION_ONLY = {
     "tool_entrypoints": [{"tool": "issue_refund", "mode": "in_process"}],
     "dependencies": [
-        {"name": "payments", "engine": "", "reached": {}, "used_by": ["issue_refund"]}
+        {
+            "name": "payments",
+            "engine": "",
+            "reached": {"host": "api.payments.example"},
+            "used_by": ["issue_refund"],
+        }
     ],
 }
 
@@ -88,14 +97,6 @@ OWN_TOOLS_SERVICE = {
         }
     ],
 }
-
-
-@pytest.fixture(autouse=True)
-def readiness_on(settings):
-    settings.HARNESS_VERSIONING_ENABLED = True
-    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
-    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
-    cache.clear()
 
 
 def _environment(user, workspace, storage, key):
@@ -141,11 +142,13 @@ def _certify(
     warnings=(),
     routed=None,
     unobserved=(),
+    sealed=None,
 ):
     """Make the pairing of ``agent`` (the default when absent) with the defaults, or
     ``pairing``, a certified bundle holding this certificate, these per-tool and
     per-action files, the tools ``routed`` to the world in qualification (by default
-    each tool whose probe passed or was refused) and these warnings."""
+    each tool whose probe passed or was refused), these warnings and any other
+    ``sealed`` files, by archive path."""
     pairing = pairing or _pairing(environment, agent)
     if routed is None:
         routed = [
@@ -180,6 +183,9 @@ def _certify(
                 if routed
                 else {}
             ),
+            **{
+                path: json.dumps(body).encode() for path, body in (sealed or {}).items()
+            },
         }
     )
     HarnessAssembledBundle._base_manager.update_or_create(
@@ -456,7 +462,7 @@ class TestRows:
             "category": "tool_routing",
             "target": "issue_refund",
             "action": "Point issue_refund at the test world",
-            "would": "issue_refund lands in the test world and its probe passes",
+            "would": "issue_refund lands in the test world and its check passes",
             "recheck": None,
             "message": None,
         }
@@ -552,6 +558,44 @@ class TestRows:
         assert routing["reason_code"] != "production_only"
         assert routing["status"] != "blocked"
 
+    def test_state_the_agent_keeps_in_its_own_process_is_not_production(
+        self, user, workspace, storage
+    ):
+        # Tools that read and write dictionaries in the agent's process: nothing outside the test world is reached.
+        contract = {
+            "tool_entrypoints": [
+                {
+                    "tool": "get_order",
+                    "mode": "import",
+                    "module": "agent",
+                    "callable": "get_order",
+                },
+                {
+                    "tool": "issue_refund",
+                    "mode": "import",
+                    "module": "agent",
+                    "callable": "issue_refund",
+                },
+            ],
+            "dependencies": [
+                {
+                    "kind": "datastore",
+                    "name": "in_memory_store",
+                    "engine": "in_process",
+                    "reached": {"host": "", "port": None, "dsn_env": ""},
+                    "used_by": ["get_order", "issue_refund"],
+                }
+            ],
+        }
+        environment = _environment(user, workspace, storage, "rd-in-process-store")
+        _certify(environment, storage)
+        _built(environment, contract=contract)
+
+        routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["reason_code"] != "production_only"
+        assert routing["status"] != "blocked"
+
     def test_a_named_host_outside_the_compose_app_is_still_production(
         self, user, workspace, storage
     ):
@@ -618,7 +662,7 @@ class TestRows:
             {"kind": "tool", "name": "apply_discount", "result": "failed"}
         ]
 
-    def test_production_only_reads_blocked_in_nikhils_words(
+    def test_production_only_reads_blocked_in_the_plan_words(
         self, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage, "rd-production")
@@ -629,9 +673,8 @@ class TestRows:
 
         assert routing["status"] == "blocked"
         assert routing["reason_code"] == "production_only"
-        assert routing["reason"] == (
-            "Unsupported for this controlled test: issue_refund reaches production"
-        )
+        # The Tools card's sentence, so the two never disagree.
+        assert routing["reason"] == production_only_reason("issue_refund")
         assert routing["targets"] == [
             {"kind": "tool", "name": "issue_refund", "result": "failed"}
         ]
@@ -761,7 +804,7 @@ class TestPairs:
         )
         assert start["stale_because"] is None
         assert start["reason"] == (
-            "Agent preflight failed: Credentials (missing OPENAI_API_KEY)"
+            "Agent start-up check failed: Credentials (missing OPENAI_API_KEY)"
         )
         assert start["fix"]["recheck"] == {
             "scope": "agent",
@@ -811,7 +854,7 @@ class TestPairs:
 
         with (
             patch.object(
-                report_module, "read_evidence", wraps=report_module.read_evidence
+                selection_module, "read_evidence", wraps=selection_module.read_evidence
             ) as read,
             patch.object(harness_readiness, "store_run_snapshot") as stored,
         ):
@@ -850,7 +893,7 @@ class TestPairs:
 
         with (
             patch.object(
-                report_module,
+                selection_module,
                 "read_evidence",
                 side_effect=ConnectionError("storage unreachable"),
             ),
@@ -874,7 +917,7 @@ class TestPairs:
         from simulate.tests.test_harness_versioning_runs import NAMES, _key
 
         with patch.object(
-            report_module,
+            selection_module,
             "read_evidence",
             side_effect=ConnectionError("storage unreachable"),
         ):
@@ -1013,7 +1056,12 @@ class TestApi:
             "rules_version",
             "computed_at",
             "selection",
+            "workers",
+            "blockers",
         }
+        # A single agent declares no workers: no worker rows, and its blockers are its blocked rows.
+        assert body["workers"] == []
+        assert body["blockers"] == body["counts"]["blocked"]
         assert set(body["selection"]) == {
             "suite_total",
             "excluded",
@@ -1024,10 +1072,14 @@ class TestApi:
             "stale",
             "untested",
             "lists",
+            "held_by",
+            "blocking_area",
             "dropped",
             "grading",
             "requirements_recorded",
         }
+        # A single agent's workers hold nothing back.
+        assert body["selection"]["held_by"] == []
         assert set(body["selection"]["lists"]) == {
             "eligible",
             "blocked",
@@ -1107,9 +1159,10 @@ class TestApi:
         assert body["counts"] == {
             "blocked": 0,
             "stale": 0,
-            "untested": 9,
+            "untested": 8,
             "partial": 0,
-            "unavailable": 1,
+            # Sub-agent evidence reads not applicable for an agent that declares no workers.
+            "unavailable": 2,
             "supported": 6,
         }
         assert body["validation"]["state"] == "ready"
@@ -1198,6 +1251,26 @@ class TestApi:
         assert response.json()["validation"]["state"] == "validating"
         assert _row(environment).state == "pending"
 
+    def test_recheck_certifies_again_a_pairing_an_earlier_harness_checked(
+        self, user, workspace, storage, auth_client
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-api-harness")
+        _made_by({"id": _row(environment).id}, harness_version="0.3.0")
+        _certify(environment, storage, agent=a2)
+        _made_by(
+            {"job_id": environment.id, "agent_version_id": a2.id},
+            harness_version="0.3.1",
+        )
+
+        response = _recheck(auth_client, environment.id)
+
+        assert response.status_code == 202, response.content
+        assert response.json()["validation"]["state"] == "validating"
+        assert _row(environment).state == "pending"
+        # The pairing the newer harness checked is reused, not checked again.
+        again = _recheck(auth_client, environment.id, agent_version_id=str(a2.id))
+        assert again.json()["validation"]["state"] == "ready"
+
     def test_recheck_is_unavailable_without_certifying(
         self, user, workspace, storage, auth_client, settings
     ):
@@ -1248,6 +1321,44 @@ class TestApi:
         assert header["capability_snapshot"]["answer"]["kind"] == "ready"
         assert _get(auth_client, environment.id).json()["answer"]["kind"] == "blocked"
 
+    def test_the_run_header_report_has_the_capabilities_report_s_shape(
+        self, user, workspace, storage, auth_client, django_capture_on_commit_callbacks
+    ):
+        """The run dialog and the run header read one report: the run's kept snapshot carries every field and row
+        field GET capabilities serves, less what only a selection adds, and an old snapshot reads the same way."""
+        from simulate.serializers.harness_environment import (
+            HarnessCapabilityReportSerializer,
+        )
+
+        environment = _environment(user, workspace, storage, "rd-api-shape")
+        _certify(environment, storage)
+        run = _committed_run(environment, django_capture_on_commit_callbacks)
+        live = _get(auth_client, environment.id).json()
+
+        def header():
+            return auth_client.get(
+                f"/simulate/v3/test-executions/{run.test_execution_id}/calls/"
+            ).json()["execution"]["capability_snapshot"]
+
+        selection_only = {"needed_by", "affected"}
+        kept = header()
+        assert set(kept) == set(live) - {"selection"}
+        assert [set(row) for row in kept["rows"]] == [
+            set(row) - selection_only for row in live["rows"]
+        ]
+        assert HarnessCapabilityReportSerializer(data=kept).is_valid()
+
+        # A snapshot kept before workers and blockers were read serves them as the report does now.
+        old = {
+            key: value
+            for key, value in run.capability_snapshot.items()
+            if key not in ("workers", "blockers")
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            capability_snapshot=old
+        )
+        assert set(header()) == set(kept)
+
 
 class TestDoneWhen:
     def test_production_only_refund_tool_blocks_routing_then_goes_stale(
@@ -1267,15 +1378,13 @@ class TestDoneWhen:
         routing = rows["tool_routing"]
         assert routing["status"] == "blocked"
         assert routing["reason_code"] == "production_only"
-        assert routing["reason"] == (
-            "Unsupported for this controlled test: issue_refund reaches production"
-        )
+        assert routing["reason"] == production_only_reason("issue_refund")
         assert routing["fix"] == {
             "type": "tool_routing",
             "category": "tool_routing",
             "target": "issue_refund",
             "action": "Point issue_refund at the test world",
-            "would": "issue_refund lands in the test world and its probe passes",
+            "would": "issue_refund lands in the test world and its check passes",
             # Certified already: the fix is a new version, checked on its own.
             "recheck": None,
             "message": None,
@@ -1292,11 +1401,16 @@ class TestDoneWhen:
         assert body["counts"] == {
             "blocked": 1,
             "stale": 0,
-            "untested": 9,
+            "untested": 8,
             "partial": 0,
-            "unavailable": 1,
+            # Sub-agent evidence reads not applicable for an agent that declares no workers and showed none.
+            "unavailable": 2,
             "supported": 5,
         }
+        assert (rows["children"]["status"], rows["children"]["reason_code"]) == (
+            "unavailable",
+            "single_agent",
+        )
 
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             agent_version=a2
@@ -1424,9 +1538,67 @@ class TestReviewFollowUps:
         files, readable = evidence._read_once("harness-sealed/stream/a.tar.gz")
 
         assert (files, readable) == (
-            {"tools": TOOLS, "actions": ACTIONS, "routed": [], "unobserved": []},
+            {
+                "tools": TOOLS,
+                "actions": ACTIONS,
+                "routed": [],
+                "unobserved": [],
+                # No door files in this archive: each reads absent.
+                **dict.fromkeys(
+                    (
+                        "worker_permissions",
+                        "door_outcome",
+                        "worker_limits",
+                        "actions_to_tools",
+                    )
+                ),
+                "door_unreadable": False,
+            },
             True,
         )
+
+    def test_certification_files_after_a_file_larger_than_the_read_limit_are_read(
+        self, storage
+    ):
+        """A bundle member bigger than the certification read limit, sorted before the certification files, is
+        streamed past, never kept, and the files after it are read in full."""
+        import os
+
+        from simulate.services.harness_readiness import evidence
+
+        large = "a-large/world.bin"
+        body = archives.pack_archive(
+            {
+                large: os.urandom(evidence._MAX_CERTIFICATION_BYTES + 1024),
+                harness_readiness.TOOL_CERTIFICATION: json.dumps(
+                    {"tools": TOOLS}
+                ).encode(),
+                harness_readiness.ACTION_CERTIFICATION: json.dumps(
+                    {"actions": ACTIONS}
+                ).encode(),
+            }
+        )
+        storage.objects["harness-sealed/stream/large-first.tar.gz"] = body
+
+        found = archives.stream_members(
+            "harness-sealed/stream/large-first.tar.gz",
+            {
+                large,
+                harness_readiness.TOOL_CERTIFICATION,
+                harness_readiness.ACTION_CERTIFICATION,
+            },
+            evidence._MAX_CERTIFICATION_BYTES,
+        )
+        files, readable = evidence._read_once(
+            "harness-sealed/stream/large-first.tar.gz"
+        )
+
+        assert large not in found
+        assert json.loads(found[harness_readiness.TOOL_CERTIFICATION]) == {
+            "tools": TOOLS
+        }
+        assert readable is True
+        assert (files["tools"], files["actions"]) == (TOOLS, ACTIONS)
 
     def test_an_archive_without_the_certification_files_is_not_read_to_its_end(
         self, storage
@@ -1459,36 +1631,59 @@ class TestReviewFollowUps:
             files, readable = evidence._read_once("harness-sealed/stream/old.tar.gz")
 
         assert (files, readable) == (
-            {"tools": [], "actions": [], "routed": [], "unobserved": []},
+            {
+                "tools": [],
+                "actions": [],
+                "routed": [],
+                "unobserved": [],
+                # No door files in this archive: each reads absent.
+                **dict.fromkeys(
+                    (
+                        "worker_permissions",
+                        "door_outcome",
+                        "worker_limits",
+                        "actions_to_tools",
+                    )
+                ),
+                "door_unreadable": False,
+            },
             True,
         )
         assert sum(read) < len(body) // 4
 
-    def test_a_second_reader_waits_for_the_first_instead_of_downloading(self, storage):
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            {"tools": [], "actions": [], "routed": [], "unobserved": []},
+            ({"tools": []}, True, "extra"),
+            "garbage",
+        ],
+    )
+    def test_a_cached_reading_of_another_shape_is_read_again(self, storage, stored):
         import hashlib
 
         from simulate.services.harness_readiness import evidence
 
-        key = "harness-sealed/stream/busy.tar.gz"
+        key = "harness-sealed/stream/old-shape.tar.gz"
+        storage.objects[key] = archives.pack_archive(
+            {
+                harness_readiness.TOOL_CERTIFICATION: json.dumps(
+                    {"tools": TOOLS}
+                ).encode(),
+            }
+        )
         cache_key = (
             "harness-readiness-certification:"
             + hashlib.sha256(key.encode()).hexdigest()
         )
-        cache.add(cache_key + ":reading", 1)
-        read = ({"tools": TOOLS, "actions": []}, True)
+        # What an earlier release could have left under the same key.
+        cache.set(cache_key, stored)
 
-        def first_reader_finishes(_seconds):
-            cache.set(cache_key, read)
+        files, readable = evidence._read_once(key)
 
-        with (
-            patch.object(evidence.time, "sleep", side_effect=first_reader_finishes),
-            patch.object(evidence.archives, "stream_members") as streamed,
-        ):
-            files = evidence._read_once(key)
-
-        assert files == read
-        assert streamed.call_count == 0
-        cache.delete(cache_key + ":reading")
+        assert readable is True
+        assert files["tools"] == TOOLS
+        cache.delete(cache_key)
 
     def test_a_stored_bundle_keeps_its_certification_files_on_its_row(
         self, user, workspace, storage
@@ -1528,10 +1723,22 @@ class TestReviewFollowUps:
 
         assert bundle.certification_files == {
             "object_key": "harness-sealed/stored/never-read.tar.gz",
+            # Stamped with the current files version, so readiness never reads it again.
+            "files_version": assembly.CERTIFICATION_FILES_VERSION,
             "tools": TOOLS,
             "actions": ACTIONS,
             "routed": [],
             "unobserved": [],
+            # No world door files in this sealed archive.
+            **dict.fromkeys(
+                (
+                    "worker_permissions",
+                    "door_outcome",
+                    "worker_limits",
+                    "actions_to_tools",
+                )
+            ),
+            "door_unreadable": False,
         }
         with patch.object(evidence.archives, "stream_members") as streamed:
             read = evidence.read_evidence(pairing, bundle)
@@ -1542,17 +1749,25 @@ class TestReviewFollowUps:
             ACTIONS,
         )
 
-    def test_an_older_bundle_is_read_once_then_keeps_its_files(
+    def test_an_older_bundle_keeps_its_files_on_a_recheck_never_on_a_read(
         self, user, workspace, storage
     ):
         from simulate.services.harness_readiness import evidence
+        from simulate.services.harness_readiness.evidence import (
+            keep_certification_files,
+        )
 
         environment = _environment(user, workspace, storage, "rd-backfill-files")
         _certify(environment, storage)
         cache.clear()
 
+        before = _bundle(environment).certification_files
         first = _report(environment)
         bundle = _bundle(environment)
+        # A read writes nothing: the row keeps its files only once a recheck runs.
+        assert bundle.certification_files == before
+        keep_certification_files(bundle, bundle.object_key)
+        bundle.refresh_from_db()
         assert bundle.certification_files == {
             "object_key": bundle.object_key,
             "tools": TOOLS,
@@ -1563,6 +1778,16 @@ class TestReviewFollowUps:
                 if one["status"] in ("passed", "refused")
             ],
             "unobserved": [],
+            **dict.fromkeys(
+                (
+                    "worker_permissions",
+                    "door_outcome",
+                    "worker_limits",
+                    "actions_to_tools",
+                )
+            ),
+            "door_unreadable": False,
+            "files_version": assembly.CERTIFICATION_FILES_VERSION,
         }
         cache.clear()
         with patch.object(evidence.archives, "stream_members") as streamed:
@@ -1571,34 +1796,41 @@ class TestReviewFollowUps:
         streamed.assert_not_called()
         assert _rows(second) == _rows(first)
 
-    def test_a_reader_that_waits_too_long_is_told_to_retry_not_to_download(
-        self, storage
+    def test_a_second_reader_reads_unreadable_at_once_never_held_or_refused(
+        self, user, workspace, storage, auth_client
     ):
+        """While another request reads the archive, the readiness GET answers 200 with the
+        pairing marked unreadable just now, which the Run dialog already shows."""
         import hashlib
 
         from simulate.services.harness_readiness import evidence
 
-        key = "harness-sealed/stream/slow.tar.gz"
+        environment = _environment(user, workspace, storage, "rd-busy-reader")
+        _certify(environment, storage)
+        bundle = _bundle(environment)
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certification_files=None
+        )
+        cache.clear()
         reading = (
-            "harness-readiness-certification:"
-            + hashlib.sha256(key.encode()).hexdigest()
+            f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
+            + hashlib.sha256(bundle.object_key.encode()).hexdigest()
             + ":reading"
         )
         cache.add(reading, 1)
         try:
-            with (
-                patch.object(evidence.time, "sleep"),
-                patch.object(evidence.archives, "stream_members") as streamed,
-                pytest.raises(HostedHarnessError) as refused,
-            ):
-                evidence._read_once(key)
+            with patch.object(evidence.archives, "stream_members") as streamed:
+                response = auth_client.get(
+                    f"/simulate/api/harness-environments/{environment.id}/capabilities/"
+                )
         finally:
             cache.delete(reading)
 
         streamed.assert_not_called()
-        assert refused.value.status_code == 503
-        assert refused.value.retryable is True
-        assert refused.value.as_dict()["retry_after"] > 0
+        assert response.status_code == 200, response.content
+        body = response.json()
+        body = body.get("result", body)
+        assert body["pairing"]["evidence_unreadable"] is True
 
     def test_recheck_needs_build_usage_unless_already_certified(
         self, user, workspace, storage, auth_client
@@ -1780,13 +2012,13 @@ class TestConsequence:
             "Cases that use issue_refund cannot run until it is routed to the test world"
         )
         assert rows["reset"]["consequence"] == (
-            "Every trial starts from the same seed, agent included"
+            "Every trial starts from the same starting point, agent included"
         )
         assert rows["audio"]["consequence"] == (
             "Audio checks do not apply to a chat connection"
         )
         assert rows["browser"]["consequence"].startswith("No check measures this yet")
-        assert report["rules_version"] == "10"
+        assert report["rules_version"] == catalogue_module.RULES_VERSION
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
     @pytest.mark.parametrize(
@@ -1869,7 +2101,7 @@ class TestConsequence:
         reset = _rows(_report(environment, a2))["reset"]
         assert reset["status"] == "unavailable"
         assert reset["consequence"] == (
-            "No seeded world of ours to reset for this connection"
+            "No starting records of ours to reset for this connection"
         )
 
 
@@ -2087,7 +2319,7 @@ SAME_TOOLS = (
 
 
 class TestAgentGap:
-    """Chintan's case: E1 built with A1, then A2 brings a tool E1 does not offer."""
+    """A case: E1 built with A1, then A2 brings a tool E1 does not offer."""
 
     def test_a_tool_the_world_lacks_blocks_before_and_after_a_check(
         self, user, workspace, storage
@@ -2121,7 +2353,7 @@ class TestAgentGap:
                 "action": "Rebuild this environment from this agent version so the"
                 " test world has send_email, or test this agent version in an"
                 " environment that has it",
-                "would": "send_email is simulated in the test world and its probe passes",
+                "would": "send_email is simulated in the test world and its check passes",
                 "recheck": None,
                 "message": None,
             }
@@ -2379,7 +2611,7 @@ class TestAgentGap:
             {"kind": "tool", "name": "lookup_order", "result": "failed"},
             {"kind": "action", "name": "issue_refund", "result": "failed"},
         ]
-        assert routing["reason"].endswith("failed its probe: issue_refund")
+        assert routing["reason"].endswith("failed its check: issue_refund")
 
     def test_a_measured_failure_naming_no_tool_keeps_the_gap_holding_every_case(self):
         from simulate.services.harness_readiness.catalogue import Reading, targets
@@ -2391,7 +2623,7 @@ class TestAgentGap:
             "Takes other arguments in this environment: issue_refund",
             targets("tool", ["issue_refund"], "failed"),
         )
-        measured = Reading("failed", "action_failed", "1 of 2 tool probes passed")
+        measured = Reading("failed", "action_failed", "1 of 2 tool checks passed")
 
         merged = _with_measured(gap, measured)
 
@@ -2400,7 +2632,7 @@ class TestAgentGap:
             "tool_signature_changed",
             [],
         )
-        assert merged.reason.endswith("; 1 of 2 tool probes passed")
+        assert merged.reason.endswith("; 1 of 2 tool checks passed")
 
 
 def _copy_version(version, **fields):
@@ -2470,8 +2702,8 @@ class TestStaleVersions:
         )
         assert start["was"] == "supported"
         assert start["reason"] == (
-            f"Checked with environment version v{parent.version_number}; this pairing"
-            f" uses v{edited.version_number}"
+            f"Checked with environment version v{parent.version_number}; these versions"
+            f" use v{edited.version_number}"
         )
         assert start["fix"]["type"] == "recheck"
         assert report["answer"]["kind"] == "stale"
@@ -2531,6 +2763,143 @@ class TestStaleVersions:
 
         assert report["pairing"]["evidence"] == "pair_certificate"
         assert not [row for row in report["rows"] if row["status"] == "stale"]
+
+
+def _made_by(bundle_filter, **runtime):
+    """Record on the matching bundles' certificates what made them."""
+    for bundle in HarnessAssembledBundle._base_manager.filter(**bundle_filter):
+        certificate = dict(bundle.certificate or {})
+        certificate["runtime"] = {
+            "validation_attempts": 1,
+            **(certificate.get("runtime") or {}),
+            **runtime,
+        }
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certificate=certificate
+        )
+
+
+def _built_by(environment, **runtime):
+    """Record on the default environment version's build certificate what made it."""
+    version = environment.environment_version
+    documents = dict(version.documents or {})
+    outputs = []
+    for one in documents.get("stage_outputs") or []:
+        if one.get("kind") == "certification":
+            data = dict(one["data"])
+            data["certificate"] = {
+                **data["certificate"],
+                "runtime": {"validation_attempts": 1, **runtime},
+            }
+            one = {**one, "data": data}
+        outputs.append(one)
+    documents["stage_outputs"] = outputs
+    HarnessEnvironmentVersion.no_workspace_objects.filter(id=version.id).update(
+        documents=documents
+    )
+    environment.refresh_from_db()
+
+
+class TestStale:
+    """A certificate made by an earlier harness, or with other framework versions."""
+
+    def test_a_harness_release_after_the_check_reads_stale(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-harness")
+        _certify(environment, storage)
+        _made_by({"job_id": environment.id}, harness_version="0.3.0")
+        # A later check, of another agent version, ran on the newer harness.
+        _certify(environment, storage, agent=a2)
+        _made_by(
+            {"job_id": environment.id, "agent_version_id": a2.id},
+            harness_version="0.3.1",
+        )
+
+        report = _report(environment)
+        start = _rows(report)["start"]
+
+        assert report["pairing"]["evidence"] == "pair_certificate"
+        assert (start["status"], start["reason_code"], start["stale_because"]) == (
+            "stale",
+            "harness_changed",
+            "harness_version",
+        )
+        assert start["was"] == "supported"
+        assert start["reason"] == "Checked with test release 0.3.0; runs now use 0.3.1"
+        # Checking the pairing again certifies it on the harness runs use now.
+        assert start["fix"]["type"] == "recheck"
+        assert start["fix"]["recheck"]["scope"] == "pair"
+        assert report["answer"]["kind"] == "stale"
+        assert validation_module.recertifies(_bundle(environment))
+        assert not validation_module.recertifies(_bundle(environment, a2))
+
+    @pytest.mark.parametrize("unknown", ["checked", "current"])
+    def test_an_unknown_harness_version_is_not_stale(
+        self, user, workspace, storage, unknown
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, f"rd-harness-{unknown}")
+        _certify(environment, storage)
+        if unknown == "current":
+            # The only certificate recording a version is the pairing's own.
+            _made_by({"job_id": environment.id}, harness_version="0.3.0")
+        else:
+            # The pairing's certificate records none; a newer one does.
+            _certify(environment, storage, agent=a2)
+            _made_by(
+                {"job_id": environment.id, "agent_version_id": a2.id},
+                harness_version="0.3.1",
+            )
+
+        report = _report(environment)
+
+        assert not [row for row in report["rows"] if row["status"] == "stale"]
+        assert report["answer"]["kind"] == "ready"
+
+    def test_a_framework_bump_names_the_framework(self, user, workspace, storage):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-framework")
+        _built(environment)
+        _built_by(environment, frameworks={"langchain-core": "0.3.10"})
+        # A certificate of the picked agent version, on another environment version.
+        HarnessAssembledBundle._base_manager.create(
+            organization_id=environment.organization_id,
+            job_id=environment.id,
+            assembly_key="sha256:" + uuid.uuid4().hex * 2,
+            agent_version_id=a2.id,
+            environment_version_id=environment.environment_version.id,
+            suite_version_id=environment.suite_version.id,
+            state="ready",
+            object_key=f"harness-sealed/{environment.id}/elsewhere.tar.gz",
+            certificate={
+                "checks": PASSED,
+                "runtime": {
+                    "validation_attempts": 1,
+                    "frameworks": {"langchain-core": "0.3.12"},
+                },
+            },
+        )
+
+        start = _rows(_report(environment, a2))["start"]
+
+        assert (start["status"], start["stale_because"]) == ("stale", "agent_version")
+        assert start["reason_code"] == "framework_changed"
+        assert start["reason"] == (
+            "Checked with langchain-core 0.3.10; this agent version uses 0.3.12"
+        )
+
+    def test_an_unchanged_framework_keeps_the_agent_text(
+        self, user, workspace, storage
+    ):
+        environment, a2 = _with_a2(user, workspace, storage, "rd-framework-same")
+        _built(environment)
+        _built_by(environment, frameworks={"langchain-core": "0.3.10"})
+
+        start = _rows(_report(environment, a2))["start"]
+
+        assert (start["reason_code"], start["reason"]) == (
+            "agent_changed",
+            "Checked with the agent version the environment was built with",
+        )
 
 
 def _ran(environment, *, key, turns=None, attempts=(1,), recording=None, agent=None):
@@ -2700,6 +3069,84 @@ class TestObservedRows:
             "supported",
             [{"check": "attempt", "result": "2"}],
         )
+
+    @pytest.mark.parametrize(
+        ("row_id", "lacks"),
+        [
+            ("files", "Nothing records the files the agent writes yet"),
+            ("browser", "Nothing records the agent's browser yet"),
+            ("hidden_material", "Treat its runs as not blind"),
+        ],
+    )
+    def test_each_unmeasured_row_names_what_it_lacks(
+        self, user, workspace, storage, row_id, lacks
+    ):
+        environment = _environment(user, workspace, storage, f"ob-lacks-{row_id}")
+        _certify(environment, storage)
+
+        report = _report(environment)
+        row = _rows(report)[row_id]
+
+        assert row["status"] == "untested"
+        assert lacks in row["reason"]
+        assert row["reason"] != "No check measures this yet"
+        # Naming what is missing changes no status and holds no case.
+        assert report["answer"]["kind"] == "ready"
+
+    @pytest.mark.parametrize(
+        ("runtime", "status", "code"),
+        [
+            (
+                {"process_isolation": "per_user", "door_user": "svc-door"},
+                "supported",
+                None,
+            ),
+            (
+                {"process_isolation": "fixed_user", "door_user": "svc-door"},
+                "partial",
+                "not_isolated",
+            ),
+            ({"process_isolation": "fixed_user"}, "partial", "not_isolated"),
+            (
+                {"process_isolation": "per_user", "door_user": "svc-tools"},
+                "partial",
+                "door_not_isolated",
+            ),
+            ({"process_isolation": "per_user"}, "partial", "door_not_isolated"),
+            ({"harness_version": "0.3.7"}, "untested", "isolation_not_recorded"),
+        ],
+        ids=[
+            "isolated",
+            "fixed_user",
+            "fixed_no_door",
+            "door_with_tools",
+            "no_door_user",
+            "old_certificate",
+        ],
+    )
+    def test_hidden_material_reads_the_isolation_the_check_recorded(
+        self, user, workspace, storage, runtime, status, code
+    ):
+        """Supported only when every process ran as its own user and the door apart from the agent's tools; a
+        certificate from before the check recorded it reads Untested. It never holds a case back."""
+        environment = _environment(user, workspace, storage, f"ob-hidden-{code}")
+        _certify(environment, storage)
+        bundle = HarnessAssembledBundle._base_manager.get(
+            job_id=environment.id, state="ready"
+        )
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certificate={**bundle.certificate, "runtime": runtime}
+        )
+        cache.clear()
+
+        report = _report(environment)
+        row = _rows(report)["hidden_material"]
+
+        assert (row["status"], row["reason_code"]) == (status, code)
+        assert row["status"] != "supported" or runtime.get("door_user") == "svc-door"
+        assert report["answer"]["kind"] == "ready"
+        if status != "supported":
+            assert "not from a blind test" in row["consequence"]
 
     def test_a_run_nothing_measured_reads_no_cost(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "ob-cost-none")
@@ -3012,6 +3459,133 @@ class TestObservedRouting:
         )
 
 
+def _finished_with_trace(environment, *, key, calls, agent=None):
+    """A completed run of the defaults whose tool trace holds ``calls``."""
+    from simulate.models import HostedHarnessArtifact
+
+    job = _ran(environment, key=key, agent=agent)
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(state="completed")
+    trace = "".join(json.dumps(call) + "\n" for call in calls).encode()
+    HostedHarnessArtifact.no_workspace_objects.create(
+        job=job,
+        sha256=uuid.uuid4().hex * 2,
+        kind="tool_trace",
+        size=len(trace),
+        content_type="application/x-ndjson",
+        object_key=f"traces/{key}.jsonl",
+        scenario_key="s1",
+    )
+    return job, trace
+
+
+class TestRouting:
+    """A voice check places no call: routing is read from the pairing's runs."""
+
+    def _voice(self, user, workspace, storage, key, **certify):
+        environment = _environment(user, workspace, storage, key)
+        # A voice check keeps no record of the agent's calls reaching the world.
+        _certify(environment, storage, routed=[], **certify)
+        _contract_runtime(environment, modality="voice")
+        return environment
+
+    def test_a_voice_run_that_reached_the_world_makes_routing_supported(
+        self, user, workspace, storage
+    ):
+        environment = self._voice(user, workspace, storage, "rt-voice")
+        before = _rows(_report(environment))["tool_routing"]
+        assert (before["status"], before["reason_code"]) == ("partial", "probe_not_run")
+        _, trace = _finished_with_trace(
+            environment,
+            key="voice-call",
+            calls=[
+                {"name": "lookup_order", "output": "found", "is_error": False},
+                {"name": "issue_refund", "output": "", "is_error": True},
+            ],
+        )
+        cache.clear()
+
+        with patch.object(evidence_module, "_read_trace", return_value=trace):
+            routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["status"] == "supported"
+        assert {
+            "check": "tools_routed_in_run",
+            "result": "1: issue_refund, lookup_order",
+        } in routing["evidence"]
+
+    def test_a_tool_the_run_never_called_stays_unshown(self, user, workspace, storage):
+        environment = self._voice(user, workspace, storage, "rt-voice-some")
+        _, trace = _finished_with_trace(
+            environment,
+            key="voice-some",
+            calls=[{"name": "lookup_order", "output": "found", "is_error": False}],
+        )
+        cache.clear()
+
+        with patch.object(evidence_module, "_read_trace", return_value=trace):
+            routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "partial",
+            "probe_not_run",
+        )
+        assert routing["reason"].startswith(
+            "Not yet shown reaching the test world: issue_refund"
+        )
+
+    def test_a_run_of_another_agent_version_is_not_read(self, user, workspace, storage):
+        environment, a2 = _with_a2(user, workspace, storage, "rt-voice-other")
+        _certify(environment, storage, routed=[])
+        _contract_runtime(environment, modality="voice")
+        _, trace = _finished_with_trace(
+            environment,
+            key="voice-a2",
+            calls=[
+                {"name": "lookup_order", "output": "found", "is_error": False},
+                {"name": "issue_refund", "output": "done", "is_error": False},
+            ],
+            agent=a2,
+        )
+        cache.clear()
+
+        with patch.object(evidence_module, "_read_trace", return_value=trace):
+            routing = _rows(_report(environment))["tool_routing"]
+
+        assert routing["status"] == "partial"
+        assert not [
+            one for one in routing["evidence"] if one["check"] == "tools_routed_in_run"
+        ]
+
+    def test_a_failed_probe_is_never_overridden_by_a_run(
+        self, user, workspace, storage
+    ):
+        environment = self._voice(
+            user,
+            workspace,
+            storage,
+            "rt-voice-failed",
+            checks={**PASSED, "action_behavior": "1/2"},
+            actions=FAILED_PROBE,
+        )
+        _, trace = _finished_with_trace(
+            environment,
+            key="voice-failed",
+            calls=[
+                {"name": "lookup_order", "output": "found", "is_error": False},
+                {"name": "issue_refund", "output": "done", "is_error": False},
+            ],
+        )
+        cache.clear()
+
+        with patch.object(evidence_module, "_read_trace", return_value=trace):
+            routing = _rows(_report(environment))["tool_routing"]
+
+        assert (routing["status"], routing["reason_code"]) == (
+            "blocked",
+            "action_failed",
+        )
+
+
 class TestReleaseChecks:
     """B8: a release is Ready only once all five release checks passed."""
 
@@ -3215,3 +3789,215 @@ def test_routing_kept_on_the_bundle_is_read(user, workspace, storage):
     )
 
     assert _rows(_report(environment))["tool_routing"]["status"] == "supported"
+
+
+def _case(door=frozenset()):
+    from simulate.services.harness_scenario_needs import CaseNeeds
+
+    return CaseNeeds(
+        key="refund-1",
+        number=1,
+        name="refund-1",
+        persona="",
+        rows=frozenset({"start", "message"}),
+        tools=frozenset(),
+        unknown=False,
+        recorded=True,
+        grading_gap=None,
+        door=frozenset(door),
+    )
+
+
+def _in_process_pairing(entrypoints):
+    from types import SimpleNamespace
+
+    contract = {"runtime": {"language": "python"}, "tool_entrypoints": entrypoints}
+    return SimpleNamespace(
+        environment_version=SimpleNamespace(documents={"contract": contract})
+    )
+
+
+def test_a_scenario_with_an_acting_actor_on_an_in_process_agent_is_held_back():
+    from simulate.services.harness_readiness.selection import (
+        NO_DOOR_REASON,
+        NO_DOOR_ROW,
+        _door_reach,
+        _needs_a_missing_door,
+        _place,
+    )
+    from simulate.services.harness_scenario_needs import ACTING, door_needs
+
+    acting = door_needs(
+        {"actors": [{"id": "dana", "actions": [{"action": "approvals.put"}]}]}
+    )
+    assert acting == frozenset({ACTING})
+    closures = _door_reach(
+        _in_process_pairing([{"tool": "issue_refund", "mode": "unreachable"}])
+    )
+    assert _needs_a_missing_door(_case(acting), closures) is True
+    placed = _place(
+        _case(acting),
+        {},
+        proved=True,
+        voice=False,
+        many=False,
+        pair_validating=False,
+        pair_failed=False,
+        no_door=True,
+    )
+    assert (placed.bucket, placed.by) == ("blocked", [NO_DOOR_ROW])
+    assert NO_DOOR_REASON == (
+        "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a "
+        "tools service to test this."
+    )
+
+
+def test_a_fault_on_a_tool_behind_a_door_is_not_held_back_and_one_on_a_closure_is():
+    from simulate.services.harness_readiness.selection import (
+        _door_reach,
+        _needs_a_missing_door,
+    )
+    from simulate.services.harness_scenario_needs import door_needs
+
+    reach = _door_reach(
+        _in_process_pairing(
+            [
+                {
+                    "tool": "issue_refund",
+                    "mode": "service",
+                    "endpoint": "orders/refund",
+                },
+                {
+                    "tool": "lookup",
+                    "mode": "import",
+                    "module": "agent.tools",
+                    "callable": "lookup",
+                },
+                {"tool": "closure", "mode": "unreachable"},
+            ]
+        )
+    )
+    behind = door_needs(
+        {"faults": [{"action": "orders.refund", "mode": "unavailable"}]}
+    )
+    in_process = door_needs({"faults": [{"action": "lookup", "mode": "unavailable"}]})
+    closure = door_needs({"faults": [{"action": "closure", "mode": "unavailable"}]})
+    assert _needs_a_missing_door(_case(behind), reach) is False
+    assert _needs_a_missing_door(_case(in_process), reach) is False
+    assert _needs_a_missing_door(_case(closure), reach) is True
+    # An acting actor is held back only when no tool is behind a door.
+    assert (
+        _needs_a_missing_door(
+            _case(
+                door_needs({"actors": [{"id": "d", "trigger": {"kind": "on_tool"}}]})
+            ),
+            reach,
+        )
+        is False
+    )
+
+
+def test_a_fault_on_a_tool_the_build_found_out_of_the_door_s_reach_is_held_back():
+    from simulate.services.harness_readiness.selection import (
+        _door_reach,
+        _needs_a_missing_door,
+    )
+    from simulate.services.harness_scenario_needs import door_needs
+
+    entry = {
+        "tool": "lookup",
+        "mode": "import",
+        "module": "agent",
+        "callable": "lookup",
+    }
+    fault = _case(door_needs({"faults": [{"action": "lookup", "mode": "unavailable"}]}))
+    # An older build's contract carries no word: read by mode, as before.
+    assert (
+        _needs_a_missing_door(fault, _door_reach(_in_process_pairing([entry]))) is False
+    )
+    unreached = {**entry, "door_unreached": "the agent is started as a script"}
+    assert (
+        _needs_a_missing_door(fault, _door_reach(_in_process_pairing([unreached])))
+        is True
+    )
+
+
+@pytest.mark.parametrize("moved", ["organization", "agent_definition"])
+def test_an_agent_version_of_another_organization_or_agent_is_not_this_environments(
+    user, workspace, storage, moved
+):
+    """Readiness, a run's pick and validation scope a requested agent version by one rule."""
+    from accounts.models import Organization
+    from simulate.models import AgentDefinition, AgentVersion
+    from simulate.services.harness_readiness.report import require_environments_agent
+    from simulate.services.harness_versioning.read import agent_in_lineage
+    from simulate.services.hosted_harness import agent_version_pickable
+
+    environment, a2 = _with_a2(user, workspace, storage, f"rv-scope-{moved}")
+    assert agent_in_lineage(environment, a2.id)
+    if moved == "organization":
+        other = Organization.objects.create(name="another organization")
+        AgentVersion.no_workspace_objects.filter(id=a2.id).update(organization=other)
+    else:
+        definition = AgentDefinition.no_workspace_objects.get(id=a2.agent_definition_id)
+        definition.pk = None
+        definition.save()
+        AgentVersion.no_workspace_objects.filter(id=a2.id).update(
+            agent_definition=definition
+        )
+
+    assert not agent_in_lineage(environment, a2.id)
+    assert not agent_version_pickable(environment, a2.id)
+    with pytest.raises(HostedHarnessError) as refused:
+        require_environments_agent(environment, a2.id)
+    assert refused.value.code == "version_not_pickable"
+
+
+@pytest.mark.parametrize(
+    "metadata, validation_job",
+    [({"certify_only": True}, True), ({}, False), ({"certify_only": None}, False)],
+)
+def test_one_rule_tells_a_validation_job_apart_in_queries_and_in_memory(
+    user, workspace, storage, metadata, validation_job
+):
+    from simulate.models import HostedHarnessJob
+    from simulate.selectors.runs import user_runs, validation_jobs
+    from simulate.services.harness_versioning.validation import certify_only
+
+    job = _environment(
+        user, workspace, storage, f"kind-{validation_job}-{len(metadata)}"
+    )
+    payload = {**(job.payload or {}), "metadata": metadata}
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(payload=payload)
+    job.refresh_from_db()
+
+    jobs = HostedHarnessJob.no_workspace_objects.filter(id=job.id)
+    assert certify_only(job) is validation_job
+    assert jobs.filter(validation_jobs()).exists() is validation_job
+    assert jobs.filter(~validation_jobs()).exists() is not validation_job
+    assert jobs.filter(user_runs()).exists() is not validation_job
+
+
+def test_a_row_reads_supported_only_from_a_passed_finding(user, workspace, storage):
+    """A pairing check, or the agent's own runs for a row no check measures (a voice agent's recorded call for
+    audio): Supported always comes with a passed finding, never from metadata."""
+    from simulate.services.harness_readiness.catalogue import CATALOGUE, Reading
+    from simulate.services.harness_readiness.rules import _row, _status
+
+    audio = next(one for one in CATALOGUE if one.id == "audio")
+    recorded = Reading(
+        "passed", evidence=[{"check": "recording", "result": "recording_assistant"}]
+    )
+    row = _row(audio, _status(recorded)[0], reading=recorded)
+    assert (row["status"], row["measured"], row["finding"]) == (
+        "supported",
+        False,
+        "passed",
+    )
+    assert _status(Reading("not_run", "no_recording", "none yet"))[0] == "untested"
+
+    environment = _environment(user, workspace, storage, "rd-supported-from-passed")
+    _certify(environment, storage)
+    for one in _report(environment)["rows"]:
+        if one["status"] == "supported":
+            assert one["finding"] == "passed", one["id"]

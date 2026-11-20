@@ -40,9 +40,6 @@ from simulate.tests.test_harness_readiness import (
     _certify,
     _pinned,
 )
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixtures
-    readiness_on as readiness_on,
-)
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
@@ -74,7 +71,7 @@ from simulate.tests.test_hosted_harness_conversation import (
     _put_conversation_checkpoint,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 ROWS = ("state", "tool_routing")
 DRAFT_UNSAVED = "draft_unsaved"
@@ -276,7 +273,7 @@ class TestSaved:
         assert run.state == "saving"
         assert run.autosave["phase"] == "validating"
         assert (
-            run.autosave["name"] == "Fix: Seeded world state, Controlled tool routing"
+            run.autosave["name"] == "Fix: Starting records, Tool calls stay in the test"
         )
         wanted = run.autosave["candidates"]
         assert wanted == {
@@ -671,7 +668,13 @@ class TestRecheck:
         assert run.state == "done"
 
     def test_the_verdict_reads_what_the_fix_saved_after_the_person_saves_again(
-        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+        self,
+        user,
+        workspace,
+        storage,
+        tasks,
+        django_capture_on_commit_callbacks,
+        settings,
     ):
         environment, run = _validating(
             user, workspace, storage, django_capture_on_commit_callbacks, "fs-mine"
@@ -685,6 +688,8 @@ class TestRecheck:
         saved = (run.result_environment_version_id, run.result_suite_version_id)
         # The person saves edits of their own: the defaults move off the fix's.
         draft = _draft(environment.environment_version)
+        # The person's own plain Save, which the base gates behind Validate by default.
+        settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = False
         drafts.save_drafts(
             environment,
             {
@@ -1176,12 +1181,20 @@ class TestNotSaved:
         _assert_unsaved(run, environment, "rebuild_running")
 
     def test_a_save_by_the_person_before_validate_is_the_runs_save(
-        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+        self,
+        user,
+        workspace,
+        storage,
+        tasks,
+        django_capture_on_commit_callbacks,
+        settings,
     ):
         environment, run = _settled(
             user, workspace, storage, django_capture_on_commit_callbacks, "fs-before"
         )
         draft = drafts.open_draft(environment, "environment")
+        # The person's own plain Save, which the base gates behind Validate by default.
+        settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = False
         drafts.save_drafts(
             environment,
             {

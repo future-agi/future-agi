@@ -44,7 +44,10 @@ vi.mock("src/api/simulate-environments/versions", async () => {
       state.versionsLoading
         ? { data: undefined, isLoading: true }
         : { data: versions(), isLoading: false },
-    useRunPlan: () => ({ data: { warnings: [] }, isLoading: false }),
+    useRunPlan: () => ({
+      data: { warnings: [], blocked_tools: [], runnable: true, held_back: 0 },
+      isLoading: false,
+    }),
     useDrafts: () => ({ data: state.drafts }),
     useSaveDrafts: () => ({ mutate: save, isPending: false, error: null }),
     useSuiteMembers: () => ({

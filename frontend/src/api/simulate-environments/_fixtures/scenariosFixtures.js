@@ -197,6 +197,8 @@ export function queryScenarioFixture(params = {}, rows = WORKING) {
     search = "",
     ordering = "number",
     group_by: groupByParam,
+    // Asks for per-row flags, not a filter.
+    readiness: _readiness,
     ...filters
   } = params;
   const groupBy = groupByParam === undefined ? "goal" : groupByParam;

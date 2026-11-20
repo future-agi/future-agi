@@ -3,27 +3,36 @@ import { useMemo } from "react";
 import { Box } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
+import { isBasicHtmlTag } from "./basicHtml";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
 // Raw HTML would be dropped by the sanitizer, losing words like "<front desk>".
-const htmlAsText = () => (tree) => {
-  const walk = (node) => {
-    if (node.type === "html") node.type = "text";
-    node.children?.forEach(walk);
+const htmlAsText =
+  ({ basicHtml } = {}) =>
+  (tree) => {
+    const walk = (node) => {
+      if (node.type === "html" && !(basicHtml && isBasicHtmlTag(node.value)))
+        node.type = "text";
+      node.children?.forEach(walk);
+    };
+    walk(tree);
   };
-  walk(tree);
-};
 
-/** Markdown prose in the builder chat: builder notes and question prompts. */
-export default function ChatMarkdown({ text, dim, small, sx }) {
+/** Markdown prose in the builder chat: builder notes and question prompts.
+ *  `basicHtml` also renders bare formatting tags like <b>; any other HTML stays text. */
+export default function ChatMarkdown({ text, dim, small, sx, basicHtml }) {
   // Every keystroke in the composer redraws the chat; parse only when text changes.
   const body = useMemo(
     () => (
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, htmlAsText]}
-        rehypePlugins={[rehypeSanitize]}
+        remarkPlugins={[remarkGfm, [htmlAsText, { basicHtml }]]}
+        // The sanitizer runs last, so nothing rehypeRaw parses gets past it.
+        rehypePlugins={
+          basicHtml ? [rehypeRaw, rehypeSanitize] : [rehypeSanitize]
+        }
         // An image loads as soon as the chat opens, so model-written text could
         // send data to any site through its URL.
         disallowedElements={["img"]}
@@ -31,7 +40,7 @@ export default function ChatMarkdown({ text, dim, small, sx }) {
         {text || ""}
       </ReactMarkdown>
     ),
-    [text],
+    [text, basicHtml],
   );
 
   return (
@@ -91,4 +100,5 @@ ChatMarkdown.propTypes = {
   dim: PropTypes.bool,
   small: PropTypes.bool,
   sx: PropTypes.object,
+  basicHtml: PropTypes.bool,
 };

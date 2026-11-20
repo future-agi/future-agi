@@ -138,7 +138,7 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
-  // The run awaiting its version picks: { ids, trials, initialPicks, collapsed }.
+  // { ids, trials, initialPicks, seed, collapsed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
   // Where runs go through the run plan.
   const planned = source === "harness" && Boolean(env?.versioning?.enabled);
@@ -176,7 +176,7 @@ export default function EnvironmentWorkspace() {
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
-    mutationFn: async ({ ids, trials, picks, resolved }) => {
+    mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
       // Run-all reads the keys from the server list: the bootstrap
       // `envState.scenarios` is seeded once and keeps a key an amend dropped.
       const scenarioIds =
@@ -188,6 +188,7 @@ export default function EnvironmentWorkspace() {
         resolved?.agent ?? picks?.agent ?? null,
         resolved?.environment ?? picks?.environment ?? null,
         resolved?.suite ?? picks?.suite ?? null,
+        seed ?? null,
       ]);
       if (pendingSubmission.current?.selection !== selection) {
         pendingSubmission.current = {
@@ -201,6 +202,7 @@ export default function EnvironmentWorkspace() {
         trials || 1,
         pendingSubmission.current.key,
         picks,
+        seed,
       );
     },
     onSuccess: (run) => {
@@ -239,17 +241,17 @@ export default function EnvironmentWorkspace() {
   });
   // With versioning on, a run first asks which versions to use; a re-run
   // pre-selects the versions it ran with.
-  const startRun = (ids, trials, { initialPicks } = {}) => {
+  const startRun = (ids, trials, { initialPicks, seed } = {}) => {
     if (source !== "harness") {
       navigate(runSimulationTarget(env));
       return;
     }
     if (env?.versioning?.enabled) {
       runMutation.reset();
-      setRunDialog({ ids, trials, initialPicks });
+      setRunDialog({ ids, trials, initialPicks, seed });
       return;
     }
-    runMutation.mutate({ ids, trials });
+    runMutation.mutate({ ids, trials, seed });
   };
   // Opens the run plan, or expands it when collapsed; never starts a run.
   const openRunPlan = () =>
@@ -286,6 +288,7 @@ export default function EnvironmentWorkspace() {
       scenarioIds={runDialog.ids}
       trials={runDialog.trials || 1}
       initialPicks={runDialog.initialPicks}
+      initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
       // The run page has no builder chat; the workspace page does.
       onGoToChat={
@@ -297,8 +300,14 @@ export default function EnvironmentWorkspace() {
       onCollapsedChange={(collapsed) =>
         setRunDialog((open) => open && { ...open, collapsed })
       }
-      onSubmit={(picks, ids, resolved) =>
-        runMutation.mutate({ ids, trials: runDialog.trials, picks, resolved })
+      onSubmit={(picks, ids, resolved, seed) =>
+        runMutation.mutate({
+          ids,
+          trials: runDialog.trials,
+          picks,
+          resolved,
+          seed,
+        })
       }
       submitting={runMutation.isPending}
       error={runMutation.error}
@@ -701,6 +710,7 @@ export default function EnvironmentWorkspace() {
               stopping={chat.stopping}
               frozen={!envLive || chat.frozen}
               frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
+              answerWithOptions={chat.answerWithOptions}
               onCollapse={collapse}
               collapseRef={collapseRef}
               active={open}
@@ -743,6 +753,7 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               onStartRun={startRun}
+              runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}
               runBlockedReason={blockedReason(
                 envState,

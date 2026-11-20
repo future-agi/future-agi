@@ -32,9 +32,6 @@ from simulate.tests.test_harness_readiness import (
     _tool,
     _with_a2,
 )
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixtures
-    readiness_on as readiness_on,
-)
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
@@ -42,7 +39,7 @@ from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 UNREACHABLE = {"tool_entrypoints": [{"tool": "issue_refund", "mode": "unreachable"}]}
 PROBE_ACTION = "Rebuild this environment so the test world's probe passes for {}"

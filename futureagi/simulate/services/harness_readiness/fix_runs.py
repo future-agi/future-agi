@@ -42,7 +42,7 @@ from simulate.services.harness_versioning.draft_pieces import (
     open_draft,
     version_error,
 )
-from simulate.services.hosted_harness import HostedHarnessError, _pin_ids
+from simulate.services.hosted_harness import HostedHarnessError, pin_ids
 
 logger = structlog.get_logger(__name__)
 
@@ -295,7 +295,7 @@ def _pairing_ids(pairing: Pairing) -> tuple[str | None, str | None, str | None]:
 
 
 def _defaults(environment: HostedHarnessJob) -> tuple[str | None, ...]:
-    return tuple(str(one) if one else None for one in _pin_ids(environment))
+    return tuple(str(one) if one else None for one in pin_ids(environment))
 
 
 def _chat_unavailable_error() -> HostedHarnessError:

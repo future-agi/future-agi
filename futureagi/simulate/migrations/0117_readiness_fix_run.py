@@ -12,7 +12,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ("accounts", "0032_merge_expiry_and_coding_agent"),
-        ("simulate", "0107_merge_certification_files_and_version_candidate"),
+        ("simulate", "0116_harness_version_candidate"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

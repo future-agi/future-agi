@@ -80,6 +80,7 @@ export default function AskUserQuestionCard({
   onSkip,
   resolved: resolvedProp = false,
   answerText,
+  answerFailed,
 }) {
   const [answer, setAnswer] = useState({ pick: null, picks: [], other: "" });
   const [resolved, setResolved] = useState(null);
@@ -141,6 +142,8 @@ export default function AskUserQuestionCard({
         question={question}
         answer={resolved || { external: true }}
         text={resolved ? undefined : answerText}
+        // What the server made of the answer, given just now or before a reload: a failed one never keeps the check.
+        failed={answerFailed}
       />
     );
   }
@@ -197,40 +200,42 @@ export default function AskUserQuestionCard({
             onSelect={() => pick(i)}
           />
         ))}
-        <AskOptionRow
-          label="Other"
-          selected={otherActive}
-          multi={question.multiSelect}
-          // Picked by typing: the row hands focus to its text box.
-          onSelect={() => otherInput.current?.focus()}
-          bottomChildren={
-            <TextField
-              size="small"
-              fullWidth
-              variant="outlined"
-              value={answer.other}
-              onChange={(e) => {
-                const other = e.target.value;
-                // One choice: typing an answer clears the picked option.
-                setAnswer((a) => ({
-                  ...a,
-                  other,
-                  pick: question.multiSelect || !other.trim() ? a.pick : null,
-                }));
-              }}
-              placeholder="Type your own answer here"
-              inputRef={otherInput}
-              inputProps={{ "aria-label": "Other answer" }}
-              InputProps={{
-                sx: {
-                  typography: "m3",
-                  bgcolor: "background.paper",
-                },
-              }}
-              sx={{ mt: 0.75 }}
-            />
-          }
-        />
+        {!question.optionsOnly && (
+          <AskOptionRow
+            label="Other"
+            selected={otherActive}
+            multi={question.multiSelect}
+            // Picked by typing: the row hands focus to its text box.
+            onSelect={() => otherInput.current?.focus()}
+            bottomChildren={
+              <TextField
+                size="small"
+                fullWidth
+                variant="outlined"
+                value={answer.other}
+                onChange={(e) => {
+                  const other = e.target.value;
+                  // One choice: typing an answer clears the picked option.
+                  setAnswer((a) => ({
+                    ...a,
+                    other,
+                    pick: question.multiSelect || !other.trim() ? a.pick : null,
+                  }));
+                }}
+                placeholder="Type your own answer here"
+                inputRef={otherInput}
+                inputProps={{ "aria-label": "Other answer" }}
+                InputProps={{
+                  sx: {
+                    typography: "m3",
+                    bgcolor: "background.paper",
+                  },
+                }}
+                sx={{ mt: 0.75 }}
+              />
+            }
+          />
+        )}
       </Stack>
 
       {/* bottom bar */}
@@ -268,6 +273,8 @@ AskUserQuestionCard.propTypes = {
   // its resolved summary from these props instead of internal submit state.
   resolved: PropTypes.bool,
   answerText: PropTypes.string,
+  // The server did not take the answer: shown failed with its reason.
+  answerFailed: PropTypes.shape({ reason: PropTypes.string }),
 };
 
 function AskOptionRow({
@@ -354,7 +361,7 @@ AskOptionRow.propTypes = {
  * post-submit shape: prompt on top, chosen option(s) below with a
  * dimmed check icon, and a subtle divider.
  */
-function ResolvedSummary({ question, answer, text }) {
+function ResolvedSummary({ question, answer, text, failed }) {
   const picks = answer.skipped
     ? []
     : question.multiSelect
@@ -393,16 +400,23 @@ function ResolvedSummary({ question, answer, text }) {
         alignItems="center"
         spacing={0.75}
         sx={{ mt: 0.75 }}
+        data-testid={failed ? "answer-not-taken" : "answer-taken"}
       >
         <Iconify
           icon={
-            answer.skipped
-              ? "solar:close-circle-linear"
-              : "solar:check-circle-bold"
+            failed
+              ? "solar:close-circle-bold"
+              : answer.skipped
+                ? "solar:close-circle-linear"
+                : "solar:check-circle-bold"
           }
           width={14}
           sx={{
-            color: answer.skipped ? "text.secondary" : "status.success.solid",
+            color: failed
+              ? "error.main"
+              : answer.skipped
+                ? "text.secondary"
+                : "status.success.solid",
             flexShrink: 0,
           }}
         />
@@ -410,6 +424,11 @@ function ResolvedSummary({ question, answer, text }) {
           {summary}
         </Typography>
       </Stack>
+      {failed?.reason ? (
+        <Typography sx={{ typography: "s2", color: "error.main", mt: 0.5 }}>
+          {failed.reason}
+        </Typography>
+      ) : null}
     </Box>
   );
 }
@@ -417,4 +436,5 @@ ResolvedSummary.propTypes = {
   question: PropTypes.object,
   answer: PropTypes.object,
   text: PropTypes.string,
+  failed: PropTypes.shape({ reason: PropTypes.string }),
 };
