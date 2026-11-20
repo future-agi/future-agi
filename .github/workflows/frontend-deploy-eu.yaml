@@ -1,4 +1,5 @@
 name: Deploy EU Frontend
+run-name: "Deploy EU Frontend: ${{ inputs.branch }}${{ inputs.request_id && format(' [{0}]', inputs.request_id) || '' }}"
 
 on:
   workflow_dispatch:
@@ -7,6 +8,11 @@ on:
         description: "Branch to deploy"
         required: false
         default: "main"
+      request_id:
+        description: "Set by the deployment pipeline to find this run; leave empty"
+        required: false
+        default: ""
+        type: string
 
 # Started by hand, or by the deployment repo's deploy-production run once EU's
 # backend is verified (it passes the release tag it deployed as `branch`).
@@ -14,6 +20,7 @@ on:
 concurrency:
   group: frontend-deploy-eu
   cancel-in-progress: false
+  queue: max
 
 jobs:
   deploy-eu:

@@ -4,6 +4,7 @@
 # build; anything else -> dev-flavored build. Either way the result ships to
 # the us2 bucket behind app-us2.futureagi.com.
 name: Deploy Frontend to US2 (GCP)
+run-name: "Deploy Frontend to US2 (GCP): ${{ inputs.branch }}${{ inputs.request_id && format(' [{0}]', inputs.request_id) || '' }}"
 
 on:
   workflow_dispatch:
@@ -13,11 +14,17 @@ on:
         required: true
         default: "main"
         type: string
+      request_id:
+        description: "Set by the deployment pipeline to find this run; leave empty"
+        required: false
+        default: ""
+        type: string
 
 # One US frontend publish at a time; a second waits instead of interleaving uploads.
 concurrency:
   group: frontend-deploy-us
   cancel-in-progress: false
+  queue: max
 
 jobs:
   deploy-us2:
