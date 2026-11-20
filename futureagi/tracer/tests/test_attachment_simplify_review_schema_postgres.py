@@ -945,6 +945,36 @@ def test_legacy_segment_conversion_is_exact_and_retains_charge(case, mode):
     ) == [23, 23, 23]
 
 
+@pytest.mark.parametrize("cleanup_complete", ["absent", False])
+def test_released_legacy_import_needs_cleanup_reconciliation(case, cleanup_complete):
+    # A settled job whose staged objects were never reconciled cannot be
+    # backfilled into a released reservation: the copy refuses instead of
+    # inventing cleanup evidence or releasing the reservation a second time.
+    case.seed()
+    _, job = case.import_job(legacy=True)
+    case.update(job, released_at=job.deadline)
+    proof = {
+        "evidence": "synthetic original allocation",
+        "binding_id": str(case.binding.id),
+        "cleanup_not_before": job.deadline + timedelta(seconds=15),
+        "capacity_evidence": "synthetic retained charge",
+        "capacity": dict(
+            zip(case.modules["0141"].VECTOR, (23, 1, 1, 1, 5, 2), strict=True)
+        ),
+    }
+    if cleanup_complete != "absent":
+        proof["cleanup_complete"] = cleanup_complete
+    case.inventory({"AttachmentImportJob": {str(job.id): proof}})
+    budgets = case.model("AttachmentBudget").objects.order_by("pk")
+    before = list(budgets.values())
+    with pytest.raises(RuntimeError, match="lacks cleanup reconciliation"):
+        case.apply("0141")
+    assert not case.recorder.migration_qs.filter(name=NAMES[5]).exists()
+    row = case.model("AttachmentImportJob").objects.get(pk=job.id)
+    assert row.released_at == job.released_at
+    assert list(budgets.values()) == before
+
+
 @pytest.mark.parametrize("owner", ["upload", "segment", "job"])
 def test_publication_rechecks_concurrent_retirement_without_waiting(live, owner):
     if owner == "upload":

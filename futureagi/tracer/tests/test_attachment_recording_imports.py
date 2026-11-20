@@ -871,31 +871,9 @@ def test_an_erase_failure_in_terminal_cleanup_holds_the_release_until_the_sweep(
     assert sweep_imports(store) == {"expired": 0, "released": 0, "deferred": 0}
 
 
-def test_a_released_job_with_a_staged_object_left_is_still_erased(
-    historical_released_import_staged_object,
-    monkeypatch,
-):
-    """Requires a schema-owner historical migration fixture, not _release bypass.
-
-    The fixture must restore a genuinely old settled job with a retained staged
-    allocation and due unknown-result cleanup, migrate normally, and supply the
-    corresponding physical objects as (ObjectIdentity, bytes) pairs.
-    """
-    history = historical_released_import_staged_object
-    job = AttachmentImportJob.objects.get(pk=history.job_id)
-    store = Store()
-    for identity, data in history.objects:
-        assert identity.binding_id == store.binding_id
-        store.identities[identity.key] = identity
-        store.objects[identity.key] = data
-    assert job.state == "rejected" and job.reservation_settled_at is not None
-    assert len(store.objects) == 1
-    after = max(timezone.now(), job.cleanup_not_before) + timedelta(seconds=1)
-    wait_for_db(after)
-    assert sweep_imports(store) == {"expired": 0, "released": 0, "deferred": 0}
-    assert _segment_states(job) == [(0, "erased"), (1, "erased"), (2, "erased")]
-    assert store.objects == {}
-    assert set(budgets().values()) == {IDLE}
+# A released job whose staged object was never reconciled is refused by the
+# 0141 backfill (see test_released_legacy_import_needs_cleanup_reconciliation in
+# the isolated schema module), so it never reaches the sweep.
 
 
 def test_sweep_expiring_a_job_while_its_worker_writes_a_segment(env, monkeypatch):
