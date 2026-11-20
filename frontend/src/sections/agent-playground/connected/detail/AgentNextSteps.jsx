@@ -325,6 +325,9 @@ function PathCell({
           {unlocks}
         </Typography>
       )}
+      {/* Pushes the action to the bottom, so both ways' buttons line up
+          however many lines of text sit above them. */}
+      {(actionNode || action) && <Box sx={{ flexGrow: 1 }} />}
       {actionNode && (
         <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
           {actionNode}
@@ -332,7 +335,8 @@ function PathCell({
       )}
       {!actionNode && action && (
         <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
-          {[action, secondary].filter(Boolean).map((one) => (
+          {/* The way forward is the card's main action; a second one stays outlined. */}
+          {[action, secondary].filter(Boolean).map((one, i) => (
             <CustomTooltip
               key={one.label}
               show={!!one.tooltip}
@@ -343,8 +347,8 @@ function PathCell({
               <span>
                 <Button
                   size="small"
-                  variant="outlined"
-                  color="inherit"
+                  variant={i === 0 ? "contained" : "outlined"}
+                  color={i === 0 ? "primary" : "inherit"}
                   disabled={!!one.disabled}
                   onClick={one.onClick}
                 >
@@ -504,9 +508,7 @@ export default function AgentNextSteps({ agent }) {
   } else if (isCode) {
     traces = {
       title: "Get its traces",
-      body: "Choose the Observe project its production calls land in.",
-      unlocks:
-        "Error Feed finds issues in real calls, and Fix can repair them.",
+      body: "Link its Observe project so Error Feed finds issues in real calls and Fix can repair them.",
       action: {
         label: "Connect traces",
         disabled: !canEdit,
@@ -517,16 +519,12 @@ export default function AgentNextSteps({ agent }) {
   } else if (!provider) {
     traces = {
       title: "Enable observability",
-      body: "Add a provider to this agent first, so there are calls to pull in.",
-      unlocks:
-        "Error Feed finds issues in real calls, and Fix can repair them.",
+      body: "Add a provider first, so there are real calls for Error Feed to check.",
     };
   } else {
     traces = {
       title: "Enable observability",
-      body: `Its ${sourceLabel(provider)} calls are pulled into an Observe project made for it.`,
-      unlocks:
-        "Error Feed finds issues in real calls, and Fix can repair them.",
+      body: `Pull its ${sourceLabel(provider)} calls into Observe, so Error Feed finds issues and Fix can repair them.`,
       action: {
         label: "Turn on observability",
         disabled: !canEdit || busy,
@@ -550,9 +548,7 @@ export default function AgentNextSteps({ agent }) {
       }
     : {
         title: "Build an environment",
-        body: "Simulated tools, data and callers to run scenarios against.",
-        unlocks:
-          "Test changes, and let improvements try fixes before they ship.",
+        body: "Run scenarios against simulated tools, data and callers, and let improvements try fixes.",
         actionNode: <BuildEnvironmentButton agent={agent} canEdit={canEdit} />,
       };
 
