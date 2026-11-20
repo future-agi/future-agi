@@ -324,6 +324,9 @@ def test_marker_and_remap_queries_are_project_batched(parity):
             statuses = r.reader.list_authorized(object(), targets, per_parent_limit=64)
         assert len(statuses) == len(targets) + 1  # main also has its recording segment
         counts.append(len(queries))
+        assert all(
+            '"tracer_attachmentrecording"."manifest"' not in q["sql"] for q in queries
+        )
         r.backend.list_by_ids.assert_called_once()
         r.backend.remap_groups.assert_called_once()
         table, ids = r.backend.remap_groups.call_args.args

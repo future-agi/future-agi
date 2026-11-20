@@ -199,6 +199,13 @@ def check_readable(row, scope, state, now, *, ready=False):
         raise not_found() from None
 
 
+def metadata_rows(query):
+    """Read authorization and completion facts, not a whole timeline per segment."""
+    return query.select_related("attachment", "capture_session", "recording").defer(
+        "recording__manifest"
+    )
+
+
 def get_occurrence(
     viewer, authority, occurrence_id, parent, *, write=False, ready=False
 ):
@@ -209,9 +216,7 @@ def get_occurrence(
     except (ValueError, TypeError, AttributeError):
         raise not_found() from None
     row = (
-        AttachmentOccurrence.objects.select_related(
-            "attachment", "capture_session", "recording"
-        )
+        metadata_rows(AttachmentOccurrence.objects)
         .filter(
             scope=scope,
             client_id=occurrence_id,
@@ -327,11 +332,7 @@ def list_occurrences(
     # A cursor must refer only to an authorized item, never the last denied child.
     items: list[dict[str, Any]]
     items, last = [], None
-    candidates = list(
-        query.select_related("attachment", "capture_session", "recording").order_by(
-            "id"
-        )[:501]
-    )
+    candidates = list(metadata_rows(query).order_by("id")[:501])
     from tracer.services.attachments.authority import LiveAuthority, clickhouse_span
     from tracer.services.attachments.control_plane import (
         Retention,

@@ -49,6 +49,9 @@ class Query(life.Query):
     def select_related(self, *args):
         return self
 
+    def defer(self, *fields):
+        return self
+
     def first(self):
         return next(iter(self.rows), None)
 
@@ -109,6 +112,7 @@ def integrated(service):
             "source_for",
             "check_readable",
             "metadata",
+            "metadata_rows",
         },
         dataclass=dataclasses.dataclass,
         trace_uuid=service.c.trace_uuid,

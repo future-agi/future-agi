@@ -631,9 +631,7 @@ class ControlPlaneReader:
                 match &= match_rows
             limit = min(budget, len(parents) * per_parent_limit)
             rows = list(
-                AttachmentOccurrence.objects.select_related(
-                    "attachment", "capture_session", "recording"
-                )
+                occurrences.metadata_rows(AttachmentOccurrence.objects)
                 .filter(
                     match,
                     scope=scope,
