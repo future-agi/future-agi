@@ -7,7 +7,7 @@ confirmation page, since link scanners prefetch URLs; a POST unsubscribes,
 or resubscribes with ``action=resubscribe``.
 """
 
-import re
+import time
 from unittest import mock
 from urllib.parse import parse_qs, urlparse
 
@@ -33,6 +33,10 @@ def _send(to, category=None, scope=None, template="integration_error.html"):
         unsubscribe_scope=scope,
     )
     return list(mail.outbox)
+
+
+def _link(user, category):
+    return eu.Link(user.email.lower(), category, None, str(user.pk))
 
 
 def _token_from(message):
@@ -142,7 +146,7 @@ class TestHeaders:
 @pytest.mark.django_db
 class TestOneClick:
     def test_get_shows_confirmation_and_changes_nothing(self, api_client, user):
-        token = eu.make_token(user.email, eu.INTEGRATION_ERRORS)
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
 
         response = api_client.get(URL, {"token": token})
 
@@ -152,7 +156,7 @@ class TestOneClick:
         assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
 
     def test_rfc8058_post_unsubscribes_only_that_category(self, api_client, user):
-        token = eu.make_token(user.email, eu.INTEGRATION_ERRORS)
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
 
         response = api_client.post(
             f"{URL}?token={token}",
@@ -167,15 +171,15 @@ class TestOneClick:
         assert not eu.is_opted_out(user.email, eu.ANNOTATION_DISCUSSION)
 
     def test_opted_out_address_gets_other_categories_and_transactional(self, user):
-        eu.set_subscribed(user.email, eu.INTEGRATION_ERRORS, None, False)
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
 
         assert _send([user.email], eu.INTEGRATION_ERRORS) == []
         assert len(_send([user.email], eu.ANNOTATION_DISCUSSION)) == 1
         assert len(_send([user.email], category=None)) == 1
 
     def test_resubscribe_restores_the_category(self, api_client, user):
-        eu.set_subscribed(user.email, eu.INTEGRATION_ERRORS, None, False)
-        token = eu.make_token(user.email, eu.INTEGRATION_ERRORS)
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
 
         response = api_client.post(
             f"{URL}?token={token}", {"action": "resubscribe"}, format="multipart"
@@ -189,7 +193,7 @@ class TestOneClick:
         user.config = {"currentOrganizationId": "org-1"}
         user.save(update_fields=["config"])
 
-        eu.set_subscribed(user.email, eu.AUTOMATION_RULE_RUNS, None, False)
+        eu.set_subscribed(_link(user, eu.AUTOMATION_RULE_RUNS), False)
 
         user.refresh_from_db()
         assert user.config == {
@@ -198,7 +202,7 @@ class TestOneClick:
         }
 
     def test_digest_category_uses_the_digest_flag(self, api_client, user):
-        token = eu.make_token(user.email, eu.ANNOTATION_DIGEST)
+        token = eu.make_token(*_link(user, eu.ANNOTATION_DIGEST))
 
         api_client.post(f"{URL}?token={token}", {}, format="multipart")
 
@@ -217,7 +221,7 @@ class TestOneClick:
         assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
 
     def test_unknown_action_is_rejected(self, api_client, user):
-        token = eu.make_token(user.email, eu.INTEGRATION_ERRORS)
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
 
         response = api_client.post(
             f"{URL}?token={token}", {"action": "delete"}, format="multipart"
@@ -227,10 +231,23 @@ class TestOneClick:
         assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
 
     def test_token_cannot_be_retargeted(self, user):
-        token = eu.make_token(user.email, eu.INTEGRATION_ERRORS)
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
         tampered = token.replace(token[2], "A" if token[2] != "A" else "B", 1)
 
         assert eu.read_token(tampered) is None
+
+    @pytest.mark.parametrize("days, works", [(29, True), (31, False)])
+    def test_link_works_for_30_days(self, api_client, user, days, works):
+        token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
+        later = time.time() + days * 86400
+
+        with mock.patch("django.core.signing.time.time", return_value=later):
+            response = api_client.post(f"{URL}?token={token}", {}, format="multipart")
+            page = api_client.get(URL, {"token": token}).content
+
+        assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS) is works
+        assert response.status_code == (200 if works else 400)
+        assert (b"older than 30 days" in page) is not works
 
 
 @pytest.mark.django_db
@@ -243,18 +260,21 @@ class TestMonitorAlerts:
         assert response.status_code == 200
         monitor.refresh_from_db()
         assert monitor.notification_emails == ["oncall@example.com"]
+        # Getting alerts back is the monitor editors' call, not the link's.
+        assert b"Resubscribe" not in response.content
+        assert b"anyone who can edit this monitor" in response.content
 
-        undo = re.search(rb"name='undo' value='([^']+)'", response.content)
-        api_client.post(
-            f"{URL}?token={token}",
-            {"action": "resubscribe", "undo": undo.group(1).decode()},
-            format="multipart",
+    def test_resubscribe_never_re_adds_a_monitor_recipient(self, api_client, monitor):
+        token = eu.make_token("lead@example.com", eu.MONITOR_ALERTS, str(monitor.id))
+        api_client.post(f"{URL}?token={token}", {}, format="multipart")
+
+        response = api_client.post(
+            f"{URL}?token={token}", {"action": "resubscribe"}, format="multipart"
         )
+
+        assert b"Can't resubscribe" in response.content
         monitor.refresh_from_db()
-        assert sorted(monitor.notification_emails) == [
-            "lead@example.com",
-            "oncall@example.com",
-        ]
+        assert monitor.notification_emails == ["oncall@example.com"]
 
     def test_old_link_cannot_put_a_removed_address_back(self, api_client, monitor):
         # The owner removed lead@ in the UI; lead@ still has an old alert email.
@@ -269,27 +289,9 @@ class TestMonitorAlerts:
 
         assert b"Resubscribe" not in page.content
         assert b"Can't resubscribe" in response.content
+        assert b"adds lead@example.com back" in response.content
         monitor.refresh_from_db()
         assert monitor.notification_emails == ["oncall@example.com"]
-
-    def test_undo_respects_the_recipient_cap(self, api_client, monitor):
-        token = eu.make_token("lead@example.com", eu.MONITOR_ALERTS, str(monitor.id))
-        api_client.post(f"{URL}?token={token}", {}, format="multipart")
-        monitor.notification_emails = [f"r{i}@example.com" for i in range(5)]
-        monitor.save(update_fields=["notification_emails"])
-
-        response = api_client.post(
-            f"{URL}?token={token}",
-            {
-                "action": "resubscribe",
-                "undo": eu.make_undo_token("lead@example.com", str(monitor.id)),
-            },
-            format="multipart",
-        )
-
-        assert b"most recipients" in response.content
-        monitor.refresh_from_db()
-        assert len(monitor.notification_emails) == 5
 
     def test_alert_email_carries_a_monitor_scoped_link(self, monitor):
         from tracer.utils.monitor import _send_alert_email
@@ -301,8 +303,8 @@ class TestMonitorAlerts:
             ["oncall@example.com"],
             ["Lead@Example.com"],
         ]
-        email, category, scope = eu.read_token(_token_from(mail.outbox[0]))
-        assert (email, category, scope) == (
+        link = eu.read_token(_token_from(mail.outbox[0]))
+        assert (link.email, link.category, link.scope) == (
             "oncall@example.com",
             eu.MONITOR_ALERTS,
             str(monitor.id),
@@ -335,3 +337,66 @@ def test_legacy_digest_link_shows_confirmation_instead_of_acting(api_client, use
     assert URL.encode() in response.content
     state, _ = AnnotationNotificationState.objects.get_or_create(user=user)
     assert state.digest_enabled is True
+
+
+@pytest.mark.django_db
+class TestReviewRound2Storage:
+    """Rick round 2: opt-outs survive config rewrites and links bind to the
+    account they were sent to."""
+
+    def test_stale_config_save_keeps_the_opt_out(self, user):
+        from accounts.models.user import User
+
+        # A user object cached before the opt-out, as the auth cache holds one.
+        stale = User.objects.get(pk=user.pk)
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+
+        stale.config["currentOrganizationId"] = "org-2"  # an org switch
+        stale.save(update_fields=["config"])
+        stale.save()  # and a full save from the same stale copy
+
+        user.refresh_from_db()
+        assert user.config["currentOrganizationId"] == "org-2"
+        assert user.config[eu.USER_CONFIG_KEY] == [eu.INTEGRATION_ERRORS]
+        assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+
+    def test_stale_config_save_keeps_a_resubscribe(self, user):
+        from accounts.models.user import User
+
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+        stale = User.objects.get(pk=user.pk)
+        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), True)
+
+        stale.save(update_fields=["config"])
+
+        assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+
+    def test_link_acts_on_the_account_it_was_sent_to(self, api_client, user):
+        from accounts.models.user import User
+
+        twin = User.objects.create_user(
+            email=user.email.upper(), password="x", name="Twin"
+        )
+        token = eu.make_token(*_link(twin, eu.INTEGRATION_ERRORS))
+
+        api_client.post(f"{URL}?token={token}", {}, format="multipart")
+
+        twin.refresh_from_db()
+        user.refresh_from_db()
+        assert eu.INTEGRATION_ERRORS in twin.config[eu.USER_CONFIG_KEY]
+        assert eu.USER_CONFIG_KEY not in (user.config or {})
+
+    def test_sent_link_carries_the_account_id(self, user):
+        (message,) = _send([user.email], eu.INTEGRATION_ERRORS)
+
+        assert eu.read_token(_token_from(message)).user_id == str(user.pk)
+
+    def test_get_on_a_deleted_monitor_has_nothing_to_change(self, api_client, monitor):
+        token = eu.make_token("oncall@example.com", eu.MONITOR_ALERTS, str(monitor.id))
+        monitor.deleted = True
+        monitor.save(update_fields=["deleted"])
+
+        page = api_client.get(URL, {"token": token})
+
+        assert b"Nothing to change" in page.content
+        assert b"<form" not in page.content

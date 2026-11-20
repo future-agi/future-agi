@@ -17,11 +17,15 @@ Opt-outs live in storage that already exists, so no schema change:
 """
 
 import os
+from datetime import timedelta
+from typing import NamedTuple
 
 from django.conf import settings
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import transaction
+
+from tfc.routers import force_primary
 
 ANNOTATION_DIGEST = "annotation_digest"
 ANNOTATION_DISCUSSION = "annotation_discussion"
@@ -40,29 +44,47 @@ CATEGORY_LABELS = {
 
 USER_CONFIG_KEY = "email_optouts"
 _SALT = "email-notification-unsubscribe"
-_UNDO_SALT = "email-notification-unsubscribe-undo"
-# A monitor's recipient list belongs to its owner, so an address may only put
-# itself back right after it unsubscribed (the undo button), not with a
-# never-expiring link after the owner removed it.
-MONITOR_UNDO_MAX_AGE = 60 * 60
-# Mirrors the cap the monitor serializer enforces on notification_emails.
-MONITOR_MAX_RECIPIENTS = 5
+# How long a link works after the email is sent. US law (CAN-SPAM) requires
+# at least 30 days; the older digest links used the same limit.
+LINK_MAX_AGE = timedelta(days=30)
+
+# What a preference change did.
+CHANGED = "changed"
+UNCHANGED = "unchanged"  # already in the requested state
+MISSING = "missing"  # the account or monitor no longer exists
+REFUSED = "refused"  # a monitor recipient can't add itself back
 
 
-def make_token(email: str, category: str, scope: str | None = None) -> str:
-    """Signed, non-expiring token. Mail-client unsubscribe buttons get pressed
-    months after delivery, so the token must outlive any time limit; the
-    signature stops anyone swapping in another address or category."""
+class Link(NamedTuple):
+    """What a signed unsubscribe link refers to."""
+
+    email: str
+    category: str
+    scope: str | None = None  # monitor id, for monitor alerts
+    user_id: str | None = None  # the account the link was sent to
+
+
+def make_token(
+    email: str, category: str, scope: str | None = None, user_id=None
+) -> str:
+    """Signed token that ``read_token`` accepts for ``LINK_MAX_AGE`` after it
+    is made. The signature stops anyone swapping in another address, account
+    or category. Account categories carry the account id so the link acts on
+    the account it was sent to, whatever other accounts share the address's
+    spelling."""
     payload = {"e": email.strip().lower(), "c": category}
     if scope:
         payload["s"] = str(scope)
+    if user_id:
+        payload["u"] = str(user_id)
     return signing.dumps(payload, salt=_SALT, compress=True)
 
 
-def read_token(token: str) -> tuple[str, str, str | None] | None:
-    """``(email, category, scope)`` for a valid token, else ``None``."""
+def read_token(token: str) -> Link | None:
+    """The link a valid token refers to, else ``None`` (also once the token
+    is older than ``LINK_MAX_AGE``)."""
     try:
-        payload = signing.loads(token or "", salt=_SALT)
+        payload = signing.loads(token or "", salt=_SALT, max_age=LINK_MAX_AGE)
     except signing.BadSignature:
         return None
     if not isinstance(payload, dict):
@@ -72,42 +94,55 @@ def read_token(token: str) -> tuple[str, str, str | None] | None:
         return None
     if category == MONITOR_ALERTS and not payload.get("s"):
         return None
-    return email, category, payload.get("s")
+    return Link(email, category, payload.get("s"), payload.get("u"))
 
 
-def make_undo_token(email: str, scope: str | None) -> str:
-    """Short-lived token for a monitor's Resubscribe (undo) button."""
-    return signing.dumps({"e": email, "s": str(scope)}, salt=_UNDO_SALT)
-
-
-def undo_token_matches(token: str, email: str, scope: str | None) -> bool:
-    try:
-        payload = signing.loads(
-            token or "", salt=_UNDO_SALT, max_age=MONITOR_UNDO_MAX_AGE
-        )
-    except signing.BadSignature:  # includes SignatureExpired
-        return False
-    return bool(payload == {"e": email, "s": str(scope)})
-
-
-def monitor_has_room(scope: str | None) -> bool:
-    monitor = _monitor(scope)
-    return monitor is not None and (
-        len(monitor.notification_emails or []) < MONITOR_MAX_RECIPIENTS
-    )
-
-
-def unsubscribe_url(email: str, category: str, scope: str | None = None) -> str:
+def unsubscribe_url(
+    email: str, category: str, scope: str | None = None, user_id=None
+) -> str:
     """This install's API host, so a self-hosted link never leaves the install."""
+    if user_id is None and category != MONITOR_ALERTS:
+        user = _user_for_email(email)
+        user_id = user.pk if user else None
     backend = (os.environ.get("BACKEND_URL") or settings.BASE_URL).rstrip("/")
-    token = make_token(email, category, scope)
+    token = make_token(email, category, scope, user_id)
     return f"{backend}/accounts/notifications/email/unsubscribe/?token={token}"
 
 
-def _user_for(email: str):
+def _user_model():
     from django.contrib.auth import get_user_model
 
-    return get_user_model().objects.filter(email__iexact=email).first()
+    return get_user_model()
+
+
+def _user_for_email(email: str):
+    """The account for an address. An exact match wins over a case variant,
+    so two accounts whose addresses differ only in case stay separate."""
+    with force_primary():
+        users = list(_user_model().objects.filter(email__iexact=email.strip())[:5])
+    exact = [u for u in users if u.email == email.strip()]
+    return (exact or users or [None])[0]
+
+
+def _user_for(link: Link):
+    if link.user_id:
+        try:
+            with force_primary():
+                return _user_model().objects.filter(pk=link.user_id).first()
+        except (ValueError, ValidationError):  # malformed id
+            return None
+    return _user_for_email(link.email)
+
+
+def _opted_out(user, category: str) -> bool:
+    if category == ANNOTATION_DIGEST:
+        from model_hub.models.annotation_queues import AnnotationNotificationState
+
+        with force_primary():
+            return AnnotationNotificationState.objects.filter(
+                user=user, digest_enabled=False
+            ).exists()
+    return category in ((user.config or {}).get(USER_CONFIG_KEY) or [])
 
 
 def is_opted_out(email: str, category: str) -> bool:
@@ -118,86 +153,88 @@ def is_opted_out(email: str, category: str) -> bool:
     """
     if category == MONITOR_ALERTS:
         return False
-    user = _user_for(email)
-    if user is None:
-        return False
-    if category == ANNOTATION_DIGEST:
-        from model_hub.models.annotation_queues import AnnotationNotificationState
-
-        return AnnotationNotificationState.objects.filter(
-            user=user, digest_enabled=False
-        ).exists()
-    return category in ((user.config or {}).get(USER_CONFIG_KEY) or [])
+    user = _user_for_email(email)
+    return user is not None and _opted_out(user, category)
 
 
-def is_subscribed(email: str, category: str, scope: str | None = None) -> bool:
+def is_subscribed(link: Link) -> bool:
     """Current state, for the unsubscribe page."""
-    if category == MONITOR_ALERTS:
-        monitor = _monitor(scope)
+    if link.category == MONITOR_ALERTS:
+        monitor = _monitor(link.scope)
         return monitor is not None and any(
-            e.lower() == email for e in (monitor.notification_emails or [])
+            e.lower() == link.email for e in (monitor.notification_emails or [])
         )
-    return not is_opted_out(email, category)
+    user = _user_for(link)
+    return user is not None and not _opted_out(user, link.category)
 
 
-def _monitor(scope):
+def destination_exists(link: Link) -> bool:
+    """Whether the account or monitor the link was for still exists."""
+    if link.category == MONITOR_ALERTS:
+        return _monitor(link.scope) is not None
+    return _user_for(link) is not None
+
+
+def _monitor(scope, lock: bool = False):
     from tracer.models.monitor import UserAlertMonitor
 
+    queryset = UserAlertMonitor.no_workspace_objects.filter(id=scope, deleted=False)
+    if lock:
+        queryset = queryset.select_for_update()
     try:
-        return UserAlertMonitor.no_workspace_objects.filter(
-            id=scope, deleted=False
-        ).first()
+        with force_primary():
+            return queryset.first()
     except (ValueError, ValidationError):  # malformed monitor id
         return None
 
 
-def set_subscribed(
-    email: str, category: str, scope: str | None, subscribed: bool
-) -> bool:
-    """Turn ``category`` on or off for ``email``. False when there is nothing
-    to change it on (no such account or monitor)."""
-    if category == MONITOR_ALERTS:
-        return _set_monitor_recipient(email, scope, subscribed)
+def set_subscribed(link: Link, subscribed: bool) -> str:
+    """Turn the link's category on or off; returns what happened."""
+    if link.category == MONITOR_ALERTS:
+        return _remove_monitor_recipient(link) if not subscribed else REFUSED
 
-    user = _user_for(email)
+    user = _user_for(link)
     if user is None:
-        return False
+        return MISSING
 
-    if category == ANNOTATION_DIGEST:
+    if link.category == ANNOTATION_DIGEST:
         from model_hub.models.annotation_queues import AnnotationNotificationState
 
         state, _ = AnnotationNotificationState.objects.get_or_create(user=user)
+        if state.digest_enabled == subscribed:
+            return UNCHANGED
         state.digest_enabled = subscribed
         state.save(update_fields=["digest_enabled", "updated_at"])
-        return True
+        return CHANGED
 
     with transaction.atomic():
         user = type(user).objects.select_for_update().get(pk=user.pk)
         config = dict(user.config or {})
-        optouts = [c for c in (config.get(USER_CONFIG_KEY) or []) if c != category]
+        stored = config.get(USER_CONFIG_KEY) or []
+        optouts = [c for c in stored if c != link.category]
+        if (len(optouts) == len(stored)) == subscribed:
+            return UNCHANGED
         if not subscribed:
-            optouts.append(category)
+            optouts.append(link.category)
         config[USER_CONFIG_KEY] = sorted(optouts)
         user.config = config
+        user._writes_email_optouts = True
         user.save(update_fields=["config"])
-    return True
+    return CHANGED
 
 
-def _set_monitor_recipient(email: str, scope: str | None, subscribed: bool) -> bool:
-    from tracer.models.monitor import UserAlertMonitor
-
-    found = _monitor(scope)
-    if found is None:
-        return False
+def _remove_monitor_recipient(link: Link) -> str:
+    """Drop the address from one monitor's recipient list, under its row lock.
+    Only someone who can edit the monitor adds an address back, so a link
+    never does: the owner may have removed it on purpose since."""
     with transaction.atomic():
-        monitor = UserAlertMonitor.no_workspace_objects.select_for_update().get(
-            pk=found.pk
-        )
-        recipients = [
-            e for e in (monitor.notification_emails or []) if e.lower() != email
-        ]
-        if subscribed:
-            recipients.append(email)
-        monitor.notification_emails = recipients
+        monitor = _monitor(link.scope, lock=True)
+        if monitor is None:
+            return MISSING
+        recipients = list(monitor.notification_emails or [])
+        kept = [e for e in recipients if e.lower() != link.email]
+        if len(kept) == len(recipients):
+            return UNCHANGED
+        monitor.notification_emails = kept
         monitor.save(update_fields=["notification_emails", "updated_at"])
-    return True
+    return CHANGED

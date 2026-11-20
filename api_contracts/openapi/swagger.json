@@ -89635,10 +89635,6 @@
                         "unsubscribe",
                         "resubscribe"
                     ]
-                },
-                "undo": {
-                    "title": "Undo",
-                    "type": "string"
                 }
             }
         },

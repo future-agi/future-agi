@@ -596,7 +596,6 @@ export const EmailUnsubscribeRequestApiAction = {
 
 export interface EmailUnsubscribeRequestApi {
   action?: EmailUnsubscribeRequestApiAction;
-  undo?: string;
 }
 
 export interface UserOnboardingResultApi {

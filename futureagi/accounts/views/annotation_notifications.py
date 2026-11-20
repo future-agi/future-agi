@@ -112,14 +112,11 @@ def _unsub_template(
     return HttpResponse(html, content_type="text/html", status=status_code)
 
 
-def _action_form(token: str, action: str, label: str, undo: str = "") -> str:
+def _action_form(token: str, action: str, label: str) -> str:
     target = reverse("email-notification-unsubscribe")
-    undo_field = (
-        f"<input type='hidden' name='undo' value='{escape(undo)}'>" if undo else ""
-    )
     return (
         f"<form method='post' action='{target}?token={quote(token)}'>"
-        f"<input type='hidden' name='action' value='{action}'>{undo_field}"
+        f"<input type='hidden' name='action' value='{action}'>"
         f"<button type='submit'>{label}</button></form>"
     )
 
@@ -127,27 +124,44 @@ def _action_form(token: str, action: str, label: str, undo: str = "") -> str:
 def _invalid_link(status_code: int = 200) -> HttpResponse:
     return _unsub_template(
         "Link invalid",
-        "This unsubscribe link is invalid or incomplete. "
+        "This unsubscribe link is invalid or older than 30 days. "
         "Use the Unsubscribe link in a recent email instead.",
         status_code=status_code,
     )
 
 
-def _confirm_page(token: str, email: str, category: str, scope) -> HttpResponse:
+def _monitor_way_back(who: str) -> str:
+    return (
+        "You'll get these alerts again if the monitor's owner, or anyone who "
+        f"can edit this monitor, adds {who} back to its recipients."
+    )
+
+
+def _nothing_to_change() -> HttpResponse:
+    return _unsub_template(
+        "Nothing to change",
+        "The account or alert this link was for no longer exists, "
+        "so there are no more of these emails to stop.",
+    )
+
+
+def _confirm_page(token: str, link: email_unsubscribe.Link) -> HttpResponse:
     """GET view of an unsubscribe link: shows the current state with the
     button that changes it, and changes nothing itself."""
-    label = email_unsubscribe.CATEGORY_LABELS[category]
-    who = escape(email)
-    if email_unsubscribe.is_subscribed(email, category, scope):
+    label = email_unsubscribe.CATEGORY_LABELS[link.category]
+    who = escape(link.email)
+    if not email_unsubscribe.destination_exists(link):
+        return _nothing_to_change()
+    if email_unsubscribe.is_subscribed(link):
         return _unsub_template(
             "Unsubscribe?",
             f"Stop sending {label} to {who}?",
             _action_form(token, "unsubscribe", "Unsubscribe"),
         )
-    if category == email_unsubscribe.MONITOR_ALERTS:
+    if link.category == email_unsubscribe.MONITOR_ALERTS:
         return _unsub_template(
             "You're unsubscribed",
-            f"{who} doesn't receive {label}. Ask the monitor's owner to add you back.",
+            f"{who} doesn't receive {label}. {_monitor_way_back(who)}",
         )
     return _unsub_template(
         "You're unsubscribed",
@@ -175,10 +189,10 @@ class EmailUnsubscribeView(APIView):
     @swagger_auto_schema(responses=_UNSUBSCRIBE_RESPONSES)
     def get(self, request):
         token = request.query_params.get("token", "")
-        parsed = email_unsubscribe.read_token(token)
-        if not parsed:
+        link = email_unsubscribe.read_token(token)
+        if not link:
             return _invalid_link()
-        return _confirm_page(token, *parsed)
+        return _confirm_page(token, link)
 
     @validated_request(
         request_serializer=EmailUnsubscribeRequestSerializer,
@@ -191,51 +205,40 @@ class EmailUnsubscribeView(APIView):
     )
     def post(self, request):
         token = request.query_params.get("token", "")
-        parsed = email_unsubscribe.read_token(token)
-        if not parsed:
+        link = email_unsubscribe.read_token(token)
+        if not link:
             return _invalid_link(status.HTTP_400_BAD_REQUEST)
-        email, category, scope = parsed
         subscribed = request.validated_data.get("action") == "resubscribe"
-        is_monitor = category == email_unsubscribe.MONITOR_ALERTS
+        is_monitor = link.category == email_unsubscribe.MONITOR_ALERTS
+        label = email_unsubscribe.CATEGORY_LABELS[link.category]
+        who = escape(link.email)
 
-        if subscribed and is_monitor:
-            refusal = None
-            if not email_unsubscribe.undo_token_matches(
-                request.validated_data.get("undo", ""), email, scope
-            ):
-                refusal = "Ask the monitor's owner to add you back."
-            elif not email_unsubscribe.monitor_has_room(scope):
-                refusal = (
-                    "This monitor already has the most recipients it allows. "
-                    "Ask its owner to add you back."
-                )
-            if refusal:
-                return _unsub_template("Can't resubscribe", refusal)
-
-        if not email_unsubscribe.set_subscribed(email, category, scope, subscribed):
-            return _unsub_template(
-                "Nothing to change",
-                "The account or alert this link was for no longer exists, "
-                "so there are no more of these emails to stop.",
+        result = email_unsubscribe.set_subscribed(link, subscribed)
+        if result == email_unsubscribe.MISSING:
+            return _nothing_to_change()
+        if result == email_unsubscribe.REFUSED:
+            return _unsub_template("Can't resubscribe", _monitor_way_back(who))
+        if result == email_unsubscribe.CHANGED:
+            logger.info(
+                "email_notification_subscription_changed",
+                category=link.category,
+                subscribed=subscribed,
             )
-        logger.info(
-            "email_notification_subscription_changed",
-            category=category,
-            subscribed=subscribed,
-        )
-        label = email_unsubscribe.CATEGORY_LABELS[category]
-        who = escape(email)
+        if is_monitor:
+            return _unsub_template(
+                "Unsubscribed",
+                f"{who} will no longer receive {label}. {_monitor_way_back(who)}",
+            )
         if subscribed:
             return _unsub_template(
                 "Resubscribed",
                 f"{who} will receive {label} again.",
                 _action_form(token, "unsubscribe", "Unsubscribe"),
             )
-        undo = email_unsubscribe.make_undo_token(email, scope) if is_monitor else ""
         return _unsub_template(
             "Unsubscribed",
             f"{who} will no longer receive {label}.",
-            _action_form(token, "resubscribe", "Resubscribe", undo),
+            _action_form(token, "resubscribe", "Resubscribe"),
         )
 
 
@@ -269,10 +272,11 @@ class UnsubscribeAnnotationDigestView(APIView):
         user = get_user_model().objects.filter(pk=user_id).first()
         if user is None:
             return _invalid_link()
-        email = user.email.lower()
-        category = email_unsubscribe.ANNOTATION_DIGEST
-        token = email_unsubscribe.make_token(email, category)
-        return _confirm_page(token, email, category, None)
+        link = email_unsubscribe.Link(
+            user.email.lower(), email_unsubscribe.ANNOTATION_DIGEST, None, str(user.pk)
+        )
+        token = email_unsubscribe.make_token(*link)
+        return _confirm_page(token, link)
 
 
 class SnoozeAnnotationDigestView(APIView):

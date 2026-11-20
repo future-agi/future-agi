@@ -673,7 +673,6 @@ export const AccountsNotificationsEmailUnsubscribeListResponse = zod.string();
  */
 export const AccountsNotificationsEmailUnsubscribeCreateBody = zod.object({
   action: zod.enum(["unsubscribe", "resubscribe"]).optional(),
-  undo: zod.string().optional(),
 });
 
 export const AccountsNotificationsEmailUnsubscribeCreateResponse = zod.string();

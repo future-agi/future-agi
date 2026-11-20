@@ -119,9 +119,6 @@ class EmailUnsubscribeRequestSerializer(serializers.Serializer):
     action = serializers.ChoiceField(
         choices=["unsubscribe", "resubscribe"], required=False
     )
-    # Monitor alerts only: the short-lived token from the Unsubscribed page
-    # that lets the address undo its own unsubscribe.
-    undo = serializers.CharField(required=False, allow_blank=True)
 
 
 class AccountsMessageResultSerializer(serializers.Serializer):

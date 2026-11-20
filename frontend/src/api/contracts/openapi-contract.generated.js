@@ -63795,10 +63795,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["unsubscribe", "resubscribe"],
         },
-        undo: {
-          title: "Undo",
-          type: "string",
-        },
       },
     },
     EmbeddingsResponse: {
