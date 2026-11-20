@@ -1065,11 +1065,11 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
-### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV and its analysis as Markdown
 
-**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+**Goal:** A developer downloads an issue's traces and its stored analysis from the issue page, and uploads the traces file unchanged as a dataset (detail and overview responses stubbed)
 
-**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:36`
 
 **Tags:** —
 
@@ -1077,8 +1077,12 @@
 
 1. open the issue page
 2. click Export
-3. save the downloaded CSV
-4. upload the downloaded CSV using the Add Dataset form
+3. choose Traces
+4. save the downloaded CSV
+5. click Export
+6. choose Analysis
+7. save the downloaded Markdown
+8. upload the downloaded CSV using the Add Dataset form
 
 **Backend state verified:**
 
@@ -1087,8 +1091,9 @@
 
 **Browser observations:**
 
-- the export requests the issue overview once, with rep_limit=200
+- the traces export requests the issue overview once, with rep_limit=200, and the analysis export once more, with rep_limit=10
 - the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the analysis is named error-feed-<issue>-analysis.md, holds the stubbed likely cause, suggested change and wrong-if under their headings, and samples exactly the two stubbed traces
 - the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
 - the snackbar reports exactly the exported trace count
 - the uploaded dataset's grid shows exactly the exported trace ids
@@ -1107,7 +1112,7 @@
 2. read the issue on Overview
 3. pick another trace in Traces affected
 4. open a trace from the Traces tab
-5. open the Trends and Fix tabs
+5. open the Trends and Root cause tabs
 6. open a restricted share link while signed out
 
 **Browser observations:**
@@ -1116,6 +1121,7 @@
 - the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
 - picking a trace reads the sidebar through the share token for exactly that trace
 - opening a trace reads it through the share token and shows its spans
+- Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
@@ -3364,4 +3370,4 @@
 - the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session
 - the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
 - B reading A's import answers 404, through A's environment and through B's own
-- a viewer of A's workspace is refused the import and the draft with 403 (Write access denied to this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+- a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending
