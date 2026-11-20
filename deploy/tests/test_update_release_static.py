@@ -960,29 +960,31 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         self.assertEqual(self.jobs["rehearse"]["uses"], "./.github/workflows/update-compatibility-proof.yml")
         self.assertEqual(needs_of(self.generate), [])
 
-    def test_bootstrap_mode_is_trigger_bound_and_normal_runs_still_require_rehearsal(self):
-        mode = self.doc["env"]["BOOTSTRAP_MODE"]
-        self.assertIn("github.event_name == 'workflow_dispatch'", mode)
-        self.assertIn("github.event_name == 'workflow_call'", mode)
-        self.assertIn("inputs.bootstrap", mode)
+    def test_bootstrap_mode_is_the_input_and_normal_runs_still_require_rehearsal(self):
+        # Inside a called workflow github.event_name is the caller's event, never
+        # workflow_call, so no condition may branch on workflow_call.
+        self.assertNotIn("'workflow_call'", UPDATE_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertEqual(self.doc["env"]["BOOTSTRAP_MODE"], "${{ inputs.bootstrap == true }}")
         rehearse_if = self.jobs["rehearse"]["if"]
         publish_if = self.publish["if"]
-        self.assertIn("!((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap)", rehearse_if)
-        self.assertIn("((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap)", publish_if)
-        self.assertIn("needs.rehearse.result == 'success'", publish_if)
+        self.assertIn("inputs.bootstrap != true", rehearse_if)
+        self.assertIn("inputs.bootstrap != true && needs.rehearse.result == 'success'", publish_if)
         self.assertIn("needs.bootstrap_approval.result == 'success'", publish_if)
+        self.assertIn("github.workflow != 'release-update-manifest'", publish_if)
         self.assertIn("needs.generate.result == 'success'", publish_if)
         self.assertIn("always()", publish_if)
 
-    def test_bootstrap_mode_harness_evaluates_the_workflow_expression_for_both_triggers(self):
+    def test_bootstrap_mode_harness_evaluates_the_workflow_expression_for_each_caller_event(self):
         expression = self.doc["env"]["BOOTSTRAP_MODE"]
         step = self.generate["steps"][0]
+        # github.event_name is "push" when release-images.yml calls this on a tag
+        # push (it passes bootstrap=false) and "workflow_dispatch" for a direct or
+        # release-images dispatch.
         for event, requested, expected in (
             ("workflow_dispatch", True, True),
             ("workflow_dispatch", False, False),
-            ("workflow_call", True, True),
-            ("workflow_call", False, False),
-            ("push", True, False),
+            ("push", False, False),
+            ("push", True, True),
         ):
             with self.subTest(event=event, requested=requested):
                 context = {
@@ -994,13 +996,26 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
                 self.assertEqual(step_env(self.doc, self.generate, step, context)["BOOTSTRAP_MODE"],
                                  "true" if expected else "false")
 
-    def test_direct_bootstrap_has_production_approval_without_changing_normal_job(self):
+    def test_bootstrap_asks_for_production_approval_exactly_once(self):
         approval = self.jobs["bootstrap_approval"]
         self.assertEqual(approval["environment"], "production")
-        self.assertIn("github.event_name == 'workflow_dispatch'", approval["if"])
-        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.bootstrap", approval["if"])
         self.assertNotIn("environment", self.publish)
         self.assertEqual(self.publish["permissions"], {"contents": "write", "id-token": "write"})
+        condition = "${{ " + approval["if"] + " }}"
+        # github.workflow is the caller's name inside a called workflow:
+        # release-images.yml already waited on its own production approval.
+        for workflow, requested, expected in (
+            ("release-update-manifest", True, True),
+            ("release-update-manifest", False, False),
+            ("release-images", True, False),
+            ("release-images", False, False),
+        ):
+            with self.subTest(workflow=workflow, requested=requested):
+                context = {"github.repository": CANONICAL_REPOSITORY, "github.workflow": workflow,
+                           "inputs.bootstrap": requested}
+                self.assertEqual(bool(evaluate_workflow_expression(condition, context)), expected)
+        self.assertEqual(load(RELEASE_IMAGES)["name"], "release-images")
+        self.assertEqual(self.doc["name"], "release-update-manifest")
 
     def test_bootstrap_publishes_only_the_frozen_uncertified_candidate(self):
         qualified = one_step(self.publish, lambda s: s.get("name") == "Qualified manifest")
@@ -1150,9 +1165,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         concurrency = self.doc["concurrency"]
         self.assertEqual(concurrency["cancel-in-progress"], "false")
         group = concurrency["group"]
-        self.assertIn("github.event_name == 'workflow_dispatch'", group)
-        self.assertIn("github.event_name == 'workflow_call'", group)
-        self.assertIn("inputs.bootstrap", group)
+        self.assertIn("inputs.bootstrap == true", group)
         self.assertIn("release-update-manifest-bootstrap", group)
         self.assertIn("format('release-update-manifest-{0}', inputs.version)", group)
         self.assertNotEqual(group, "release-update-manifest")
@@ -3016,7 +3029,7 @@ class TrustWorkflowGuardAdditions(unittest.TestCase):
         self.assertEqual(rehearsal["permissions"], {"contents": "read"})
         approval = self.jobs["bootstrap_approval"]
         self.assertIn(f"github.repository == '{self.claims[0]}'", approval["if"])
-        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.bootstrap", approval["if"])
+        self.assertIn("github.workflow == 'release-update-manifest' && inputs.bootstrap == true", approval["if"])
         for name, job in self.jobs.items():
             with self.subTest(job=name):
                 condition = job.get("if")
@@ -3024,10 +3037,10 @@ class TrustWorkflowGuardAdditions(unittest.TestCase):
                     self.assertEqual(condition, f"github.repository == '{self.claims[0]}'")
                 elif name == "rehearse":
                     self.assertIn(f"github.repository == '{self.claims[0]}'", condition)
-                    self.assertIn("!((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap)", condition)
+                    self.assertIn("inputs.bootstrap != true", condition)
                 elif name == "bootstrap_approval":
                     self.assertIn(f"github.repository == '{self.claims[0]}'", condition)
-                    self.assertIn("github.event_name == 'workflow_dispatch'", condition)
+                    self.assertIn("github.workflow == 'release-update-manifest'", condition)
                 else:
                     self.assertIn(f"github.repository == '{self.claims[0]}'", condition)
                     self.assertIn("!cancelled()", condition)

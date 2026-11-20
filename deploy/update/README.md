@@ -453,9 +453,12 @@ them notify-only with a reason such as `uncertified_release`. The first signed
 manifest may be published deliberately uncertified/manual by starting
 `release-update-manifest.yml` from its exact release tag with its explicit
 `bootstrap` dispatch input enabled (or by dispatching `release-images.yml`
-from that tag with `components=update-manifest` and `bootstrap=true`). A
-direct bootstrap dispatch pauses at the `production` environment approval;
-normal reusable releases retain the approval performed by `release-images.yml`.
+from that tag with `components=update-manifest` and `bootstrap=true`). Either
+way the bootstrap asks for `production` environment approval exactly once: a
+direct dispatch pauses at its own approval job, and a `release-images.yml`
+dispatch uses that workflow's existing approval (inside a called workflow,
+`github.workflow` names the caller, so the extra job is skipped). Normal
+reusable releases keep the approval performed by `release-images.yml`.
 The bootstrap path is restricted to the initial stable channel. It first verifies
 that no published, non-draft stable GitHub Release other than the current
 target has either signed-manifest asset. A partial manifest/bundle pair on

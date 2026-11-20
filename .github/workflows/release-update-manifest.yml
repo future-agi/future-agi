@@ -95,15 +95,17 @@ concurrency:
   # Bootstrap attempts share one queue, while normal releases only serialize
   # retries of the same version. cancel-in-progress=false preserves a running
   # publication; unrelated normal releases never evict one another.
-  group: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap) && 'release-update-manifest-bootstrap' || format('release-update-manifest-{0}', inputs.version) }}
+  group: ${{ inputs.bootstrap == true && 'release-update-manifest-bootstrap' || format('release-update-manifest-{0}', inputs.version) }}
   cancel-in-progress: false
 
 env:
   OIDC_ISSUER: https://token.actions.githubusercontent.com
-  # Normalize the input once and bind it to a supported trigger. In particular,
-  # a stale caller input or proof can never turn a workflow_dispatch bootstrap
-  # into a compatibility-proof download.
-  BOOTSTRAP_MODE: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap) }}
+  # Normalize the input once. The only triggers are workflow_dispatch and
+  # workflow_call, and inside a called workflow github.event_name is the
+  # caller's event (push or workflow_dispatch), never workflow_call, so the
+  # input itself is the signal. release-images.yml passes false on a tag push.
+  # A bootstrap run never downloads or attaches a compatibility proof.
+  BOOTSTRAP_MODE: ${{ inputs.bootstrap == true }}
 
 jobs:
   generate:
@@ -389,22 +391,24 @@ jobs:
     needs: generate
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      !((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap)
+      inputs.bootstrap != true
     permissions:
       contents: read
     uses: ./.github/workflows/update-compatibility-proof.yml
     with:
       produce: true
 
-  # Direct dispatches do not pass through release-images.yml's approved job.
-  # Keep this gate in a separate job so normal reusable releases retain their
-  # existing approval path and do not inherit or bypass this environment.
+  # A direct dispatch of this file does not pass through release-images.yml's
+  # approve job, so it needs its own Production approval. When release-images.yml
+  # calls this workflow, github.workflow is the caller's name ("release-images"),
+  # which already waited on the production environment: this job is skipped there
+  # so a bootstrap asks for Production approval exactly once.
   bootstrap_approval:
     name: approve direct bootstrap
     needs: generate
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      github.event_name == 'workflow_dispatch' && inputs.bootstrap
+      github.workflow == 'release-update-manifest' && inputs.bootstrap == true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -421,11 +425,9 @@ jobs:
       always() && !cancelled() && github.repository == 'future-agi/future-agi' &&
       needs.generate.result == 'success' &&
       (
-        (((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap) &&
-          ((github.event_name == 'workflow_dispatch' && needs.bootstrap_approval.result == 'success') ||
-           github.event_name == 'workflow_call')) ||
-        (!((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.bootstrap) &&
-          needs.rehearse.result == 'success')
+        (inputs.bootstrap == true &&
+          (needs.bootstrap_approval.result == 'success' || github.workflow != 'release-update-manifest')) ||
+        (inputs.bootstrap != true && needs.rehearse.result == 'success')
       )
     runs-on: ubuntu-latest
     timeout-minutes: 15
