@@ -154,10 +154,13 @@ export function endingText(fix) {
   if (fix.state !== "failed") return null;
   if (code === "fix_deadline")
     return `This epoch ran out of its time limit ${whenEnded(fix)}. Nothing changed. Run a new epoch with a longer time limit.`;
-  // A failed epoch can be retried once; after that, the next one starts from the run.
-  const again = fix.retryable
-    ? "Retry it"
-    : "It was retried once already. Run a new epoch from the run's Debug failures";
+  // A failed epoch can be retried once; after that, the next one starts from the run. A
+  // retry takes it once it started: one that never started leaves it, and offers it too.
+  const next = "Run a new epoch from the run's Debug failures";
+  let again = `It was retried once already. ${next}`;
+  if (fix.retryable) again = "Retry it";
+  else if (fix.retried_from_id && fix.started_at)
+    again = `This epoch was the retry. ${next}`;
   if (code === "fix_queue_timeout")
     return `Too many epochs were running, so this one could not start. Nothing changed. ${again}${fix.retryable ? " in a few minutes" : ""}.`;
   if (!code || OUR_FAILURES.has(code))
