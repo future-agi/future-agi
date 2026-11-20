@@ -228,6 +228,8 @@ function normalizeManagementSpec(spec) {
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
           name.startsWith("HostUpdateStatusResponse") ||
+          name.startsWith("AgentVersion") ||
+          name.startsWith("StoredAgent") ||
           // Every non-ready source state sends kind and the ids as explicit null.
           name === "EvalLogSourceNavigation" ||
           // A log row sends explicit null for ids its source does not have.
