@@ -1,0 +1,73 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#root{width:1000px;padding:28px 30px 26px;position:relative}
+.grid{display:grid;grid-template-columns:230px 1fr 210px;gap:0;align-items:stretch;position:relative}
+.col h4{font-size:15px;font-weight:600;margin-bottom:4px}
+.col p{font-size:13px;color:var(--fg2);line-height:1.4;margin-bottom:12px}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.code{font-size:12.5px;line-height:1.65;padding:12px 12px;color:var(--fg2);white-space:pre}
+.code b{color:var(--fg);font-weight:500}
+.gw{margin:0 34px;padding:14px 16px 10px}
+.gw .title{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.gw .title b{font-size:16px;font-weight:600}
+.gw .title span{font-size:12.5px;color:var(--fg3)}
+.step{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:13.5px}
+.step:first-of-type{border-top:0}
+.step i{font-style:normal;font-size:12px;font-weight:600;color:var(--fg3);text-align:center}
+.step small{display:block;color:var(--fg3);font-size:12px;margin-top:1px}
+.prov{display:flex;flex-direction:column;gap:8px}
+.pv{display:flex;justify-content:space-between;align-items:center;padding:9px 11px;font-size:13.5px}
+.pv span:first-child{display:flex;align-items:center;gap:9px}
+.m{width:18px;height:18px;background:var(--fg);-webkit-mask:var(--u) center/contain no-repeat;mask:var(--u) center/contain no-repeat}
+svg.links{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+</style></head>
+<body><div class="root" id="root">
+<div class="grid" id="grid">
+  <div class="col">
+    <h4>Your app</h4><p>Any OpenAI-compatible client. Change one line.</p>
+    <div class="box code" id="app">client = OpenAI(
+  <b>base_url="…/v1"</b>,
+  api_key=APP_KEY,
+)
+client.chat.completions
+  .create(model="gpt-4o", …)</div>
+  </div>
+  <div class="col">
+    <div class="box gw" id="gw">
+      <div class="title"><b>Agent Command Center</b><span>on every request</span></div>
+      <div class="step"><div>Key, budget and rate limit<small>separate keys per app or team</small></div><span class="tag pass">ok</span></div>
+      <div class="step"><div>Guardrails on the request<small>PII, prompt injection, secrets</small></div><span class="tag fail">blocks bad input</span></div>
+      <div class="step"><div>Cache<small>exact and semantic</small></div><span class="tag plain">hit or miss</span></div>
+      <div class="step"><div>Route<small>weighted, fastest, lowest cost</small></div><span class="tag plain">picks a provider</span></div>
+      <div class="step"><div>Guardrails on the response<small>leaked data, unsafe tool use</small></div><span class="tag pass">ok</span></div>
+      <div class="step"><div>Log and trace<small>cost, tokens, latency</small></div><span class="tag plain">traced</span></div>
+    </div>
+  </div>
+  <div class="col">
+    <h4>Any model</h4><p>Native or OpenAI-compatible, cloud or self-hosted.</p>
+    <div class="prov" id="prov">
+      <div class="box pv" id="p0"><span><i class="m" style="--u:url('logos/openai.svg')"></i>OpenAI</span><span class="tag hold">timed out</span></div>
+      <div class="box pv" id="p1"><span><i class="m" style="--u:url('logos/anthropic.svg')"></i>Anthropic</span><span class="tag pass">fallback</span></div>
+      <div class="box pv"><span><i class="m" style="--u:url('logos/google-genai.svg')"></i>Gemini</span><span></span></div>
+      <div class="box pv"><span><i class="m" style="--u:url('logos/lh-bedrock.svg')"></i>Bedrock</span><span></span></div>
+      <div class="box pv"><span><i class="m" style="--u:url('logos/vllm.svg')"></i>Your vLLM</span><span></span></div>
+    </div>
+  </div>
+  <svg class="links" id="links"></svg>
+</div>
+</div>
+<script>
+document.body.className=new URLSearchParams(location.search).get('theme')||'dark';
+document.fonts.ready.then(()=>{
+  const G=document.getElementById('grid').getBoundingClientRect(), r=id=>document.getElementById(id).getBoundingClientRect();
+  const app=r('app'), gw=r('gw'), p0=r('p0'), p1=r('p1');
+  const cs=getComputedStyle(document.body), s1=cs.getPropertyValue('--silver1').trim(), s2=cs.getPropertyValue('--silver2').trim(), hold=cs.getPropertyValue('--hold').trim();
+  const y1=app.top+app.height/2-G.top, x1=app.right-G.left, x2=gw.left-G.left;
+  const x3=gw.right-G.left, x4=p0.left-G.left, ya=p0.top+p0.height/2-G.top, yb=p1.top+p1.height/2-G.top, ym=gw.top+gw.height*0.62-G.top;
+  const L=document.getElementById('links'); L.setAttribute('width',G.width); L.setAttribute('height',G.height);
+  const head=(x,y,c)=>`<path d="M ${x-6} ${y-5} L ${x} ${y} L ${x-6} ${y+5}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+  L.innerHTML=`<path d="M ${x1} ${y1} H ${x2-2}" stroke="${s1}" stroke-width="1.5"/>${head(x2-2,y1,s1)}
+   <path d="M ${x3} ${ym} C ${x3+30} ${ym}, ${x4-30} ${ya}, ${x4-2} ${ya}" fill="none" stroke="${hold}" stroke-width="1.5" stroke-dasharray="4 4"/>${head(x4-2,ya,hold)}
+   <path d="M ${x3} ${ym} C ${x3+30} ${ym}, ${x4-30} ${yb}, ${x4-2} ${yb}" fill="none" stroke="${s1}" stroke-width="1.5"/>${head(x4-2,yb,s1)}`;
+});
+</script></body></html>
