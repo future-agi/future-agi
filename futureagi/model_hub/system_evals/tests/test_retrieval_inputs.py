@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from agentic_eval.core_evals.fi_evals.function.functions import custom_code_eval
+from agentic_eval.core_evals.fi_utils import sandbox
+
 RETRIEVAL_EVALS = (
     "recall_score",
     "recall_at_k",
@@ -20,9 +23,30 @@ CONTEXT_EVALS = ("non_llm_context_precision", "non_llm_context_recall")
 YAML_DIR = Path(__file__).resolve().parent.parent / "function"
 
 
+def _eval_code(name):
+    return yaml.safe_load((YAML_DIR / f"{name}.yaml").read_text())["config"]["code"]
+
+
+@pytest.mark.parametrize("eval_name", RETRIEVAL_EVALS)
+@pytest.mark.parametrize("reference", ["'doc1'", "['doc1']", "doc1"])
+def test_local_fallback_inputs(eval_name, reference, monkeypatch, settings):
+    monkeypatch.setattr(sandbox, "CODE_EXECUTOR_URL", "")
+    settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+    settings.CLOUD_DEPLOYMENT = ""
+    code = _eval_code(eval_name)
+    if reference == "doc1":
+        assert (
+            custom_code_eval(code, reference=reference, hypothesis=["doc1"])["result"]
+            == 1.0
+        )
+    else:
+        with pytest.raises(ValueError, match="Use valid JSON"):
+            custom_code_eval(code, reference=reference, hypothesis=["doc1"])
+
+
 def _load_eval(name):
     path = YAML_DIR / f"{name}.yaml"
-    code = yaml.safe_load(path.read_text())["config"]["code"]
+    code = _eval_code(name)
     namespace: dict = {}
     vars(builtins)["exec"](compile(code, str(path), "exec"), namespace)
     return namespace["evaluate"]

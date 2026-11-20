@@ -44,7 +44,11 @@ config:
                     try:
                         import ast
                         parsed = ast.literal_eval(val)
-                    except (ImportError, ValueError, SyntaxError):
+                    except ImportError:
+                        if val.lstrip().startswith(("'", '"', "[", "(", "{")):
+                            raise ValueError("Use valid JSON for quoted IDs or collections in the local executor")
+                        return [val]
+                    except (ValueError, SyntaxError):
                         return [val]
                 return [parsed] if isinstance(parsed, (str, int, float)) else parsed
             if isinstance(val, (int, float)):
