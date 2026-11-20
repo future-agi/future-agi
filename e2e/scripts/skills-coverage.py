@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import runpy
 import sys
 from pathlib import Path
 
@@ -159,6 +160,16 @@ def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_s
     print(f"{len(seen)} required Skills executions passed on {commit}")
 
 
+def reconcile_verified(directory, registered, pair, commit, sdk, traceai, pair_sha, sdk_sha, application_sha):
+    verifier = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'stack/verify-skill-packages.py'))
+    artifacts = verifier['verify'](pair, pair_sha, {'product': commit, 'sdk': sdk, 'traceai': traceai})
+    verifier['verify_sums'](pair, artifacts)
+    wheel = artifacts['sdk_python']['sha256']
+    if wheel != sdk_sha:
+        raise ValueError('Verified SDK wheel differs from the independent producer digest')
+    reconcile(directory, commit, registered, sdk, pair_sha, wheel, application_sha)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -175,6 +186,8 @@ if __name__ == "__main__":
     p.add_argument("commit")
     p.add_argument("--registered", type=Path, required=True)
     p.add_argument("--sdk", required=True)
+    p.add_argument("--traceai", required=True)
+    p.add_argument("--pair", type=Path, required=True)
     p.add_argument("--pair-sha", required=True)
     p.add_argument("--sdk-sha", required=True)
     p.add_argument("--application-sha", required=True)
@@ -196,6 +209,7 @@ if __name__ == "__main__":
                     receipt['application_sha256'] = os.environ['J6_APP_SHA256']
             args.out.write_text(json.dumps(receipt) + "\n")
         else:
-            reconcile(args.directory, args.commit, args.registered, args.sdk, args.pair_sha, args.sdk_sha, args.application_sha)
+            reconcile_verified(args.directory, args.registered, args.pair, args.commit, args.sdk, args.traceai,
+                               args.pair_sha, args.sdk_sha, args.application_sha)
     except (OSError, ValueError, KeyError) as exc:
         sys.exit(str(exc))

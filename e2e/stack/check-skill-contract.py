@@ -1,13 +1,17 @@
-"""Authenticate the regenerated SDK snapshot against the product checkout before packaging."""
+"""Regenerate the SDK snapshot and compare the shipped Skills subset to committed product inputs."""
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
 
+OPENAPI = 'api_contracts/openapi/swagger.json'
+MCP = 'futureagi/mcp_server/catalog/tools.generated.json'
 SKILLS = '/model-hub/skills/'
 HTTP_METHODS = {'get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'}
 CONTRACTS = ('swagger.json', 'mcp-tools.json', 'SOURCE.json')
@@ -36,46 +40,91 @@ def check_changes(sdk):
         raise ValueError(f'SDK regeneration touched files outside the generated outputs: {sorted(unexpected)}')
 
 
-def projection(api):
-    paths = {path: item for path, item in api['paths'].items() if path.startswith(SKILLS)}
-    definitions = {}
+def referenced(doc, ref):
+    # Swagger 2 local JSON references; direct model cycles are common.
+    if not ref.startswith(('#/definitions/', '#/parameters/', '#/responses/')):
+        raise ValueError(f'Unsupported reference in shipped Skills contract: {ref}')
+    value = doc
+    for part in ref[2:].split('/'):
+        value = value[part.replace('~1', '/').replace('~0', '~')]
+    return value
+
+
+def inline_reusable(doc, value, visiting=()):
+    if isinstance(value, list):
+        return [inline_reusable(doc, item, visiting) for item in value]
+    if not isinstance(value, dict):
+        return value
+    ref = value.get('$ref')
+    if ref and not ref.startswith('#/definitions/'):
+        if ref in visiting:
+            raise ValueError(f'Circular reusable parameter or response: {ref}')
+        return inline_reusable(doc, referenced(doc, ref), (*visiting, ref))
+    return {key: inline_reusable(doc, item, visiting) for key, item in value.items()}
+
+
+def effective_operation(doc, method, path):
+    item = doc['paths'].get(path, {})
+    if method.lower() not in item:
+        return None
+    op = dict(item[method.lower()])
+    # A method overrides a path parameter with the same (in, name), regardless
+    # of whether either parameter is inline or a reusable Parameter Object.
+    parameters = {}
+    for param in [*item.get('parameters', []), *op.pop('parameters', [])]:
+        param = inline_reusable(doc, param)
+        parameters[param['in'], param['name']] = param
+    return {**inline_reusable(doc, op), 'parameters': parameters}
+
+
+def reached_models(doc, operation):
+    models = {}
 
     def visit(value):
         if isinstance(value, dict):
-            if '$ref' in value:
-                prefix = '#/definitions/'
-                ref = value['$ref']
-                if not ref.startswith(prefix):
-                    raise ValueError('Unsupported reference in Skills contract')
-                name = ref[len(prefix):]
-                if name not in definitions:
-                    definitions[name] = api['definitions'][name]
-                    visit(definitions[name])
+            ref = value.get('$ref')
+            if ref and ref not in models:
+                models[ref] = inline_reusable(doc, referenced(doc, ref))
+                visit(models[ref])
             for child in value.values():
                 visit(child)
         elif isinstance(value, list):
             for child in value:
                 visit(child)
 
-    visit(paths)
-    return paths, definitions
+    visit(operation)
+    return models
 
 
-def operations(paths):
-    return {(method.upper(), path) for path, item in paths.items() for method in HTTP_METHODS & item.keys()}
+def check_tool(name, endpoint, declared, tool):
+    if tool is None or endpoint != (tool['request']['method'].upper(), tool['request']['path']):
+        raise ValueError(f'SDK Skills MCP tool absent or bound differently in the tested backend: {name}')
+    hints = tool.get('annotations', {})
+    if 'access' in declared:
+        access = declared['access']
+        if (access not in {'read', 'write', 'destructive'}
+                or hints.get('readOnlyHint') is not (access == 'read')
+                or hints.get('destructiveHint') is not (access == 'destructive')):
+            raise ValueError(f'SDK Skills MCP access differs for {name}')
+    if 'open_world' in declared and hints.get('openWorldHint') is not declared['open_world']:
+        raise ValueError(f'SDK Skills MCP open_world differs for {name}')
+    for param, cap in declared.get('max_page_size', {}).items():
+        schema = tool['inputSchema']['properties'].get(param, {})
+        mapping = tool['request']['parameters']
+        if (param not in [*mapping['query'], *mapping['body']] or schema.get('type') != 'integer'
+                or type(schema.get('maximum')) is not int or type(cap) is not int or schema['maximum'] != cap):
+            raise ValueError(f'SDK Skills MCP max_page_size differs for {name}.{param}')
+    # Other explicit fields (including group or stability) must have an equal
+    # backend value. Do not silently accept new, unmapped catalog settings.
+    for key in declared.keys() - {'access', 'open_world', 'max_page_size'}:
+        if key not in tool or declared[key] != tool[key]:
+            raise ValueError(f'SDK Skills MCP {key} differs for {name}')
 
 
 def check_slice(api, swagger, catalog, sdk_catalog):
-    """Every Skills operation and MCP tool the SDK ships must exist, unchanged, in the tested backend.
-
-    The SDK wraps a reviewed subset of the backend's Skills API. A backend operation the SDK
-    does not wrap yet is a coverage gap, reported in the receipt, not a break; an operation the
-    SDK wraps that the backend removed, renamed or reshaped fails the build.
-    """
-    backend_paths, _ = projection(api)
-    sdk_paths, _ = projection(swagger)
-    backend_ops = operations(backend_paths)
-
+    """Compare the shipped Skills subset, reporting additional backend coverage separately."""
+    backend_ops = {(method.upper(), path) for path, item in api['paths'].items() if path.startswith(SKILLS)
+                   for method in HTTP_METHODS & item.keys()}
     shipped, tools = set(), {}
     for entry in sdk_catalog['operations']:
         op = entry['operation']
@@ -86,31 +135,27 @@ def check_slice(api, swagger, catalog, sdk_catalog):
         if 'sdk' in surfaces and surfaces['sdk'] is not False:
             shipped.add(endpoint)
         if 'mcp' in surfaces and surfaces['mcp'] is not False:
-            name = (surfaces['mcp'] or {}).get('name') or entry['id'].replace('.', '_')
-            tools[name] = endpoint
+            declared = surfaces['mcp']
+            name = declared.get('name') or entry['id'].replace('.', '_')
+            if name in tools:
+                raise ValueError(f'Duplicate SDK Skills MCP tool: {name}')
+            tools[name] = (endpoint, declared)
     if not shipped:
         raise ValueError('Resolved SDK ships no Skills operations')
     missing = sorted(shipped - backend_ops)
     if missing:
         raise ValueError(f'SDK ships Skills operations the tested backend does not expose: {missing}')
-    for method, path in shipped:
-        mine = (sdk_paths.get(path) or {}).get(method.lower())
-        theirs = backend_paths[path][method.lower()]
+    for method, path in sorted(shipped):
+        mine = effective_operation(swagger, method, path)
+        theirs = effective_operation(api, method, path)
         if mine != theirs:
             raise ValueError(f'Regenerated SDK operation differs from the tested backend: {method} {path}')
-    # Every definition a shipped operation reaches must match the backend's.
-    def reached(api_doc, item_paths):
-        _, models = projection({'paths': item_paths, 'definitions': api_doc['definitions']})
-        return models
-    shipped_items = {path: {m.lower(): backend_paths[path][m.lower()] for m, p in shipped if p == path} for _, path in shipped}
-    if reached(api, shipped_items) != reached(swagger, shipped_items):
-        raise ValueError('Regenerated SDK models differ from the tested backend for shipped Skills operations')
+        if reached_models(swagger, mine) != reached_models(api, theirs):
+            raise ValueError(f'Regenerated SDK models differ from the tested backend: {method} {path}')
 
-    backend_tools = {t['name']: (t['request']['method'].upper(), t['request']['path'])
-                     for t in catalog['tools'] if t['request']['path'].startswith(SKILLS)}
-    unknown = sorted(name for name, binding in tools.items() if backend_tools.get(name) != binding)
-    if unknown:
-        raise ValueError(f'SDK Skills MCP tools are absent or bound differently in the tested backend: {unknown}')
+    backend_tools = {t['name']: t for t in catalog['tools'] if t['request']['path'].startswith(SKILLS)}
+    for name, (endpoint, declared) in tools.items():
+        check_tool(name, endpoint, declared, backend_tools.get(name))
     return {
         'skills_operations': {'backend': len(backend_ops), 'sdk': len(shipped),
                               'not_wrapped': sorted(f'{m} {p}' for m, p in backend_ops - shipped)},
@@ -119,29 +164,64 @@ def check_slice(api, swagger, catalog, sdk_catalog):
     }
 
 
-def check(root, sdk, baseline):
-    check_changes(sdk)
-    product = subprocess.check_output(['git', '-C', root, 'rev-parse', 'HEAD'], text=True).strip()
-    raw_api = (root / 'api_contracts/openapi/swagger.json').read_bytes()
-    raw_tools = (root / 'futureagi/mcp_server/catalog/tools.generated.json').read_bytes()
-    api_hash, mcp_hash = (hashlib.sha256(data).hexdigest() for data in (raw_api, raw_tools))
+def blob(repo, commit, path):
+    if not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise ValueError('Expected a full commit SHA')
+    return subprocess.check_output(['git', '--no-replace-objects', '-C', repo, 'show', f'{commit}:{path}'])
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def run_sdk(sdk, *args):
+    # stdout of this driver is reserved for the verified JSON receipt.
+    subprocess.run([sys.executable, '-IB', *args], cwd=sdk, stdout=sys.stderr, check=True)
+
+
+def regenerate(root, sdk, product):
+    # Keep the expected bytes independent of the generator's writable inputs.
+    raw_api, raw_tools = blob(root, product, OPENAPI), blob(root, product, MCP)
+    api_hash, mcp_hash = sha(raw_api), sha(raw_tools)
     catalog = json.loads(raw_tools)
-    files = {name: (sdk / 'sdkgen/contracts' / name).read_bytes() for name in CONTRACTS}
+    if catalog['source_contract_sha256'] != api_hash:
+        raise ValueError('Product MCP catalog was not generated from the committed OpenAPI file')
+
+    contracts = sdk / 'sdkgen/contracts'
+    metadata = contracts / 'SOURCE.json'
+    baseline_args = []
+    expected_source = {'backend_commit': product, 'openapi_sha256': api_hash, 'mcp_sha256': mcp_hash}
+    if metadata.exists():
+        baseline = json.loads(metadata.read_bytes())['non_skills_sdk_commit']
+        baseline_hash = sha(blob(sdk, baseline, 'sdkgen/contracts/swagger.json'))
+        expected_source.update(non_skills_sdk_commit=baseline, non_skills_slice_sha256=baseline_hash)
+        baseline_args = ['--skills-baseline-sdk', baseline]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        api_input, mcp_input = Path(tmp) / 'swagger.json', Path(tmp) / 'tools.generated.json'
+        api_input.write_bytes(raw_api)
+        mcp_input.write_bytes(raw_tools)
+        run_sdk(sdk, 'sdkgen/sync_contract.py', api_input, '--backend-commit', product,
+                '--mcp-tools', mcp_input, *baseline_args)
+        if api_input.read_bytes() != raw_api or mcp_input.read_bytes() != raw_tools:
+            raise ValueError('SDK sync changed its committed contract inputs')
+    run_sdk(sdk, 'sdkgen/generate.py', '--only', 'python', 'typescript')
+    run_sdk(sdk, 'sdkgen/generate.py', '--check', '--only', 'python', 'typescript')
+    if baseline_args:
+        run_sdk(sdk, 'sdkgen/check_skills_baseline.py')
+    check_changes(sdk)
+    files = {name: (contracts / name).read_bytes() for name in CONTRACTS}
     swagger, tools, source = (json.loads(files[name]) for name in CONTRACTS)
-    if source['backend_commit'] != product or source['non_skills_sdk_commit'] != baseline:
-        raise ValueError('Regenerated SOURCE.json does not identify the tested product and SDK baseline')
-    if (api_hash != source['openapi_sha256'] or api_hash != swagger['x-source-sha256']
-            or api_hash != catalog['source_contract_sha256'] or mcp_hash != source['mcp_sha256']
-            or mcp_hash != tools['x-source-sha256']
-            or source['non_skills_slice_sha256'] != swagger['x-skills-only-baseline-sha256']):
-        raise ValueError('Regenerated snapshot source hash mismatch')
+    if (source != expected_source or swagger['x-source-sha256'] != api_hash or tools['x-source-sha256'] != mcp_hash
+            or swagger.get('x-skills-only-baseline-sha256') != expected_source.get('non_skills_slice_sha256')):
+        raise ValueError('Regenerated snapshot does not match the committed contract inputs')
     if tools['tools'] != [{'name': name} for name in sorted(t['name'] for t in catalog['tools'])]:
         raise ValueError('SDK tool inventory does not match the tested catalog')
     sdk_catalog = yaml.safe_load((sdk / 'sdkgen/catalog/operations.yaml').read_bytes())
     coverage = check_slice(json.loads(raw_api), swagger, catalog, sdk_catalog)
-    return {'source': source, 'coverage': coverage,
-            'sha256': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
+    return {'sync_mode': 'scoped' if baseline_args else 'full', 'source': source, 'coverage': coverage,
+            'sha256': {name: sha(data) for name, data in files.items()}}
 
 
 if __name__ == '__main__':
-    print(json.dumps(check(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])))
+    print(json.dumps(regenerate(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])))

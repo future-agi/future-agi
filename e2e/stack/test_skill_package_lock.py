@@ -28,6 +28,7 @@ class PairLockTests(unittest.TestCase):
         }
         self.branches = {"sdk": "feat/skills", "traceai": "dev"}
         self.contract = {
+            "sync_mode": "scoped",
             "source": {"backend_commit": self.sources["product"], "non_skills_sdk_commit": "d" * 40,
                        **dict.fromkeys(("openapi_sha256", "mcp_sha256", "non_skills_slice_sha256"), "e" * 64)},
             "sha256": dict.fromkeys(("swagger.json", "mcp-tools.json", "SOURCE.json"), "f" * 64),
@@ -75,6 +76,16 @@ class PairLockTests(unittest.TestCase):
         del self.branches["sdk"]
         with self.assertRaisesRegex(ValueError, "branch"):
             verify(self.dist, self.lock(), self.sources)
+
+    def test_baseline_provenance_matches_sync_mode(self):
+        del self.contract["source"]["non_skills_sdk_commit"]
+        with self.assertRaisesRegex(ValueError, "contract provenance"):
+            verify(self.dist, self.lock(), self.sources)
+        self.contract["sync_mode"] = "full"
+        with self.assertRaisesRegex(ValueError, "contract provenance"):
+            verify(self.dist, self.lock(), self.sources)
+        del self.contract["source"]["non_skills_slice_sha256"]
+        self.assertEqual(verify(self.dist, self.lock(), self.sources), self.items)
 
     def test_missing_extra_and_wrongly_named_packages_are_rejected(self):
         self.items["sdk_python"]["file"] = "../futureagi-0.6.14-py3-none-any.whl"

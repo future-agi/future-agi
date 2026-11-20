@@ -1,6 +1,7 @@
 """Controls for branch matching and the regenerated Skills contract."""
 
 import copy
+import hashlib
 import json
 import runpy
 import subprocess
@@ -45,16 +46,22 @@ class ContractTests(unittest.TestCase):
         self.api = {'paths': {self.path: {'parameters': [], 'get': {'$ref': '#/definitions/Page'}}},
                     'definitions': {'Page': {'items': {'$ref': '#/definitions/Skill'}}, 'Skill': {'type': 'string'}}}
         self.swagger = copy.deepcopy(self.api)
-        self.catalog = {'tools': [{'name': 'list_skills', 'request': {'method': 'GET', 'path': self.path}}]}
+        self.catalog = {'tools': [{
+            'name': 'list_skills', 'group': 'skills',
+            'request': {'method': 'GET', 'path': self.path, 'parameters': {'query': ['size'], 'body': []}},
+            'annotations': {'readOnlyHint': True, 'destructiveHint': False, 'openWorldHint': False},
+            'inputSchema': {'properties': {'size': {'type': 'integer', 'maximum': 25}}},
+        }]}
         self.entry = {'id': 'skills.list', 'operation': {'method': 'GET', 'path': self.path},
-                      'surfaces': {'sdk': {}, 'mcp': {'name': 'list_skills'}}}
+                      'surfaces': {'sdk': {}, 'mcp': {'name': 'list_skills', 'group': 'skills', 'access': 'read'}}}
 
     def check(self):
         return check_slice(self.api, self.swagger, self.catalog, {'operations': [self.entry]})
 
     def test_unwrapped_backend_operations_are_reported_not_fatal(self):
         self.assertEqual(self.check()['skills_operations']['not_wrapped'], [])
-        self.api['paths'][self.path]['post'] = {}
+        self.api['responses'] = {'Accepted': {'description': 'Queued'}}
+        self.api['paths'][self.path]['post'] = {'responses': {'202': {'$ref': '#/responses/Accepted'}}}
         self.assertEqual(self.check()['skills_operations']['not_wrapped'], [f'POST {self.path}'])
 
     def test_shipped_operation_must_exist_unchanged_in_backend(self):
@@ -70,6 +77,48 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'models differ'):
             self.check()
 
+    def test_effective_path_parameter_is_part_of_shipped_operation(self):
+        param = {'in': 'query', 'name': 'limit', 'type': 'integer', 'minimum': 1}
+        self.api['paths'][self.path]['parameters'] = [param]
+        self.swagger['paths'][self.path]['parameters'] = [{**param, 'minimum': 0}]
+        with self.assertRaisesRegex(ValueError, 'operation differs'):
+            self.check()
+        # The method overrides this parameter on both sides.
+        for doc in (self.api, self.swagger):
+            doc['paths'][self.path]['get']['parameters'] = [{**param, 'minimum': 3}]
+        self.check()
+
+    def test_reusable_parameters_and_responses_of_shipped_operation(self):
+        param = {'in': 'body', 'name': 'body', 'schema': {'$ref': '#/definitions/Skill'}}
+        response = {'description': 'OK'}
+        self.api.update(parameters={'Body': param}, responses={'OK': response})
+        self.api['paths'][self.path] = {'parameters': [{'$ref': '#/parameters/Body'}],
+                                        'get': {'responses': {'200': {'$ref': '#/responses/OK'}}}}
+        self.swagger['paths'][self.path] = {'parameters': [copy.deepcopy(param)],
+                                            'get': {'responses': {'200': copy.deepcopy(response)}}}
+        self.check()
+        self.swagger['definitions']['Skill']['type'] = 'integer'
+        with self.assertRaisesRegex(ValueError, 'models differ'):
+            self.check()
+
+    def test_unwrapped_tools_and_same_binding_different_settings(self):
+        self.catalog['tools'].append({'name': 'another_tool', 'request': {'method': 'GET', 'path': self.path}})
+        declared = self.entry['surfaces']['mcp']
+        declared.update(max_page_size={'size': 25}, open_world=False)
+        self.assertEqual(self.check()['skills_mcp_tools']['not_wrapped'], ['another_tool'])
+        for key, value in [('group', 'other'), ('access', 'write'), ('access', 'destructive'),
+                           ('open_world', True), ('max_page_size', {'size': 100}), ('stability', 'beta')]:
+            with self.subTest(key=key, value=value), patch.dict(declared, {key: value}):
+                with self.assertRaisesRegex(ValueError, key):
+                    self.check()
+        declared['access'] = 'write'
+        hints = self.catalog['tools'][0]['annotations']
+        hints['readOnlyHint'] = False
+        self.check()
+        hints['destructiveHint'] = True
+        with self.assertRaisesRegex(ValueError, 'access'):
+            self.check()
+
     def test_snapshot_alone_is_not_a_shipped_surface(self):
         self.entry['surfaces']['sdk'] = False
         with self.assertRaisesRegex(ValueError, 'ships no Skills operations'):
@@ -78,6 +127,56 @@ class ContractTests(unittest.TestCase):
         self.catalog['tools'][0]['request']['method'] = 'POST'
         with self.assertRaisesRegex(ValueError, 'bound differently'):
             self.check()
+
+    def test_released_sdk_syncs_committed_inputs_without_a_preview_baseline(self):
+        regenerate = checker['regenerate']
+        with tempfile.TemporaryDirectory() as tmp:
+            product, sdk = Path(tmp) / 'product', Path(tmp) / 'sdk'
+            api_bytes = json.dumps(self.api).encode()
+            api_sha = hashlib.sha256(api_bytes).hexdigest()
+            tools_bytes = json.dumps({**self.catalog, 'source_contract_sha256': api_sha}).encode()
+            tools_sha = hashlib.sha256(tools_bytes).hexdigest()
+
+            def commit(repo, files):
+                for name, content in files.items():
+                    path = repo / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                def git(*args):
+                    return subprocess.check_output(['git', '-C', repo, *args], text=True).strip()
+                git('init', '-q')
+                git('add', '.')
+                git('-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'fixture')
+                return git('rev-parse', 'HEAD')
+
+            revision = commit(product, {checker['OPENAPI']: api_bytes, checker['MCP']: tools_bytes})
+            commit(sdk, {'sdkgen/catalog/operations.yaml': json.dumps({'operations': [self.entry]}).encode(),
+                         'sdkgen/contracts/swagger.json': b'{}', 'sdkgen/contracts/BACKEND_VERSION': b'v1.0.0'})
+            # A released SDK has neither SOURCE.json nor mcp-tools.json. A
+            # writable product tree is not the input or the provenance authority.
+            (product / checker['OPENAPI']).write_text('{}')
+            (product / checker['MCP']).write_text('{}')
+            calls = []
+            source = {'backend_commit': revision, 'openapi_sha256': api_sha, 'mcp_sha256': tools_sha}
+
+            def fixture_run(repo, script, *args):
+                self.assertEqual(repo, sdk)
+                calls.append((script, *args))
+                if script == 'sdkgen/sync_contract.py':
+                    api, commit_flag, sha, mcp_flag, mcp = args  # full commit mode has no baseline flag
+                    self.assertEqual((commit_flag, sha, mcp_flag), ('--backend-commit', revision, '--mcp-tools'))
+                    self.assertEqual((api.read_bytes(), mcp.read_bytes()), (api_bytes, tools_bytes))
+                    snapshots = {'SOURCE.json': source, 'swagger.json': {**self.swagger, 'x-source-sha256': api_sha},
+                                 'mcp-tools.json': {'tools': [{'name': 'list_skills'}], 'x-source-sha256': tools_sha}}
+                    for name, value in snapshots.items():
+                        (sdk / 'sdkgen/contracts' / name).write_text(json.dumps(value))
+
+            with patch.dict(regenerate.__globals__, run_sdk=fixture_run):
+                receipt = regenerate(product, sdk, revision)
+            self.assertEqual(receipt['sync_mode'], 'full')
+            self.assertEqual(receipt['source'], source)
+            self.assertEqual(calls[1:], [('sdkgen/generate.py', '--only', 'python', 'typescript'),
+                                         ('sdkgen/generate.py', '--check', '--only', 'python', 'typescript')])
 
     def test_regeneration_rejects_handwritten_changes_and_new_scaffolds(self):
         with tempfile.TemporaryDirectory() as tmp:

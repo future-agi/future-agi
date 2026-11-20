@@ -913,20 +913,38 @@ A resolution or build failure fails the producer; it does not try an older SDK
 or skip cases. The dispatch input `sdk-ref` selects a separate live suite and
 does not override the Skills pair.
 
-**What gets built.** CI checks out both resolved full SHAs once. It runs the SDK's
-scoped sync against the OpenAPI and MCP files at the exact product checkout
-(including PR merge or merge-queue commits), preserving the non-Skills baseline
-named by the SDK. It regenerates both clients, checks for changes outside the
-generated files, and requires the SDK's baseline and MCP parity checks to pass.
-The Skills paths, methods, inherited parameters and reachable models must match
-the product; a copied tool inventory does not substitute for SDK catalog support.
+**What gets built.** CI checks out both resolved full SHAs and gives the SDK
+copies of the OpenAPI and MCP blobs from the tested product commit (including
+PR merge and merge-queue commits). Both SDK layouts use `--backend-commit`
+and `--mcp-tools` to record those inputs:
+
+- **Scoped preview:** `sdkgen/contracts/SOURCE.json` names the non-Skills SDK
+  baseline. CI supplies that commit via `--skills-baseline-sdk` and requires
+  the SDK's non-Skills baseline check to pass.
+- **Released checkout:** a release sync records `BACKEND_VERSION` and removes
+  `SOURCE.json`. CI runs a full commit-pinned sync without a preview baseline;
+  it does not change the release pin.
+
+Both modes regenerate and check the Python and TypeScript clients and reject
+changes outside the generator-owned files. Product CI checks the **shipped
+Skills subset**, as declared in `sdkgen/catalog/operations.yaml`: each SDK
+method must match the backend, including effective parameters and reachable
+models; each shipped MCP tool must match its backend binding, group, access
+and other declared settings (including page-size limits). Missing or changed
+shipped entries fail. Additional backend methods and tools do not: the pair
+receipt lists them under `contract.coverage.skills_operations.not_wrapped`
+(`METHOD /path`) and `contract.coverage.skills_mcp_tools.not_wrapped` (names).
+Full MCP inventory parity is the SDK repository's gate. On a backend release,
+`.github/workflows/sdk-sync.yml` opens the SDK sync PR.
+
 `application-wheels` builds the support application separately; 061 and 063 use
 that artifact and the same verified SDK wheel.
 
 **What to verify.** The schema-2 `pair.json` contains the three full commits in
-`sources`, the two resolved branch names in `branches`, and the regenerated
-`contract.source` (`SOURCE.json` metadata) and `contract.sha256` (hashes of
-`swagger.json`, `mcp-tools.json`, and `SOURCE.json`). `artifacts` records the
+`sources` and the two resolved branch names in `branches`. `contract.sync_mode`
+is `full` or `scoped`; `contract.source` records the `SOURCE.json` metadata,
+and `contract.sha256` contains hashes of the three regenerated files
+(`swagger.json`, `mcp-tools.json`, and `SOURCE.json`). `artifacts` records the
 filename and SHA-256 for each of `sdk_python`, `traceai_python`, `sdk_ts`,
 `traceai_ts`, and `semconv_ts`. The producer emits the pair receipt digest and
 SDK wheel digest separately from the artifact. Consumers verify the supplied
@@ -960,7 +978,10 @@ the case identities, tested SHA and relevant package digests. The ordinary suite
 selects the complement without requiring a complete Skills inventory. Catalog
 validation runs separately; Skills discovery and pass reconciliation fail if a
 required identity is missing. The required **E2E Tests Pass** aggregate also
-checks job outcomes; a skipped or cancelled applicable worker cannot pass.
+checks job outcomes, downloads the same-run package pair and verifies it against
+the independent receipt digest and all three expected commits before reconciling
+passes against the verified SDK wheel. A skipped or cancelled applicable worker
+cannot pass.
 Private browser output, raw attachments and actor inputs are not uploaded.
 On the host, R7 executes and inspects each client's copied plan with the plain
 interpreter, then verifies the installed lock. Case 021 checks the disabled

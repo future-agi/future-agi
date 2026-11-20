@@ -260,6 +260,45 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+  # These caches also feed Standalone and release builds. Only this push-only
+  # job publishes them; it never checks out or runs a sibling package.
+  publish-build-cache:
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: backend, context: futureagi, file: Dockerfile.oss}
+          - {target: code-executor, context: futureagi/code-executor, file: Dockerfile}
+          - {target: fi-collector, context: fi-collector, file: Dockerfile}
+          - {target: frontend, context: frontend, file: Dockerfile}
+          - {target: gateway, context: agentcc-gateway, file: Dockerfile}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: scripts/reclaim-runner-disk.sh
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/${{ matrix.file }}
+          build-args: ${{ matrix.target == 'frontend' && 'VITE_SKILL_TRACES=off' || '' }}
+          outputs: type=cacheonly
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.target }}
+          cache-to: type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.target }},mode=max
+
   e2e:
     name: e2e (${{ matrix.stack }})
     needs: changes
@@ -274,9 +313,6 @@ jobs:
     # the flow catalog) and the SDK live suites run in this one job. Dev runs
     # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
     timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write # ghcr build-cache: read on PRs, written on pushes
     env: &stack-env
       SKILLS_COHORT: ${{ matrix.cohort || 'ordinary' }}
       E2E_SKILLS_CAMPAIGNS_ENABLED: ${{ startsWith(matrix.cohort, 'campaign-') && 'true' || 'false' }}
@@ -331,30 +367,8 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: ghcr login (cache writes on trusted pushes only)
-        if: github.event_name == 'push' && !matrix.cohort
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: ghcr login (cache reads on internal PRs and the Standalone leg)
-        # Fork PRs get no token and read anonymously, which works only once the
-        # e2e-cache package is made public — a one-time manual step in the org's
-        # package settings. Until then forks build cold.
-        if: >-
-          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
-          || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # The backend, frontend and gateway images are always built from this
-      # PR's code (see the env block above); the registry cache keeps the
-      # backend build short.
+      # Stack images are built here; vendor pulls and optional layer-cache
+      # reads are anonymous. A private cache miss simply builds from source.
       - name: Build backend image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
@@ -372,7 +386,6 @@ jobs:
           cache-from: |
             type=registry,ref=${{ env.CACHE_REPO }}:backend
             ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
-          cache-to: ${{ github.event_name == 'push' && !matrix.cohort && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Add E2E-only fixtures and telemetry isolation to backend image
         if: env.BUILD_BACKEND == 'true'
@@ -392,7 +405,6 @@ jobs:
           load: true
           tags: futureagi/code-executor:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:code-executor
-          cache-to: ${{ github.event_name == 'push' && !matrix.cohort && format('type=registry,ref={0}:code-executor,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Select the source-built executor in both stacks
         run: echo "CODE_EXECUTOR_VERSION=$IMAGE_TAG" >> "$GITHUB_ENV"
@@ -406,7 +418,6 @@ jobs:
           load: true
           tags: futureagi/fi-collector:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
-          cache-to: ${{ github.event_name == 'push' && !matrix.cohort && format('type=registry,ref={0}:fi-collector,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Build frontend image from PR code
         if: env.BUILD_FRONTEND == 'true'
@@ -419,7 +430,6 @@ jobs:
           load: true
           tags: futureagi/frontend:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
-          cache-to: ${{ github.event_name == 'push' && !matrix.cohort && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Add local editor assets to the E2E frontend
         if: env.BUILD_FRONTEND == 'true'
@@ -440,7 +450,6 @@ jobs:
           load: true
           tags: futureagi/agentcc-gateway:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
-          cache-to: ${{ github.event_name == 'push' && !matrix.cohort && format('type=registry,ref={0}:gateway,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Assemble futureagi/standalone from those images
         if: matrix.stack == 'standalone'
@@ -687,6 +696,7 @@ jobs:
           repository: future-agi/futureagi-sdk
           ref: ${{ steps.sdk-ref.outputs.ref }}
           path: futureagi-sdk
+          persist-credentials: false
           fetch-depth: 1
 
       - uses: actions/setup-python@v5
@@ -858,6 +868,12 @@ jobs:
           pattern: skill-passes-*
           path: ${{ runner.temp }}/skill-passes
           merge-multiple: false
+      - name: Collect the package pair from this workflow run
+        uses: actions/download-artifact@v4
+        if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
       - name: Collect registered worker receipts from this workflow run
         uses: actions/download-artifact@v4
         if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
@@ -871,9 +887,11 @@ jobs:
         if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
         env:
           SDK_COMMIT: ${{ needs.skill-packages.outputs.sdk }}
+          TRACEAI_COMMIT: ${{ needs.skill-packages.outputs.traceai }}
           APP_SHA: ${{ needs.application-wheels.outputs.sha256 }}
           PAIR_SHA: ${{ needs.skill-packages.outputs.pair_sha256 }}
           SDK_SHA: ${{ needs.skill-packages.outputs.sdk_sha256 }}
         run: |
           python3 -I e2e/scripts/skills-coverage.py reconcile "$RUNNER_TEMP/skill-passes" "$GITHUB_SHA" \
-            --registered "$RUNNER_TEMP/skills-gcp" --sdk "$SDK_COMMIT" --pair-sha "$PAIR_SHA" --sdk-sha "$SDK_SHA" --application-sha "$APP_SHA"
+            --registered "$RUNNER_TEMP/skills-gcp" --pair "$RUNNER_TEMP/skill-pair" --sdk "$SDK_COMMIT" \
+            --traceai "$TRACEAI_COMMIT" --pair-sha "$PAIR_SHA" --sdk-sha "$SDK_SHA" --application-sha "$APP_SHA"

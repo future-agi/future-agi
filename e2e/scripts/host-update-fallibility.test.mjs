@@ -581,15 +581,24 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.match(rejected.stdout, /no builds were started/);
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', 'pull-requests': 'read' });
-  assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'write' });
+  const publisher = workflow.jobs['publish-build-cache'];
+  assert.deepEqual(publisher.permissions, { contents: 'read', packages: 'write' });
+  assert.equal(publisher.if, "github.event_name == 'push' && needs.changes.outputs.any == 'true'");
+  assert.deepEqual(publisher.strategy.matrix.include.map(x => x.target).sort(),
+    ['backend', 'code-executor', 'fi-collector', 'frontend', 'gateway']);
+  const cacheBuild = publisher.steps.find(step => step.uses === 'docker/build-push-action@v5');
+  assert.equal(cacheBuild.with['cache-to'], 'type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.target }},mode=max');
+  for (const [id, job] of Object.entries(workflow.jobs)) {
+    assert.equal(Boolean(job.steps?.some(step => step.uses?.startsWith('docker/login-action@'))), id === 'publish-build-cache');
+  }
   assert.deepEqual(workflow.jobs['skills-gcp'].permissions, { contents: 'read', 'id-token': 'write' });
-  assert.deepEqual(Object.keys(workflow.jobs).filter(id => workflow.jobs[id].permissions).sort(), ['changes', 'e2e', 'skills-gcp']);
+  assert.deepEqual(Object.keys(workflow.jobs).filter(id => workflow.jobs[id].permissions).sort(), ['changes', 'publish-build-cache', 'skills-gcp']);
   const builds = steps.filter(step => step.uses === 'docker/build-push-action@v5');
   assert.equal(builds.length, 5);
   for (const step of builds) {
     assert.equal(step.with.push, undefined);
     assert.equal(step.with.load, true);
-    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && !matrix\.cohort && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway|code-executor),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
+    assert.equal(step.with['cache-to'], undefined);
   }
   assert.equal(steps.find(step => step.name === 'Save Playwright browser cache').if,
     "github.event_name == 'push' && !matrix.cohort && steps.pw-cache.outputs.cache-hit != 'true'");

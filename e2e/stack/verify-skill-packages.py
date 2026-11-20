@@ -31,12 +31,18 @@ def verify_provenance(document, product):
     contract = document.get("contract", {})
     source = contract.get("source", {})
     hashes = contract.get("sha256", {})
+    baseline_fields = {"non_skills_sdk_commit", "non_skills_slice_sha256"}
+    mode = contract.get("sync_mode")
+    if mode == "scoped":
+        if (not re.fullmatch(r"[0-9a-f]{40}", source.get("non_skills_sdk_commit", ""))
+                or not re.fullmatch(r"[0-9a-f]{64}", source.get("non_skills_slice_sha256", ""))):
+            raise ValueError("Invalid scoped contract provenance")
+    elif mode != "full" or baseline_fields.intersection(source):
+        raise ValueError("Invalid contract provenance for sync mode")
     if (source.get("backend_commit") != product
-            or not re.fullmatch(r"[0-9a-f]{40}", source.get("non_skills_sdk_commit", ""))
             or set(hashes) != {"swagger.json", "mcp-tools.json", "SOURCE.json"}
             or not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (
                 *hashes.values(), source.get("openapi_sha256", ""), source.get("mcp_sha256", ""),
-                source.get("non_skills_slice_sha256", ""),
             ))):
         raise ValueError("Invalid regenerated contract provenance")
 

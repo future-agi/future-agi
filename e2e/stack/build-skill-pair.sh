@@ -12,34 +12,11 @@ trace_commit=$(jq -er '.traceai.commit' <<< "$SKILL_REFS")
 [[ $(git -C "$traceai" rev-parse HEAD) == "$trace_commit" ]]
 printf 'Testing %s with %s @ %s and %s @ %s\n' "$product" \
   "$(jq -er '.sdk.branch' <<< "$SKILL_REFS")" "$sdk_commit" "$(jq -er '.traceai.branch' <<< "$SKILL_REFS")" "$trace_commit"
-api=api_contracts/openapi/swagger.json
-tools=futureagi/mcp_server/catalog/tools.generated.json
-git -C "$root" ls-files --error-unmatch -- "$api" "$tools" >/dev/null
-git -C "$root" diff --exit-code --quiet HEAD -- "$api" "$tools"
 for repo in "$sdk" "$traceai"; do
   state=$(git -C "$repo" status --porcelain --untracked-files=all --ignored)
   [[ -z $state ]] || { echo 'Expected clean disposable package checkouts' >&2; exit 1; }
 done
-api_sha=$(sha256sum "$root/$api" | cut -d' ' -f1)
-catalog_source=$(jq -er '.source_contract_sha256' "$root/$tools")
-[[ $catalog_source == "$api_sha" ]] || { echo 'Product MCP catalog was not generated from this OpenAPI file' >&2; exit 1; }
-# Keep non-Skills code on the baseline selected by this SDK, not its feature tip.
-if ! baseline=$(jq -er '.non_skills_sdk_commit' "$sdk/sdkgen/contracts/SOURCE.json") || [[ ! $baseline =~ ^[a-f0-9]{40}$ ]]; then
-  echo 'The resolved SDK must include Skills sync support and its full non-Skills baseline commit in SOURCE.json' >&2
-  exit 1
-fi
-git -C "$sdk" cat-file -e "${baseline}:sdkgen/contracts/swagger.json"
-(
-  cd "$sdk"
-  python3 -IB sdkgen/sync_contract.py "$root/$api" --backend-commit "$product" \
-    --mcp-tools "$root/$tools" --skills-baseline-sdk "$baseline"
-  python3 -IB sdkgen/generate.py --only python typescript
-  python3 -IB sdkgen/generate.py --check --only python typescript
-  python3 -IB sdkgen/check_skills_baseline.py
-  # check_mcp_parity.py (every backend tool has an SDK catalog entry) is the SDK repo's own
-  # gate; product CI requires only that what the SDK ships matches this backend.
-)
-contract=$(python3 -IB "$root/e2e/stack/check-skill-contract.py" "$root" "$sdk" "$baseline")
+contract=$(python3 -IB "$root/e2e/stack/check-skill-contract.py" "$root" "$sdk" "$product")
 mkdir -p "$dist"
 for repo in "$sdk" "$traceai"; do uv build --python 3.11 --wheel "$repo/python" --out-dir "$dist"; done
 # Use the pnpm major matching each checkout's frozen lock format, not a floating CLI.

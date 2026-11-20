@@ -1,5 +1,6 @@
 """CI regression checks for missing tests, skips, and wrong-checkout receipts."""
 
+import hashlib
 import json
 import runpy
 import tempfile
@@ -70,6 +71,26 @@ class RequiredCoverage(unittest.TestCase):
             path.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):
                 check()
+
+    def test_aggregate_rejects_old_schema_or_missing_provenance_before_counting_passes(self):
+        commit, sdk, traceai = ('a' * 40, 'b' * 40, 'c' * 40)
+        sources = {'product': commit, 'sdk': sdk, 'traceai': traceai}
+        with tempfile.TemporaryDirectory() as tmp:
+            pair = Path(tmp)
+            for document, error in [
+                ({'schema': 1}, 'source revisions'),
+                ({'schema': 2}, 'contract provenance'),
+                ({'schema': 2, 'contract': {'sync_mode': 'full', 'source': {'backend_commit': sdk}}},
+                 'contract provenance'),
+                ({'schema': 2, 'sources': {**sources, 'traceai': sdk}}, 'source revisions'),
+            ]:
+                with self.subTest(document=document):
+                    raw = json.dumps({'sources': sources, 'branches': {'sdk': 'dev', 'traceai': 'dev'},
+                                      **document}).encode()
+                    (pair / 'pair.json').write_bytes(raw)
+                    with self.assertRaisesRegex(ValueError, error):
+                        coverage['reconcile_verified'](pair / 'passes', pair / 'registered', pair, commit, sdk,
+                                                       traceai, hashlib.sha256(raw).hexdigest(), 'd' * 64, 'e' * 64)
 
     def test_missing_lane_and_wrong_checkout_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
