@@ -289,56 +289,78 @@ def test_recovery_continues_after_one_dispatch_fails(signup):
     assert {c.kwargs["task_id"] for c in start.call_args_list} == first_ids
 
 
+@pytest.fixture
+def legacy_seed_database():
+    """Route the seeder's ordinary default-ORM calls to a disposable database."""
+    from uuid import uuid4
+
+    from django.db import connections
+    from django.db.migrations.executor import MigrationExecutor
+    from psycopg import sql
+
+    shared = connections["default"]
+    historical = shared.copy()
+    name = f"test_legacy_demo_{uuid4().hex}"
+    historical.settings_dict["NAME"] = name
+    with shared.cursor() as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        try:
+            connections["default"] = historical
+            yield historical
+        finally:
+            connections["default"] = shared
+            historical.close()
+            admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
+    # The shared database remains at every app's latest migration.
+    executor = MigrationExecutor(shared)
+    assert executor.migration_plan(executor.loader.graph.leaf_nodes()) == []
+
+
 @pytest.mark.django_db(transaction=True)
-def test_legacy_reseed_works_before_publication_table_exists(signup):
+def test_legacy_reseed_works_before_publication_table_exists(legacy_seed_database):
     from importlib import import_module
 
-    from django.db import connection
     from django.db.migrations.executor import MigrationExecutor
 
     from accounts.user_onboard import create_demo_traces_and_spans
 
-    user = signup(seed_demo_data=False)
-    old = ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key")
+    connection = legacy_seed_database
+    old = [
+        ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
+        ("tracer", "0135_eval_put_back"),  # Last node before attachment migrations.
+    ]
     new = ("accounts", "0030_queue_existing_demo_trace_publications")
     executor = MigrationExecutor(connection)
-    try:
-        executor.migrate([old])
-        assert (
-            "accounts_demotracepublication"
-            not in connection.introspection.table_names()
+    apps = executor.migrate(old).apps
+    org = apps.get_model("accounts", "Organization").objects.create(name="Demo")
+    user = apps.get_model("accounts", "User").objects.create(
+        email="legacy@example.com", organization=org
+    )
+    apps.get_model("accounts", "OrganizationMembership").objects.create(
+        user=user, organization=org, role="Owner"
+    )
+    assert "accounts_demotracepublication" not in connection.introspection.table_names()
+    # 0020 explicitly uses this historical-compatible seeding path.
+    assert (
+        create_demo_traces_and_spans(str(user.organization_id), publish=False) is None
+    )
+    trace_ids = identities(user)
+    assert len(trace_ids) == 2
+    executor = MigrationExecutor(connection)
+    executor.migrate([new])
+    assert (
+        set(DemoTracePublication.objects.values_list("trace_id", flat=True))
+        == trace_ids
+    )
+    # The data operation itself is idempotent.
+    operation = import_module(
+        "accounts.migrations.0030_queue_existing_demo_trace_publications"
+    )
+    with connection.schema_editor() as editor:
+        operation.queue_existing_demo_traces(
+            executor.loader.project_state([new]).apps, editor
         )
-        # 0020 explicitly uses this historical-compatible seeding path.
-        assert (
-            create_demo_traces_and_spans(str(user.organization_id), publish=False)
-            is None
-        )
-        trace_ids = identities(user)
-        assert len(trace_ids) == 2
-        executor = MigrationExecutor(connection)
-        executor.migrate([new])
-        assert (
-            set(DemoTracePublication.objects.values_list("trace_id", flat=True))
-            == trace_ids
-        )
-        # The data operation itself is idempotent.
-        operation = import_module(
-            "accounts.migrations.0030_queue_existing_demo_trace_publications"
-        )
-        with connection.schema_editor() as editor:
-            operation.queue_existing_demo_traces(
-                executor.loader.project_state([new]).apps, editor
-            )
-        assert DemoTracePublication.objects.count() == 2
-    finally:
-        # Back to every app's latest migration, not to 0030 or accounts alone:
-        # rolling accounts back also unapplies other apps' migrations that depend
-        # on it (tracer 0136_attachment_control_records depends on accounts 0032),
-        # and none may stay unapplied for the rest of the test session.
-        executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes())
-        executor = MigrationExecutor(connection)
-        assert executor.migration_plan(executor.loader.graph.leaf_nodes()) == []
+    assert DemoTracePublication.objects.count() == 2
 
 
 @pytest.mark.django_db(transaction=True)
