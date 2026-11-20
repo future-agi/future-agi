@@ -242,7 +242,9 @@ export function useRunDetail(
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
       // Must-pass cases this run failed, by name.
-      mustPassFailed: Array.isArray(execution.must_pass_failed) ? execution.must_pass_failed : [],
+      mustPassFailed: Array.isArray(execution.must_pass_failed)
+        ? execution.must_pass_failed
+        : [],
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume
@@ -653,6 +655,10 @@ export function mapCallDetail(raw) {
     attemptNumber: raw.attempt_number,
     // The World state view shows only when the call detail says actors are on.
     actorsEnabled: raw.actors_enabled,
+    // Why the platform kept no transcript and ran none of its own evals or CSAT, in the server's words.
+    processingSkipReason: raw.processing_skipped
+      ? raw.processing_skip_reason || null
+      : null,
     // Who took part in the call, as the server says, and whether a customer did.
     participants: raw.participants,
     hasCustomer: raw.has_customer,

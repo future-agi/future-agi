@@ -867,6 +867,32 @@ describe("CallDrawer — the call's traces", () => {
     });
   });
 
+  it("says why a voice call kept no transcript, from the server's reason", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-1",
+        transcript: [],
+        processing_skipped: true,
+        processing_skip_reason: "Call transcript is unavailable.",
+      },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByText("Call transcript is unavailable."),
+    ).toBeInTheDocument();
+  });
+
   it("gives a voice call no World state tab while actors are off", () => {
     useHasWorkers.mockReturnValue(false);
     useCallExecutionV3Detail.mockReturnValue({

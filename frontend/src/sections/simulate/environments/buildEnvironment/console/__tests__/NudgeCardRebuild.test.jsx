@@ -207,6 +207,41 @@ describe("NudgeCard once a rebuild lands", () => {
     expect(screen.queryByText("Your unsaved edits")).toBeNull();
   });
 
+  it("lists restored scenarios apart from new ones, and a failed restore with why", async () => {
+    const user = userEvent.setup();
+    render(
+      <NudgeCard
+        turn={applied({
+          piece: "suite",
+          label: "v8",
+          update: {
+            added: ["late_refund_case"],
+            restored: ["cancels_a_booking"],
+            changed: {},
+          },
+          restored: [{ key: "cancels_a_booking", name: "cancels a booking" }],
+          restore_failed: [
+            {
+              key: "cancels_the_only_booking",
+              why: "could not be proved again: a check is broken",
+            },
+          ],
+          draft_edits: null,
+          both: [],
+        })}
+      />,
+    );
+    expect(screen.getByText("Restored: cancels_a_booking")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Not restored: cancels_the_only_booking — could not be proved again: a check is broken",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByText("This update"));
+    expect(screen.getByText("Scenarios restored")).toBeVisible();
+    expect(screen.getByText("Scenarios added")).toBeVisible();
+  });
+
   it("lists what was reused, left out, not checked and warned", () => {
     render(
       <NudgeCard

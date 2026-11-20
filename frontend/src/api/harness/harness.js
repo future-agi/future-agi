@@ -11,8 +11,12 @@ const secretFilesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-files/");
 const conversationMessagesPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/conversation/messages/", { id });
+const extendPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/extend/", { id });
 const scenariosPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/scenarios/", { id });
+const scenarioCoveragePath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/coverage/", { id });
 const amendScenariosPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/scenarios/amend/", { id });
 
@@ -68,6 +72,11 @@ export const cancelHarnessJob = async (id, reason) => {
   if (trimmed) body.reason = trimmed.slice(0, 500);
   return (await axios.post(cancelPath(id), body)).data;
 };
+// The RL-environment chat, once terminal, drives follow-ups: "add 5 scenarios with more
+// neutral happy flows" adds scenarios against the saved world; a message with no count
+// just reruns the saved suite.
+export const extendHarnessJob = async (id, payload) =>
+  (await axios.post(extendPath(id), payload)).data;
 
 // Post a turn into the live builder conversation. `payload` carries the required
 // { content, client_request_id, kind } and, for a reply to a blocking question,
@@ -93,6 +102,21 @@ export const listHarnessScenarios = async (id, params = {}) => {
     .data;
 };
 
+export const getHarnessScenarioCoverage = async (id, params = {}) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    // A repeated key is one property's OR-set, so an array has to stay several params.
+    (Array.isArray(value) ? value : [value]).forEach((one) =>
+      search.append(key, String(one)),
+    );
+  });
+  const query = search.toString();
+  return (
+    await axios.get(`${scenarioCoveragePath(id)}${query ? `?${query}` : ""}`)
+  ).data;
+};
+
 // Edit a finished run's authored suite. `changes` is a batch, and the reply is one receipt per
 // change saying what happened to it (applied, reworked, or refused, and why) rather than a
 // job that merely looks saved. `rework: false` applies only what cannot affect the suite's
@@ -102,3 +126,66 @@ export const amendHarnessScenarios = async (
   changes,
   { rework = true } = {},
 ) => (await axios.post(amendScenariosPath(id), { changes, rework })).data;
+
+// Scenario lifecycle: validate (and read the validation), archive, restore, revisions, source changes.
+const validatePath = (id) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/validate/", {
+    id,
+  });
+const archivePath = (id, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/archive/", {
+    id,
+    key,
+  });
+const recordsPath = (id, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/records/", {
+    id,
+    key,
+  });
+// Seeded rows of one table, to pick a real record for a case whose record is missing.
+export const getHarnessScenarioRecords = async (id, key, table) =>
+  (await axios.get(recordsPath(id, key), { params: { table } })).data;
+const restorePath = (id, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/restore/", {
+    id,
+    key,
+  });
+const revisionsPath = (id, key) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/",
+    { id, key },
+  );
+const sourceChangesPath = (id, versionId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/",
+    { id, version_id: versionId },
+  );
+
+export const validateHarnessScenarios = async (id, body = {}) => {
+  const response = await axios.post(validatePath(id), body);
+  return { ...response.data, httpStatus: response.status };
+};
+
+export const getHarnessScenarioValidation = async (id, jobId) =>
+  (await axios.get(validatePath(id), { params: { job_id: jobId } })).data;
+
+const runningValidationPath = (id) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/scenarios/validate/running/",
+    { id },
+  );
+// The default pair's validation still running, and how many cases a Validate of those not yet proved would prove.
+export const getHarnessRunningValidation = async (id) =>
+  (await axios.get(runningValidationPath(id))).data;
+
+export const archiveHarnessScenario = async (id, key, reason = "") =>
+  (await axios.post(archivePath(id, key), { reason })).data;
+
+export const restoreHarnessScenario = async (id, key) =>
+  (await axios.post(restorePath(id, key), {})).data;
+
+export const listHarnessScenarioRevisions = async (id, key) =>
+  (await axios.get(revisionsPath(id, key))).data;
+
+export const getHarnessSourceChanges = async (id, versionId) =>
+  (await axios.get(sourceChangesPath(id, versionId))).data;

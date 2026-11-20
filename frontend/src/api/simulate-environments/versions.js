@@ -109,6 +109,8 @@ const acceptUnresolvedPath = (envId) =>
   });
 const environmentFilesPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/files/", { id: envId });
+const fileRolePath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/files/role/", { id: envId });
 
 const actorValidationPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/actor-validation/", {
@@ -344,6 +346,24 @@ export const uploadEnvironmentFile = async (
   if (revision != null) form.append("expected_revision", String(revision));
   return (await axios.post(environmentFilesPath(envId), form)).data;
 };
+
+// Give one attached file its role (policy, seed_records, evaluator_only); resolves to the cast.
+export const setFileRole = async (envId, { path, role, revision }) =>
+  (
+    await axios.post(fileRolePath(envId), {
+      path,
+      role,
+      ...(revision != null ? { expected_revision: revision } : {}),
+    })
+  ).data;
+
+// The pairing's whole readiness report: rows, workers, blockers and the selection.
+export const getRunReadiness = async (envId, picks) =>
+  (
+    await axios.get(capabilitiesPath(envId), {
+      params: versionPickFields(picks),
+    })
+  ).data;
 
 export const environmentVersionsKey = (envId) => [
   "harness-env-versions",
@@ -1067,6 +1087,17 @@ export const useSetActorLimits = (envId) =>
   useCastChange(envId, setActorLimits);
 export const useUploadEnvironmentFile = (envId) =>
   useCastChange(envId, uploadEnvironmentFile);
+export const useSetFileRole = (envId) => useCastChange(envId, setFileRole);
+
+export function useRunReadiness(envId, picks, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: [...runPlanKey(envId, picks), "readiness"],
+    queryFn: () => getRunReadiness(envId, picks),
+    enabled: Boolean(envId) && enabled,
+    retry: retryServerFailures,
+    meta: { errorHandled: true },
+  });
+}
 export const useAcceptUnresolved = (envId) =>
   useCastChange(envId, acceptUnresolved);
 

@@ -235,7 +235,10 @@ export function NudgeActions({
         </Typography>
       )}
       {error && (
-        <Typography role="alert" sx={{ typography: "s1", color: "status.danger.fg" }}>
+        <Typography
+          role="alert"
+          sx={{ typography: "s1", color: "status.danger.fg" }}
+        >
           {answerErrorText(error, errorFallback)}
         </Typography>
       )}
@@ -277,10 +280,7 @@ DraftNotice.propTypes = { draft: PropTypes.object };
 function Bucket({ title, children }) {
   return (
     <Box component="details" sx={{ "& > summary": { cursor: "pointer" } }}>
-      <Box
-        component="summary"
-        sx={{ typography: "s1", fontWeight: 500 }}
-      >
+      <Box component="summary" sx={{ typography: "s1", fontWeight: 500 }}>
         {title}
       </Box>
       <Box sx={{ pt: 0.75, pl: 1.5 }}>{children}</Box>
@@ -339,6 +339,33 @@ function NudgeOutcome({ nudge }) {
             <Box component="li" key={one.key}>
               <Line>
                 {COPY.leftOut}: {one.key}
+                {one.why ? ` — ${one.why}` : ""}
+              </Line>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {summary.restored?.length > 0 && (
+        <Box component="ul" sx={{ m: 0, pl: 2 }} aria-label={COPY.restored}>
+          {summary.restored.map((one) => (
+            <Box component="li" key={one.key}>
+              <Line>
+                {COPY.restored}: {one.key}
+              </Line>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {summary.restoreFailed?.length > 0 && (
+        <Box
+          component="ul"
+          sx={{ m: 0, pl: 2 }}
+          aria-label={COPY.restoreFailed}
+        >
+          {summary.restoreFailed.map((one) => (
+            <Box component="li" key={one.key}>
+              <Line color="status.warning.fg">
+                {COPY.restoreFailed}: {one.key}
                 {one.why ? ` — ${one.why}` : ""}
               </Line>
             </Box>

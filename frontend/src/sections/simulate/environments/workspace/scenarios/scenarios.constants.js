@@ -25,7 +25,6 @@ export const SCENARIOS_COPY = {
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",
   addShortLabel: "Add",
-  addComingSoon: "Coming soon",
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
@@ -44,7 +43,186 @@ export const SCENARIOS_COPY = {
   emptyBody:
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
+  proofCounts: ({
+    proved = 0,
+    kept_as_written: kept = 0,
+    not_proved: notProved = 0,
+  }) => `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
+  lifecycle: {
+    draft: "Draft",
+    validated: "Validated",
+    active: "Active",
+    kept_as_written: "Kept as written",
+    archived: "Archived",
+  },
+  legacyTooltip:
+    "Validated before checks were recorded. Validate again to confirm.",
+  keptAsWritten: "Kept as written",
+  notMeasured: "Not measured at run time",
+  couldNotApply: "Could not apply",
+  discardChange: "Discard unsaved scenario changes",
+  lifecycleFilterLabel: "Lifecycle",
+  versionsLabel: "Versions",
+  versionsDefault: "Saved (default)",
+  versionPair: (suite, environment, candidate) =>
+    `Suite ${suite} on environment ${environment}${candidate ? " (candidate)" : ""}`,
+  versionsInView:
+    "Showing these versions. Cases proved here read Validated; they read Active once these versions are saved.",
+  recordHint: "This case presumes a record the world does not hold.",
+  recordTable: "Table",
+  recordPick: "Record",
+  useRealRecord: "Use a real record",
+  approveSynthetic: "Approve as a synthetic record",
+  syntheticId: "Synthetic record id",
+  realRecordMessage: (key, table, id) =>
+    `Change scenario ${key} to use ${table} record ${id} instead of the record it presumes that the world does not hold.`,
+  syntheticQuote: (user) => `Synthetic record approved by ${user}`,
+  activate: "Activate",
+  activateHint: "Activating saves these versions. It does not start a run.",
+  activateNothing: "Nothing to save: these versions are not unsaved changes.",
+  lifecycleFilters: [
+    { value: "", label: "All" },
+    { value: "draft", label: "Draft" },
+    { value: "validated", label: "Validated" },
+    { value: "active", label: "Active" },
+    { value: "kept_as_written", label: "Kept as written" },
+    { value: "archived", label: "Archived" },
+    { value: "source_changed", label: "Source changed" },
+  ],
+  validate: "Validate cases not yet proved",
+  validateOne: "Validate scenario against the environment",
+  validateDrafts: "Validate with the unsaved changes",
+  validating: "Validating…",
+  // From the validation's own counts: how many cases hold a proof of their own, of how many.
+  validatingProgress: (proved, total) =>
+    `Validating · proved ${proved} of ${total}`,
+  validationNoResults:
+    "Validation finished but recorded no results; try again.",
+  validationDone: (proved, total) =>
+    Number.isInteger(total) && total > 0
+      ? `Validation finished · proved ${proved} of ${total}`
+      : "Validation finished",
+  // A press would only return the validation already running, which does not prove this case.
+  validationElsewhere:
+    "Another validation is running; validate this case when it ends.",
+  nothingToValidate: "Nothing to validate",
+  archive: "Archive",
+  restore: "Restore",
+  archiveTitle: "Archive this scenario?",
+  archiveReason: "Reason (optional)",
+  archived: "Archived. It no longer runs.",
+  restored: "Restored as a draft. Validate and save to run it.",
+  restoredLive: "Restored. It runs again.",
+  draftChanged: "The environment was edited elsewhere; reload and try again.",
+  savedAsDraft: (n) => `${n} cases saved as Draft; validate them to run them`,
+  noSources: "No source recorded (written before sources were required).",
+  assumption: "Assumption",
+  sourcesTitle: "Sources",
+  statusTitle: "Status",
+  controlsTitle: "Wrong-way examples",
+  controlsHint:
+    "A deliberately wrong answer is run; the scenario counts only if its checks fail it.",
+  revisionsTitle: "Revisions",
+  controlResult: (control) =>
+    control.assumed?.length
+      ? "Not run"
+      : control.failed === false
+        ? "Not caught: the checks passed this wrong answer"
+        : control.failed
+          ? "Caught: the checks failed this wrong answer, as they should"
+          : "Not run",
+  sourceChanged: (version) => `Source changed in environment v${version}`,
+  compare: "Compare",
+  citedRule: "a cited rule",
+  compareTitle: (from, to) =>
+    `What changed between environment v${from} and v${to}`,
+  compareRule: "Rule",
+  compareBefore: (version) => `Before (v${version})`,
+  compareAfter: (version) => `After (v${version})`,
+  compareMissing: "Not in this version.",
+  compareLoading: "Reading both versions…",
+  compareFailed: "Couldn't read the change. Try again.",
+  compareCitedBy: (keys) =>
+    `Cited by ${keys.length === 1 ? "1 case" : `${keys.length} cases`}: ${keys.join(", ")}`,
+  addMissingCases: "Add missing cases",
+  uncoveredTitle: "Planned levels no scenario covers yet",
+  requestedTitle: "Asked for, not written yet",
+  requestedGuidance: (lines) =>
+    `Write these cases you were asked for and have not written yet: ${lines.join("; ")}`,
+  workflowTitle: "Release checks per workflow",
+  workflowColumn: "Workflow",
+  workflowKinds: {
+    success: "Success",
+    refusal: "Refusal",
+    wrong_result: "Wrong result",
+  },
+  workflowMissing: "Missing",
+  workflowGuidance: (kind, workflow) =>
+    `Write the missing ${kind.replace("_", " ")} case for the workflow "${workflow}".`,
 };
+
+// The version pairs the Scenarios tab can show besides the saved one: each candidate pair Validate
+// built, and each other active suite or environment version on the other's default.
+const versionName = (version) =>
+  version?.label || `v${String(version?.id ?? "").slice(0, 6)}`;
+export const versionPairs = (versions) => {
+  if (!versions || versions.empty) return [];
+  const suites = versions.suite ?? [];
+  const environments = versions.environment ?? [];
+  const suiteDefault = versions.defaults?.suite;
+  const environmentDefault = versions.defaults?.environment;
+  const pairs = [];
+  const add = (suite, environment) => {
+    if (!suite || !environment || (suite.isDefault && environment.isDefault))
+      return;
+    const value = `${suite.id}:${environment.id}`;
+    if (pairs.some((one) => one.value === value)) return;
+    const candidate =
+      suite.status === "candidate" || environment.status === "candidate";
+    pairs.push({
+      value,
+      suiteVersionId: suite.id,
+      environmentVersionId: environment.id,
+      label: SCENARIOS_COPY.versionPair(
+        versionName(suite),
+        versionName(environment),
+        candidate,
+      ),
+    });
+  };
+  const candidateSuite = suites.find((one) => one.status === "candidate");
+  const candidateEnvironment = environments.find(
+    (one) => one.status === "candidate",
+  );
+  if (candidateSuite || candidateEnvironment) {
+    add(
+      candidateSuite ?? suiteDefault,
+      candidateEnvironment ?? environmentDefault,
+    );
+  }
+  suites
+    .filter(
+      (one) => !one.isDefault && ["active", "candidate"].includes(one.status),
+    )
+    .forEach((one) => add(one, environmentDefault));
+  environments
+    .filter(
+      (one) => !one.isDefault && ["active", "candidate"].includes(one.status),
+    )
+    .forEach((one) => add(suiteDefault, one));
+  return pairs;
+};
+
+// Badge role per lifecycle state, from the design system's status roles.
+export const LIFECYCLE_ROLES = {
+  draft: "neutral",
+  validated: "info",
+  active: "success",
+  kept_as_written: "warning",
+  archived: "neutral",
+};
+// A warning on a case that runs and is proved: a check reads evidence this agent does not give.
+export const RUN_TIME_WARNINGS = ["evidence_not_captured"];
 
 // A row the unsaved changes add or change; an added one can't be picked for a
 // run yet.
@@ -103,15 +281,24 @@ export const deriveUseCase = (row) => {
   }
   if (id.includes("-rule-")) {
     const short = title.split(/[.:]/)[0].slice(0, 42).trim();
-    return { id: `rule:${short.toLowerCase()}`, label: short || "Rule enforcement" };
+    return {
+      id: `rule:${short.toLowerCase()}`,
+      label: short || "Rule enforcement",
+    };
   }
   if (id.includes("-trap-")) {
     const table = title.split(":")[0].trim();
-    if (table) return { id: `trap:${table.toLowerCase()}`, label: `${humanize(table)} data` };
+    if (table)
+      return {
+        id: `trap:${table.toLowerCase()}`,
+        label: `${humanize(table)} data`,
+      };
     return { id: "trap:other", label: "Data traps" };
   }
-  if (id.includes("-adversarial-")) return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
-  if (id.includes("-edge-")) return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
+  if (id.includes("-adversarial-"))
+    return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
+  if (id.includes("-edge-"))
+    return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
   return { id: "other", label: "Other" };
 };
 
@@ -129,7 +316,10 @@ export const groupKeyOf = (row, mode, env) => {
     const subs = subTasksFor(row, env);
     const first = subs?.[0]?.label;
     if (!first) return { id: "subgoal:none", label: "No sub-goals" };
-    const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const slug = first
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
     return { id: `subgoal:${slug}`, label: first };
   }
   return deriveUseCase(row);
@@ -139,7 +329,8 @@ export const groupScenarios = (rows, mode = "goal", env) => {
   const buckets = new Map();
   (rows || []).forEach((r) => {
     const key = groupKeyOf(r, mode, env);
-    if (!buckets.has(key.id)) buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
+    if (!buckets.has(key.id))
+      buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
     buckets.get(key.id).rows.push(r);
   });
   // Bigger groups first — the tail of one-off adversarial/edge titles shouldn't

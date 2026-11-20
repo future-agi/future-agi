@@ -262,6 +262,7 @@ export const VERSIONS_COPY = {
     removed: "Removed",
     changed: "Changed",
     scenariosAdded: "Scenarios added",
+    scenariosRestored: "Scenarios restored",
     scenariosRemoved: "Scenarios removed",
     scenariosChanged: "Scenarios changed",
     source: "Source changed",
@@ -518,6 +519,7 @@ export const DRAFTS_COPY = {
   validating: "Validating changes",
   validateError: "Couldn't start validating. Try again in a moment.",
   validation: {
+    ready: "Validated. Name this version to save it.",
     retry: "Validation did not start. Try again",
     superseded: "The environment changed while validating. Validate again",
     failed: (n) =>
@@ -539,7 +541,7 @@ export const DRAFTS_COPY = {
     draft_not_found: "These changes were already saved or discarded.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
-    validation_required: "Validate these reviewed changes, then save them.",
+    validation_required: "Validate these changes, then save them.",
     scenario_index_mismatch:
       "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
     change_depends_on_rejected:
@@ -598,6 +600,8 @@ export const COMPARE_COPY = {
     return reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : null;
   },
   criteriaHint: (names) => `Sub-goal changed: ${names.join(", ")}`,
+  changedTest: "Changed test",
+  changedTestHint: "This case changed between the two runs; compare with care.",
   columns: {
     scenario: "Scenario",
     current: "This run",

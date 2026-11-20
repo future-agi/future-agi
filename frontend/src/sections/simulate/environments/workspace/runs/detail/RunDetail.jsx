@@ -14,6 +14,7 @@ import {
   Tab,
   Tooltip,
 } from "@mui/material";
+import MustPassBanner from "./MustPassBanner";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -40,6 +41,7 @@ import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
+import RunReadinessTag from "./RunReadinessTag";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
@@ -312,6 +314,10 @@ export default function RunDetail({
                 environmentVersion={identity.environmentVersion}
               />
             )}
+            <RunReadinessTag
+              snapshot={identity?.capabilitySnapshot}
+              selection={identity?.readinessSelection}
+            />
             {status && <StatusChip status={status} />}
             {!fixRun && (
               <StopRunControl
@@ -340,6 +346,8 @@ export default function RunDetail({
             </Alert>
           )}
         </Box>
+
+        <MustPassBanner names={identity?.mustPassFailed} />
 
         <ReliabilityHeadline
           executionId={executionId}

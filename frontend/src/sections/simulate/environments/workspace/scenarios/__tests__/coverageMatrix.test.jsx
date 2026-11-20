@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 import coverageSample from "src/api/simulate-environments/_fixtures/scenarioSamples/07-coverage.json";
-import CoverageMatrix from "../CoverageMatrix";
+import userEvent from "@testing-library/user-event";
+import CoverageMatrix, { UncoveredLevels } from "../CoverageMatrix";
+import { missingCasesGuidance } from "../addScenarios.constants";
 
 // The grid consumes the server coverage response through the hook; mock the hook
 // so the component renders straight from a captured sample (07 = the 20-row run).
@@ -87,5 +89,55 @@ describe("CoverageMatrix", () => {
     expect(screen.getByLabelText("Loading coverage")).toBeInTheDocument();
     expect(screen.queryByText(/0 scenarios/)).toBeNull();
     expect(screen.queryByText("0%")).toBeNull();
+  });
+});
+
+
+describe("CoverageMatrix uncovered levels", () => {
+  it("offers Add missing cases only when a planned level is uncovered", async () => {
+    const onAddMissing = vi.fn();
+    const uncovered = [{ axis: "task", level: "cancel" }];
+    const { rerender } = render(<UncoveredLevels uncovered={uncovered} onAddMissing={onAddMissing} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add missing cases" }));
+    expect(onAddMissing).toHaveBeenCalledWith(uncovered);
+    expect(missingCasesGuidance(uncovered)).toBe(
+      "Write scenarios for these planned levels that no scenario covers yet: task: cancel",
+    );
+    rerender(<UncoveredLevels uncovered={[]} onAddMissing={onAddMissing} />);
+    expect(screen.queryByRole("button", { name: "Add missing cases" })).toBeNull();
+  });
+});
+
+describe("WorkflowChecks", () => {
+  it("Missing cell offers Add missing cases with the request prefilled", async () => {
+    const { WorkflowChecks } = await import("../CoverageMatrix");
+    const onAddMissing = vi.fn();
+    render(
+      <WorkflowChecks
+        workflows={[{ workflow: "refunds", success: 2, refusal: 0, wrong_result: 1, missing: ["refusal"] }]}
+        onAddMissing={onAddMissing}
+      />,
+    );
+    expect(screen.getByTestId("coverage-workflows")).toHaveTextContent("Missing");
+    fireEvent.click(screen.getByRole("button", { name: "Add missing cases" }));
+    expect(onAddMissing).toHaveBeenCalledWith('Write the missing refusal case for the workflow "refunds".');
+  });
+
+  it("shows nothing without workflows", async () => {
+    const { WorkflowChecks } = await import("../CoverageMatrix");
+    render(<WorkflowChecks workflows={[]} />);
+    expect(screen.queryByTestId("coverage-workflows")).toBeNull();
+  });
+});
+
+describe("RequestedUncovered", () => {
+  it("lists what was asked for and not written, and asks for it", async () => {
+    const { RequestedUncovered } = await import("../CoverageMatrix");
+    const onAddMissing = vi.fn();
+    render(<RequestedUncovered lines={["a refund after 30 days"]} onAddMissing={onAddMissing} />);
+    expect(screen.getByTestId("coverage-requested")).toHaveTextContent("Asked for, not written yet");
+    expect(screen.getByTestId("coverage-requested")).toHaveTextContent("a refund after 30 days");
+    fireEvent.click(screen.getByRole("button", { name: "Add missing cases" }));
+    expect(onAddMissing).toHaveBeenCalledWith(["a refund after 30 days"]);
   });
 });
