@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "586741e2bee7723d3a9ae64547a828e9508d0e21b642f07bffff7d6061efc077",
+  "source_contract_sha256": "b3662049eb0acab441723c0ba6de9f89c2b13ef5bef162eab76676a527eaafce",
   "tool_count": 111,
   "tools": [
     {
@@ -4433,7 +4433,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4467,7 +4467,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -4510,7 +4510,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -4544,7 +4544,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5085,7 +5085,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -5119,7 +5119,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5162,7 +5162,7 @@
                       "properties": {
                         "column_id": {
                           "type": "string",
-                          "description": "Column or attribute id to filter on."
+                          "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                         },
                         "property_id": {
                           "type": "string",
@@ -5196,7 +5196,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5823,9 +5823,36 @@
               "eval_metric",
               "annotation_metric",
               "custom_attribute",
-              "custom_column"
+              "custom_column",
+              "derived_metric",
+              "metric"
             ],
             "default": ""
+          },
+          "context": {
+            "type": "string",
+            "enum": [
+              "sessions",
+              "spans",
+              "traces",
+              "users",
+              "task_sessions",
+              "task_spans",
+              "task_traces",
+              "task",
+              "tasks"
+            ],
+            "description": "Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "span",
+              "trace",
+              "conversation",
+              "user"
+            ],
+            "description": "Filter by the active definition's source grain, before projection."
           },
           "role": {
             "type": "string",
@@ -5893,6 +5920,8 @@
             "exclude_custom_attributes",
             "search",
             "category",
+            "context",
+            "level",
             "role",
             "source",
             "page",
@@ -9543,7 +9572,7 @@
                   "properties": {
                     "column_id": {
                       "type": "string",
-                      "description": "Column or attribute id to filter on."
+                      "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                     },
                     "property_id": {
                       "type": "string",
@@ -9577,7 +9606,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                         },
                         "attribute_value_types": {
                           "type": "array",
@@ -10799,7 +10828,7 @@
               "properties": {
                 "column_id": {
                   "type": "string",
-                  "description": "Column or attribute id to filter on."
+                  "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                 },
                 "property_id": {
                   "type": "string",
@@ -10833,7 +10862,7 @@
                     },
                     "col_type": {
                       "type": "string",
-                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                     },
                     "attribute_value_types": {
                       "type": "array",
@@ -10922,7 +10951,8 @@
                   "eval_metric",
                   "annotation_metric",
                   "custom_attribute",
-                  "custom_column"
+                  "custom_column",
+                  "derived_metric"
                 ],
                 "default": "system_metric"
               },
@@ -10934,7 +10964,8 @@
                   "datasets",
                   "simulation",
                   "both",
-                  "all"
+                  "all",
+                  "derived_metrics"
                 ],
                 "default": "traces"
               },
@@ -11028,7 +11059,8 @@
                   "eval_metric",
                   "annotation_metric",
                   "custom_attribute",
-                  "custom_column"
+                  "custom_column",
+                  "derived_metric"
                 ]
               },
               "source": {
@@ -11039,7 +11071,8 @@
                   "datasets",
                   "simulation",
                   "both",
-                  "all"
+                  "all",
+                  "derived_metrics"
                 ],
                 "default": "traces"
               },
@@ -11083,6 +11116,11 @@
               "config_id": {
                 "title": "Config id",
                 "type": "string"
+              },
+              "derived_run_id": {
+                "title": "Derived run id",
+                "type": "string",
+                "format": "uuid"
               },
               "label_id": {
                 "title": "Label id",
@@ -11132,7 +11170,7 @@
                   "properties": {
                     "column_id": {
                       "type": "string",
-                      "description": "Column or attribute id to filter on."
+                      "description": "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id."
                     },
                     "property_id": {
                       "type": "string",
@@ -11166,7 +11204,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context."
                         },
                         "attribute_value_types": {
                           "type": "array",
@@ -11316,9 +11354,36 @@
               "eval_metric",
               "annotation_metric",
               "custom_attribute",
-              "custom_column"
+              "custom_column",
+              "derived_metric",
+              "metric"
             ],
             "default": ""
+          },
+          "context": {
+            "type": "string",
+            "enum": [
+              "sessions",
+              "spans",
+              "traces",
+              "users",
+              "task_sessions",
+              "task_spans",
+              "task_traces",
+              "task",
+              "tasks"
+            ],
+            "description": "Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "span",
+              "trace",
+              "conversation",
+              "user"
+            ],
+            "description": "Filter by the active definition's source grain, before projection."
           },
           "role": {
             "type": "string",
@@ -11386,6 +11451,8 @@
             "exclude_custom_attributes",
             "search",
             "category",
+            "context",
+            "level",
             "role",
             "source",
             "page",
