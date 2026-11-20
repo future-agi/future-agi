@@ -426,16 +426,27 @@ export function LifecycleSections({ row, jobId }) {
       </Section>
       {controls.length > 0 && (
         <Section title={SCENARIOS_COPY.controlsTitle}>
-          <Stack spacing={0.5} data-testid="lifecycle-controls">
+          <Typography sx={{ typography: "s2", color: "text.subtitle", mb: 1 }}>
+            {SCENARIOS_COPY.controlsHint}
+          </Typography>
+          <Stack spacing={1} data-testid="lifecycle-controls">
             {controls.map((control) => (
-              <PolicyRow
-                key={control.name}
-                label={SCENARIOS_COPY.controlResult(control)}
-              >
+              <Box key={control.name}>
                 <Typography sx={{ typography: "s2", color: "text.primary" }}>
                   {control.name}: {control.why}
                 </Typography>
-              </PolicyRow>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color:
+                      control.failed === false && !control.assumed?.length
+                        ? "error.main"
+                        : "text.subtitle",
+                  }}
+                >
+                  {SCENARIOS_COPY.controlResult(control)}
+                </Typography>
+              </Box>
             ))}
           </Stack>
         </Section>

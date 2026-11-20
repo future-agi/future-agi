@@ -136,8 +136,23 @@ describe("ScenarioDetail lifecycle", () => {
     expect(screen.getByTestId("lifecycle-status")).toHaveTextContent(lifecycle.reason_text);
     expect(screen.getByTestId("lifecycle-sources")).toHaveTextContent("Refund at most once.");
     expect(screen.getByText("Assumption")).toBeInTheDocument();
-    expect(screen.getByTestId("lifecycle-controls")).toHaveTextContent("Passed");
+    // A wrong answer the checks passed is the bad case: said as not caught, never as a bare "Passed".
+    expect(screen.getByText("Wrong-way examples")).toBeInTheDocument();
+    expect(screen.getByTestId("lifecycle-controls")).toHaveTextContent(
+      "Not caught: the checks passed this wrong answer",
+    );
     expect(screen.getByTestId("lifecycle-revisions")).toHaveTextContent("Revision 2");
+  });
+
+  it("says a wrong answer the checks failed was caught", () => {
+    const caught = {
+      ...lifecycle,
+      proof: { controls: [{ name: "two_refunds", why: "refunds twice", failed: true, assumed: [] }] },
+    };
+    render(<ScenarioDetailBody row={{ id: "r1", name: "Refund", lifecycle: caught }} />);
+    expect(screen.getByTestId("lifecycle-controls")).toHaveTextContent(
+      "Caught: the checks failed this wrong answer, as they should",
+    );
   });
 
   it("says a case with no sources was assumed by the builder", () => {
