@@ -120,7 +120,8 @@ describe("jobToBuildProgress", () => {
       "Stopped — an issue occurred while running this. Run it again; it doesn't count against the agent.",
     );
 
-    // Exit 78 recorded as unknown stays unknown, whatever the message names.
+    // Exit 78 recorded as unknown stays unknown, whatever the message names; a person then
+    // reads what their agent printed after the run's label.
     expect(
       failedWith({
         stage: "validating_environment",
@@ -130,11 +131,11 @@ describe("jobToBuildProgress", () => {
         message: `We couldn't run this agent version in its environment: ProcessRuntimeError: ${startTimeout}`,
       }),
     ).toBe(
-      "We couldn't run this agent version in its environment, and the run recorded no cause. Run it again; if it repeats, start the agent on your own machine and check that it comes up.",
+      `We couldn't run this agent version in its environment, and the run recorded no cause. Run it again; if it repeats, start the agent on your own machine and check that it comes up. ProcessRuntimeError: ${startTimeout}`,
     );
   });
 
-  it("says a named failure cause in plain words, never the raw guest line", () => {
+  it("says a named failure cause in plain words, then what the agent printed", () => {
     const failedWith = (cause) =>
       jobToBuildProgress(
         jobAt("failed", {
@@ -150,17 +151,18 @@ describe("jobToBuildProgress", () => {
       ).failure.detail;
 
     expect(failedWith("agent_exited_before_ready")).toBe(
-      "Didn't start — the agent exited before it was ready. Fix the crash on startup, then push a new agent version.",
+      "Didn't start — the agent exited before it was ready. Fix the crash on startup, then push a new agent version. ProcessRuntimeError: depends_on/spawn_failed (agent)",
     );
     expect(failedWith("agent_not_ready_in_time")).toBe(
-      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner.",
+      "Didn't start in time — the agent wasn't ready within the limit. Run it again; if it repeats, make it start or listen sooner. ProcessRuntimeError: depends_on/spawn_failed (agent)",
     );
     // A process the agent depends on was not ready: its own words, which never blame the agent.
     expect(failedWith("dependency_not_ready_in_time")).toBe(
-      "Didn't start in time — a service this run needs wasn't ready within the limit. Run it again.",
+      "Didn't start in time — a service this run needs wasn't ready within the limit. Run it again. ProcessRuntimeError: depends_on/spawn_failed (agent)",
     );
     // Exit 78 with no recorded cause, or one this page does not know, including names an object
-    // carries and a value that is not a string: the unknown words, with a next step and no code.
+    // carries and a value that is not a string: the unknown words, with a next step and no code,
+    // then the agent's own line.
     for (const cause of [
       "unknown",
       "a_value_from_a_newer_server",
@@ -169,9 +171,45 @@ describe("jobToBuildProgress", () => {
       { cause: "agent_exited_before_ready" },
     ]) {
       expect(failedWith(cause)).toBe(
-        "We couldn't run this agent version in its environment, and the run recorded no cause. Run it again; if it repeats, start the agent on your own machine and check that it comes up.",
+        "We couldn't run this agent version in its environment, and the run recorded no cause. Run it again; if it repeats, start the agent on your own machine and check that it comes up. ProcessRuntimeError: depends_on/spawn_failed (agent)",
       );
     }
+
+    // A message that is only the run's label adds nothing after the words.
+    expect(
+      jobToBuildProgress(
+        jobAt("failed", {
+          failure: {
+            stage: "validating_environment",
+            domain: "environment",
+            code: "authoring_runtime_validation_failed",
+            cause: "agent_exited_before_ready",
+            message: "We couldn't run this agent version in its environment",
+          },
+        }),
+      ).failure.detail,
+    ).toBe(
+      "Didn't start — the agent exited before it was ready. Fix the crash on startup, then push a new agent version.",
+    );
+  });
+
+  it("reads a failure the platform set as final as recorded, never as a retry", () => {
+    // The platform writes these with retryable false: the same build would fail the same way.
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "understanding_agent",
+          domain: "infrastructure",
+          code: "subfolder_ignored",
+          retryable: false,
+          message:
+            "the build asked for folder 'agents/support' but the harness read the repository root",
+        },
+      }),
+    );
+    expect(out.failure.detail).toBe(
+      "the build asked for folder 'agents/support' but the harness read the repository root",
+    );
   });
 
   it("leaves a failure with no cause outside our infrastructure as recorded", () => {

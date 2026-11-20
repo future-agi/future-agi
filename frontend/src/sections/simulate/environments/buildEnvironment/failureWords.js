@@ -4,9 +4,10 @@
  *
  * A failure that names its cause (`failure.cause`, from a closed set) reads as that cause, and
  * any other value as `unknown`. A run's start timeout, recorded by its closed code without a
- * cause, reads as one. Another failure the run itself caused reads as a run issue that doesn't
- * count against the agent. Any other failure reads as recorded. The message never decides:
- * it can carry what the agent printed.
+ * cause, reads as one. Another failure the run itself caused, and may pass on a retry, reads as
+ * a run issue that doesn't count against the agent. Any other failure reads as recorded. The
+ * message never decides: it can carry what the agent printed. A person reads it after a cause's
+ * words, since it names which crash it was.
  */
 export const CAUSE_WORDS = {
   agent_exited_before_ready:
@@ -40,6 +41,28 @@ export function failureHeadline(failure) {
       ? CAUSE_WORDS[failure.cause]
       : CAUSE_WORDS.unknown;
   if (failure.code === START_TIMEOUT_CODE) return START_TIMEOUT_LINE;
-  if (failure.domain === "infrastructure") return INFRASTRUCTURE_LINE;
+  // A failure the platform set as final, such as a folder the build could not use, would fail
+  // the same way again: it reads as recorded.
+  if (failure.domain === "infrastructure" && failure.retryable !== false)
+    return INFRASTRUCTURE_LINE;
   return null;
+}
+
+// The label a runtime-validation failure's recorded message starts with; what follows it is the
+// agent's own line.
+const RUNTIME_VALIDATION_LABEL =
+  "We couldn't run this agent version in its environment";
+
+/**
+ * A failed step's text: the plain headline, then, when the failure has a cause, what the recorded
+ * message adds to its label. Null when it has no headline and reads as recorded.
+ */
+export function failureDetail(failure) {
+  const headline = failureHeadline(failure);
+  if (!headline || failure.cause == null) return headline;
+  let printed = failure.message || "";
+  if (printed.startsWith(`${RUNTIME_VALIDATION_LABEL}: `))
+    printed = printed.slice(RUNTIME_VALIDATION_LABEL.length + 2);
+  else if (printed === RUNTIME_VALIDATION_LABEL) printed = "";
+  return printed ? `${headline} ${printed}` : headline;
 }

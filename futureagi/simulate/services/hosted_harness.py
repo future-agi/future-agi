@@ -3262,20 +3262,24 @@ def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     from simulate.selectors.held_back import (
         coding_agent_failure_message,
         has_plain_words,
+        person_failure_message,
     )
 
     if not job.test_execution_id:
         return
     failure = job.failure or {}
     message = failure.get("message")
-    if message and (
-        has_plain_words(failure)
-        or ((job.payload or {}).get("metadata") or {}).get("coding_agent_key_id")
-    ):
-        # A cause or a run's start timeout reads in plain words for everyone, and a coding
-        # agent reads only fixed text: the stored message can end with guest output, which
-        # stays on the job.
+    coding_agent_run = bool(
+        ((job.payload or {}).get("metadata") or {}).get("coding_agent_key_id")
+    )
+    if message and coding_agent_run:
+        # A coding agent reads only fixed text: the stored message can end with guest output,
+        # which can quote a held-back case. It stays on the job.
         message = coding_agent_failure_message(failure)
+    elif message and has_plain_words(failure):
+        # A person's own run reads the plain words too, with what their agent printed after
+        # them. A coding agent's key reads only the runs it started.
+        message = person_failure_message(failure)
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
     )

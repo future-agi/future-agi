@@ -26,6 +26,7 @@ from simulate.selectors.held_back import (
     failure_cause,
     has_plain_words,
     held_back,
+    person_failure_message,
     verify_run,
     version_verify,
 )
@@ -1128,9 +1129,11 @@ class TestWhatACodingAgentReads:
                 test_execution_id=created.json()["test_execution_id"]
             ).values_list("ended_reason", flat=True)
         )
-        # With a cause every call says it plainly, and the guest text stays on the job.
-        # Without one, a person's calls keep the stored message as before.
-        assert reasons == ({_cause_read(read)} if read else {raw})
+        # With a cause every call says it plainly, then what the person's agent printed: it is
+        # their own run, and it names which crash it was. Without one, the stored message as before.
+        assert reasons == (
+            {f"{_cause_read(read)} ProcessRuntimeError: {detail}"} if read else {raw}
+        )
         run.refresh_from_db()
         assert run.failure["message"] == raw
 
@@ -1286,6 +1289,21 @@ def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():
     assert coding_agent_failure_message(run_timeout) == (
         "Stopped — a service this run needs didn't start in time. Run it again."
     )
+    # A person's own run: the words, then what their agent printed after the run's label. A
+    # message that is only the label adds nothing, and a failure without a cause reads its words.
+    crash = {
+        **failure,
+        "cause": "unknown",
+        "message": f"{RUNTIME_VALIDATION_FAILED}: ModuleNotFoundError: No module named 'x'",
+    }
+    assert person_failure_message(crash) == (
+        f"{CAUSE_WORDS['unknown']} ModuleNotFoundError: No module named 'x'"
+    )
+    assert (
+        person_failure_message({**crash, "message": RUNTIME_VALIDATION_FAILED})
+        == CAUSE_WORDS["unknown"]
+    )
+    assert person_failure_message(run_timeout) == START_TIMEOUT_LINE
     # A named cause wins over the code, and a failure with neither has none.
     assert (
         failure_cause({**start_timeout, "cause": "chat_target_timeout"})

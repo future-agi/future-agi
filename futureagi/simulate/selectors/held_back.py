@@ -207,6 +207,22 @@ def coding_agent_failure_message(failure: Mapping[str, Any]) -> str:
     return _FAILURE_LABELS.get(code, f"The run failed ({code})")
 
 
+def person_failure_message(failure: Mapping[str, Any]) -> str:
+    """A failure's message on a person's own run: the same words, and, when the failure has a
+    cause, what the stored message adds to its label after them. A person may read what their
+    agent printed, and it names which crash it was; a coding agent never reads a person's run."""
+    words = coding_agent_failure_message(failure)
+    if failure_cause(failure) is None:
+        return words
+    message = str(failure.get("message") or "")
+    label = _FAILURE_LABELS.get(str(failure.get("code") or ""))
+    if label and message.startswith(f"{label}: "):
+        message = message[len(label) + 2 :]
+    elif message == label:
+        message = ""
+    return f"{words} {message}" if message else words
+
+
 def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
     """A run read as a coding agent may see it: only the fields listed above."""
     job = read.get("job") or {}
