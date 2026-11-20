@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { test, expect } from '../../lib/scope-actors';
 import { E2E } from '../../lib/env';
 import { authInitScript } from '../../lib/auth';
@@ -11,6 +12,11 @@ import { authInitScript } from '../../lib/auth';
 // Cloud-only screenshot fixture, not a catalogued flow or measured driver.
 test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   test.setTimeout(300_000);
+  // The copied commands invoke `python`; use the same verified plain SDK venv as CI.
+  const sdkPython = process.env.SKILL_TRACES_NO_OTEL_PYTHON;
+  if (!sdkPython || !isAbsolute(sdkPython)) throw new Error('Set SKILL_TRACES_NO_OTEL_PYTHON to the paired SDK venv interpreter');
+  const sdkBin = dirname(sdkPython);
+  await access(join(sdkBin, 'python'), constants.X_OK);
   const actor = scopeActors.member;
   const owner = scopeActors.ownerA;
   const api = async (who: typeof actor, method: string, path: string, data?: unknown) => {
@@ -26,7 +32,13 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   page.setDefaultTimeout(60_000);
   const output = `${process.cwd()}/r7-context-shots-critic-fix`;
   await mkdir(output, { recursive: true });
-  const shot = async (name: string) => { if (new URL(page.url()).searchParams.get('tab') === 'recovery') await expect(page.getByText('Verify consumers', { exact: true }).or(page.getByText('Recovery view unavailable', { exact: true }))).toBeVisible(); await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' }); };
+  const shot = async (name: string) => {
+    if (new URL(page.url()).searchParams.get('tab') === 'recovery') {
+      // This fixture publishes v1 but never promotes the context to production.
+      await expect(page.getByRole('tabpanel', { name: 'Rollback', exact: true }).getByText('Production is not set. Choose an eligible version to request a rollback.', { exact: true })).toBeVisible();
+    }
+    await page.screenshot({ path: `${output}/${name}.png`, animations: 'disabled' });
+  };
   const overflows = [];
   const labels: Record<string, string> = { context: 'Instructions', links: 'Linked skills', use: 'Install', versions: 'Versions', tests: 'Tests', consumers: 'Connected apps', recovery: 'Rollback' };
   await page.goto('/dashboard/skills/contexts');
@@ -60,6 +72,9 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   }
   await api(owner, 'POST', 'publish/', { files: [{ path: 'SKILL.md', content: `---\nname: refund-policy\ndescription: Help customers with clear, consistent support.\n---\nReview the purchase date before approving a refund.\n` }], labels: ['production'], expected_release_revision: 1, acknowledge_warnings: true });
   const root = `/dashboard/skills/contexts/${draft.context_id}?version=1`;
+  const refundSkillPath = `/dashboard/skills/${leaves[0].id}`;
+  const linkedSkills = page.getByRole('list', { name: 'Linked skills', exact: true });
+  const refundActions = linkedSkills.getByRole('button', { name: 'Actions for refund-policy', exact: true });
   for (const [tab, name] of [['context', 'context-detail-instructions'], ['links', 'context-linked-skills'], ['versions', 'context-versions'], ['tests', 'context-tests'], ['consumers', 'context-consumers'], ['recovery', 'context-recovery'], ['use', 'context-use']]) {
     await page.goto(`${root}&tab=${tab}`);
     await expect(page.getByRole('tab', { name: labels[tab], exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -85,15 +100,15 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
     if (tab === 'links') await expect(page.getByText('v2 available', { exact: true })).toBeVisible();
     if (tab === 'use') await expect(page.getByRole('button', { name: 'Copy plan command', exact: true })).toBeVisible();
     if (tab === 'links') {
-      const list = page.getByRole('list', { name: 'Linked skills' });
-      await expect(list).toBeVisible();
-      await expect(list.getByText('Follows production · locked v1', { exact: true }).first()).toBeInViewport();
-      await expect(list.getByRole('link', { name: 'Check update', exact: true })).toBeInViewport();
+      await expect(linkedSkills).toBeVisible();
+      await expect(linkedSkills.getByText('Follows production · locked v1', { exact: true }).first()).toBeInViewport();
+      await expect(refundActions).toBeInViewport();
       await expect(page.getByRole('table', { name: 'Linked skills' })).toHaveCount(0);
     }
     if (tab === 'context') {
       await expect(page.getByRole('combobox', { name: 'Viewed release' })).toBeVisible();
       const panel = await page.getByRole('tabpanel').boundingBox();
+      await test.info().attach('context-mobile-layout', { contentType: 'application/json', body: JSON.stringify({ viewport: page.viewportSize(), panel }) });
       expect(panel?.y).toBeLessThan(300);
     }
     const widths = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth, main: document.querySelector('main')?.scrollWidth }));
@@ -106,8 +121,12 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
       await shot('context-use-mobile-command');
     }
     if (tab === 'links') {
-      await page.getByRole('link', { name: 'Check update', exact: true }).scrollIntoViewIfNeeded();
+      await refundActions.click();
+      const checkUpdate = page.getByRole('menuitem', { name: 'Check for update', exact: true });
+      await expect(checkUpdate).toBeInViewport();
       await shot('context-linked-skills-mobile-actions');
+      await checkUpdate.click();
+      await expect(page).toHaveURL((url) => url.pathname === refundSkillPath && url.searchParams.get('tab') === 'dependents');
     }
     if (tab === 'context') {
       await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
@@ -189,7 +208,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
   await expect(page.getByText('Up to date', { exact: true })).toBeVisible();
   await shot('context-linked-skills-lookup-failed');
   await page.unroute(skillRoute);
-  await page.goto(`/dashboard/skills/${leaves[0].id}?tab=dependents`);
+  await page.goto(`${refundSkillPath}?tab=dependents`);
   await expect(page.getByRole('table', { name: 'Published context dependents' })).toBeVisible();
   await shot('context-dependents');
   await page.getByRole('button', { name: 'Prepare draft updates for 2 contexts', exact: true }).click();
@@ -231,7 +250,7 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
     await page.evaluate(() => navigator.clipboard.writeText(''));
     expect(command).toContain('--allow-preview');
     expect(command).toContain("FI_CONTEXT_ORIGIN='http://localhost:8100'");
-    const env = { ...process.env, PATH: `${resolve(process.cwd(), '../../context-sdk/.venv/bin')}:${process.env.PATH}`, FI_CONTEXT_CREDENTIAL: credential.secret, FI_CONTEXT_ORIGIN: E2E.apiUrl, FI_CONTEXT_ORGANIZATION_ID: actor.organizationId, FI_CONTEXT_WORKSPACE_ID: actor.workspaceId };
+    const env = { ...process.env, PATH: [sdkBin, process.env.PATH].filter(Boolean).join(delimiter), FI_CONTEXT_CREDENTIAL: credential.secret, FI_CONTEXT_ORIGIN: E2E.apiUrl, FI_CONTEXT_ORGANIZATION_ID: actor.organizationId, FI_CONTEXT_WORKSPACE_ID: actor.workspaceId };
     await run('bash', ['-c', command], { cwd: project, env, timeout: 60000 });
     const plan = JSON.parse(await readFile(`${project}/context-plan.json`, 'utf8'));
     expect(JSON.stringify(plan)).toContain(inspection.manifest.digest);
