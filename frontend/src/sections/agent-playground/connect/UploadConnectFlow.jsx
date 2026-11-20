@@ -12,6 +12,7 @@ import {
   useStartScan,
 } from "src/api/agents/agentConnect";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import RuntimePreflight from "src/sections/simulate/environments/panels/RuntimePreflight";
 import { CONNECTED_AGENTS_PATH } from "../agentsTabs";
 import { AgentDetails, FoundAgents } from "./ConnectAgentSteps";
 import { TextLink } from "./connectBits";
@@ -26,6 +27,7 @@ import {
 } from "./connectDraft";
 import { UPLOAD_SOURCE } from "./connectSources";
 import { ACTION_SX, MONO } from "./connectStyles";
+import useConnectPreflight from "./useConnectPreflight";
 import FolderUploadField from "./FolderUploadField";
 
 const WHOLE_UPLOAD = "Connect the uploaded folder anyway";
@@ -61,6 +63,7 @@ export default function UploadConnectFlow({ onComplete, draftKey }) {
   const startScan = useStartScan();
   const scan = useAgentScan(scanId);
   const connect = useConnectAgent();
+  const check = useConnectPreflight();
 
   useEffect(() => {
     if (!keepsDraft) return;
@@ -114,6 +117,24 @@ export default function UploadConnectFlow({ onComplete, draftKey }) {
   const chosenEntry = manual ? "" : picked?.entry || "";
   const selection = selectionKey(source, scanId, chosenEntry, manual);
   const credentials = credentialsOf(held, selection);
+  const checkedInputs = JSON.stringify([
+    selection,
+    name,
+    credentials.values,
+    credentials.extra,
+  ]);
+  const resetCheck = check.reset;
+  useEffect(() => {
+    resetCheck();
+  }, [checkedInputs, resetCheck]);
+  const checkSource = () => ({
+    kind: "upload",
+    folderName: folder?.name || "",
+    entry: chosenEntry,
+    archive_artifact_id: folder?.sourceId,
+    displayName: name.trim(),
+    envValues: shownEnvValues(credentials, envNames),
+  });
 
   const toDetails = () => {
     if (onComplete) {
@@ -281,16 +302,30 @@ export default function UploadConnectFlow({ onComplete, draftKey }) {
             setHeld((prev) => ({ ...credentialsOf(prev, selection), extra }))
           }
         />
+        <RuntimePreflight
+          status={check.status}
+          canRun={!!name.trim() && canConnect}
+          blockedReason={name.trim() ? null : "Name the agent first."}
+          onRun={() => check.run(checkSource())}
+          result={check.result}
+          error={check.error}
+        />
       </>
     );
-    hint = name.trim()
-      ? "We read the agent once it's connected"
-      : "Name the agent";
+    hint = !name.trim()
+      ? "Name the agent"
+      : !check.ready
+        ? check.status === "done" || check.status === "error"
+          ? "Fix what preflight found, then run it again"
+          : "Run preflight first"
+        : "We read the agent once it's connected";
     action = (
       <Button
         variant="contained"
         color="primary"
-        disabled={!name.trim() || !canConnect || connect.isPending}
+        disabled={
+          !name.trim() || !check.ready || !canConnect || connect.isPending
+        }
         onClick={connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
         sx={ACTION_SX}
