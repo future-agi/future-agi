@@ -963,6 +963,42 @@ def test_a_proof_blocked_on_a_source_names_that_source(user, workspace, storage)
     )
 
 
+def test_the_builder_reads_each_case_s_lifecycle_as_the_scenarios_tab_shows_it(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import (
+        conversation_scenarios,
+        enqueue_message,
+    )
+
+    environment = _environment(user, workspace, storage, "lc-chat-rows")
+    _suite(environment, _ten())
+    _proofs(
+        environment,
+        {
+            **dict.fromkeys(KEYS, PROVED),
+            REFUND_KEYS[0]: {
+                **PROVED,
+                "proved": False,
+                "blocked_reason": "source_unresolved",
+            },
+        },
+    )
+    conversation, _command, _ = enqueue_message(
+        environment, content="why is it draft", client_request_id="lc-chat-rows"
+    )
+
+    page = conversation_scenarios(conversation, {"page_size": 100})
+    views = _views(environment)
+
+    by_name = {row["name"]: row["lifecycle"] for row in page["rows"]}
+    for key in (REFUND_KEYS[0], REFUND_KEYS[1]):
+        assert by_name[key] == {
+            name: views[key][name] for name in ("state", "reason", "reason_text")
+        }
+    assert by_name[REFUND_KEYS[0]]["state"] == "draft"
+
+
 @pytest.mark.parametrize(
     ("code", "why", "detail"),
     [
