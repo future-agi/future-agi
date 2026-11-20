@@ -2,7 +2,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Collapse, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { heldReasonOf, nameList } from "../_mock/heldReasons";
+import { heldReasonOf } from "../_mock/heldReasons";
 import { scenarioTitle } from "../_mock/scenarios";
 
 /* Under the Run dialog's verdict: the held-back scenarios by name, each with
@@ -36,43 +36,58 @@ export default function RunHeldNotes({ report, scenarios, staleIds, envHeld }) {
       "A scenario"
     );
   };
-  /* Same name under different rules: add the rule, as the table's group does. */
-  const staleRaw = (staleIds || []).map((id) => nameOf(id));
-  const staleNames = (staleIds || []).map((id, i) => {
-    const dup = staleRaw.filter((n) => n === staleRaw[i]).length > 1;
-    const rule = String(scenarioTitle(byId.get(id)?.title) || "").replace(
-      /\.+$/,
-      "",
-    );
-    return dup && rule && rule !== staleRaw[i]
-      ? `${staleRaw[i]} (${rule})`
-      : staleRaw[i];
-  });
-  if (!held.length && !staleNames.length) return null;
+  /* Changed since last proved: the name, with its rule in grey (same-named
+     scenarios sit under different rules). */
+  const stale = (staleIds || []).map((id) => ({
+    id,
+    name: nameOf(id),
+    rule: String(scenarioTitle(byId.get(id)?.title) || "").replace(/\.+$/, ""),
+  }));
+  /* Same name under different rules reads as one line, its rules below. */
+  const groups = Object.values(
+    stale.reduce((m, x) => {
+      (m[x.name] = m[x.name] || { name: x.name, rules: [] }).rules.push(
+        x.rule && x.rule !== x.name ? x.rule : "",
+      );
+      return m;
+    }, {}),
+  );
+  if (!held.length && !stale.length) return null;
+  const SHOW = 3;
 
   return (
-    <Stack spacing={1.25}>
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
+      }}
+    >
       {held.length > 0 && (
-        <Box>
-          <Typography
-            sx={{ typography: "s2", color: "text.secondary", mb: 0.5 }}
-          >
-            {`Held back · ${held.length} — never sent, recorded as not run`}
-          </Typography>
+        <NoteRow
+          label="Held back"
+          count={held.length}
+          tip="Never sent — recorded as not run"
+        >
           <Stack spacing={0.75}>
             {held.map((b) => {
-              const r = b;
               const open = openId === b.id;
               return (
-                <Box key={b.id}>
+                <Box key={b.id} minWidth={0}>
                   <Stack direction="row" spacing={1} alignItems="baseline">
                     <Typography
-                      sx={{ typography: "s2", fontWeight: 500, minWidth: 0 }}
+                      noWrap
+                      sx={{
+                        typography: "s2",
+                        fontWeight: 500,
+                        minWidth: 0,
+                        flex: 1,
+                      }}
                     >
                       {nameOf(b.id, b.title)}
                     </Typography>
-                    <Box sx={{ flex: 1 }} />
-                    {r.detail && (
+                    {b.detail && (
                       <ButtonBase
                         onClick={() => setOpenId(open ? null : b.id)}
                         aria-expanded={open}
@@ -97,7 +112,7 @@ export default function RunHeldNotes({ report, scenarios, staleIds, envHeld }) {
                     )}
                   </Stack>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    {r.plain}
+                    {b.plain}
                   </Typography>
                   <Collapse in={open} unmountOnExit>
                     <Typography
@@ -113,27 +128,88 @@ export default function RunHeldNotes({ report, scenarios, staleIds, envHeld }) {
                         bgcolor: "action.hover",
                       }}
                     >
-                      {r.detail}
+                      {b.detail}
                     </Typography>
                   </Collapse>
                 </Box>
               );
             })}
           </Stack>
-        </Box>
+        </NoteRow>
       )}
-      {staleNames.length > 0 && (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {`${staleNames.length} ${
-            staleNames.length === 1 ? "scenario changed" : "scenarios changed"
-          } since ${staleNames.length === 1 ? "it was" : "they were"} last proved: ${nameList(
-            staleNames,
-          )}. Validate ${staleNames.length === 1 ? "it" : "them"} before relying on the results.`}
-        </Typography>
+      {stale.length > 0 && (
+        <NoteRow
+          label="Changed since proved"
+          count={stale.length}
+          tip="Validate them before relying on the results"
+        >
+          <Stack spacing={0.5}>
+            {groups.slice(0, SHOW).map((g) => (
+              <Box key={g.name} minWidth={0}>
+                <Typography noWrap title={g.name} sx={{ typography: "s2" }}>
+                  {g.name}
+                  {g.rules.length > 1 && (
+                    <Box component="span" sx={{ color: "text.secondary" }}>
+                      {` × ${g.rules.length}`}
+                    </Box>
+                  )}
+                </Typography>
+                {g.rules.some(Boolean) && (
+                  <Typography
+                    noWrap
+                    title={g.rules.filter(Boolean).join("\n")}
+                    sx={{ typography: "s3", color: "text.disabled" }}
+                  >
+                    {g.rules.filter(Boolean).join(" · ")}
+                  </Typography>
+                )}
+              </Box>
+            ))}
+            {groups.length > SHOW && (
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {`+${groups.length - SHOW} more`}
+              </Typography>
+            )}
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              Validate them before relying on the results.
+            </Typography>
+          </Stack>
+        </NoteRow>
       )}
-    </Stack>
+    </Box>
   );
 }
+
+function NoteRow({ label, count, tip, children }) {
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        rowGap: 0.5,
+        px: 1.5,
+        py: 1,
+        "& + &": { borderTop: "1px solid", borderColor: "divider" },
+      }}
+    >
+      <Typography
+        title={tip}
+        sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
+      >
+        {label}
+        <Box component="span" sx={{ color: "text.disabled" }}>
+          {` · ${count}`}
+        </Box>
+      </Typography>
+      <Box minWidth={0}>{children}</Box>
+    </Box>
+  );
+}
+NoteRow.propTypes = {
+  label: PropTypes.string,
+  count: PropTypes.number,
+  tip: PropTypes.string,
+  children: PropTypes.node,
+};
 
 RunHeldNotes.propTypes = {
   report: PropTypes.object,

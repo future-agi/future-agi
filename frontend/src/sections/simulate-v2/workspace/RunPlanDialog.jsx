@@ -501,10 +501,18 @@ export default function RunPlanDialog({
   const countLead = outParts.length
     ? `${runCount} of ${totalN} will run`
     : `All ${runCount} will run`;
-  const countRest = [
-    outParts.length ? `${heldN} won't: ${outParts.join(", ")}` : null,
-    staleN > 0 ? `${staleN} stale` : null,
-  ].filter(Boolean);
+  /* Held back and changed-since-proved are listed by name under the line
+     (RunHeldNotes), so the line itself only says how many will run. */
+  const notesShown =
+    blockedN > 0 ||
+    (fromSuite?.blockedList || []).length > 0 ||
+    (fromSuite?.staleIds || []).length > 0;
+  const countRest = notesShown
+    ? []
+    : [
+        outParts.length ? `${heldN} won't: ${outParts.join(", ")}` : null,
+        staleN > 0 ? `${staleN} stale` : null,
+      ].filter(Boolean);
   const pairVal = compat?.validation;
   const pairState = checkingCompat ? "validating" : pairVal?.state;
   const areasNow = compat
@@ -566,7 +574,8 @@ export default function RunPlanDialog({
                   dot: "queued",
                   hollow: true,
                   title: countLead,
-                  rest: [...countRest, compat.staleWhy].join(" · "),
+                  /* Why the check is out of date is on Ready to run. */
+                  rest: countRest.join(" · "),
                 }
               : anyUnchecked && !anyBlocker && !pairVal
                 ? {
@@ -581,17 +590,19 @@ export default function RunPlanDialog({
                   ? {
                       dot: "flaky",
                       title: `${runCount} of ${totalN} will run`,
-                      rest: [
-                        `${heldN} won't: ${outParts.join(", ")}`,
-                        staleN > 0 && `${staleN} stale`,
-                      ]
-                        .filter(Boolean)
-                        .join(" · "),
+                      rest: notesShown
+                        ? ""
+                        : [
+                            `${heldN} won't: ${outParts.join(", ")}`,
+                            staleN > 0 && `${staleN} stale`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · "),
                     }
                   : {
                       dot: "passed",
                       title: `All ${runCount} will run`,
-                      rest: staleN ? `${staleN} stale` : "",
+                      rest: staleN && !notesShown ? `${staleN} stale` : "",
                     };
   /* A first run of this agent version on this environment version prepares
      the pair first. */
