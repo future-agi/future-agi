@@ -89,6 +89,15 @@ vi.mock("src/api/simulate-environments/versions", async () => {
           return { data: undefined, isLoading: false, isError: false };
         if (state.diffLoading)
           return { data: undefined, isLoading: true, isError: false };
+        // A comparison still loading keeps the previous answer, as
+        // placeholderData does.
+        if (state.diffStale)
+          return {
+            data: state.diffs[`${id}:`],
+            isLoading: false,
+            isError: false,
+            isPlaceholderData: Boolean(against),
+          };
         const data = state.diffs[`${id}:${against || ""}`];
         return {
           data,
@@ -190,6 +199,7 @@ beforeEach(() => {
   state.diffs = { "e2:": ENV_DIFF };
   state.members = {};
   state.diffLoading = false;
+  state.diffStale = false;
   state.membersError = false;
   state.versionsRefreshFailed = false;
   state.diffRefreshFailed = false;
@@ -305,9 +315,11 @@ describe("VersionsPanel", () => {
     await user.click(row("environment", "v2"));
     const detail = screen.getByTestId("version-detail");
 
+    // The row above already names the version and says its summary.
+    expect(within(detail).getByText("What changed")).toBeInTheDocument();
     expect(
-      within(detail).getByText("What changed in Environment v2"),
-    ).toBeInTheDocument();
+      within(detail).queryByText("1 tool added, 1 world file changed"),
+    ).toBeNull();
     expect(within(detail).getByText("issue_refund")).toBeInTheDocument();
     expect(
       within(detail).getByText("no refunds over $500"),
@@ -346,7 +358,10 @@ describe("VersionsPanel", () => {
       diff: {
         added: ["late-delivery"],
         removed: [{ key: "old-refund", reason: "removed by manual edit" }],
-        changed: { "refund-request": ["instruction", "persona"] },
+        changed: {
+          "refund-request": ["instruction", "persona"],
+          "wrong-item": ["instruction", "persona"],
+        },
       },
     };
     state.members.s2 = [
@@ -363,19 +378,22 @@ describe("VersionsPanel", () => {
     await user.click(row("suite", "v2"));
 
     const detail = screen.getByTestId("version-detail");
-    expect(
-      within(detail).getByText("What changed in Scenarios v2"),
-    ).toBeInTheDocument();
+    expect(within(detail).getByText("What changed")).toBeInTheDocument();
     expect(
       within(detail).getByText("late-delivery", { selector: "span" }),
     ).toBeInTheDocument();
     expect(
       within(detail).getByText(/removed by manual edit/),
     ).toBeInTheDocument();
-    // Field names read in the scenario editor's words, not the server's keys.
+    // Scenarios that changed the same way share one line, in the scenario
+    // editor's words, not the server's keys.
     expect(
-      within(detail).getByText("Changed: What the caller wants, Persona"),
+      within(detail).getAllByText(/What the caller wants, Persona/),
+    ).toHaveLength(1);
+    expect(
+      within(detail).getByText("What the caller wants, Persona · 2 scenarios"),
     ).toBeInTheDocument();
+    expect(within(detail).getByText("wrong-item")).toBeInTheDocument();
     // The list under the changes is the whole version, not the comparison.
     expect(
       within(detail).getByText("All 2 scenarios in v2"),
@@ -552,6 +570,26 @@ describe("VersionsPanel", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Nothing changed.")).toBeNull();
     expect(screen.queryByTestId("diff-group-Actors")).toBeNull();
+  });
+
+  it("keeps the last comparison readable while another one loads", async () => {
+    const user = userEvent.setup();
+    state.versions = {
+      ...VERSIONS,
+      environment: [...VERSIONS.environment, item({ id: "e0", label: "v0" })],
+    };
+    state.diffStale = true;
+    render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
+    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
+    await user.click(screen.getByRole("option", { name: "v0" }));
+
+    const detail = screen.getByTestId("version-detail");
+    // A thin line says it's updating; the old answer stays, not faded out.
+    expect(
+      within(detail).getByRole("progressbar", { name: "Loading the changes" }),
+    ).toBeInTheDocument();
+    expect(within(detail).getByText("issue_refund")).toBeVisible();
   });
 
   it("shows a skeleton while the changes load and an error if they fail", async () => {

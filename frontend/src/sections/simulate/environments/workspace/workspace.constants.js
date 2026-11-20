@@ -236,7 +236,8 @@ export const VERSIONS_COPY = {
     error: "Couldn't change the default. Try again in a moment.",
   },
   detail: {
-    changes: (label) => `What changed in ${label}`,
+    // The row above names the version, so the heading doesn't again.
+    changes: "What changed",
     compareWith: "Compared with",
     previous: "Its previous version",
     // The version it was made from, named so it isn't listed twice.
@@ -296,7 +297,9 @@ export const VERSIONS_COPY = {
       faults: "Faults",
       limits: "Limits",
     },
-    fieldsChanged: (words) => `Changed: ${words.join(", ")}`,
+    // Scenarios that changed the same fields, under one line.
+    changedGroup: (words, n) =>
+      `${words.join(", ")} · ${n} scenario${n === 1 ? "" : "s"}`,
     source: "Source changed",
     prompt: "Prompt changed",
     variables: "Variables",

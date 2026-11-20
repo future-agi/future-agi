@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   Box,
+  LinearProgress,
   MenuItem,
   Stack,
   Table,
@@ -136,16 +137,9 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
     !isError &&
     isEmptyDiff(piece, data?.diff);
 
-  // The last comparison is dimmed while the next loads, not swapped for a
-  // skeleton, so the area doesn't flash.
-  const dim = {
-    opacity: stale && !first ? 0.5 : 1,
-    transition: (theme) =>
-      theme.transitions.create("opacity", {
-        duration: theme.transitions.duration.shorter,
-      }),
-    "@media (prefers-reduced-motion: reduce)": { transition: "none" },
-  };
+  // The last comparison stays as it is while the next loads (no skeleton
+  // flash, no faded "disabled" look); a thin line on top says it's updating.
+  const updating = stale && !first;
 
   const note = (text) => (
     <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -179,7 +173,7 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
         useFlexGap
       >
         <Typography sx={{ typography: "s1", fontWeight: 500, flex: 1 }}>
-          {detail.changes(`${VERSIONS_COPY.pieces[piece]} ${named(version)}`)}
+          {detail.changes}
         </Typography>
         {(parent || others.length > 0) && (
           <TextField
@@ -205,11 +199,16 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
           </TextField>
         )}
       </Stack>
-      {data?.summary && !first && !empty && (
-        <Typography sx={{ typography: "s2", color: "text.secondary", ...dim }}>
-          {data.summary}
-        </Typography>
-      )}
+      {/* The row already says its own summary; say it again only when the
+          comparison gives a different one. */}
+      {data?.summary &&
+        !first &&
+        !empty &&
+        data.summary !== version.summary && (
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            {data.summary}
+          </Typography>
+        )}
       {first && version.summary && (
         <Typography sx={{ typography: "s2", color: "text.secondary" }}>
           {version.summary}
@@ -218,7 +217,20 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
       {piece === "agent" && (
         <PreflightReport report={version.preflightReport} />
       )}
-      <Box aria-busy={stale} sx={dim}>
+      <Box aria-busy={updating} sx={{ position: "relative" }}>
+        {updating && (
+          <LinearProgress
+            aria-label={detail.loading}
+            sx={{
+              position: "absolute",
+              top: -10,
+              left: 0,
+              right: 0,
+              height: 2,
+              borderRadius: 1,
+            }}
+          />
+        )}
         {body()}
       </Box>
       {piece === "suite" && <SuiteMembers envId={envId} version={version} />}

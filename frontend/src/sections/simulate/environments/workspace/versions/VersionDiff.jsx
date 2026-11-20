@@ -108,6 +108,19 @@ function EnvironmentDiff({ diff }) {
 }
 EnvironmentDiff.propTypes = { diff: PropTypes.object };
 
+// Changed scenarios gathered by the fields that changed, in first-seen order,
+// so "Passes when" across three scenarios is said once.
+const groupByFields = (changed) => {
+  const groups = new Map();
+  changed.forEach(([key, fields]) => {
+    const words = list(fields).map(fieldWord);
+    const id = words.join("\u0000");
+    if (!groups.has(id)) groups.set(id, { words, keys: [] });
+    groups.get(id).keys.push(key);
+  });
+  return [...groups.values()];
+};
+
 function SuiteDiff({ diff }) {
   const added = list(diff?.added).map(String);
   const removed = list(diff?.removed);
@@ -146,19 +159,23 @@ function SuiteDiff({ diff }) {
           <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {COPY.scenariosChanged}
           </Typography>
-          {changed.map(([key, fields]) => (
-            <Box key={key}>
-              <Typography
-                sx={{
-                  typography: "s2",
-                  fontFamily: "ui-monospace, Menlo, monospace",
-                }}
-              >
-                {key}
-              </Typography>
+          {groupByFields(changed).map(({ words, keys }) => (
+            <Box key={words.join()}>
               <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {COPY.fieldsChanged(list(fields).map(fieldWord))}
+                {COPY.changedGroup(words, keys.length)}
               </Typography>
+              {keys.map((key) => (
+                <Typography
+                  key={key}
+                  sx={{
+                    typography: "s2",
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    mt: 0.25,
+                  }}
+                >
+                  {key}
+                </Typography>
+              ))}
             </Box>
           ))}
         </Stack>
