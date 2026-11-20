@@ -27,6 +27,7 @@ import {
   usageOf,
   dataCli,
   sourceEditPatch,
+  defaultVisibility,
 } from "../../_mock/orgData";
 import { kbRefreshOf } from "../../_mock/kbCatalog";
 import { personalDataOf } from "../../_mock/dataMapping";
@@ -35,6 +36,7 @@ import AddSourceMenu from "./AddSourceMenu";
 import DataProposalCard from "./DataProposalCard";
 import ReviewRefreshDialog from "./ReviewRefreshDialog";
 import SourceDrawer from "./SourceDrawer";
+import UploadRoles from "./UploadRoles";
 import SideDrawer from "../../components/SideDrawer";
 
 const STATUS = {
@@ -670,6 +672,26 @@ export default function SourcesSection({
                     </Typography>
                   </Stack>
                 ))}
+            {review && (
+              <UploadRoles
+                disabled={readOnly}
+                sources={review
+                  .map((id) =>
+                    (envState.sources || []).find((x) => x.id === id),
+                  )
+                  .filter((x) => x && !isReading(x) && !x.kb)}
+                onRole={(src, role) =>
+                  patch(
+                    sourceEditPatch(
+                      envState,
+                      src.id,
+                      { role, visibility: defaultVisibility(role) },
+                      `${src.name} is now ${roleLabel(role)}`,
+                    ),
+                  )
+                }
+              />
+            )}
             {review &&
               review.some((id) =>
                 (envState.sources || []).some(

@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Radio, Stack, Typography } from "@mui/material";
-import { ROLES } from "../../_mock/orgData";
+import { PICK_ROLES, pickedRoleOf } from "../../_mock/orgData";
 
 /*
   How a file is used, asked as plain questions with every option in view
@@ -10,7 +10,11 @@ import { ROLES } from "../../_mock/orgData";
   real choice; for records and grader-only answers it's a fact, so it's said.
 */
 /* The same words the Sources table and notices use (orgData ROLES). */
-const USES = ROLES.map((r) => ({ id: r.id, label: r.option, note: r.note }));
+const USES = PICK_ROLES.map((r) => ({
+  id: r.id,
+  label: r.option,
+  note: r.note,
+}));
 
 const READS = [
   { id: "agent", label: "Yes — it reads the file directly" },
@@ -109,7 +113,7 @@ export default function SourceUsage({
   );
   /* Compact: the two answers as key-value lines; Change opens the options. */
   if (compact) {
-    const use = USES.find((u) => u.id === role);
+    const use = USES.find((u) => u.id === pickedRoleOf(role));
     const read =
       READ_FACT[role] || READS.find((r) => r.id === visibility)?.label || "—";
     const row = (k, v, extra) => (
@@ -155,9 +159,10 @@ export default function SourceUsage({
           <Option
             key={u.id}
             name="source-use"
-            checked={role === u.id}
+            checked={pickedRoleOf(role) === u.id}
             disabled={disabled}
-            onPick={() => onRole(u.id)}
+            /* A background file is already Policy or reference. */
+            onPick={() => pickedRoleOf(role) !== u.id && onRole(u.id)}
             label={u.label}
             note={u.note}
           />

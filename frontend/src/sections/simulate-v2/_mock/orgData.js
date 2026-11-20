@@ -41,29 +41,37 @@ export { ORG_SOURCES };
 export const ROLES = [
   {
     id: "policy",
-    label: "Rules",
-    option: "Rules to grade against",
-    note: "Sentences like “refunds over $200 need approval” become rules checked on every run.",
+    label: "Policy or reference",
+    option: "Policy or reference",
+    note: "Rules the agent must follow — sentences like “refunds over $200 need approval” become rules checked on every run.",
   },
   {
+    /* Background the agent reads: the same role on the server (policy),
+       told apart by "Can the agent read it?". Never offered on its own. */
     id: "reference",
-    label: "Background",
-    option: "Background for the agent",
-    note: "The agent can look things up in it. Nothing is graded from it.",
+    label: "Policy or reference",
+    option: "Policy or reference",
+    note: "Background the agent can look things up in. Nothing is graded from it.",
+    pick: false,
   },
   {
     id: "seed",
-    label: "Records",
-    option: "Records for the world",
-    note: "Its rows fill the world's tables — what the agent's tools return.",
+    label: "Seed records",
+    option: "Seed records",
+    note: "Rows that set up the world's starting data — what the agent's tools return.",
   },
   {
     id: "evaluation-reference",
-    label: "Grader answers",
-    option: "Answers for the grader",
-    note: "Expected answers. Hidden from the agent and the simulated customer.",
+    label: "Evaluator only",
+    option: "Evaluator only",
+    note: "Grading material, like expected answers. Hidden from the agent and the simulated people.",
   },
 ];
+/* The three a person picks from (the server's policy, seed_records,
+   evaluator_only). A background file reads as Policy or reference. */
+export const PICK_ROLES = ROLES.filter((r) => r.pick !== false);
+export const pickedRoleOf = (id) =>
+  normalizeRole(id) === "reference" ? "policy" : normalizeRole(id);
 /* The roles data.md names: policy, reference, records, evaluator-only.
    Files saved earlier as "task input" or "example conversation" read as
    reference — transcripts become scenarios through Observe (evidence.md),

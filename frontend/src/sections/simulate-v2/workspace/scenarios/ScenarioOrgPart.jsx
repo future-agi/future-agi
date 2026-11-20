@@ -290,8 +290,9 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
             )}
           </Stack>
           <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}>
-            A tag describes and filters; a suite selects. Being in two suites is
-            still one scenario, with one history.
+            {SHOW_TAGS
+              ? "A tag describes and filters; a suite selects. Being in two suites is still one scenario, with one history."
+              : "A suite is an exact set to run together. Being in two suites is still one scenario, with one history."}
           </Typography>
         </Box>
       </Box>
@@ -717,7 +718,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
             onClick={() => revalidate(live)}
             sx={{ color: "text.primary", borderColor: "divider" }}
           >
-            Validate against the environment
+            Validate scenario against the environment
           </Button>
           {!live.promoted && (
             <>

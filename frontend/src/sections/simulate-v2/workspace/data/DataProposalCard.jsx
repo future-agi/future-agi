@@ -766,7 +766,7 @@ function ReferenceItem({ item, inset, onOpen }) {
         {item.cite?.ref}
       </ButtonBase>,
     ],
-    ["Used as", "Background — the agent can look things up in it"],
+    ["Used as", "Policy or reference — the agent can look things up in it"],
     ["Rules", "None stated, so nothing is graded from it"],
     [
       "Read",
