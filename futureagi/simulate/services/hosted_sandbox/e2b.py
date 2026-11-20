@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import shlex
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
+import structlog
 from django.conf import settings
 
 from .base import (
     SandboxCommand,
     SandboxCommandLogs,
     SandboxCommandRequest,
+    SandboxCommandStep,
     SandboxExecResult,
     SandboxFileNotFoundError,
     SandboxLaunchSpec,
@@ -21,6 +23,8 @@ from .base import (
     SandboxProviderUnavailableError,
     SandboxRuntimeProvider,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 def _translate_error(exc: Exception) -> SandboxProviderError | None:
@@ -147,38 +151,27 @@ class E2BProcess:
         command_token = uuid.uuid4().hex
         log_path = f"{self._COMMAND_DIR}/{command_token}.log"
         exit_path = f"{self._COMMAND_DIR}/{command_token}.exit"
-        isolate = (
-            request.isolate_processes
-            and self.exec(f"test -f {self._ISOLATION_MARKER}").exit_code == 0
-        )
-        command = request.command
+        isolate = False
+        if request.steps:
+            isolate = self.exec(f"test -f {self._ISOLATION_MARKER}").exit_code == 0
+            if not isolate:
+                # An image the platform expects to isolate: one without the marker is a pin moved back.
+                logger.warning(
+                    "hosted_isolation_marker_missing",
+                    sandbox_id=getattr(self._sandbox, "sandbox_id", None),
+                )
         if isolate:
-            # Default-deny before any customer code starts: no other user can read what /work
-            # already holds, and what the harness writes stays its own.
-            command = (
-                f"umask 077; chmod -R go-rwx /work && chmod 0711 /work && {command}"
-            )
-        wrapped = (
-            f"mkdir -p {shlex.quote(self._COMMAND_DIR)}; set +e; "
-            f"( {command} ) > {shlex.quote(log_path)} 2>&1; "
-            "_futureagi_code=$?; "
-            f"printf '%s' \"$_futureagi_code\" > {shlex.quote(exit_path)}; "
-            'exit "$_futureagi_code"'
-        )
-        user = self._os_user
-        if isolate:
-            # Root only to grant the capabilities: everything, the log and exit files included,
-            # runs as the sandbox user. The request is set here and nowhere else, so the harness
-            # asks for isolation exactly when it was granted.
+            wrapped = self._isolated_command(request.steps, log_path, exit_path)
             user = "root"
+        else:
             wrapped = (
-                f"exec setpriv --reuid={self._os_user} --regid={self._os_user} "
-                f"--init-groups --inh-caps={self._ISOLATION_CAPABILITIES} "
-                f"--ambient-caps={self._ISOLATION_CAPABILITIES} -- "
-                f"env HOME=/home/{self._os_user} USER={self._os_user} "
-                f"LOGNAME={self._os_user} ALK_PROCESS_ISOLATION=required "
-                f"sh -c {shlex.quote(wrapped)}"
+                f"mkdir -p {shlex.quote(self._COMMAND_DIR)}; set +e; "
+                f"( {request.command} ) > {shlex.quote(log_path)} 2>&1; "
+                "_futureagi_code=$?; "
+                f"printf '%s' \"$_futureagi_code\" > {shlex.quote(exit_path)}; "
+                'exit "$_futureagi_code"'
             )
+            user = self._os_user
         handle = _call(
             self._sandbox.commands.run,
             wrapped,
@@ -188,6 +181,42 @@ class E2BProcess:
             user=user,
         )
         return SandboxCommand(cmd_id=f"{handle.pid}:{command_token}", status="running")
+
+    def _isolated_command(
+        self, steps: Sequence[SandboxCommandStep], log_path: str, exit_path: str
+    ) -> str:
+        """The root shell of an isolated session. It only wraps each step: every step runs as the
+        sandbox user, and only a harness step holds the capabilities and asks for isolation. Root
+        locks /work down first, since it can hold files a declared user owns, and writes the exit
+        file, so a step that could not even start still ends with its code."""
+        name = self._os_user
+        user = shlex.quote(name)
+        caps = self._ISOLATION_CAPABILITIES
+
+        def drop(step: SandboxCommandStep) -> str:
+            grant = (
+                f"--inh-caps={caps} --ambient-caps={caps} "
+                if step.harness
+                else "--inh-caps=-all --ambient-caps=-all "
+            )
+            required = " ALK_PROCESS_ISOLATION=required" if step.harness else ""
+            return (
+                f"setpriv --reuid={user} --regid={user} --init-groups {grant}-- "
+                f"env HOME=/home/{name} USER={name} LOGNAME={name}{required} "
+                f"sh -c {shlex.quote(f'umask 077; {step.command}')}"
+            )
+
+        chain = " && ".join(drop(step) for step in steps)
+        log, exit_file = shlex.quote(log_path), shlex.quote(exit_path)
+        return (
+            f"install -d -m 0700 -o {user} -g {user} {shlex.quote(self._COMMAND_DIR)} && "
+            f"install -m 0600 -o {user} -g {user} /dev/null {log}; set +e; "
+            f"( chmod -R go-rwx /work && chmod 0711 /work && {chain} ) >> {log} 2>&1; "
+            "_futureagi_code=$?; "
+            f"printf '%s' \"$_futureagi_code\" > {exit_file}; "
+            f"chown {user}:{user} {exit_file}; "
+            'exit "$_futureagi_code"'
+        )
 
     @staticmethod
     def _command_parts(command_id: str) -> tuple[int, str]:

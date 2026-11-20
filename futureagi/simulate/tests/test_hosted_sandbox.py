@@ -6,11 +6,14 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import structlog
+import structlog.testing
 
 from simulate.services.hosted_sandbox import (
     DaytonaSandboxRuntimeProvider,
     E2BSandboxRuntimeProvider,
     SandboxCommandRequest,
+    SandboxCommandStep,
     SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
@@ -381,41 +384,103 @@ class _E2BIsolationCommands(_E2BCommands):
         return super().run(command, **kwargs)
 
 
+# A build's session: the two harness entrypoints around a step that is not one.
+_STEPS = (
+    SandboxCommandStep(
+        "python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json",
+        harness=True,
+    ),
+    SandboxCommandStep("python -m fi.alk.harness.cli scenarios extend --count 4"),
+    SandboxCommandStep(
+        "python -m fi.alk.harness.hosted_entrypoint /work/job.json", harness=True
+    ),
+)
+_COMMAND = " && ".join(step.command for step in _STEPS)
+
+
 def _session(process, *, isolate):
     process.execute_session_command(
         "alk-harness",
         SandboxCommandRequest(
-            command="python -m fi.alk.harness.hosted_entrypoint /work/job.json",
+            command=_COMMAND,
             env={"PATH": "/usr/bin"},
             run_async=True,
-            isolate_processes=isolate,
+            steps=_STEPS if isolate else (),
         ),
     )
     return process._sandbox.commands.calls[-1]
 
 
-def test_e2b_isolation_runs_the_harness_as_itself_with_the_grant(monkeypatch):
+def _drops(command):
+    """Each step's drop to the sandbox user: its setpriv flags and env, and the step it runs."""
+    tokens = shlex.split(command)
+    drops = []
+    for index, token in enumerate(tokens):
+        if token == "setpriv":
+            end = tokens.index("-c", index)
+            drops.append((tokens[index:end], tokens[end + 1]))
+    return drops
+
+
+def test_e2b_isolation_grants_only_the_harness_steps(monkeypatch):
     monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
     raw = _E2BSandbox()
     raw.commands = _E2BIsolationCommands(marker=True)
 
     command, options = _session(E2BProcess(raw, "svc-control"), isolate=True)
 
-    assert options["user"] == "root"  # only to grant the capabilities
-    assert command.startswith(
-        "exec setpriv --reuid=svc-control --regid=svc-control --init-groups "
-        "--inh-caps=+chown,+dac_override,+fowner,+kill,+setgid,+setuid "
-        "--ambient-caps=+chown,+dac_override,+fowner,+kill,+setgid,+setuid -- "
-        "env HOME=/home/svc-control USER=svc-control LOGNAME=svc-control "
-        "ALK_PROCESS_ISOLATION=required sh -c "
-    )
-    # The log and exit files are written inside the drop, as the sandbox user.
-    inner = shlex.split(command)[-1]
-    assert inner.startswith(
-        "mkdir -p /run/futureagi/provider-commands; set +e; ( umask 077; "
-    )
-    assert "chmod -R go-rwx /work && chmod 0711 /work && python -m fi.alk" in inner
+    assert options["user"] == "root"  # only to wrap each step
     assert options["envs"] == {"PATH": "/usr/bin"}
+    drops = _drops(command)
+    assert [step for _, step in drops] == [
+        f"umask 077; {step.command}" for step in _STEPS
+    ]
+    caps = "+chown,+dac_override,+fowner,+kill,+setgid,+setuid"
+    for (flags, _), step in zip(drops, _STEPS, strict=True):
+        assert flags[1:4] == [
+            "--reuid=svc-control",
+            "--regid=svc-control",
+            "--init-groups",
+        ]
+        assert "HOME=/home/svc-control" in flags and "sh" == flags[-1]
+        if step.harness:
+            assert f"--inh-caps={caps}" in flags and f"--ambient-caps={caps}" in flags
+            assert "ALK_PROCESS_ISOLATION=required" in flags
+        else:
+            # Extend and everything else between the entrypoints holds no capability.
+            assert "--inh-caps=-all" in flags and "--ambient-caps=-all" in flags
+            assert not [flag for flag in flags if caps in flag]
+            assert "ALK_PROCESS_ISOLATION=required" not in flags
+
+
+def test_e2b_isolation_locks_work_down_as_root_and_always_writes_the_exit_code(
+    monkeypatch,
+):
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    raw.commands = _E2BIsolationCommands(marker=True)
+
+    command, _options = _session(E2BProcess(raw, "svc-control"), isolate=True)
+
+    # The commands directory and the log stay the sandbox user's, so its later sessions can write
+    # theirs and the poller can read them.
+    assert command.startswith(
+        "install -d -m 0700 -o svc-control -g svc-control /run/futureagi/provider-commands && "
+        "install -m 0600 -o svc-control -g svc-control /dev/null /run/futureagi/provider-commands/"
+    )
+    # /work is closed before the first step, by root: a relaunch can find files a declared user owns.
+    assert "( chmod -R go-rwx /work && chmod 0711 /work && setpriv " in command
+    # The exit code is written by the root shell after the steps, so a drop that fails to start
+    # still ends with its code instead of reading as a command that disappeared.
+    steps_end = command.rindex(") >> /run/futureagi/provider-commands/")
+    written = command.index(
+        "printf '%s' \"$_futureagi_code\" > /run/futureagi/provider-commands/"
+    )
+    assert steps_end < written
+    assert (
+        "chown svc-control:svc-control /run/futureagi/provider-commands/"
+        in command[written:]
+    )
 
 
 def test_e2b_without_the_image_marker_runs_exactly_today_s_command(monkeypatch):
@@ -424,13 +489,21 @@ def test_e2b_without_the_image_marker_runs_exactly_today_s_command(monkeypatch):
     raw.commands = _E2BIsolationCommands(marker=False)
     process = E2BProcess(raw, "svc-control")
 
-    asked, asked_options = _session(process, isolate=True)
+    with structlog.testing.capture_logs() as logged:
+        asked, asked_options = _session(process, isolate=True)
     plain, plain_options = _session(process, isolate=False)
 
     pattern = re.compile(r"provider-commands/[0-9a-f]+\.")
     assert pattern.sub("X.", asked) == pattern.sub("X.", plain)
     assert asked_options["user"] == plain_options["user"] == "svc-control"
     assert "ALK_PROCESS_ISOLATION" not in asked and "setpriv" not in asked
+    # Isolation is expected once the image carries it: an image without it says so.
+    assert [one["event"] for one in logged] == ["hosted_isolation_marker_missing"]
+
+
+def test_a_request_s_steps_must_be_its_command():
+    with pytest.raises(ValueError):
+        SandboxCommandRequest(command="python -m one", steps=_STEPS)
 
 
 def test_e2b_a_request_without_isolation_never_checks_the_image(monkeypatch):

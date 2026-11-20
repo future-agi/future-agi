@@ -2013,8 +2013,17 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
-    # The entrypoint, and only the entrypoint, asks for each customer process its own user.
-    assert client.sandbox.process.session_request.isolate_processes is True
+    # Only the two agent-learning-kit entrypoints may run each customer process as its own user:
+    # the bundle author between them holds no such means.
+    request = client.sandbox.process.session_request
+    harness = [step.command for step in request.steps if step.harness]
+    assert len(harness) == 2
+    assert harness[0].startswith("if [ ! -f /work/authoring/contract.json ]; then ")
+    assert "python -m fi.alk.harness.hosted_authoring_entrypoint " in harness[0]
+    assert harness[1].startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    assert [step for step in request.steps if "bundle_author_v2" in step.command] == [
+        step for step in request.steps if not step.harness
+    ]
     assert (
         client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
         == "gemini-3.7-flash"

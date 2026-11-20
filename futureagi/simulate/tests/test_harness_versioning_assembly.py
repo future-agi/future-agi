@@ -503,6 +503,11 @@ class TestLaunchHit:
         copy = "cp -a /work/authoring/environment-bundle /work/bundle"
         assert check in command and SOURCE_DIGEST in command
         assert command.index(check) < command.index(copy)
+        # The source check is a step of its own, without the means to run customer processes.
+        steps = gateway.client.sandbox.process.session_request.steps
+        checking = [step for step in steps if check in step.command]
+        assert len(checking) == 1 and not checking[0].harness
+        assert len([step for step in steps if step.harness]) == 2
         assert "sys.exit(78)" in command
         assert "--certify-only" not in command
         assert "/work/certify-job.json" not in gateway.client.sandbox.fs.uploads
@@ -1200,6 +1205,14 @@ class TestLaunchMiss:
         assert attempt.state == HostedHarnessAttempt.State.RUNNING
         command = _command(gateway)
         assert "--certify-only --bundle-output /work/bundle " in command
+        # Certify is an entrypoint too: it runs the suite's customer processes, so it is a harness
+        # step, and the copies around it are not.
+        steps = gateway.client.sandbox.process.session_request.steps
+        harness = [step.command for step in steps if step.harness]
+        assert len(harness) == 3 and "--certify-only" in harness[1]
+        assert [step.command for step in steps if not step.harness] == [
+            step.command for step in assembly.certify_steps() if not step.harness
+        ]
         assert "--target-secrets" not in command
         assert "--provider-profile-cache" not in command
         uploads = gateway.client.sandbox.fs.uploads
@@ -1801,3 +1814,22 @@ class TestRerun:
         run = HostedHarnessJob.no_workspace_objects.get(id=result["job"]["job_id"])
         assert run.environment_version_id == environment.environment_version_id
         assert "rerun_of" not in run.payload["metadata"]
+
+
+def test_certify_is_today_s_command_with_only_its_entrypoint_a_harness_step():
+    """Joined, the certify steps are byte for byte the command a provider that cannot isolate runs."""
+    assert assembly.certify_command() == (
+        "if [ -f /work/authoring/scenarios.json ]; then "
+        f"cp /work/authoring/scenarios.json {assembly.SUITE_INDEX_PATH}; fi && "
+        "python -m fi.alk.harness.hosted_authoring_entrypoint "
+        f"{assembly.CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
+        "--certify-only --bundle-output /work/bundle "
+        "&& rm -rf /work/authoring/environment-bundle "
+        "&& cp -a /work/bundle /work/authoring/environment-bundle"
+    )
+    assert [step.harness for step in assembly.certify_steps()] == [
+        False,
+        True,
+        False,
+        False,
+    ]

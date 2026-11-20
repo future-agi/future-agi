@@ -21,13 +21,29 @@ class SandboxLaunchSpec:
 
 
 @dataclass(frozen=True)
+class SandboxCommandStep:
+    """One step of a session command. A harness step is an agent-learning-kit entrypoint that
+    runs each customer process as its own OS user; only a harness step may hold the means."""
+
+    command: str
+    harness: bool = False
+
+
+@dataclass(frozen=True)
 class SandboxCommandRequest:
     command: str
     env: dict[str, str] | None = None
     run_async: bool = False
     suppress_input_echo: bool = False
-    # Run each customer process as its own OS user, where the provider and its image can.
-    isolate_processes: bool = False
+    # The command's steps, when its customer processes should run as their own OS users where the
+    # provider and its image can; a provider that cannot runs ``command``, the steps joined by &&.
+    steps: tuple[SandboxCommandStep, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.steps and self.command != " && ".join(
+            step.command for step in self.steps
+        ):
+            raise ValueError("a command with steps must be its steps joined by &&")
 
 
 @dataclass(frozen=True)

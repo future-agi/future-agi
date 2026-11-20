@@ -84,6 +84,7 @@ from simulate.services.hosted_harness_diagnostics import (
 )
 from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
+    SandboxCommandStep,
     SandboxConflictError,
     SandboxFileNotFoundError,
     SandboxLaunchSpec,
@@ -2988,43 +2989,58 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
-            if certify:
-                bundle_command = bundle_cache.certify_command()
-            elif assembled is not None:
-                bundle_command = (
-                    bundle_cache.source_check_command(assembled.source_digest)
-                    + bundle_command
+            # The two agent-learning-kit entrypoints, and certify, run the suite's customer
+            # processes: only those steps may run each as its own OS user. Extend, the bundle
+            # author and the copies between them run as the sandbox user, without that means.
+            steps = [
+                SandboxCommandStep(
+                    "if [ ! -f /work/authoring/contract.json ]; then "
+                    "python -m fi.alk.harness.hosted_authoring_entrypoint "
+                    "/work/job.json --source /work/source --output /work/authoring "
+                    + (
+                        "--await-harness "
+                        if harness_builds
+                        else f"--adjustments {_ADJUSTMENTS_PATH} "
+                    )
+                    + provider_profile_args
+                    + (
+                        f"--seed-contract {_SEED_CONTRACT_PATH} "
+                        if seed_contract is not None
+                        else ""
+                    )
+                    + "; fi",
+                    harness=True,
                 )
+            ]
+            if extend_command:
+                steps.append(SandboxCommandStep(extend_command))
+            if certify:
+                steps.extend(bundle_cache.certify_steps())
+            else:
+                source_check = (
+                    bundle_cache.source_check_command(assembled.source_digest)
+                    if assembled is not None
+                    else ""
+                )
+                if source_check:
+                    steps.append(SandboxCommandStep(source_check.removesuffix(" && ")))
+                steps.append(SandboxCommandStep(bundle_command))
+            steps.append(
+                SandboxCommandStep(
+                    "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
+                    "--source /work/source --output /work/artifacts",
+                    harness=True,
+                )
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
-                    command=(
-                        "if [ ! -f /work/authoring/contract.json ]; then "
-                        "python -m fi.alk.harness.hosted_authoring_entrypoint "
-                        "/work/job.json --source /work/source --output /work/authoring "
-                        + (
-                            "--await-harness "
-                            if harness_builds
-                            else f"--adjustments {_ADJUSTMENTS_PATH} "
-                        )
-                        + provider_profile_args
-                        + (
-                            f"--seed-contract {_SEED_CONTRACT_PATH} "
-                            if seed_contract is not None
-                            else ""
-                        )
-                        + "; fi && "
-                        + ((extend_command + " && ") if extend_command else "")
-                        + bundle_command
-                        + " && "
-                        "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
-                        "--source /work/source --output /work/artifacts"
-                    ),
+                    command=" && ".join(step.command for step in steps),
                     env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
                     # The suite's held-back cases sit in this sandbox; the agent must not read them.
-                    isolate_processes=True,
+                    steps=tuple(steps),
                 ),
             )
             sandbox.fs.upload_file(
