@@ -132,6 +132,31 @@ def _validating(setup, *, invalid_bytes=False):
     return upload, store
 
 
+@pytest.mark.django_db(transaction=True)
+def test_snapshot_transport_outage_preserves_validation_for_retry(setup, monkeypatch):
+    from tracer.tests.test_attachment_storage import private_client, storage
+
+    upload, store = _validating(setup)
+    client = private_client()
+    client.get_object.side_effect = OSError("transient GET failure")
+    adapter = storage(client)
+    event = _validate_event(upload)
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "snapshot", adapter.snapshot)
+        assert not validation.consume_validation(event.pk, storage=store)
+    upload.refresh_from_db()
+    event.refresh_from_db()
+    client.get_object.assert_called_once()
+    assert upload.state == AttachmentState.VALIDATING and upload.usage_id is None
+    assert upload.reservation_settled_at is None and not store.promotions
+    assert event.processed_at is None and event.available_at > timezone.now()
+    _make_due(upload)
+    validation.consume_validation(event.pk, storage=store)
+    upload.refresh_from_db()
+    assert upload.state == AttachmentState.READY and upload.usage_outcome == "ready"
+    assert store.promotions == [core.wav_bytes()]
+
+
 def _validation_jobs():
     return sorted(AttachmentBudget.objects.values_list("key", "validation_jobs"))
 
@@ -172,7 +197,9 @@ def test_unavailable_sandbox_leaves_the_upload_retryable(setup, monkeypatch):
     assert upload.usage_stored_bytes == len(core.wav_bytes())
     assert upload.reservation_settled_at is None
     assert _validation_jobs() == jobs
-    after = upload.cleanup_not_before + timedelta(seconds=1)
+    after = max(
+        _validate_event(upload).available_at, upload.cleanup_not_before
+    ) + timedelta(seconds=1)
     wait_for_db(after)
     assert validation.consume_validation(_validate_event(upload).pk, storage=store)
     upload.refresh_from_db()
@@ -182,6 +209,7 @@ def test_unavailable_sandbox_leaves_the_upload_retryable(setup, monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_probe_rejection_still_settles_rejected(setup, monkeypatch):
     upload, store = _validating(setup, invalid_bytes=True)
     with pytest.raises(AttachmentError, match="validation_rejected"):
@@ -249,11 +277,12 @@ def _unavailable(monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_consumer_retries_unavailable_then_settles_failed(setup, monkeypatch):
     upload, store = _validating(setup)
     jobs = _validation_jobs()
     calls = _unavailable(monkeypatch)
-    for attempt in range(1, validation.MAX_VALIDATION_ATTEMPTS):
+    for attempt in range(1, validation.MAX_VALIDATION_ATTEMPTS + 1):
         before = timezone.now()
         assert not validation.consume_validation(
             _validate_event(upload).pk, storage=store
@@ -280,7 +309,7 @@ def test_consumer_retries_unavailable_then_settles_failed(setup, monkeypatch):
             upload_id=upload.id, event="erase"
         ).exists()
         _make_due(upload)
-    assert len(calls) == validation.MAX_VALIDATION_ATTEMPTS - 1
+    assert len(calls) == validation.MAX_VALIDATION_ATTEMPTS
 
     assert validation.consume_validation(_validate_event(upload).pk, storage=store)
     event = _validate_event(upload)

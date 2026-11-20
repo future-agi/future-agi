@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from django.db import IntegrityError, transaction
 from django.test import RequestFactory
 from django.utils import timezone
 
@@ -267,7 +268,7 @@ def test_mixed_batch_checks_parent_per_item(recording):
         "capture_revoked",
     ],
 )
-def test_warm_grant_never_bypasses_current_authority(recording, change):
+def test_warm_grant_never_bypasses_current_authority(recording, change, setup):
     r = recording
     assert_readable(r)
     head = response(r, method="HEAD")
@@ -300,7 +301,22 @@ def test_warm_grant_never_bypasses_current_authority(recording, change):
     elif change == "null_workspace":
         r.authority.viewer = replace(r.viewer, workspace_id=None)
     elif change == "unbound":
-        AttachmentOccurrence.objects.filter(pk=r.row.id).update(bound_at=None)
+        # Existing bindings cannot be reset. Try the warm grant against a real
+        # unbound occurrence instead, keeping the same viewer, scope and parent.
+        with pytest.raises(IntegrityError), transaction.atomic():
+            AttachmentOccurrence.objects.filter(pk=r.row.id).update(bound_at=None)
+        unbound, token, _, _ = initialized(setup)
+        args = {"scope_id": r.scope.id, "upload_id": unbound.id}
+        uploads.transfer(token, chunks=[wav_bytes()], storage=r.write_store, **args)
+        uploads.complete(token, **args)
+        validation.validate(unbound.id, scope_id=r.scope.id, storage=r.write_store)
+        unbound.refresh_from_db()
+        r.row = unbound.occurrence
+        assert unbound.state == "ready" and r.row.bound_at is None
+        with pytest.raises(AttachmentError, match="not_found"):
+            occurrences.get_occurrence(
+                r.viewer, r.authority, r.row.client_id, r.parent, ready=True
+            )
     elif change == "policy":
         AttachmentScope.objects.filter(pk=r.scope.id).update(
             require_media_redaction=True, policy_version=2
@@ -349,9 +365,25 @@ def test_revoke_session_and_expired_grant(recording):
         token_digest=playback.digest(r.grant)
     ).update(expires_at=timezone.now())
     assert response(r).status_code == 404
-    AttachmentPlaybackGrant.objects.filter(
-        token_digest=playback.digest(r.grant)
-    ).update(expires_at=timezone.now() + timedelta(seconds=30))
+    # Expired grants cannot be extended. Resolve a fresh grant on the live session.
+    (result,) = playback.resolve(
+        r.viewer,
+        r.authority,
+        [
+            {
+                "occurrence_id": str(r.row.client_id),
+                "parent": {
+                    "trace_id": str(r.parent.trace_id),
+                    "span_id": r.parent.span_id,
+                },
+                "representation": "original",
+            }
+        ],
+        media_session_id=str(r.session.id),
+    )
+    old_grant = r.grant
+    r.grant = result["gateway_path"].rsplit("/", 1)[1]
+    assert r.grant != old_grant and response(r, grant=old_grant).status_code == 404
     assert response(r, method="HEAD").status_code == 200
     playback.revoke_application_session(
         user_id=r.viewer.user_id, application_session_id=r.viewer.application_session_id

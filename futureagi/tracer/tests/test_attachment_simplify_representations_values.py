@@ -386,6 +386,7 @@ def test_stale_returned_version_cannot_erase_current_publication(service, monkey
 
     monkeypatch.setattr(service.d, "_locked", locked)
     store = Mock()
+    store.erase_version.return_value = None
     stale = service.i.ObjectIdentity(
         original.storage_binding_id, "serving", row.storage_key, "stale"
     )
@@ -720,6 +721,7 @@ def work_row(service, original, **changes):
         storage_version=None,
         reservation_settled_at=None,
         published_at=None,
+        erased_at=None,
     )
     row.__dict__.update(changes)
     return row
@@ -897,7 +899,11 @@ def test_ready_cleanup_preserves_published_version(service, monkeypatch):
             None,
         )
 
-    store = NS(list_versions=versions, erase_version=Mock(), erase_all_versions=Mock())
+    store = NS(
+        list_versions=versions,
+        erase_version=Mock(return_value=None),
+        erase_all_versions=Mock(),
+    )
     with service.d._scratch_lock(row) as work:
         assert service.d._settle(row, store, work)
     assert row.state == "ready" and row.storage_version == "keep"
@@ -983,6 +989,9 @@ def test_grant_issuance_persists_channel_and_derivative_after_authorization(
 def test_generate_streamed_asset_with_real_worker_and_frozen_storage_calls(
     service, monkeypatch, representation
 ):
+    # Only this path gives the real worker an absolute deadline. Start its
+    # frozen service clock here, not when a potentially long shard collects.
+    monkeypatch.setattr(sys.modules[__name__], "NOW", datetime.now(UTC))
     samples = [(1000, -3000), (2000, -4000)] * 400
     pcm = b"".join(struct.pack("<hh", *pair) for pair in samples)
     payload = (
@@ -1006,6 +1015,7 @@ def test_generate_streamed_asset_with_real_worker_and_frozen_storage_calls(
         storage_version=None,
         reservation_settled_at=None,
         published_at=None,
+        erased_at=None,
     )
     lock_double(service, monkeypatch, original, row)
     monkeypatch.setattr(service.d, "_source_authority", Mock(return_value={}))

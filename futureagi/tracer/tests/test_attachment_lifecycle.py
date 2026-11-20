@@ -42,8 +42,10 @@ from tracer.services.attachments.contract import PLACEMENT_FIELDS, AttachmentErr
 from tracer.services.attachments.probe import probe
 from tracer.tests import test_attachment_core as core
 from tracer.tests import test_attachment_playback as playback_tests
+from tracer.tests.attachment_fixtures import erase_terminal_upload, wait_for_db
 from tracer.tests.test_attachment_core import TRACE, initialized, wav_bytes
 
+short_upload = core.short_upload
 setup = core.setup
 recording = playback_tests.recording
 
@@ -153,6 +155,7 @@ def test_activities_are_inert_while_disabled(settings):
         assert getattr(tasks, name)._original_func() == {"disabled": True}
 
 
+@pytest.mark.usefixtures("short_upload")
 def test_streamed_upload_reaches_ready_through_the_scheduled_drain(
     setup, parser_probe, monkeypatch
 ):
@@ -178,8 +181,8 @@ def test_streamed_upload_reaches_ready_through_the_scheduled_drain(
         event__in=["admitted", "settled"]
     ).exists()
     assert not budgets_released()
-    after = upload.cleanup_not_before + timedelta(seconds=1)
-    monkeypatch.setattr(timezone, "now", lambda after=after: after)
+    event = AttachmentOutbox.objects.get(upload=upload, event="validate")
+    wait_for_db(max(event.available_at, upload.cleanup_not_before))
     counts = tasks.drain_attachment_outbox._original_func()
     assert counts["validate_done"] == 1
     assert budgets_released()
@@ -220,66 +223,115 @@ def test_without_the_drain_the_project_budget_throttles(setup):
         initialized(setup, current=current)
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_300_sequential_uploads_never_throttle_after_settle(
     setup, parser_probe, monkeypatch
 ):
-    """Fable P1-1: slots must come back. The per-minute initialization limiter
-    (120/min per project) is a separate rate limit, so the window is advanced
-    by one minute every 100 uploads; the slot check is never relaxed."""
+    """Every release must subtract exactly one owner, including with peers live.
+
+    Overlap the real SQL wait for up to 16 uploads. Neither the application nor
+    PostgreSQL clock is moved. The first and last singleton batches retain the
+    zero-outstanding control; for every intervening release, compare *all* pool,
+    project, and organization balances to the independently counted live owners.
+    """
+    from collections import Counter
+
     store = ErasableStore()
+    scope, _ = setup
     current, _ = core.session(setup)
-    for index in range(300):
-        if index:
+    core._upload_ids(monkeypatch, *(index % 16 for index in range(300)))
+    charge = 3 * len(wav_bytes()) + uploads.MAX_UPLOAD_BYTES
+    total = 0
+    while total < 300:
+        size = 1 if total in (0, 299) else min(16, 299 - total)
+        batch = []
+        shards = Counter()
+        assert budgets_released()
+        for _ in range(size):
             current, _ = core.session(
                 setup,
                 capture_session_id=str(current.client_id),
                 correlation_nonce=str(current.correlation_nonce),
             )
-        if index and index % 100 == 0:
-            AttachmentBudget.objects.update(
-                window_started_at=timezone.now() - timedelta(minutes=1, seconds=1)
+            upload, _ = streamed(setup, store, current=current)
+            event = AttachmentOutbox.objects.get(upload=upload, event="validate")
+            assert not validation.consume_validation(event.id, storage=store)
+            upload.refresh_from_db()
+            event.refresh_from_db()
+            assert upload.state == AttachmentState.READY
+            assert upload.usage_id is not None and upload.reservation_settled_at is None
+            assert not budgets_released()
+            batch.append((upload, event))
+            shards[upload.reservation_pool_key] += 1
+            total += 1
+
+        wait_for_db(
+            max(
+                max(upload.cleanup_not_before, event.available_at)
+                for upload, event in batch
             )
-        upload, _ = streamed(setup, store, current=current)
-        counts = lifecycle.drain_outbox(storage=store)
-        assert counts.get("validate_retrying") == 1, (index, counts)
-        assert not budgets_released(), index
-        upload.refresh_from_db()
-        after = upload.cleanup_not_before + timedelta(seconds=1)
-        monkeypatch.setattr(timezone, "now", lambda after=after: after)
-        counts = lifecycle.drain_outbox(storage=store)
-        assert counts.get("validate_done") == 1, (index, counts)
-        assert budgets_released(), index
-    assert AttachmentUpload.objects.filter(state=AttachmentState.READY).count() == 300
+        )
+        batch.sort(key=lambda pair: (pair[1].available_at, pair[1].id))
+        for index, (upload, event) in enumerate(batch):
+            counts = lifecycle.drain_outbox(storage=store, limits={"validate": 1})
+            assert counts == {"validate_done": 1}
+            upload.refresh_from_db()
+            event.refresh_from_db()
+            assert (
+                event.processed_at is not None
+                and upload.reservation_settled_at is not None
+            )
+            shards[upload.reservation_pool_key] -= 1
+            remaining = size - index - 1
+            balances = {
+                row.key: (row.active_transfers, row.validation_jobs, row.reserved_bytes)
+                for row in AttachmentBudget.objects.all()
+            }
+            expected = {
+                f"org:{scope.organization_id}": remaining,
+                f"project:{scope.project_id}": remaining,
+                **{key: shards[key] for key in balances if key.startswith("global:")},
+            }
+            assert all(key in balances for key in shards)
+            assert balances == {
+                key: (count, count, count * charge) for key, count in expected.items()
+            }
+        assert budgets_released()
+    assert (
+        AttachmentUpload.objects.filter(
+            state=AttachmentState.READY, reservation_settled_at__isnull=False
+        ).count()
+        == 300
+    )
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_failing_row_is_pushed_back_and_does_not_stall_the_batch(setup, monkeypatch):
-    scope, _ = setup
+    store = ErasableStore()
     first, _, _, _ = initialized(setup)
     second, _, _, _ = initialized(setup)
-    # Explicit retained historical events, not new asynchronous admission work.
     for upload in (first, second):
-        AttachmentOutbox.objects.create(
-            id=upload.admission_event_id,
-            scope=scope,
-            upload=upload,
-            attachment_id=upload.attachment_id,
-            event="admitted",
-            generation=upload.deletion_generation,
-            available_at=timezone.now(),
+        uploads.settle(
+            upload.id, scope_id=upload.scope_id, outcome=AttachmentState.EXPIRED
         )
     rows = list(
-        AttachmentOutbox.objects.filter(event="admitted").order_by("available_at", "id")
+        AttachmentOutbox.objects.filter(event="erase").order_by("available_at", "id")
     )
-    real = lifecycle.CONSUMERS["admitted"]
+    assert len(rows) == 2
+    wait_for_db(max(first.cleanup_not_before, second.cleanup_not_before))
+    _travel(monkeypatch, timedelta(hours=2))
+    real = lifecycle.CONSUMERS["erase"]
 
     def flaky(pk, storage):
         if pk == rows[0].pk:
-            raise RuntimeError("boom")
+            raise RuntimeError("synthetic store unavailable")
         return real(pk, storage)
 
-    monkeypatch.setitem(lifecycle.CONSUMERS, "admitted", flaky)
-    counts = lifecycle.drain_outbox(storage=ErasableStore())
-    assert counts["admitted_error"] == 1 and counts["admitted_done"] == 1
+    monkeypatch.setitem(lifecycle.CONSUMERS, "erase", flaky)
+    counts = lifecycle.drain_outbox(storage=store)
+    assert counts["erase_error"] == 1 and counts["erase_done"] == 1
     rows[0].refresh_from_db()
     assert rows[0].processed_at is None
     assert rows[0].available_at > timezone.now() + timedelta(seconds=30)
@@ -288,8 +340,10 @@ def test_failing_row_is_pushed_back_and_does_not_stall_the_batch(setup, monkeypa
 # --- Deletion ------------------------------------------------------------------
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_trace_delete_tombstones_occurrences_and_erase_drain_removes_bytes(
-    setup, parser_probe
+    setup, parser_probe, monkeypatch
 ):
     from tracer.views.trace import _soft_delete_trace_tree
 
@@ -304,9 +358,8 @@ def test_trace_delete_tombstones_occurrences_and_erase_drain_removes_bytes(
     upload.occurrence.refresh_from_db()
     assert upload.occurrence.deleted_at is not None
     assert Attachment.objects.get(pk=upload.attachment_id).state == "deleted"
-    counts = lifecycle.drain_outbox(storage=store)
-    assert counts["erase_done"] == 1
-    assert store.erased == [upload.id] and store.objects == {}
+    erase_terminal_upload(upload, store, monkeypatch)
+    assert set(store.erased) == {upload.id} and store.objects == {}
 
 
 def test_trace_delete_without_attachment_scope_is_a_no_op(project):
@@ -326,7 +379,9 @@ def test_deletion_hook_failure_never_fails_the_caller(setup, monkeypatch):
     assert retention.run_deletion_hook(broken) == 0
 
 
-def test_project_delete_fences_and_sweep_tombstones(setup, parser_probe):
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
+def test_project_delete_fences_and_sweep_tombstones(setup, parser_probe, monkeypatch):
     from tracer.models.project import Project
     from tracer.services.project_deletion import soft_delete_projects
 
@@ -342,7 +397,7 @@ def test_project_delete_fences_and_sweep_tombstones(setup, parser_probe):
     upload.occurrence.refresh_from_db()
     assert upload.occurrence.deleted_at is not None
     assert AttachmentAuditEvent.objects.filter(reason="scope_deleted").count() == 2
-    assert lifecycle.drain_outbox(storage=store)["erase_done"] == 1
+    erase_terminal_upload(upload, store, monkeypatch)
     assert store.objects == {}
 
 
@@ -452,6 +507,7 @@ def test_upload_less_tombstone_queues_attachment_keyed_erase_and_erases_it(
     assert segment.storage_binding_id == orphan.storage_binding_id
     assert segment.cleanup_not_before is not None
     scope.refresh_from_db()
+    monkeypatch.setattr(uploads, "UPLOAD_SECONDS", 12)
     upload, _, _, _ = initialized(setup)
     AttachmentOccurrence.objects.filter(pk=row.pk).update(
         expires_at=timezone.now() - timedelta(seconds=1)
@@ -468,7 +524,10 @@ def test_upload_less_tombstone_queues_attachment_keyed_erase_and_erases_it(
     AttachmentOutbox.objects.filter(event="erase").update(available_at=timezone.now())
     with recording_tests.routed_store(store):
         counts = lifecycle.drain_outbox(storage=store)
-    assert counts["erase_done"] == 0  # Early emptiness cannot complete either row.
+    assert counts.get("erase_done", 0) == 0
+    assert (
+        counts.get("erase_not_yet", 0) == 2
+    )  # Early emptiness cannot complete either row.
     erase.refresh_from_db()
     orphan.refresh_from_db()
     assert erase.processed_at is None
@@ -479,6 +538,7 @@ def test_upload_less_tombstone_queues_attachment_keyed_erase_and_erases_it(
     # Keep the original assertion that upload-keyed and attachment-keyed work
     # both complete in one tick, but only after actual writer retirement/horizon.
     job.refresh_from_db()
+    wait_for_db(upload.cleanup_not_before)
     after = max(
         job.cleanup_not_before,
         segment.cleanup_not_before,
@@ -740,12 +800,16 @@ def test_a_user_who_viewed_attachments_can_be_deleted(recording):
     assert AttachmentPlaybackGrant.objects.filter(media_session=r.session).exists()
 
 
-def test_expired_media_sessions_and_old_audit_rows_are_purged(recording, settings):
+def test_expired_media_sessions_and_old_audit_rows_are_purged(
+    recording, settings, monkeypatch
+):
     r = recording
     later = timezone.now() + timedelta(days=2)
     assert lifecycle.purge_media(now=later) >= 2
     assert not AttachmentMediaSession.objects.exists()
-    AttachmentAuditEvent.objects.update(created_at=timezone.now() - timedelta(days=401))
+    assert AttachmentAuditEvent.objects.exists()
+    audit_clock = timezone.now() + timedelta(days=401)
+    monkeypatch.setattr(timezone, "now", lambda: audit_clock)
     settings.FI_ATTACHMENTS_AUDIT_RETENTION_DAYS = 400
     assert lifecycle.sweep()["audit_purged"] >= 1
     assert not AttachmentAuditEvent.objects.filter(
@@ -888,6 +952,15 @@ def _ready_upload(setup, store):
     return upload
 
 
+def reconcile_ready(upload, store):
+    event = AttachmentOutbox.objects.get(upload=upload, event="validate")
+    wait_for_db(max(event.available_at, upload.cleanup_not_before))
+    assert lifecycle.drain_outbox(storage=store)["validate_done"] == 1
+    upload.refresh_from_db()
+    assert upload.reservation_settled_at is not None
+    assert set(store.objects) == {upload.serving_key}
+
+
 def _reader(scope, user, row, lifetime):
     parent = occurrences.Parent(row.trace_id, row.span_id)
     state = occurrences.SourceState(
@@ -946,12 +1019,15 @@ def _tick(store):
     return swept, lifecycle.drain_outbox(storage=store)
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_bound_upload_outlives_the_24h_pending_deadline(
     setup, user, parser_probe, monkeypatch
 ):
     scope, _ = setup
     store = ErasableStore()
     upload = _ready_upload(setup, store)
+    reconcile_ready(upload, store)
     state, authority = _reader(scope, user, upload.occurrence, DECADE)
     row = retention.bind_retention(
         scope_id=scope.id, occurrence_id=upload.occurrence_id, source=state
@@ -974,12 +1050,15 @@ def test_bound_upload_outlives_the_24h_pending_deadline(
     assert _plays(authority, row) == "ready" and store.objects == objects
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_linked_occurrence_of_bound_media_outlives_the_24h_deadline(
     setup, user, parser_probe, monkeypatch
 ):
     scope, _ = setup
     store = ErasableStore()
     upload = _ready_upload(setup, store)
+    reconcile_ready(upload, store)
     state, authority = _reader(scope, user, upload.occurrence, DECADE)
     retention.bind_retention(
         scope_id=scope.id, occurrence_id=upload.occurrence_id, source=state
@@ -1011,20 +1090,24 @@ def test_linked_occurrence_of_bound_media_outlives_the_24h_deadline(
     assert _plays(authority, created) == "ready"
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_unbound_upload_still_expires_and_is_erased_after_24h(
     setup, user, parser_probe, monkeypatch
 ):
     # Control: the 24 h deadline still applies while nothing has bound it.
     store = ErasableStore()
     upload = _ready_upload(setup, store)
+    reconcile_ready(upload, store)
     assert store.objects
     _travel(monkeypatch, timedelta(hours=25))
     swept, drained = _tick(store)
     upload.occurrence.refresh_from_db()
     assert swept["occurrences_expired"] == 1, swept
-    assert drained["erase_done"] == 1, drained
+    assert drained.get("erase_done", 0) == 0 and drained["erase_not_yet"] == 1, drained
+    erase_terminal_upload(upload, store, monkeypatch)
     assert upload.occurrence.deleted_at is not None
-    assert store.erased == [upload.id] and store.objects == {}
+    assert set(store.erased) == {upload.id} and store.objects == {}
     # And a late bind can no longer revive it.
     scope, _ = setup
     state, _ = _reader(scope, user, upload.occurrence, DECADE)
@@ -1034,6 +1117,8 @@ def test_unbound_upload_still_expires_and_is_erased_after_24h(
         )
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_bound_upload_with_short_source_retention_expires_with_its_source(
     setup, user, parser_probe, monkeypatch
 ):
@@ -1041,6 +1126,7 @@ def test_bound_upload_with_short_source_retention_expires_with_its_source(
     scope, _ = setup
     store = ErasableStore()
     upload = _ready_upload(setup, store)
+    reconcile_ready(upload, store)
     state, authority = _reader(scope, user, upload.occurrence, timedelta(hours=2))
     row = retention.bind_retention(
         scope_id=scope.id, occurrence_id=upload.occurrence_id, source=state
@@ -1053,6 +1139,7 @@ def test_bound_upload_with_short_source_retention_expires_with_its_source(
     swept, drained = _tick(store)
     row.refresh_from_db()
     assert swept["occurrences_expired"] == 1, swept
-    assert drained["erase_done"] == 1, drained
+    assert drained.get("erase_done", 0) == 0 and drained["erase_not_yet"] == 1, drained
+    erase_terminal_upload(upload, store, monkeypatch)
     assert row.deleted_at is not None and store.objects == {}
     assert _plays(authority, row) == "not_found"

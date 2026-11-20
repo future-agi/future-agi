@@ -58,6 +58,8 @@ class Query:
                     equal = actual in value
                 elif op == "isnull":
                     equal = (actual is None) == value
+                elif op == "gt":
+                    equal = actual > value
                 elif op == "lte":
                     equal = actual <= value
                 else:
@@ -283,6 +285,9 @@ def env(monkeypatch):
         u=uploads,
         v=validation,
         error=contract.AttachmentError,
+        contract=contract,
+        load=load,
+        module=module,
     )
 
     def scope(org=None, project=None):
@@ -844,7 +849,10 @@ def test_import_publication_requires_exact_job_fence(env, mutation):
 def source_rows(env):
     scope = env.scope()
     creator = uuid4()
-    session = Row(
+    scope.require_media_redaction = False
+    session = env.models["CaptureSession"].objects.create(
+        scope_id=scope.id,
+        policy=env.contract.CapturePolicy(enabled=True, allow_import=True),
         id=uuid4(),
         writer_kind="user",
         writer_id=creator,
@@ -853,6 +861,9 @@ def source_rows(env):
         deletion_generation=0,
     )
     job = Row(
+        scope_id=scope.id,
+        source_kind="RemoteUrlEnvelope",
+        envelope_id=uuid4(),
         id=uuid4(),
         capture_session_id=session.id,
         importer_kind="user",
@@ -868,12 +879,14 @@ def source_rows(env):
         source_trace_id=uuid4(),
         source_span_id="0123456789abcdef",
         source_direction="mixed",
-        source_expires_at=NOW + timedelta(minutes=20),
+        source_expires_at=NOW + timedelta(minutes=10),
         deadline=NOW + timedelta(minutes=10),
         policy_version=1,
         deletion_generation=0,
     )
-    envelope = Row(
+    envelope = env.models["AttachmentSourceEnvelope"].objects.create(
+        id=job.envelope_id,
+        scope_id=scope.id,
         creator_kind="user",
         creator_id=creator,
         generation_kind=job.source_generation_kind,
@@ -886,9 +899,20 @@ def source_rows(env):
         span_id=job.source_span_id,
         direction="mixed",
         revoked_at=None,
-        expires_at=NOW + timedelta(minutes=10),
+        expires_at=job.source_expires_at,
         source_expires_at=job.source_expires_at,
     )
+    # Exercise the real scoped envelope query, identity checks and frozen-facts
+    # comparison. Only secret decryption is outside this in-memory ledger test.
+    env.module("django.conf", settings=SimpleNamespace())
+    env.module(
+        "tracer.services.attachments.safe_fetch",
+        parse_destination=None,
+        validate_revision_query=None,
+    )
+    envelopes = env.load("envelopes")
+    envelopes._document = lambda row: {"capture_session_id": str(session.id)}
+    env.load("source_providers")
     return scope, session, job, envelope
 
 
@@ -904,7 +928,8 @@ def source_rows(env):
 )
 def test_source_fences_reject_creator_replacement_revocation_expiry(env, field, value):
     _, session, job, envelope = source_rows(env)
-    env.u._check_source(job, session, (None, envelope, None))
+    with env.tx.atomic():
+        env.u._check_source(job, session, (None, envelope, None))
     setattr(envelope, field, value)
     with pytest.raises(env.error):
         env.u._check_source(job, session, (None, envelope, None))
@@ -1054,7 +1079,7 @@ def test_stale_result_can_only_delete_its_exact_unreferenced_version(
 def test_source_retention_shrink_denies_original_job(env):
     _, session, job, envelope = source_rows(env)
     envelope.source_expires_at = NOW + timedelta(minutes=5)
-    with pytest.raises(env.error, match="source_unavailable"):
+    with pytest.raises(env.error, match="snapshot_changed"):
         env.u._check_source(job, session, (None, envelope, None))
 
 
@@ -1100,7 +1125,9 @@ def test_unassigned_segment_uses_exact_scoped_client_and_plan(env):
     assert allocation.attachment_id is None
 
 
-def test_normal_validation_keeps_snapshot_probe_promote_outside_locks(env, monkeypatch):
+def test_normal_validation_keeps_snapshot_probe_promote_outside_locks(
+    env, monkeypatch, tmp_path
+):
     import hashlib
 
     scope, asset, upload, _ = publication_upload(env)
@@ -1162,9 +1189,8 @@ def test_normal_validation_keeps_snapshot_probe_promote_outside_locks(env, monke
     monkeypatch.setattr(env.v, "_storage_for", lambda *a, **k: storage)
     monkeypatch.setattr(env.v, "sandbox_probe", probe)
     monkeypatch.setattr(env.v, "_cleanup_ready", lambda *a: False)
-    readiness = types.ModuleType("tracer.services.attachments.readiness")
-    readiness.require_decoder = lambda requirements: None
-    monkeypatch.setitem(sys.modules, readiness.__name__, readiness)
+    # Decoder preflight uses its own known sample; only the upload probe is observed here.
+    monkeypatch.setattr(env.v, "require_decoder", lambda requirements: None)
     derivatives = types.ModuleType("tracer.services.attachments.derivatives")
 
     def enqueue(attachment):
@@ -1174,6 +1200,10 @@ def test_normal_validation_keeps_snapshot_probe_promote_outside_locks(env, monke
 
     derivatives.enqueue_for_asset_locked = enqueue
     monkeypatch.setitem(sys.modules, derivatives.__name__, derivatives)
+    env.module(
+        "django.conf", settings=SimpleNamespace(FI_ATTACHMENTS_WORK_DIR=str(tmp_path))
+    )
+    env.load("readiness")
     facts = env.v.validate(
         upload.id, scope_id=scope.id, storage=storage, _claim_event=claim
     )
@@ -1209,9 +1239,8 @@ def test_snapshot_rehashes_exact_bytes_before_decoder(env, monkeypatch, tmp_path
         return "0" * 64 if bad == "digest" else digest
 
     storage = Row(binding_id=asset.storage_binding_id, snapshot=snapshot)
-    readiness = types.ModuleType("tracer.services.attachments.readiness")
-    readiness.require_decoder = lambda requirements: None
-    monkeypatch.setitem(sys.modules, readiness.__name__, readiness)
+    # Decoder preflight uses its own known sample; only the upload probe is observed here.
+    monkeypatch.setattr(env.v, "require_decoder", lambda requirements: None)
     monkeypatch.setattr(env.v, "_check", lambda upload: None)
     monkeypatch.setattr(
         env.v,

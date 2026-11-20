@@ -240,6 +240,31 @@ def test_null_version_negative_control_detects_missing_revision_guard(monkeypatc
         test_create_once_quarantine_and_no_null_version()
 
 
+@pytest.mark.parametrize("failure", ["read", "write"])
+def test_snapshot_io_failure_remains_retryable(failure):
+    client = private_client()
+
+    class Output(io.BytesIO):
+        def write(self, data):
+            raise OSError("scratch unavailable")
+
+    if failure == "read":
+        client.get_object.side_effect = OSError("transient storage outage")
+    else:
+        client.get_object.return_value = {
+            "Body": io.BytesIO(b"abc"),
+            "VersionId": "v1",
+            "ContentLength": 3,
+            "ServerSideEncryption": "AES256",
+        }
+    with pytest.raises(AttachmentError, match="storage_unverified"):
+        storage(client).snapshot(
+            ObjectIdentity(BINDING_ID, "quarantine", "key", "v1"),
+            io.BytesIO() if failure == "read" else Output(),
+            expected_length=3,
+        )
+
+
 def test_snapshot_never_reads_latest_or_excess_bytes():
     client = private_client()
     client.get_object.return_value = {

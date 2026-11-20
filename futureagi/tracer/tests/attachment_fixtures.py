@@ -234,29 +234,27 @@ def erase_terminal_upload(
 
     from tracer.services.attachments import retention, validation
 
-    event = AttachmentOutbox.objects.get(upload=upload, event="erase")
-    after = timezone.now() + timedelta(hours=2)
-    monkeypatch.setattr(timezone, "now", lambda: after)
-    for pending in AttachmentOutbox.objects.filter(
-        upload=upload, event="validate", processed_at__isnull=True
-    ):
-        assert validation.consume_validation(pending.id, storage=store)
-    assert retention.erase(event.id, storage=store)
+    event = AttachmentOutbox.objects.get(
+        attachment_id=upload.attachment_id, event="erase"
+    )
+    upload.refresh_from_db()
+    wait_for_db(upload.cleanup_not_before)
+    # The DB proof clock is real. Advance the application clock for the later
+    # tombstone horizon and scheduled validation/erase retries.
+    clock = timezone.now() + timedelta(hours=2)
+    monkeypatch.setattr(timezone, "now", lambda: clock)
+    for _ in range(3):
+        for pending in AttachmentOutbox.objects.filter(
+            upload=upload,
+            event="validate",
+            processed_at__isnull=True,
+            available_at__lte=clock,
+        ):
+            validation.consume_validation(pending.pk, storage=store)
+        if retention.erase(event.pk, storage=store):
+            break
+        clock += timedelta(minutes=6)
+    event.refresh_from_db()
+    assert event.processed_at is not None
     upload.refresh_from_db()
     assert upload.reservation_settled_at is not None
-
-
-def legacy_settlement_event(upload: AttachmentUpload) -> AttachmentOutbox:
-    """A retained historical event uses the already persisted receipt event ID."""
-
-    upload.refresh_from_db()
-    assert upload.settlement_event_id is not None
-    return AttachmentOutbox.objects.create(
-        id=upload.settlement_event_id,
-        scope_id=upload.scope_id,
-        upload=upload,
-        attachment_id=upload.attachment_id,
-        event="settled",
-        generation=upload.deletion_generation,
-        available_at=timezone.now(),
-    )

@@ -662,11 +662,10 @@ class S3PrivateMediaStorage:
         body = result["Body"]
         try:
             size = expected_length if start is None else end - start + 1
-            if (
-                result.get("VersionId") != identity.version
-                or result.get("ContentLength") != size
-            ):
-                raise ValueError
+            generation = _revision(result.get("VersionId"))
+            observed_size = _length(result.get("ContentLength"))
+            if generation != identity.version or observed_size != size:
+                raise AttachmentError("snapshot_changed", 409)
             if (
                 start is not None
                 and result.get("ContentRange")
@@ -693,15 +692,18 @@ class S3PrivateMediaStorage:
                     break
                 seen += len(chunk)
                 if seen > size or len(chunk) > BUFFER:
-                    raise ValueError
+                    raise AttachmentError("snapshot_changed", 409)
                 digest.update(chunk)
                 if output.write(chunk) != len(chunk):
                     raise ValueError
             if seen != size:
+                # Truncated transport is ambiguous even with a matching declared size.
                 raise ValueError
             return digest.hexdigest()
+        except AttachmentError:
+            raise
         except Exception:
-            raise AttachmentError("snapshot_changed", 409) from None
+            raise _error() from None
         finally:
             if body is not None:
                 with contextlib.suppress(Exception):

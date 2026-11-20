@@ -20,7 +20,6 @@ Backend requirements implemented here (SDK design section 11):
 """
 
 import hashlib
-import tempfile
 import time
 from datetime import timedelta
 from types import SimpleNamespace
@@ -700,7 +699,9 @@ def transfer(token, *, scope_id, upload_id, chunks, storage, content_length=None
 
     began, size, hasher, identity = time.monotonic(), 0, hashlib.sha256(), None
     try:
-        with tempfile.TemporaryFile() as snapshot:
+        from tracer.services.attachments.readiness import snapshot_file
+
+        with snapshot_file(named=False) as snapshot:
             for chunk in chunks:
                 _live_upload(token, scope_id, upload_id, "upload")
                 if time.monotonic() - began > TRANSFER_SECONDS:

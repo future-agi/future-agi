@@ -580,6 +580,24 @@ def test_real_factory_discovery_via_standard_default_posture_bridge(
     assert len(http.calls) > 4 and all(m == "GET" for m, _, _, _ in http.calls)
 
 
+@pytest.mark.parametrize(
+    "historical",
+    [{}, {"other.readonly": object()}, {"other.readonly": Credentials(None)}],
+    ids=["absent", "wrong-type", "typed-without-valid-token"],
+)
+def test_admission_checks_named_historical_posture(native, monkeypatch, historical):
+    adapter, http, b = native
+    settings = install_settings(
+        monkeypatch, b, {"gcs.readonly-v1": adapter._posture, **historical}
+    )
+    settings.FI_ATTACHMENTS_BINDING_ACCESS[b.identity_sha256][
+        "posture_credential_ref"
+    ] = "other.readonly"
+    monkeypatch.setattr(g, "storage_http_client", lambda **kw: http)
+    with pytest.raises(AttachmentError, match="storage_unverified"):
+        storage.bind_for_admission(settings=settings)
+
+
 def test_factory_optional_missing_posture_still_deletes_historical_generation(
     native, monkeypatch
 ):

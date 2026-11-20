@@ -25,7 +25,9 @@ from tracer.services.attachments.session_deletion import sweep_deleted_sessions
 from tracer.tests import test_attachment_core as core
 from tracer.tests import test_attachment_lifecycle as life
 from tracer.tests import test_attachment_playback as media
+from tracer.tests.attachment_fixtures import erase_terminal_upload
 
+short_upload = core.short_upload
 setup = core.setup
 parser_probe = life.parser_probe
 pytestmark = [pytest.mark.django_db, pytest.mark.unit]
@@ -132,8 +134,10 @@ def collector_recording(setup, user, monkeypatch, parser_probe):
 
 
 @pytest.mark.parametrize("pg_session", [False, True])
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_collector_session_delete_denies_and_erases(
-    collector_recording, auth_client, pg_session
+    collector_recording, auth_client, pg_session, monkeypatch
 ):
     r = collector_recording
     if pg_session:
@@ -156,17 +160,25 @@ def test_collector_session_delete_denies_and_erases(
     r.row.refresh_from_db()
     assert r.row.deleted_at is not None
     assert AttachmentOutbox.objects.filter(
-        upload=r.upload, event="erase", processed_at=None
+        attachment=r.upload.attachment, upload=None, event="erase", processed_at=None
     ).exists()
     # Denial precedes physical erasure, not the other way around.
     assert r.objects.objects
-    assert lifecycle.drain_outbox(storage=r.objects)["erase_done"] == 1
+    erase_terminal_upload(r.upload, r.objects, monkeypatch)
+    assert (
+        AttachmentOutbox.objects.filter(
+            attachment=r.upload.attachment, event="erase", processed_at__isnull=False
+        ).count()
+        == 1
+    )
     assert r.objects.objects == {}
     assert not Trace._base_manager.filter(id=r.row.trace_id).exists()
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_cleanup_outage_cannot_reauthorize_and_sweep_retries(
-    collector_recording, auth_client
+    collector_recording, auth_client, monkeypatch
 ):
     r = collector_recording
     r.reader.list_by_ids.side_effect = RuntimeError("CH read unavailable")
@@ -189,7 +201,13 @@ def test_cleanup_outage_cannot_reauthorize_and_sweep_retries(
     assert media.response(r, method="HEAD").status_code == 404
     r.reader.list_by_ids.side_effect = None
     assert lifecycle.sweep()["session_occurrences_deleted"] == 1
-    assert lifecycle.drain_outbox(storage=r.objects)["erase_done"] == 1
+    erase_terminal_upload(r.upload, r.objects, monkeypatch)
+    assert (
+        AttachmentOutbox.objects.filter(
+            attachment=r.upload.attachment, event="erase", processed_at__isnull=False
+        ).count()
+        == 1
+    )
     assert not r.objects.objects
 
 
@@ -270,7 +288,11 @@ def test_inaccessible_session_delete_does_not_create_marker(
     assert media.response(r, method="HEAD").status_code == 200
 
 
-def test_deleted_survivor_denies_and_erases_new_session_id(collector_recording):
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
+def test_deleted_survivor_denies_and_erases_new_session_id(
+    collector_recording, monkeypatch
+):
     r = collector_recording
     survivor = uuid.uuid4()
     TraceSessionOverlay._base_manager.create(
@@ -282,7 +304,13 @@ def test_deleted_survivor_denies_and_erases_new_session_id(collector_recording):
     }
     assert media.response(r, method="HEAD").status_code == 404
     assert sweep_deleted_sessions(project_id=r.scope.project_id) == 1
-    assert lifecycle.drain_outbox(storage=r.objects)["erase_done"] == 1
+    erase_terminal_upload(r.upload, r.objects, monkeypatch)
+    assert (
+        AttachmentOutbox.objects.filter(
+            attachment=r.upload.attachment, event="erase", processed_at__isnull=False
+        ).count()
+        == 1
+    )
     assert not r.objects.objects
 
 
@@ -298,8 +326,10 @@ def test_remap_failure_denies_without_erasing(collector_recording):
     assert r.row.deleted_at is None and r.objects.objects
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_orphan_scan_checks_session_marker_before_advancing_shared_cursor(
-    collector_recording,
+    collector_recording, monkeypatch
 ):
     r = collector_recording
     TraceSessionOverlay._base_manager.create(
@@ -314,7 +344,13 @@ def test_orphan_scan_checks_session_marker_before_advancing_shared_cursor(
     assert counts["session_occurrences_deleted"] == 1
     r.row.refresh_from_db()
     assert r.row.deleted_at is not None
-    assert lifecycle.drain_outbox(storage=r.objects)["erase_done"] == 1
+    erase_terminal_upload(r.upload, r.objects, monkeypatch)
+    assert (
+        AttachmentOutbox.objects.filter(
+            attachment=r.upload.attachment, event="erase", processed_at__isnull=False
+        ).count()
+        == 1
+    )
     assert not r.objects.objects
 
 

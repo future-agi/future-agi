@@ -141,6 +141,10 @@ def _close(response):
         response.release_conn()
 
 
+class _ReadLimitExceeded(ValueError):
+    pass
+
+
 def _read(response, limit=MAX_METADATA):
     """Always bound reads, including untrusted error/metadata responses."""
     chunks, size = [], 0
@@ -151,7 +155,7 @@ def _read(response, limit=MAX_METADATA):
                 return b"".join(chunks)
             size += len(part)
             if size > limit:
-                raise ValueError
+                raise _ReadLimitExceeded
             chunks.append(part)
     finally:
         _close(response)
@@ -705,11 +709,18 @@ class GCSPrivateMediaStorage:
             headers=headers,
         )
         try:
+            if response.status != (200 if start is None else 206):
+                raise ValueError
+            generation = _generation(response.headers.get("x-goog-generation"))
+            length = response.headers.get("content-length")
+            if not isinstance(length, str) or not re.fullmatch(
+                r"0|[1-9][0-9]{0,19}", length
+            ):
+                raise ValueError
+            if generation != identity.version or length != str(wanted):
+                raise AttachmentError("snapshot_changed", 409)
             if (
-                response.status != (200 if start is None else 206)
-                or response.headers.get("x-goog-generation") != identity.version
-                or response.headers.get("content-length") != str(wanted)
-                or response.headers.get("content-encoding", "identity") != "identity"
+                response.headers.get("content-encoding", "identity") != "identity"
                 or response.headers.get("x-goog-stored-content-encoding", "identity")
                 != "identity"
                 or (
@@ -720,8 +731,12 @@ class GCSPrivateMediaStorage:
             ):
                 raise ValueError
             self._encryption(identity.purpose, response.headers)
-            data = _read(response, wanted)
+            try:
+                data = _read(response, wanted)
+            except _ReadLimitExceeded:
+                raise AttachmentError("snapshot_changed", 409) from None
             if len(data) != wanted:
+                # A truncated stream is not proof that the immutable object changed.
                 raise ValueError
             return data
         finally:
@@ -735,8 +750,10 @@ class GCSPrivateMediaStorage:
                 if output.write(part) != len(part):
                     raise ValueError
             return hashlib.sha256(data).hexdigest()
+        except AttachmentError:
+            raise
         except Exception:
-            raise AttachmentError("snapshot_changed", 409) from None
+            raise AttachmentError("storage_unverified", 503) from None
 
     def open_range(self, identity, *, start, end, expected_length):
         try:

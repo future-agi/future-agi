@@ -30,6 +30,7 @@ from tracer.models.attachment_storage import (
     binding_identity_sha256,
 )
 from tracer.services.attachments import readiness, storage
+from tracer.services.attachments import storage_s3 as s3
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.interfaces import (
     LeaseFence,
@@ -42,7 +43,6 @@ from tracer.services.attachments.storage_minio import (
     MinIOPostureCredentials,
     MinIOPrivateMediaStorage,
 )
-from tracer.services.attachments import storage_s3 as s3
 
 DATA = b"synthetic bounded media"
 HASH = hashlib.sha256(DATA).hexdigest()
@@ -945,7 +945,7 @@ def test_admission_observation_precedes_persistence_and_compares_full_tuple(
     monkeypatch.setattr(
         storage, "resolve_attachment_storage_config", lambda c: config_value
     )
-    monkeypatch.setattr(storage, "resolve_attachment_binding_config", Mock())
+    monkeypatch.setattr(AttachmentStorageBinding.objects, "get", lambda **kw: row)
     monkeypatch.setattr(storage, "materialize_attachment_binding_config", Mock())
 
     def create(**kw):
@@ -956,20 +956,15 @@ def test_admission_observation_precedes_persistence_and_compares_full_tuple(
         AttachmentStorageBinding.objects, "get_or_create", side_effect=create
     ):
         assert storage.bind_for_admission(settings=access_settings(row)) == row.id
-    assert events == ["observe", "verify", "persist"]
+    assert events == ["observe", "verify", "persist", "verify"]
+    observed = {n: getattr(row, n) for n in BINDING_IDENTITY_FIELDS}
     row.serving_created_at = CREATED + timedelta(days=1)
     with patch.object(
         AttachmentStorageBinding.objects, "get_or_create", return_value=(row, False)
     ):
         # Return a candidate matching the old tuple but a corrupt persisted row.
         constructor.discover_identity.side_effect = None
-        constructor.discover_identity.return_value = dict(
-            constructor.call_args.kwargs["binding"].__dict__
-        )
-        constructor.discover_identity.return_value = {
-            n: constructor.discover_identity.return_value[n]
-            for n in BINDING_IDENTITY_FIELDS
-        }
+        constructor.discover_identity.return_value = observed
         with pytest.raises(AttachmentError):
             storage.bind_for_admission(settings=access_settings(row))
 

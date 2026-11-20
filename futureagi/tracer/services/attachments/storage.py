@@ -173,7 +173,16 @@ def bind_for_admission(*, settings: object) -> UUID:
         access = resolve_attachment_binding_config(
             binding.id, operation="admit", settings=settings
         )
-        materialize_attachment_binding_config(binding=binding, config=access)
+        historical = materialize_attachment_binding_config(
+            binding=binding, config=access
+        )
+        provider(
+            binding=binding,
+            config=historical,
+            posture_credentials=_posture(
+                access, settings, binding.provider, operation="admit"
+            ),
+        ).verify_readiness()
         return binding.id
     except AttachmentError:
         raise

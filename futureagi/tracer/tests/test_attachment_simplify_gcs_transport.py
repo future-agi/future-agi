@@ -184,7 +184,14 @@ class HTTP:
         if parsed.path.startswith("/storage/v1/b/"):
             assert method == "GET"
             assert kwargs["headers"]["authorization"] == "Bearer synthetic-token"
-            if parsed.path.endswith("/o"):
+            if "/o/" in parsed.path:
+                assert query["softDeleted"] == ["true"]
+                assert query["generation"] == ["101"]
+                status, data = (
+                    404,
+                    {"error": {"code": 404, "errors": [{"reason": "notFound"}]}},
+                )
+            elif parsed.path.endswith("/o"):
                 assert query["softDeleted"] == ["true"]
                 assert "versions" not in query
                 status, data = (
@@ -433,7 +440,7 @@ def test_historical_cleanup_without_posture_or_default(monkeypatch):
     b = binding()
     http = HTTP(b)
     s = g.GCSPrivateMediaStorage(binding=b, config=config(b), http=http)
-    s.erase_version(identity(b))
+    assert_error("cleanup_unavailable", s.erase_version, identity(b))
     assert "101" not in http.objects
     assert all("/storage/v1/" not in url for _, url, _ in http.calls)
     assert not s.erase_all_versions(
@@ -518,7 +525,14 @@ def test_write_posture_rejects_unsafe_settings_but_cleanup_survives(
 def test_readiness_valid_and_no_posture_writes(setup):
     s, http, b = setup
     s.verify_readiness()
-    assert len(http.calls) == 2
+    for purpose in ("quarantine", "serving"):
+        path = f"/storage/v1/b/{getattr(b, f'{purpose}_bucket')}"
+        assert any(urlsplit(url).path == path for _, url, _ in http.calls)
+        assert any(
+            urlsplit(url).path == path + "/o"
+            and parse_qs(urlsplit(url).query).get("softDeleted") == ["true"]
+            for _, url, _ in http.calls
+        )
     assert all(method == "GET" for method, _, _ in http.calls)
 
 
@@ -531,7 +545,8 @@ def test_expired_posture_never_refreshes(setup, monkeypatch):
     monkeypatch.setattr(s._posture, "refresh", lambda *a: pytest.fail("minted token"))
     assert_error("storage_unverified", s.verify_readiness)
     assert http.calls == []
-    s.erase_version(identity(b))
+    assert_error("cleanup_unavailable", s.erase_version, identity(b))
+    assert "101" not in http.objects
 
 
 def test_exact_range_inclusive_checked_and_detached(setup):
@@ -616,6 +631,29 @@ def test_short_or_excess_range_body_not_exposed(setup, payload):
         expected_length=6,
     )
     assert all(r.closed for r in http.responses)
+
+
+@pytest.mark.parametrize("failure", ["read", "write"])
+def test_snapshot_io_failure_remains_retryable(setup, failure):
+    s, http, b = setup
+
+    class Output(io.BytesIO):
+        def write(self, data):
+            raise OSError("scratch unavailable")
+
+    if failure == "read":
+
+        def fail_get(_response):
+            raise OSError("transient object GET failure")
+
+        http.mutate_object_response = fail_get
+    assert_error(
+        "storage_unverified",
+        s.snapshot,
+        identity(b),
+        io.BytesIO() if failure == "read" else Output(),
+        expected_length=6,
+    )
 
 
 def test_snapshot_rehash_and_buffer_bound(setup):
@@ -795,11 +833,13 @@ def test_exact_delete_absence_vs_ambiguous(setup, status, code, success):
     s, http, b = setup
     http.delete_status, http.delete_error = status, code
     if success:
+        del http.objects["101"]  # The exact live generation was already removed.
         s.erase_version(identity(b))
+        assert "101" not in http.objects
     else:
         assert_error("cleanup_unavailable", s.erase_version, identity(b))
     assert all(r.closed for r in http.responses)
-    delete = http.calls[-1]
+    (delete,) = [call for call in http.calls if call[0] == "DELETE"]
     assert delete[0] == "DELETE"
     assert "generation=101" in delete[1]
     assert delete[2]["headers"]["x-goog-if-generation-match"] == "101"
@@ -826,7 +866,11 @@ def test_native_generation_pagination_exact_key(setup):
     second = s.list_versions(locator, cursor=first.next_cursor)
     assert [x.version for x in first.versions + second.versions] == ["101", "102"]
     assert second.next_cursor is None and second.delete_markers == ()
-    query = parse_qs(urlsplit(http.calls[-1][1]).query)
+    query = next(
+        parse_qs(urlsplit(url).query)
+        for _, url, _ in http.calls
+        if "generation-marker=" in url
+    )
     assert query["marker"] == [key] and query["generation-marker"] == ["101"]
     assert "version-id-marker" not in query
 
@@ -927,7 +971,7 @@ def test_soft_deleted_json_pagination_filters_neighbors(setup):
         (200, {"kind": "storage#objects"}),
     ]
     assert s.erase_all_versions(ObjectLocator(b.id, "serving", "original/test")).empty
-    assert "pageToken=token%2F%2B%201" in http.calls[-1][1]
+    assert any("pageToken=token%2F%2B%201" in url for _, url, _ in http.calls)
 
 
 def test_bounded_enumeration_never_false_complete(setup, monkeypatch):

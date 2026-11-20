@@ -6,6 +6,7 @@ source keys never become an implicit prerequisite for historical read/erasure.
 
 import os
 import stat
+import tempfile
 
 from django.conf import settings as django_settings
 
@@ -51,6 +52,18 @@ def _scratch(settings, required):
     finally:
         if fd is not None:
             os.close(fd)
+
+    return path
+
+
+def snapshot_file(*, named):
+    # Never fall back to the process-wide temporary volume for attachment bytes.
+    directory = _scratch(django_settings, 0)
+    factory = tempfile.NamedTemporaryFile if named else tempfile.TemporaryFile
+    try:
+        return factory(dir=directory)
+    except OSError:
+        raise AttachmentError("validation_unavailable", 503) from None
 
 
 def require_decoder(requirements: DecoderRequirements) -> None:

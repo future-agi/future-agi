@@ -20,7 +20,12 @@ from django.test import RequestFactory
 from django.utils import timezone
 from PIL import Image
 
-from tracer.models.attachment import Attachment, AttachmentState, AttachmentUpload
+from tracer.models.attachment import (
+    Attachment,
+    AttachmentOutbox,
+    AttachmentState,
+    AttachmentUpload,
+)
 from tracer.services.attachments import (
     occurrences,
     playback,
@@ -572,9 +577,17 @@ def test_type_mismatch_is_rejected_not_relabelled(
         declared.split("/")[0]
     ]
     upload, store = _stored(setup, payload, declared, modality)
-    monkeypatch.setattr(validation, "sandbox_probe", probe)
-    with pytest.raises(AttachmentError):
-        validation.validate(upload.id, scope_id=upload.scope_id, storage=store)
+
+    # The parser runs in process here; translate its rejection as the sandbox does.
+    def parser(path):
+        try:
+            return probe(path)
+        except ValueError:
+            raise AttachmentError("validation_rejected", 422) from None
+
+    monkeypatch.setattr(validation, "sandbox_probe", parser)
+    event = AttachmentOutbox.objects.get(upload=upload, event="validate")
+    assert validation.consume_validation(event.id, storage=store)
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.REJECTED
     assert (
         store.promotions == []

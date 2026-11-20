@@ -28,12 +28,13 @@ from tracer.tests import test_attachment_playback as playback_tests
 from tracer.tests.attachment_fixtures import (
     BINDING_ID,
     erase_terminal_upload,
-    legacy_settlement_event,
+    wait_for_db,
 )
 from tracer.tests.test_attachment_core import ImmutableStore, initialized, wav_bytes
 from tracer.tests.test_attachment_playback import response
 from tracer.tests.test_attachment_storage import private_client, storage
 
+short_upload = core.short_upload
 setup = core.setup
 recording = playback_tests.recording
 
@@ -41,9 +42,10 @@ pytestmark = [pytest.mark.unit]
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_verified_usage_is_settled_once_even_after_delete(recording, monkeypatch):
     r = recording
-    event = legacy_settlement_event(r.upload)
+    r.upload.refresh_from_db()
     original_receipt = (r.upload.usage_id, r.upload.usage_created_at)
     original_blob = (
         r.upload.attachment.verified_blob_id,
@@ -52,11 +54,15 @@ def test_verified_usage_is_settled_once_even_after_delete(recording, monkeypatch
     retention.delete_occurrence(
         r.viewer, r.authority, occurrence_id=r.row.client_id, parent=r.parent
     )
-    first = accounting.consume_settlement(event.id)
+    uploads.settle(r.upload.id, scope_id=r.scope.id, outcome=AttachmentState.DELETED)
+    first = AttachmentUpload.objects.select_related("attachment").get(pk=r.upload.pk)
     assert (
         first.usage_stored_bytes == len(wav_bytes()) and first.usage_outcome == "ready"
     )
-    assert accounting.consume_settlement(event.id).usage_id == first.usage_id
+    assert not uploads.settle(
+        r.upload.id, scope_id=r.scope.id, outcome=AttachmentState.DELETED
+    )
+    assert AttachmentUpload.objects.get(pk=r.upload.pk).usage_id == first.usage_id
     assert AttachmentUpload.objects.filter(usage_id__isnull=False).count() == 1
     assert AttachmentAuditEvent.objects.filter(event="settlement").count() == 1
     assert (first.usage_id, first.usage_created_at) == original_receipt
@@ -73,6 +79,7 @@ def test_verified_usage_is_settled_once_even_after_delete(recording, monkeypatch
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_expired_reservations_release_once_and_store_zero_bytes(setup, monkeypatch):
     upload, _, _, _ = initialized(setup)
     # Expiry identity is write-once. Advance the clock, never rewrite the ledger.
@@ -80,8 +87,9 @@ def test_expired_reservations_release_once_and_store_zero_bytes(setup, monkeypat
     monkeypatch.setattr(timezone, "now", lambda: after)
     assert accounting.expire_reservations() == 1
     assert accounting.expire_reservations() == 0
-    event = legacy_settlement_event(upload)
-    receipt = accounting.consume_settlement(event.id)
+    receipt = AttachmentUpload.objects.get(pk=upload.id)
+    assert receipt.usage_id is not None
+    assert not AttachmentOutbox.objects.filter(upload=upload, event="settled").exists()
     assert receipt.usage_stored_bytes == 0 and receipt.usage_outcome == "expired"
     erase_terminal_upload(upload, ImmutableStore(), monkeypatch)
     assert all(
@@ -90,6 +98,42 @@ def test_expired_reservations_release_once_and_store_zero_bytes(setup, monkeypat
         and row.validation_jobs == 0
         for row in AttachmentBudget.objects.all()
     )
+
+
+@pytest.mark.django_db
+def test_expiry_progresses_past_unreleased_terminal_receipts(setup, monkeypatch):
+    from tracer.services.attachments import uploads
+
+    oldest, token, _, _ = initialized(setup)
+    uploads.abort(token, scope_id=oldest.scope_id, upload_id=oldest.id)
+    newer, _, _, _ = initialized(setup)
+    after = newer.reservation_expires_at + timedelta(seconds=1)
+    monkeypatch.setattr(timezone, "now", lambda: after)
+    assert accounting.expire_reservations(limit=1) == 1
+    oldest.refresh_from_db()
+    newer.refresh_from_db()
+    assert oldest.reservation_settled_at is None and oldest.usage_id is not None
+    assert newer.state == "expired" and newer.usage_outcome == "expired"
+    assert newer.reservation_settled_at is None
+
+
+@pytest.mark.django_db
+def test_expiry_requeues_missing_terminal_cleanup_without_releasing_capacity(
+    setup, monkeypatch
+):
+    upload, token, _, _ = initialized(setup)
+    uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
+    upload.refresh_from_db()
+    original_receipt = upload.usage_id
+    work = AttachmentOutbox.objects.filter(upload=upload, event="erase")
+    assert work.count() == 1
+    work.delete()  # Emulate historical usage with no pending cleanup owner.
+    after = upload.reservation_expires_at + timedelta(seconds=1)
+    monkeypatch.setattr(timezone, "now", lambda: after)
+    accounting.expire_reservations(limit=1)
+    upload.refresh_from_db()
+    assert work.filter(processed_at__isnull=True).count() == 1
+    assert upload.usage_id == original_receipt and upload.reservation_settled_at is None
 
 
 @pytest.mark.django_db
@@ -170,7 +214,29 @@ def test_validation_rechecks_tombstone_retention_and_generation(
     )
     uploads.complete(token, scope_id=scope.id, upload_id=upload.id)
 
+    expiry = timezone.now() + timedelta(seconds=10)
+    changes = []
+    if during == "expiry":
+        retention.bind_retention(
+            scope_id=scope.id,
+            occurrence_id=upload.occurrence_id,
+            source=SourceState(
+                scope.id,
+                Parent(upload.occurrence.trace_id, upload.occurrence.span_id),
+                1,
+                timezone.now() - timedelta(hours=1),
+                expiry,
+                True,
+            ),
+        )
+
     def probing(path):
+        from pathlib import Path
+
+        facts = probe(path)
+        if Path(path).read_bytes() != wav_bytes():
+            return facts  # Known decoder-readiness sample, not the upload.
+        changes.append(during)
         if during == "delete":
             retention.tombstone_parent(
                 scope_id=scope.id,
@@ -178,16 +244,15 @@ def test_validation_rechecks_tombstone_retention_and_generation(
                 source_generation=1,
             )
         elif during == "expiry":
-            AttachmentOccurrence.objects.filter(pk=upload.occurrence_id).update(
-                source_expires_at=timezone.now() - timedelta(seconds=1)
-            )
+            monkeypatch.setattr(timezone, "now", lambda: expiry + timedelta(seconds=1))
         else:
             retention.fence_scope(scope_id=scope.id)
-        return probe(path)
+        return facts
 
     monkeypatch.setattr(validation, "sandbox_probe", probing)
     with pytest.raises(AttachmentError):
         validation.validate(upload.id, scope_id=scope.id, storage=store)
+    assert changes == [during]
     assert (
         store.promotions == []
         and not Attachment.objects.filter(verified_blob_id__isnull=False).exists()
@@ -309,6 +374,7 @@ def test_one_occurrence_delete_preserves_separate_survivor(recording):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_erase_replays_until_transfer_horizon_and_retries_failure(
     recording, monkeypatch
 ):
@@ -316,7 +382,9 @@ def test_erase_replays_until_transfer_horizon_and_retries_failure(
     retention.delete_occurrence(
         r.viewer, r.authority, occurrence_id=r.row.client_id, parent=r.parent
     )
-    event = AttachmentOutbox.objects.get(upload=r.upload, event="erase")
+    event = AttachmentOutbox.objects.get(
+        attachment=r.upload.attachment, upload=None, event="erase"
+    )
     r.upload.refresh_from_db()
     r.upload.attachment.refresh_from_db()
     service = r.write_store
@@ -343,6 +411,7 @@ def test_erase_replays_until_transfer_horizon_and_retries_failure(
         r.upload.attachment.deleted_at + retention.ATTACHMENT_ERASE_HORIZON,
     ) + timedelta(seconds=1)
     monkeypatch.setattr(timezone, "now", lambda: after)
+    wait_for_db(r.upload.cleanup_not_before)
     # Real consumer retires the accepted validation claim before final erasure.
     for pending in AttachmentOutbox.objects.filter(
         upload=r.upload, event="validate", processed_at__isnull=True
@@ -492,63 +561,3 @@ def test_cleanup_only_exact_keys_all_versions_markers_and_parts():
         not result.empty and result.retryable and result.reason == "cleanup_unavailable"
     )
     assert "secret-signed-url-CANARY" not in repr(result)
-
-
-@pytest.mark.django_db(transaction=True)
-def test_historical_first_settlement_after_delete(
-    historical_attachment_first_settlement,
-):
-    """Requires schema-owner migration fixture, never a current-row field reset.
-
-    Fixture contract: create pre-value-migration READY verified Blob + Upload,
-    no UsageReceipt, retain its settlement Outbox; tombstone through the old
-    schema's legal transition, then migrate forward to the selected head.
-    Return upload_id and settlement_event_id. The fixture must use an exclusive
-    disposable migration database and leave all current fences enabled.
-    """
-    history = historical_attachment_first_settlement
-    upload = AttachmentUpload.objects.select_related("attachment").get(
-        pk=history.upload_id
-    )
-    asset = upload.attachment
-    event = AttachmentOutbox.objects.get(pk=history.settlement_event_id)
-    assert upload.usage_id is None and upload.usage_created_at is None
-    assert asset.state == AttachmentState.DELETED and asset.deleted_at is not None
-    assert asset.verified_blob_id is not None and asset.verified_byte_length > 0
-    assert event.event == "settled" and event.processed_at is None
-    assert event.upload_id == upload.id
-    before = (
-        asset.verified_blob_id,
-        asset.verified_blob_created_at,
-        asset.verified_storage_key,
-        asset.verified_storage_version,
-        asset.verified_sha256,
-        asset.verified_byte_length,
-        asset.deleted_at,
-    )
-    first = accounting.consume_settlement(event.id)
-    assert first.usage_id is not None and first.usage_created_at is not None
-    assert first.usage_outcome == "ready"
-    assert first.usage_stored_bytes == before[5]
-    assert accounting.consume_settlement(event.id).usage_id == first.usage_id
-    assert (
-        AttachmentUpload.objects.filter(pk=upload.id, usage_id=first.usage_id).count()
-        == 1
-    )
-    assert (
-        AttachmentAuditEvent.objects.filter(
-            scope_id=upload.scope_id, entity_id=upload.id, event="settlement"
-        ).count()
-        == 1
-    )
-    asset.refresh_from_db()
-    assert (
-        asset.verified_blob_id,
-        asset.verified_blob_created_at,
-        asset.verified_storage_key,
-        asset.verified_storage_version,
-        asset.verified_sha256,
-        asset.verified_byte_length,
-        asset.deleted_at,
-    ) == before
-    assert asset.state == AttachmentState.DELETED

@@ -176,12 +176,34 @@ def expire_reservations(*, limit=100):
 
     if type(limit) is not int or not 1 <= limit <= 100:
         raise AttachmentError("invalid_request")
-    rows = list(
-        AttachmentUpload.objects.filter(
-            reservation_settled_at__isnull=True,
-            reservation_expires_at__lte=timezone.now(),
-        ).order_by("reservation_expires_at", "id")[:limit]
-    )
+    # Serve first-time expiry before any historical cleanup repair. A terminal
+    # owner with pending cleanup must never occupy that first-time batch.
+    due = AttachmentUpload.objects.filter(
+        reservation_settled_at__isnull=True,
+        reservation_expires_at__lte=timezone.now(),
+    ).order_by("reservation_expires_at", "id")
+    rows = list(due.filter(usage_id__isnull=True)[:limit])
+    if len(rows) < limit:
+        from django.db.models import Exists, OuterRef, Q
+
+        pending = AttachmentOutbox.objects.filter(
+            scope_id=OuterRef("scope_id"), processed_at__isnull=True
+        ).filter(
+            Q(upload_id=OuterRef("id"), event__in=["validate", "erase"])
+            | Q(attachment_id=OuterRef("attachment_id"), event="erase")
+        )
+        # Keep the old recovery path for terminal rows that have NO cleanup
+        # worker, e.g. a legacy failed upload with usage but no erase event.
+        # settle never erases a READY original or releases without proof.
+        repair = (
+            due.filter(usage_id__isnull=False)
+            .filter(~Exists(pending))
+            .filter(
+                ~Q(usage_outcome=AttachmentState.READY)
+                | Q(cleanup_checked_at__isnull=False)
+            )
+        )
+        rows.extend(repair[: limit - len(rows)])
     changed = 0
     for upload in rows:
         outcome = upload.usage_outcome or (

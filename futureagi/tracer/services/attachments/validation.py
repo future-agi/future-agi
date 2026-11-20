@@ -510,7 +510,9 @@ def validate(upload_id, *, scope_id, storage=None, _claim_event=None):
     with transaction.atomic():
         _guard(ref, claim)
     identity = None
-    with tempfile.NamedTemporaryFile() as snapshot:
+    from tracer.services.attachments.readiness import snapshot_file
+
+    with snapshot_file(named=True) as snapshot:
         digest, probe = _snapshot(ref, storage, snapshot)
         if ref.serving_version:
             # Only the previously recorded immutable result, never an unrecorded
@@ -639,7 +641,9 @@ def validate_import_snapshot(*, upload_id, scope_id, fence):
         if upload.producer_kind != "import" or upload.allocation_epoch != fence.epoch:
             raise AttachmentError("validation_fenced", 409)
     storage = _storage_for(ref)
-    with tempfile.NamedTemporaryFile() as snapshot:
+    from tracer.services.attachments.readiness import snapshot_file
+
+    with snapshot_file(named=True) as snapshot:
         digest, probe = _snapshot(ref, storage, snapshot)
         if ref.serving_version:
             identity = ObjectIdentity(

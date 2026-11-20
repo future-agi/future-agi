@@ -642,7 +642,7 @@ def test_new_receipt_obeys_verified_facts_and_remains_immutable(live):
         live.update(upload, usage_stored_bytes=0)
 
 
-def test_legacy_receipt_survives_backfill_contraction_and_cleanup(case):
+def migrated_deleted_upload(case, *, has_receipt):
     case.seed()
     asset, _, upload = case.upload(legacy=True)
     now = timezone.now()
@@ -686,14 +686,29 @@ def test_legacy_receipt_survives_backfill_contraction_and_cleanup(case):
         )
         for kind in ("admitted", "settled")
     ]
-    receipt = case.create(
-        "AttachmentUsageReceipt",
-        scope=case.scope,
-        upload=upload,
-        outcome="deleted",
-        stored_bytes=0,
-    )
-    original = (receipt.id, receipt.created_at, receipt.outcome, receipt.stored_bytes)
+    assert upload.usage_id is None and upload.usage_created_at is None
+    assert events[1].processed_at is None
+    original = None
+    if has_receipt:
+        receipt = case.create(
+            "AttachmentUsageReceipt",
+            scope=case.scope,
+            upload=upload,
+            outcome="deleted",
+            stored_bytes=0,
+        )
+        original = (
+            receipt.id,
+            receipt.created_at,
+            receipt.outcome,
+            receipt.stored_bytes,
+        )
+    else:
+        assert (
+            not case.model("AttachmentUsageReceipt")
+            .objects.filter(upload=upload)
+            .exists()
+        )
     proof = {
         "evidence": "synthetic original owner",
         "binding_id": str(case.binding.id),
@@ -714,6 +729,11 @@ def test_legacy_receipt_survives_backfill_contraction_and_cleanup(case):
         }
     )
     case.activate()
+    return original, upload, asset, blob, events
+
+
+def test_legacy_receipt_survives_backfill_contraction_and_cleanup(case):
+    original, upload, _, _, events = migrated_deleted_upload(case, has_receipt=True)
     current = case.model("AttachmentUpload").objects.get(pk=upload.id)
     case.update(current, cleanup_checked_at=timezone.now())
     case.update(current, reservation_settled_at=timezone.now())
@@ -738,6 +758,107 @@ def test_legacy_receipt_survives_backfill_contraction_and_cleanup(case):
     ):
         with denied():
             case.update(current, **change)
+
+
+def test_historical_first_settlement_after_delete(case, monkeypatch):
+    """The forward migration settles missing usage before any current worker can run."""
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    _, upload, asset, blob, events = migrated_deleted_upload(case, has_receipt=False)
+    models = SimpleNamespace(
+        **{
+            name: case.model(name)
+            for name in (
+                "Attachment",
+                "AttachmentAuditEvent",
+                "AttachmentOutbox",
+                "AttachmentUpload",
+            )
+        },
+        AttachmentState=SimpleNamespace(READY="ready"),
+    )
+    current = models.AttachmentUpload.objects.get(pk=upload.id)
+    event = models.AttachmentOutbox.objects.get(pk=events[1].pk)
+    assert (
+        event.upload_id == current.pk
+        and event.event == "settled"
+        and event.processed_at is not None
+    )
+    assert current.usage_id is not None and current.usage_created_at is not None
+    assert (
+        current.usage_outcome == "ready"
+        and current.usage_stored_bytes == blob.byte_length > 0
+    )
+    before = (
+        blob.pk,
+        blob.created_at,
+        blob.storage_key,
+        blob.storage_version,
+        blob.sha256,
+        blob.byte_length,
+        asset.deleted_at,
+    )
+    assert asset.deleted_at is not None
+
+    def retained_asset_facts():
+        result = models.Attachment.objects.get(pk=asset.pk)
+        assert result.state == "deleted"
+        return (
+            result.verified_blob_id,
+            result.verified_blob_created_at,
+            result.verified_storage_key,
+            result.verified_storage_version,
+            result.verified_sha256,
+            result.verified_byte_length,
+            result.deleted_at,
+        )
+
+    assert retained_asset_facts() == before
+    processed_at = event.processed_at
+    # Migration-state models point at the real fenced PostgreSQL tables. Keep the
+    # service's queries, row locks, transactions and replay logic unmodified.
+    with monkeypatch.context() as patch:
+        patch.setitem(sys.modules, "tracer.models.attachment", models)
+        spec = importlib.util.spec_from_file_location(
+            "historical_accounting",
+            Path(__file__).resolve().parents[1] / "services/attachments/accounting.py",
+        )
+        accounting = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(accounting)
+    for _ in range(2):
+        receipt = accounting.consume_settlement(event.pk)
+        assert (
+            receipt.usage_id,
+            receipt.usage_created_at,
+            receipt.usage_outcome,
+            receipt.usage_stored_bytes,
+        ) == (current.usage_id, current.usage_created_at, "ready", blob.byte_length)
+    assert (
+        models.AttachmentUpload.objects.filter(
+            pk=current.pk, usage_id=current.usage_id
+        ).count()
+        == 1
+    )
+    assert (
+        models.AttachmentAuditEvent.objects.filter(
+            scope_id=current.scope_id,
+            entity_id=current.pk,
+            event="settlement",
+            event_id=event.pk,
+        ).count()
+        == 1
+    )
+    assert (
+        models.AttachmentAuditEvent.objects.filter(
+            scope_id=current.scope_id, entity_id=current.pk, event="settlement"
+        ).count()
+        == 1
+    )
+    event.refresh_from_db()
+    assert event.processed_at == processed_at
+    assert retained_asset_facts() == before
 
 
 @pytest.mark.parametrize(

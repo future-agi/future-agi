@@ -2,12 +2,14 @@
 
 import hashlib
 import io
+import os
 import threading
 import uuid
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -61,6 +63,12 @@ def wav_bytes():
 
 class ImmutableStore(MemoryObjectStore):
     """Component storage only; preserves the original fixed version expectations."""
+
+
+@pytest.fixture
+def short_upload(monkeypatch):
+    # Short admission lifetime; write/erase fences and the SQL clock remain real.
+    monkeypatch.setattr(uploads, "UPLOAD_SECONDS", 12)
 
 
 @pytest.fixture
@@ -574,6 +582,7 @@ def test_malformed_transfer_is_discarded_and_replayable(setup, chunks, code):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_abandoned_reservation_is_released_once(setup, monkeypatch):
     upload, token, _, _ = initialized(setup)
     uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
@@ -658,6 +667,39 @@ def test_finite_aggregate_admission(setup, index, field, maximum):
     assert not AttachmentUpload.objects.exists()
 
 
+def test_transfer_and_validation_spool_on_reserved_volume(setup, settings, monkeypatch):
+    upload, token, _, _ = initialized(setup)
+    work = Path(settings.FI_ATTACHMENTS_WORK_DIR)
+    observed = []
+
+    class ObservedStore(ImmutableStore):
+        def put_quarantine(self, permit, stream, length):
+            observed.append(
+                Path(os.readlink(f"/proc/self/fd/{stream.fileno()}")).parent
+            )
+            assert os.fstat(stream.fileno()).st_mode & 0o077 == 0
+            return super().put_quarantine(permit, stream, length)
+
+        def snapshot(self, identity, output, **kwargs):
+            observed.append(Path(output.name).parent)
+            assert os.fstat(output.fileno()).st_mode & 0o077 == 0
+            return super().snapshot(identity, output, **kwargs)
+
+    store = ObservedStore()
+    uploads.transfer(
+        token,
+        scope_id=upload.scope_id,
+        upload_id=upload.id,
+        chunks=[wav_bytes()],
+        storage=store,
+    )
+    uploads.complete(token, scope_id=upload.scope_id, upload_id=upload.id)
+    monkeypatch.setattr(validation, "sandbox_probe", probe)
+    validation.validate(upload.id, scope_id=upload.scope_id, storage=store)
+    assert observed == [work, work]
+    assert not list(work.iterdir())
+
+
 def test_validated_bytes_are_immutable_snapshot_and_unbound(setup, monkeypatch):
     upload, token, _, _ = initialized(setup)
     storage = ImmutableStore()
@@ -672,11 +714,13 @@ def test_validated_bytes_are_immutable_snapshot_and_unbound(setup, monkeypatch):
 
     def probing(path):
         # Simulate mutable-latest overwrite after snapshot: never promoted.
-        storage.objects[f"quarantine/{upload.id}"] = b"attacker"
+        if Path(path).read_bytes() == wav_bytes():
+            storage.objects[f"quarantine/{upload.id}"] = b"replacement"
         return probe(path)
 
     monkeypatch.setattr(validation, "sandbox_probe", probing)
     blob = validation.validate(upload.id, scope_id=upload.scope_id, storage=storage)
+    assert storage.objects[f"quarantine/{upload.id}"] == b"replacement"
     assert storage.promotions == [wav_bytes()]
     assert blob.object.identity.version == "immutable-v1"
     assert blob.object.sha256 == hashlib.sha256(wav_bytes()).hexdigest()
@@ -896,21 +940,21 @@ def test_reservation_sweep_uses_the_unsettled_partial_index(setup):
     assert "att_upload_reservation_due" in plan
 
 
-def _upload_ids(monkeypatch, *shards, rejected=()):
+def _upload_ids(monkeypatch, *shards):
     """Make initialize allocate upload ids that land on the given shards."""
     ids = iter(
         value
         for index, shard in enumerate(shards)
         for value in (
-            (uuid.UUID(int=(index + 1) * 16 + shard),)
-            if index in rejected
-            else (uuid.UUID(int=(index + 1) * 16 + shard), uuid.uuid4())
+            uuid.UUID(int=(index + 1) * 16 + shard),
+            uuid.uuid4(),
         )
     )
     monkeypatch.setattr(uploads, "uuid4", lambda: next(ids))
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_admission_and_settle_use_the_same_global_shard(setup, monkeypatch):
     """An upload is charged to one ``global:<shard>`` row named by its id, and
     settling it releases that same row. No single 'global' row exists."""
@@ -936,7 +980,7 @@ def test_a_full_global_shard_refuses_only_its_own_uploads(setup, monkeypatch):
     AttachmentBudget.objects.create(
         key="global:3", window_started_at=timezone.now(), active_transfers=cap
     )
-    _upload_ids(monkeypatch, 3, 4, rejected=(0,))
+    _upload_ids(monkeypatch, 3, 4)
     with pytest.raises(AttachmentError, match="throttled"):
         initialized(setup)
     upload, _, _, _ = initialized(setup)
@@ -970,26 +1014,23 @@ def test_project_cap_stays_exact_across_global_shards(setup, monkeypatch):
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_deletion_releases_the_shard_its_upload_was_charged_to(setup, monkeypatch):
-    """Deletion batches lock every shard first (they may settle any of them),
-    and the tombstone releases the upload's own shard."""
+    """A tombstone retains its charge until erasure; only its own shard changes."""
     _upload_ids(monkeypatch, 11)
     upload, _, _, _ = initialized(setup)
     scope, _ = setup
     occurrence = upload.occurrence
     parent = SimpleNamespace(trace_id=occurrence.trace_id, span_id=occurrence.span_id)
     retention.tombstone_parent(scope_id=scope.id, parent=parent, source_generation=0)
+    assert AttachmentBudget.objects.get(key="global:11").active_transfers == 1
     erase_terminal_upload(upload, ImmutableStore(), monkeypatch)
     rows = dict(
         AttachmentBudget.objects.filter(key__startswith="global:").values_list(
             "key", "active_transfers"
         )
     )
-    assert rows == {
-        **{f"global:{shard}": 0 for shard in range(16)},
-        "global:imports": 0,
-        "global:derivatives": 0,
-    }
+    assert rows == {"global:11": 0}
     assert AttachmentUpload.objects.get(pk=upload.pk).reservation_settled_at is not None
 
 
