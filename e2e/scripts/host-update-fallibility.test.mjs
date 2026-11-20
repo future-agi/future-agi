@@ -549,9 +549,9 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   const steps = workflow.jobs.e2e.steps;
   const normal = steps.findIndex(step => step.name === 'Run E2E suite');
   const proof = steps[normal + 1];
-  assert.equal(steps[normal].run, 'bin/e2e test');
+  assert.equal(steps[normal].run, 'e2e/stack/run-skill-cohort.sh "$SKILLS_COHORT"');
   assert.equal(proof.id, 'host-update-fallibility');
-  assert.equal(proof.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'");
+  assert.equal(proof.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed' && !matrix.cohort");
   assert.equal(proof.timeoutMinutes, undefined);
   assert.equal(proof['timeout-minutes'], 22);
   assert.ok(proof['timeout-minutes'] * 60_000 > BUDGET.overallMs + BUDGET.termGraceMs + BUDGET.killGraceMs);
@@ -588,8 +588,8 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   for (const step of builds) {
     assert.equal(step.with.push, undefined);
     assert.equal(step.with.load, true);
-    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway|code-executor),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
+    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && !matrix\.cohort && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway|code-executor),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
   }
   assert.equal(steps.find(step => step.name === 'Save Playwright browser cache').if,
-    "github.event_name == 'push' && steps.pw-cache.outputs.cache-hit != 'true'");
+    "github.event_name == 'push' && !matrix.cohort && steps.pw-cache.outputs.cache-hit != 'true'");
 });

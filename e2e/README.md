@@ -855,7 +855,7 @@ judge model to compose its own JSON — which is why `EVAL-E2E-001` authors its 
 
 Ordinary standalone E2E and F10 use the managed-mock topology. It retains the
 internal executor link required by the existing canary tests; the app has no
-interface on the Skills native network. Native drivers and F6 require the
+interface on the Skills native network. Native drivers (not F6) require the
 explicit `native` topology and prepared native runtime inputs (including the
 retained-CI fixture); do not treat a managed-mock run as native evidence. On the
 isolated test VM, with `E2E_STACK=standalone` and `DOCKER_CONTEXT=default`:
@@ -882,3 +882,38 @@ and versions. Set `CTXHUB_APP_COMMIT`, `SDK_COMMIT`, `TRACEAI_COMMIT`, and
 `e2e/stack/prepare-skill-traces.sh packages <dist>` on the isolated standalone
 stack; `interpreters <dist> <new-dir>` prepares traced and plain Python installs.
 A self-computed checksum of unknown packages is not a release receipt.
+
+
+### Skills in required CI
+
+`skill-packages` builds the two wheels and three npm archives from full public
+`SKILL_PAIR_SDK_COMMIT` and `SKILL_PAIR_TRACEAI_COMMIT` revisions. Set them in
+`stack/skill-pair.lock.json` or as non-secret workflow configuration variables.
+The SDK's `sdkgen/contracts/SOURCE.json` must name **the actual tested checkout**
+(`github.sha`, including PR/queue merge commits). To pair a freshly generated
+merge SHA, publish the SDK pin **after** that SHA exists and set the variables
+without changing the checkout. Missing or stale pins fail the required check;
+`sdk-ref` controls a different, later live suite. The build job passes the
+`pair.json` digest as a workflow output, separate from the run-scoped artifact.
+
+Only the E2E frontend is built with `VITE_SKILL_TRACES=on`. Host cases receive
+`SKILL_TRACES_PYTHON` (SDK with telemetry) and `SKILL_TRACES_NO_OTEL_PYTHON`
+(plain SDK, OpenTelemetry explicitly absent). Inventory and rollout clients use
+`CTXHUB_J5_PYTHON`; `E2E_SKILLS_CAMPAIGNS_ENABLED` is false for inventory and
+true **before boot** on each campaign runner. The J6 application and guest
+consume the same two wheel bytes via `J6_WHEELS`; `J6_APP_PYTHON` points to a
+fresh host install. The venv is never transported to another runner.
+
+F6 runs with `E2E_STACK=standalone E2E_STANDALONE_NETWORK=typescript` for both
+stack boot and Playwright. Prepare with `prepare-skill-traces.sh typescript <dist>`;
+only the client image is built and joined to the app on the internal network.
+No native verification service or callback is configured. Run incompatible
+standalone topologies on different workers or take the first stack down first.
+
+`e2e/scripts/skills-coverage.json` owns each numbered Skills case, the two
+Observe cases and three named harnesses. `run-skill-cohort.sh <cohort>` uses
+Playwright discovery with the normal quarantine/live policy, checks real JSON
+results for one pass (not a skip, expected failure or retry) and emits only
+IDs and the tested SHA. The ordinary suite runs the complement. The required
+aggregate rejects a missing cohort; raw Skills reports, attachments and
+private fixture inputs must stay on their original worker.
