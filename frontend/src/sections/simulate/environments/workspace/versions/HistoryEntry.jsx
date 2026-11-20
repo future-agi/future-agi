@@ -18,6 +18,7 @@ import { VERSIONS_COPY } from "../workspace.constants";
 import { PreflightBadge } from "../agents/PreflightStatus";
 import { named } from "../agents/agentVersionStatus";
 import MakeDefaultConfirm from "./MakeDefaultConfirm";
+import { VersionBadge } from "./VersionBadge";
 import VersionDetail from "./VersionDetail";
 import { historyEntryId } from "./historyTimeline";
 import { refusalText } from "../evals/refusalText";
@@ -134,17 +135,11 @@ export default function HistoryEntry({
                 {title}
               </Typography>
               {badges.map((badge) => (
-                <Typography
+                <VersionBadge
                   key={badge}
-                  sx={{
-                    typography: "s3",
-                    color: IN_USE.has(badge)
-                      ? "status.discovery.fg"
-                      : "text.subtitle",
-                  }}
-                >
-                  {`· ${history.badges[badge]}`}
-                </Typography>
+                  label={history.badges[badge]}
+                  role={IN_USE.has(badge) ? "discovery" : undefined}
+                />
               ))}
               {piece === "agent" && (
                 <PreflightBadge status={version.preflightStatus} />

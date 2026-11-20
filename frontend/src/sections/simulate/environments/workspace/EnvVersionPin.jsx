@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Stack, Typography, Popover } from "@mui/material";
+import {
+  Box,
+  Button,
+  ButtonBase,
+  Stack,
+  Typography,
+  Popover,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fDateTime } from "src/utils/format-time";
 import {
@@ -19,7 +26,7 @@ import { VersionBadge } from "./versions/VersionBadge";
 // can be made the default. Shown once the server has answered (a failed refresh
 // keeps the last answer); hidden when versioning is off, has just been switched
 // off, or the environment has no versions.
-export default function EnvVersionPin({ env }) {
+export default function EnvVersionPin({ env, onHistory }) {
   const [anchor, setAnchor] = useState(null);
   // The version waiting on the user's confirmation.
   const [confirming, setConfirming] = useState(null);
@@ -227,6 +234,38 @@ export default function EnvVersionPin({ env }) {
             </Box>
           ))}
         </Stack>
+        {onHistory && (
+          <Box
+            sx={{
+              px: 1.25,
+              pt: 1,
+              pb: 0.25,
+              mt: 0.75,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <ButtonBase
+              onClick={() => {
+                close();
+                onHistory();
+              }}
+              sx={{
+                typography: "s3",
+                fontWeight: 500,
+                color: "primary.main",
+                borderRadius: "4px",
+                "&.Mui-focusVisible": {
+                  outline: "2px solid",
+                  outlineColor: "primary.main",
+                  outlineOffset: 2,
+                },
+              }}
+            >
+              {pin.fullHistory}
+            </ButtonBase>
+          </Box>
+        )}
       </Popover>
       <MakeDefaultConfirm
         piece="environment"
@@ -247,6 +286,8 @@ EnvVersionPin.propTypes = {
     id: PropTypes.string,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }).isRequired,
+  // Opens the History tab; no link without it.
+  onHistory: PropTypes.func,
 };
 
 // Small tag. Neutral by default (11/500 secondary on action.selected); a status

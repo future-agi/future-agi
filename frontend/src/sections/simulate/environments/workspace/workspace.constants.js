@@ -131,6 +131,7 @@ export const WORKSPACE_COPY = {
       "Runs use the default version. You can roll back to an earlier one.",
     default: "default",
     rollBack: (label) => `Roll back to ${label}`,
+    fullHistory: "See full history",
   },
   // Banner shown while the derivation is still in flight — the panels below are
   // loading and this explains why.

@@ -270,6 +270,21 @@ describe("EnvVersionPin", () => {
   const confirmButton = () =>
     screen.getByRole("button", { name: /^(Roll back|Rolling back…)$/ });
 
+  it("opens the full history from the list", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    const onHistory = vi.fn();
+    render(<EnvVersionPin env={VERSIONED_ENV} onHistory={onHistory} />);
+    await user.click(screen.getByRole("button", { name: /env v2/i }));
+    await user.click(screen.getByRole("button", { name: "See full history" }));
+    expect(onHistory).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Environment versions" }),
+      ).toBeNull(),
+    );
+  });
+
   it("offers a move only on active versions that aren't the default", async () => {
     const user = userEvent.setup();
     versionsResponse.current = {

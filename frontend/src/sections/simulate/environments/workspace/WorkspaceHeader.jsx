@@ -18,6 +18,7 @@ import {
 import CancelBuildControl from "../buildEnvironment/building/CancelBuildControl";
 import LivePill from "./LivePill";
 import EnvVersionPin from "./EnvVersionPin";
+import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import ForkMenu from "./ForkMenu";
@@ -41,6 +42,7 @@ export default function WorkspaceHeader({
   selectionActive = false,
   scenarioCount: serverScenarioCount,
 }) {
+  const { setTab } = useWorkspaceTab();
   const navigate = useNavigate();
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -123,7 +125,7 @@ export default function WorkspaceHeader({
             </CustomTooltip>
           )}
           {/* The default environment version; hidden while versioning is off. */}
-          <EnvVersionPin env={env} />
+          <EnvVersionPin env={env} onHistory={() => setTab("versions")} />
         </Stack>
         <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
           {env.tagline}
