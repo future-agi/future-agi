@@ -141997,6 +141997,11 @@
                     "title": "Meters agent cost",
                     "type": "boolean",
                     "default": false
+                },
+                "measured_automatically": {
+                    "title": "Measured automatically",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
