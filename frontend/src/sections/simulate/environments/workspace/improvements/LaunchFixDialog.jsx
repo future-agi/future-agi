@@ -196,8 +196,8 @@ export default function LaunchFixDialog({
     setBudget(options.defaults.budget_credits);
     setMinutes(options.defaults.max_minutes);
     setModels(seenModelsOf(options));
-    setLatencyMargin(options.defaults.reply_latency_margin_pct);
-    setCostMargin(options.defaults.cost_margin_pct);
+    setLatencyMargin(options.defaults.reply_latency_margin_pct ?? 0);
+    setCostMargin(options.defaults.cost_margin_pct ?? 0);
     setCostLimit("");
   }, [options, open, initialTargets]);
 

@@ -155,6 +155,10 @@ export function launchError({
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
   if (targets.length < limits.scenarios_min) {
+    // Older launch options leave out how variations fill the gap: say only the minimum.
+    if (limits.variations_per_case == null || limits.cases_min == null) {
+      return `Needs at least ${limits.scenarios_min} failing cases.`;
+    }
     return `Needs at least ${limits.scenarios_min} failing cases: with ${limits.variations_per_case} variations of each, they can reach the ${limits.cases_min} an epoch needs.`;
   }
   if (targets.length > limits.scenarios_max) {

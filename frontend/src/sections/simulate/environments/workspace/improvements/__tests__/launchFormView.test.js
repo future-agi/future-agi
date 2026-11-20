@@ -236,4 +236,17 @@ describe("constraints", () => {
       "m1",
     ]);
   });
+
+  it("says only the minimum when the options leave out how variations fill the gap", () => {
+    const older = { scenarios_min: 12, scenarios_max: 200 };
+    const input = {
+      targets: ["a"],
+      protectedKeys: [],
+      surfaces: ["prompt"],
+      limits: older,
+    };
+    expect(launchError(input)).toBe("Needs at least 12 failing cases.");
+    expect(variationsNote(1, older)).toBeNull();
+    expect(countsLine(1, 9, older)).toBe("1 failing to fix · 9 protected");
+  });
 });
