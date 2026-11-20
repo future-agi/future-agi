@@ -535,6 +535,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def actors(self, request, pk=None):
         """The environment's cast as the next run would use it: the draft's when there is one."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -562,6 +563,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def actor_detail(self, request, pk=None, actor_id=None):
         """What one actor sees and may do, optionally in one scenario, and what it never sees."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -611,6 +613,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """What a create, replace or removal of one actor would say, writing nothing: its problems, the actions it
         would share that `share_actions` does not confirm, the id a create gets, and how far it is over the bound."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -648,6 +651,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def actor_limits(self, request, pk=None):
         """Set the environment's actor limits in its draft (each a number, or null for no limit) and its actors' model."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -672,6 +676,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def accept_unresolved(self, request, pk=None):
         """Accept the cast as written for one policy point the builder could not model."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -700,6 +705,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
         it, for picking per actor."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -718,6 +724,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
 
     def _actor_edit(self, request, pk, *, op, actor_id=None):
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
