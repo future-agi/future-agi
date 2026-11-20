@@ -2242,16 +2242,6 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
-        "finish_unpublished_replan": filed(
-            ROW_DRIVEN,
-            why=(
-                "headless expiry or subject erasure verifies the scrub of all metric "
-                "stores, including current-list span copies, by writer org, leased "
-                "project and generation ceiling. It does not query source spans or "
-                "admit the project for calculation"
-            ),
-            row="tracer.MetricProjectRefresh",
-        ),
         "_verified_delete": filed(
             ROW_DRIVEN,
             why=(
@@ -2260,15 +2250,6 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "project and generation predicate. Scheduled expiry, unpublished "
                 "replans and erasure scrubs call it; it never reads source spans "
                 "or admits the project for calculation"
-            ),
-            row="tracer.MetricProjectRefresh",
-        ),
-        "finish_pending_expiry": filed(
-            ROW_DRIVEN,
-            why=(
-                "verifies scrubs for durable erasure obligations under the refresh "
-                "row's project lease; current-list payloads are included. This "
-                "cleanup protocol is not authorization to admit hidden work"
             ),
             row="tracer.MetricProjectRefresh",
         ),
