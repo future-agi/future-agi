@@ -420,6 +420,15 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
          FROM tracer_metricprojectrefresh WHERE project_id = $1`, [projectId]).catch((error: Error) => error.message);
       await testInfo.attach('metric-refresh-state', { contentType: 'application/json', body: JSON.stringify(refresh) });
     }
+    // metric_refresh_failed carries no cause. Record whether the stack provisioned
+    // the Metrics ClickHouse schema (028-038), the first suspect for a refresh
+    // that never publishes.
+    const schema = await probe.ch<{ name: string }>(
+      `SELECT name FROM system.tables WHERE database = currentDatabase()
+       AND (startsWith(name, 'derived_metric') OR startsWith(name, 'metric_') OR startsWith(name, 'list_current_'))
+       ORDER BY name`)
+      .then(rows => rows.map(row => row.name)).catch((error: Error) => error.message);
+    await testInfo.attach('metric-schema-tables', { contentType: 'application/json', body: JSON.stringify(schema) });
     await req.dispose();
   }
 });
