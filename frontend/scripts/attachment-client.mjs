@@ -20,6 +20,9 @@ export function attachmentTransport(source) {
       "streamAttachmentContentBody",
     ],
   ]);
+  update("getAttachmentMedia", [
+    [/method:\s*["']GET["']/, 'method: "GET",\n      responseType: "blob"'],
+  ]);
   update("bootstrapAttachmentSession", [
     [
       /options\?: RequestInit/,

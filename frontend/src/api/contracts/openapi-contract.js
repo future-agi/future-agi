@@ -523,6 +523,29 @@ export function validateContractedRequestConfig(config) {
   return { ok: true, endpoint };
 }
 
+// The authenticated media gateway does not use the management JSON envelope.
+// Axios returns an empty Blob even for a bodyless response in blob mode.
+function mediaResponseSchema(status) {
+  if (status === 200 || status === 206) {
+    return z.custom(
+      (data) => typeof Blob !== "undefined" && data instanceof Blob,
+      { message: "Expected media bytes" },
+    );
+  }
+  if ([304, 404, 416, 429].includes(status)) {
+    return z.custom(
+      (data) =>
+        data == null ||
+        data === "" ||
+        (typeof Blob !== "undefined" &&
+          data instanceof Blob &&
+          data.size === 0),
+      { message: "Expected an empty media response" },
+    );
+  }
+  return null;
+}
+
 function responseSchemaFor(endpoint, status) {
   const responses = endpoint.contract.responses || {};
   const numericStatus = Number(status);
@@ -556,9 +579,12 @@ export function validateContractedResponse(response) {
   if (!endpoint) return { ok: true, skipped: true };
 
   const schema = responseSchemaFor(endpoint, response?.status);
-  if (!schema) return { ok: true, skipped: true, endpoint };
-
-  const zodSchema = schemaToZod(schema);
+  const mediaSchema =
+    endpoint.contract.operationId === "getAttachmentMedia"
+      ? mediaResponseSchema(Number(response.status))
+      : null;
+  if (!schema && !mediaSchema) return { ok: true, skipped: true, endpoint };
+  const zodSchema = mediaSchema || schemaToZod(schema);
   const parsed = zodSchema.safeParse(response.data);
   if (parsed.success) return { ok: true, endpoint };
 

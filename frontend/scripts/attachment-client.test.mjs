@@ -59,3 +59,9 @@ test("bootstrap forwards the caller's replay key and existing headers", async ()
   }
   await assert.rejects(() => bootstrap(body), /Idempotency-Key/);
 });
+
+test("media GET explicitly requests a binary Axios response", async () => {
+  const media = await helper("getAttachmentMedia", "getGetAttachmentMediaUrl");
+  const request = await media("session", "occurrence", "grant");
+  assert.equal(request.responseType, "blob");
+});

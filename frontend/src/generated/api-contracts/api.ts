@@ -91473,6 +91473,7 @@ export const getAttachmentMedia = async (
     {
       ...options,
       method: "GET",
+      responseType: "blob",
     },
   );
 };
