@@ -720,14 +720,13 @@ def _join_renames(
         was, now = before[old["id"]].value, after[change["id"]].value
         fields = _fields(_renamed(was), _renamed(now))
         shown = _shown_fields(fields)
-        change.update(
-            action="changed",
-            fields=["name", *fields],
-            patch=[],
-            base_digest=old["base_digest"],
-            renamed_from=old["key"],
-            summary=f"Rename scenario {old['key']} → {change['key']}"
-            + (f"; change {', '.join(shown)}" if shown else ""),
+        change["action"] = "changed"
+        change["fields"] = ["name", *fields]
+        change["patch"] = []
+        change["base_digest"] = old["base_digest"]
+        change["renamed_from"] = old["key"]
+        change["summary"] = f"Rename scenario {old['key']} → {change['key']}" + (
+            f"; change {', '.join(shown)}" if shown else ""
         )
         joined.add(old["id"])
     return [one for one in changes if one["id"] not in joined]
