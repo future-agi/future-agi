@@ -40,6 +40,9 @@
 # alias. `update-manifest` moves no tag, so it runs for any release, from that
 # release's tag. `bump` runs on its own, once everything it pins is
 # published; without `components` a dispatch is that deployment bump retry.
+# The explicit `bootstrap` dispatch input may be combined only with
+# `components=update-manifest` to publish the first uncertified/manual signed
+# manifest; ordinary tag pushes and dispatches never opt into it.
 # One dispatch per version at a time: a second one waiting in the same
 # concurrency group replaces the first that is still waiting.
 #
@@ -69,6 +72,11 @@ on:
         required: false
         default: bump
         type: string
+      bootstrap:
+        description: Publish the first uncertified/manual signed manifest; requires components=update-manifest
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -83,6 +91,7 @@ jobs:
     env:
       REQUESTED_VERSION: ${{ inputs.version }}
       REQUESTED_COMPONENTS: ${{ inputs.components }}
+      REQUESTED_BOOTSTRAP: ${{ inputs.bootstrap }}
       GH_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -134,6 +143,16 @@ jobs:
             done
             selected="${selected# }"
             [ -n "$selected" ] || { echo "::error::no component selected"; exit 1; }
+            if [ "${REQUESTED_BOOTSTRAP:-false}" = true ]; then
+              [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || {
+                echo '::error::bootstrap is dispatch-only'
+                exit 1
+              }
+              [ "$selected" = update-manifest ] || {
+                echo '::error::bootstrap requires components=update-manifest'
+                exit 1
+              }
+            fi
             case " $selected " in
               *" bump "*)
                 if [ "$selected" != "bump" ]; then
@@ -222,6 +241,7 @@ jobs:
     env:
       REQUESTED_VERSION: ${{ inputs.version }}
       REQUESTED_COMPONENTS: ${{ inputs.components }}
+      REQUESTED_BOOTSTRAP: ${{ inputs.bootstrap }}
       GH_TOKEN: ${{ github.token }}
     steps:
       # The guard again: a review can wait for days, and a newer release or
@@ -270,6 +290,16 @@ jobs:
             done
             selected="${selected# }"
             [ -n "$selected" ] || { echo "::error::no component selected"; exit 1; }
+            if [ "${REQUESTED_BOOTSTRAP:-false}" = true ]; then
+              [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || {
+                echo '::error::bootstrap is dispatch-only'
+                exit 1
+              }
+              [ "$selected" = update-manifest ] || {
+                echo '::error::bootstrap requires components=update-manifest'
+                exit 1
+              }
+            fi
             case " $selected " in
               *" bump "*)
                 if [ "$selected" != "bump" ]; then
@@ -1027,6 +1057,7 @@ jobs:
     uses: ./.github/workflows/release-update-manifest.yml
     with:
       version: ${{ needs.guard.outputs.version }}
+      bootstrap: ${{ inputs.bootstrap || false }}
 
   # Every image of this release next to its budget, in one table for the
   # release notes. Each image was already checked before its tags moved; this

@@ -461,23 +461,147 @@ def runs_containing(text: str):
 _EXPRESSION_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}")
 
 
-def expand(value: str, context: Dict[str, str]) -> str:
+def expand(value: str, context: Dict[str, Any]) -> str:
     """Replace ${{ expr }} with context values; an expression without one fails."""
 
     def substitute(match: "re.Match[str]") -> str:
         if match.group(1) not in context:
             raise KeyError(f"no test value for ${{{{ {match.group(1)} }}}} in {value!r}")
-        return context[match.group(1)]
+        resolved = context[match.group(1)]
+        return ("true" if resolved else "false") if isinstance(resolved, bool) else str(resolved)
 
     return _EXPRESSION_RE.sub(substitute, value)
 
 
+_EXPRESSION_TOKEN_RE = re.compile(
+    r"\s*(?:(\|\||&&|!=|==|!|\(|\))|('(?:[^']|'')*')|([A-Za-z_][A-Za-z0-9_.]*))"
+)
+
+
+class ExpressionEvaluationError(ValueError):
+    """The static harness cannot safely evaluate a workflow expression."""
+
+
+class _WorkflowExpressionParser:
+    """Evaluate the small GitHub expression subset used by this workflow.
+
+    This deliberately parses the expression taken from the workflow rather than
+    encoding BOOTSTRAP_MODE's intended condition in the harness. Unsupported
+    syntax fails the static test instead of silently taking another path.
+    """
+
+    def __init__(self, expression: str, context: Dict[str, Any]) -> None:
+        expression = expression.strip()
+        match = _EXPRESSION_RE.fullmatch(expression)
+        if not match:
+            raise ExpressionEvaluationError(f"not a workflow expression: {expression!r}")
+        body = match.group(1)
+        self.context = context
+        self.tokens: List[Tuple[str, Any]] = []
+        position = 0
+        while position < len(body):
+            token = _EXPRESSION_TOKEN_RE.match(body, position)
+            if token is None:
+                raise ExpressionEvaluationError(f"unsupported expression syntax near {body[position:]!r}")
+            operator, quoted, identifier = token.groups()
+            if operator:
+                self.tokens.append((operator, operator))
+            elif quoted:
+                self.tokens.append(("value", quoted[1:-1].replace("''", "'")))
+            elif identifier in ("true", "false"):
+                self.tokens.append(("value", identifier == "true"))
+            else:
+                self.tokens.append(("identifier", identifier))
+            position = token.end()
+        self.tokens.append(("eof", None))
+        self.position = 0
+
+    def current(self) -> Tuple[str, Any]:
+        return self.tokens[self.position]
+
+    def take(self, kind: str) -> Any:
+        actual, value = self.current()
+        if actual != kind:
+            raise ExpressionEvaluationError(f"expected {kind!r}, got {actual!r}")
+        self.position += 1
+        return value
+
+    def evaluate(self) -> Any:
+        result = self.parse_or()
+        if self.current()[0] != "eof":
+            raise ExpressionEvaluationError(f"unexpected token {self.current()[1]!r}")
+        return result
+
+    def parse_or(self) -> Any:
+        result = self.parse_and()
+        while self.current()[0] == "||":
+            self.take("||")
+            right = self.parse_and()
+            result = result if bool(result) else right
+        return result
+
+    def parse_and(self) -> Any:
+        result = self.parse_equality()
+        while self.current()[0] == "&&":
+            self.take("&&")
+            right = self.parse_equality()
+            result = right if bool(result) else result
+        return result
+
+    def parse_equality(self) -> Any:
+        result = self.parse_not()
+        while self.current()[0] in ("==", "!="):
+            operator = self.current()[0]
+            self.take(operator)
+            right = self.parse_not()
+            result = result == right if operator == "==" else result != right
+        return result
+
+    def parse_not(self) -> Any:
+        if self.current()[0] == "!":
+            self.take("!")
+            return not bool(self.parse_not())
+        return self.parse_primary()
+
+    def parse_primary(self) -> Any:
+        kind, value = self.current()
+        if kind == "(":
+            self.take("(")
+            result = self.parse_or()
+            self.take(")")
+            return result
+        if kind == "value":
+            self.take("value")
+            return value
+        if kind == "identifier":
+            self.take("identifier")
+            if value not in self.context:
+                raise ExpressionEvaluationError(f"no test value for {value!r}")
+            return self.context[value]
+        raise ExpressionEvaluationError(f"expected a value, got {kind!r}")
+
+
+def evaluate_workflow_expression(expression: str, context: Dict[str, Any]) -> Any:
+    return _WorkflowExpressionParser(expression, context).evaluate()
+
+
 def step_env(document: Dict[str, Any], job: Dict[str, Any], step: Dict[str, Any],
-             context: Dict[str, str]) -> Dict[str, str]:
+             context: Dict[str, Any]) -> Dict[str, str]:
     env: Dict[str, str] = {}
     for layer in (document.get("env") or {}, job.get("env") or {}, step.get("env") or {}):
         for key, value in layer.items():
-            env[key] = expand(str(value), context)
+            if key == "BOOTSTRAP_MODE":
+                # Evaluate the workflow's actual expression. The harness must
+                # not duplicate its trigger/input condition, or tests can pass
+                # while GitHub evaluates a different expression.
+                expression = str(value)
+                mode = evaluate_workflow_expression(expression, {
+                    "github.event_name": context.get("github.event_name", "workflow_call"),
+                    "inputs.bootstrap": context.get("inputs.bootstrap", False),
+                })
+                env[key] = "true" if bool(mode) else "false"
+            else:
+                env[key] = expand(str(value), context)
     return env
 
 
@@ -783,13 +907,23 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
             with self.subTest(trigger=trigger):
                 self.assertIsNone(re.search(rf"^\s*{trigger}:", block, re.M))
 
-    def test_both_triggers_require_a_string_version_and_take_nothing_else(self):
-        for trigger in ("workflow_call", "workflow_dispatch"):
-            with self.subTest(trigger=trigger):
-                inputs = self.doc["on"][trigger]["inputs"]
-                self.assertEqual(sorted(inputs), ["version"])
-                self.assertEqual(inputs["version"]["required"], "true")
-                self.assertEqual(inputs["version"]["type"], "string")
+    def test_call_requires_only_a_string_version_and_dispatch_has_explicit_bootstrap(self):
+        call_inputs = self.doc["on"]["workflow_call"]["inputs"]
+        self.assertEqual(sorted(call_inputs), ["bootstrap", "version"])
+        self.assertEqual(call_inputs["version"]["required"], "true")
+        self.assertEqual(call_inputs["version"]["type"], "string")
+        self.assertEqual(call_inputs["bootstrap"], {
+            "description": "Explicitly publish the first uncertified/manual signed manifest without compatibility proof",
+            "required": "false", "default": "false", "type": "boolean",
+        })
+        dispatch_inputs = self.doc["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual(sorted(dispatch_inputs), ["bootstrap", "version"])
+        self.assertEqual(dispatch_inputs["version"]["required"], "true")
+        self.assertEqual(dispatch_inputs["version"]["type"], "string")
+        self.assertEqual(dispatch_inputs["bootstrap"], {
+            "description": "Explicitly publish the first uncertified/manual signed manifest without compatibility proof",
+            "required": "false", "default": "false", "type": "boolean",
+        })
         self.assertNotIn("secrets", self.doc["on"]["workflow_call"])
 
     def test_no_secret_is_used(self):
@@ -820,10 +954,101 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
             self.assertIsNone(regex.search(value), value)
 
     def test_the_publish_job_cannot_run_without_the_generate_job(self):
-        self.assertEqual(needs_of(self.publish), ["generate", "rehearse"])
+        self.assertEqual(needs_of(self.publish), ["generate", "rehearse", "bootstrap_approval"])
         self.assertEqual(needs_of(self.jobs["rehearse"]), ["generate"])
+        self.assertEqual(needs_of(self.jobs["bootstrap_approval"]), ["generate"])
         self.assertEqual(self.jobs["rehearse"]["uses"], "./.github/workflows/update-compatibility-proof.yml")
         self.assertEqual(needs_of(self.generate), [])
+
+    def test_bootstrap_mode_is_the_input_and_normal_runs_still_require_rehearsal(self):
+        # Inside a called workflow github.event_name is the caller's event, never
+        # workflow_call, so no condition may branch on workflow_call.
+        self.assertNotIn("'workflow_call'", UPDATE_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertEqual(self.doc["env"]["BOOTSTRAP_MODE"], "${{ inputs.bootstrap == true }}")
+        rehearse_if = self.jobs["rehearse"]["if"]
+        publish_if = self.publish["if"]
+        self.assertIn("inputs.bootstrap != true", rehearse_if)
+        self.assertIn("inputs.bootstrap != true && needs.rehearse.result == 'success'", publish_if)
+        self.assertIn("needs.bootstrap_approval.result == 'success'", publish_if)
+        self.assertIn("github.workflow != 'release-update-manifest'", publish_if)
+        self.assertIn("needs.generate.result == 'success'", publish_if)
+        self.assertIn("always()", publish_if)
+
+    def test_bootstrap_mode_harness_evaluates_the_workflow_expression_for_each_caller_event(self):
+        expression = self.doc["env"]["BOOTSTRAP_MODE"]
+        step = self.generate["steps"][0]
+        # github.event_name is "push" when release-images.yml calls this on a tag
+        # push (it passes bootstrap=false) and "workflow_dispatch" for a direct or
+        # release-images dispatch.
+        for event, requested, expected in (
+            ("workflow_dispatch", True, True),
+            ("workflow_dispatch", False, False),
+            ("push", False, False),
+            ("push", True, True),
+        ):
+            with self.subTest(event=event, requested=requested):
+                context = {
+                    "github.event_name": event,
+                    "inputs.bootstrap": requested,
+                    "inputs.version": INPUT_VERSION,
+                }
+                self.assertEqual(evaluate_workflow_expression(expression, context), expected)
+                self.assertEqual(step_env(self.doc, self.generate, step, context)["BOOTSTRAP_MODE"],
+                                 "true" if expected else "false")
+
+    def test_bootstrap_asks_for_production_approval_exactly_once(self):
+        approval = self.jobs["bootstrap_approval"]
+        self.assertEqual(approval["environment"], "production")
+        self.assertNotIn("environment", self.publish)
+        self.assertEqual(self.publish["permissions"], {"contents": "write", "id-token": "write"})
+        condition = "${{ " + approval["if"] + " }}"
+        # github.workflow is the caller's name inside a called workflow:
+        # release-images.yml already waited on its own production approval.
+        for workflow, requested, expected in (
+            ("release-update-manifest", True, True),
+            ("release-update-manifest", False, False),
+            ("release-images", True, False),
+            ("release-images", False, False),
+        ):
+            with self.subTest(workflow=workflow, requested=requested):
+                context = {"github.repository": CANONICAL_REPOSITORY, "github.workflow": workflow,
+                           "inputs.bootstrap": requested}
+                self.assertEqual(bool(evaluate_workflow_expression(condition, context)), expected)
+        self.assertEqual(load(RELEASE_IMAGES)["name"], "release-images")
+        self.assertEqual(self.doc["name"], "release-update-manifest")
+
+    def test_bootstrap_publishes_only_the_frozen_uncertified_candidate(self):
+        qualified = one_step(self.publish, lambda s: s.get("name") == "Qualified manifest")
+        bootstrap = one_step(self.publish, lambda s: s.get("name") == "Bootstrap manifest")
+        proof = one_step(self.publish, lambda s: s.get("name") == "Compatibility proof from generation")
+        self.assertIn("env.BOOTSTRAP_MODE != 'true'", qualified["if"])
+        self.assertEqual(bootstrap["if"], "${{ env.BOOTSTRAP_MODE == 'true' }}")
+        self.assertEqual(bootstrap["with"]["name"], "update-candidate")
+        self.assertIn("env.BOOTSTRAP_MODE != 'true'", proof["if"])
+        validate = one_step(self.publish, lambda s: s.get("name") == "Validate proof before signing")
+        self.assertIn('os.environ.get("BOOTSTRAP_MODE", "false") == "true"', validate["run"])
+        self.assertIn('require(validation is None', validate["run"])
+        self.assertIn('require(not proof.exists()', validate["run"])
+        stable = one_step(self.generate, lambda s: s.get("name") == "Bootstrap is only the initial stable channel")
+        self.assertIn("env.BOOTSTRAP_MODE == 'true'", stable["if"])
+        self.assertIn("*-beta.* | *-rc.*", stable["run"])
+        precondition = one_step(self.generate, lambda s: s.get("name") == "Bootstrap is the first stable-channel signed manifest")
+        self.assertIn("gh api --paginate", precondition["run"])
+        self.assertIn(".draft == false and .prerelease == false and .published_at != null", precondition["run"])
+        self.assertIn("stable_tag_re='^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})$'", precondition["run"])
+        self.assertIn("select(.tag_name != $version)", precondition["run"])
+        self.assertIn("select(.tag_name | test($stable_tag_re))", precondition["run"])
+        self.assertIn("partial signed-manifest pair", precondition["run"])
+        publish_precondition = one_step(self.publish, lambda s: s.get("name") == "Bootstrap is still the first stable-channel signed manifest")
+        self.assertIn(".draft == false and .prerelease == false and .published_at != null", publish_precondition["run"])
+        self.assertIn("stable_tag_re='^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})$'", publish_precondition["run"])
+        self.assertIn("select(.tag_name | test($stable_tag_re))", publish_precondition["run"])
+        self.assertIn("select(.tag_name != $version)", publish_precondition["run"])
+        normal_precondition = one_step(self.publish, lambda s: s.get("name") == "Normal release cannot publish the first stable-channel manifest")
+        self.assertIn("env.BOOTSTRAP_MODE != 'true'", normal_precondition["if"])
+        self.assertIn("select(.tag_name | test($stable_tag_re))", normal_precondition["run"])
+        self.assertIn("normal release cannot publish the first stable-channel signed manifest", normal_precondition["run"])
+        self.assertIn("orphaned signed-manifest pair", normal_precondition["run"])
 
     # ---- permissions
 
@@ -936,10 +1161,14 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         self.assertIn('--certificate-oidc-issuer "$OIDC_ISSUER"', run)
         self.assertNotIn("--certificate-identity-regexp", run)
 
-    def test_concurrency_never_cancels_a_running_publish(self):
+    def test_concurrency_separates_bootstrap_from_per_version_normal_retries(self):
         concurrency = self.doc["concurrency"]
         self.assertEqual(concurrency["cancel-in-progress"], "false")
-        self.assertIn(INPUT_VERSION, concurrency["group"])
+        group = concurrency["group"]
+        self.assertIn("inputs.bootstrap == true", group)
+        self.assertIn("release-update-manifest-bootstrap", group)
+        self.assertIn("format('release-update-manifest-{0}', inputs.version)", group)
+        self.assertNotEqual(group, "release-update-manifest")
 
     # ---- identity, issuer, assets
 
@@ -1523,7 +1752,8 @@ class PublishStepTests(_StepHarness):
         job = self.doc["jobs"]["publish"]
         step = one_step(job, runs_containing("gh release upload"))
         context = {"inputs.version": self.version, "github.repository": CANONICAL_REPOSITORY,
-                   "github.token": "fake-token"}
+                   "github.token": "fake-token",
+                   "github.event_name": "workflow_call", "inputs.bootstrap": False}
         env = self.base_env(
             **step_env(self.doc, job, step, context),
             GITHUB_REPOSITORY=CANONICAL_REPOSITORY, RUNNER_TEMP=str(self.runner),
@@ -1639,7 +1869,7 @@ class ReleaseProofWiringTests(unittest.TestCase):
         upload = one_step(self.generate, lambda s: s.get("with", {}).get("name") == "update-candidate")
         self.assertLess(steps.index(resolve), steps.index(upload))
         self.assertEqual(needs_of(self.doc["jobs"]["rehearse"]), ["generate"])
-        self.assertEqual(needs_of(self.publish), ["generate", "rehearse"])
+        self.assertEqual(needs_of(self.publish), ["generate", "rehearse", "bootstrap_approval"])
         job = load(WORKFLOWS / "update-compatibility-proof.yml")["jobs"]["proof"]
         build = one_step(job, runs_containing("scripts/build_update_compatibility_proof.py"))
         self.assertLess(build["run"].index("scripts/rehearse_update_compatibility.py"),
@@ -1682,8 +1912,8 @@ class ReleaseProofWiringTests(unittest.TestCase):
             for step in job.get("steps", []):
                 if str(step.get("uses", "")).startswith("actions/download-artifact@"):
                     self.assertLessEqual(set(step["with"]), {"name", "pattern", "path", "merge-multiple"})
-        for trigger in ("workflow_call", "workflow_dispatch"):
-            self.assertEqual(set(self.doc["on"][trigger]["inputs"]), {"version"})
+        self.assertEqual(set(self.doc["on"]["workflow_call"]["inputs"]), {"version", "bootstrap"})
+        self.assertEqual(set(self.doc["on"]["workflow_dispatch"]["inputs"]), {"version", "bootstrap"})
 
 
 class ReleaseImagesWiringTests(unittest.TestCase):
@@ -1702,11 +1932,21 @@ class ReleaseImagesWiringTests(unittest.TestCase):
         self.assertEqual(self.guard_components().count("update-manifest"), 1)
 
     def test_the_dispatch_input_documents_update_manifest(self):
-        description = self.doc["on"]["workflow_dispatch"]["inputs"]["components"]["description"]
-        self.assertIn("update-manifest", description)
+        inputs = self.doc["on"]["workflow_dispatch"]["inputs"]
+        self.assertIn("update-manifest", inputs["components"]["description"])
+        self.assertIn("components=update-manifest", inputs["bootstrap"]["description"])
+        self.assertEqual(inputs["bootstrap"]["type"], "boolean")
+        self.assertEqual(inputs["bootstrap"]["default"], "false")
 
     def test_the_approved_guard_reruns_the_same_script(self):
         self.assertEqual(self.jobs["approve"]["steps"][0]["run"], self.guard)
+
+    def test_bootstrap_is_dispatch_only_and_update_manifest_only(self):
+        self.assertIn("REQUESTED_BOOTSTRAP", self.jobs["guard"]["env"])
+        self.assertIn("REQUESTED_BOOTSTRAP", self.jobs["approve"]["env"])
+        self.assertIn("bootstrap is dispatch-only", self.guard)
+        self.assertIn("bootstrap requires components=update-manifest", self.guard)
+        self.assertIn("[ \"$selected\" = update-manifest ]", self.guard)
 
     def test_update_manifest_is_not_exempt_from_the_tag_check(self):
         exempt = re.search(r'case "\$c" in bump \| docs\) continue ;; esac', self.guard)
@@ -1715,8 +1955,12 @@ class ReleaseImagesWiringTests(unittest.TestCase):
 
     def test_it_calls_the_reusable_workflow_with_the_guards_version(self):
         self.assertEqual(self.job["uses"], "./.github/workflows/release-update-manifest.yml")
-        self.assertEqual(self.job["with"], {"version": "${{ needs.guard.outputs.version }}"})
+        self.assertEqual(self.job["with"], {
+            "version": "${{ needs.guard.outputs.version }}",
+            "bootstrap": "${{ inputs.bootstrap || false }}",
+        })
         self.assertEqual(self.jobs["guard"]["outputs"]["version"], "${{ steps.v.outputs.version }}")
+        self.assertIn("bootstrap", self.job["with"])
         self.assertNotIn("secrets", self.job)
         self.assertNotIn("steps", self.job)
 
@@ -1789,7 +2033,7 @@ class ReleaseImagesWiringTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         jobs = load(UPDATE_WORKFLOW)["jobs"]
         self.assertEqual(jobs["rehearse"]["uses"], "./.github/workflows/update-compatibility-proof.yml")
-        self.assertEqual(set(needs_of(jobs["publish"])), {"generate", "rehearse"})
+        self.assertEqual(set(needs_of(jobs["publish"])), {"generate", "rehearse", "bootstrap_approval"})
 
     def test_no_other_workflow_touches_the_manifest_assets(self):
         for path in sorted(WORKFLOWS.glob("*.y*ml")):
@@ -1829,7 +2073,8 @@ class ReleaseImagesGuardStepTests(_StepHarness):
         job = self.doc["jobs"]["guard"]
         step = job["steps"][0]
         env = self.base_env(
-            **step_env(self.doc, job, step, {"inputs.version": version, "inputs.components": components, "github.token": "fake-token"}),
+            **step_env(self.doc, job, step, {"inputs.version": version, "inputs.components": components,
+                                             "inputs.bootstrap": False, "github.token": "fake-token"}),
             GITHUB_EVENT_NAME=event, GITHUB_REF=ref, GITHUB_REF_NAME=ref.rsplit("/", 1)[-1],
             GITHUB_SERVER_URL="https://github.com", GITHUB_REPOSITORY=CANONICAL_REPOSITORY,
             GITHUB_OUTPUT=str(self.output), FAKE_TAGS=tags, FAKE_EXIT_CURL="97",
@@ -2678,6 +2923,13 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn(f"`{CONFIG_FILE}`", self.text)
         self.assertIn(f"`{STATE_DIR}/`", self.text)
 
+    def test_bootstrap_recovery_and_scope_are_documented(self):
+        self.assertIn("published, non-draft stable GitHub Release", self.text)
+        self.assertIn("partial manifest/bundle pair", self.text)
+        self.assertIn("existing pre-fix tag cannot run new bootstrap logic", self.text)
+        self.assertIn("new patch release", self.text)
+        self.assertIn("tag contains this fix", self.text)
+
     def test_files_it_points_at_exist(self):
         runtime = {f"{STATE_DIR}/", "deploy/.env.production", MANIFEST_ASSET, BUNDLE_ASSET, CONFIG_FILE,
                    # Private commit records are generated on the target filesystem, not shipped assets.
@@ -2770,14 +3022,29 @@ class TrustWorkflowGuardAdditions(unittest.TestCase):
         self.assertEqual(self.claims, (CANONICAL_REPOSITORY, "refs/tags/v1.60.0"))
 
     def test_both_jobs_run_only_in_the_repository_hosts_pin(self):
-        self.assertEqual(sorted(self.jobs), ["generate", "publish", "rehearse"])
+        self.assertEqual(sorted(self.jobs), ["bootstrap_approval", "generate", "publish", "rehearse"])
         rehearsal = self.jobs["rehearse"]
         self.assertEqual(rehearsal["uses"], "./.github/workflows/update-compatibility-proof.yml")
         self.assertEqual(needs_of(rehearsal), ["generate"])
         self.assertEqual(rehearsal["permissions"], {"contents": "read"})
+        approval = self.jobs["bootstrap_approval"]
+        self.assertIn(f"github.repository == '{self.claims[0]}'", approval["if"])
+        self.assertIn("github.workflow == 'release-update-manifest' && inputs.bootstrap == true", approval["if"])
         for name, job in self.jobs.items():
             with self.subTest(job=name):
-                self.assertEqual(job.get("if"), f"github.repository == '{self.claims[0]}'")
+                condition = job.get("if")
+                if name == "generate":
+                    self.assertEqual(condition, f"github.repository == '{self.claims[0]}'")
+                elif name == "rehearse":
+                    self.assertIn(f"github.repository == '{self.claims[0]}'", condition)
+                    self.assertIn("inputs.bootstrap != true", condition)
+                elif name == "bootstrap_approval":
+                    self.assertIn(f"github.repository == '{self.claims[0]}'", condition)
+                    self.assertIn("github.workflow == 'release-update-manifest'", condition)
+                else:
+                    self.assertIn(f"github.repository == '{self.claims[0]}'", condition)
+                    self.assertIn("!cancelled()", condition)
+                    self.assertIn("needs.generate.result == 'success'", condition)
 
     def test_every_checkout_takes_this_repository_at_the_release_tag(self):
         checkouts = 0
@@ -2818,7 +3085,8 @@ class TrustPublishVerifyAdditions(_StepHarness):
         job = self.doc["jobs"]["publish"]
         step = one_step(job, runs_containing("gh release upload"))
         context = {"inputs.version": self.version, "github.repository": CANONICAL_REPOSITORY,
-                   "github.token": "fake-token"}
+                   "github.token": "fake-token",
+                   "github.event_name": "workflow_call", "inputs.bootstrap": False}
         env = self.base_env(
             **step_env(self.doc, job, step, context),
             GITHUB_REPOSITORY=CANONICAL_REPOSITORY, RUNNER_TEMP=str(self.runner_temp),
@@ -2909,7 +3177,8 @@ class TrustRound4PublishOrderTests(_StepHarness):
         job = self.doc["jobs"]["publish"]
         step = one_step(job, runs_containing("gh release upload"))
         context = {"inputs.version": self.version, "github.repository": CANONICAL_REPOSITORY,
-                   "github.token": "fake-token"}
+                   "github.token": "fake-token",
+                   "github.event_name": "workflow_call", "inputs.bootstrap": False}
         env = self.base_env(
             **step_env(self.doc, job, step, context),
             GITHUB_REPOSITORY=CANONICAL_REPOSITORY, RUNNER_TEMP=str(self.runner),
@@ -3039,7 +3308,8 @@ class TrustRound4ReleaseImagesGuardTests(_StepHarness):
         job = self.doc["jobs"]["approve"]
         step = job["steps"][0]
         env = self.base_env(
-            **step_env(self.doc, job, step, {"inputs.version": "v1.52.0", "inputs.components": "update-manifest", "github.token": "fake-token"}),
+            **step_env(self.doc, job, step, {"inputs.version": "v1.52.0", "inputs.components": "update-manifest",
+                                             "inputs.bootstrap": False, "github.token": "fake-token"}),
             GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/tags/v1.52.0", GITHUB_REF_NAME="v1.52.0",
             GITHUB_SERVER_URL="https://github.com", GITHUB_REPOSITORY=CANONICAL_REPOSITORY,
             GITHUB_OUTPUT=str(self.output), FAKE_TAGS="v1.52.0 v1.53.0", FAKE_EXIT_CURL="97",
@@ -3156,7 +3426,10 @@ class TrustRound5BuildDigestsJobTests(_StepHarness):
 
     def test_update_manifest_waits_for_it_and_takes_nothing_else(self):
         self.assertIn("build-digests", needs_of(self.jobs["update-manifest"]))
-        self.assertEqual(self.jobs["update-manifest"]["with"], {"version": "${{ needs.guard.outputs.version }}"})
+        self.assertEqual(self.jobs["update-manifest"]["with"], {
+            "version": "${{ needs.guard.outputs.version }}",
+            "bootstrap": "${{ inputs.bootstrap || false }}",
+        })
         for job in set(COMPONENT_JOBS.values()):
             self.assertIn(job, needs_of(self.job))
         self.assertEqual(self.job["if"], self.jobs["update-manifest"]["if"])
@@ -3718,7 +3991,7 @@ class TrustRound6RevisionCheckTests(TrustRound6RevisionCase):
         self.assertIn('done 3< "$RUNNER_TEMP/components.txt"', check["run"])
         self.assertIn('printf \'%s=%s@%s\\n\' "$name" "$image" "$digest" >> "$RUNNER_TEMP/components.txt"',
                       resolve["run"])
-        self.assertEqual(needs_of(self.doc["jobs"]["publish"]), ["generate", "rehearse"])
+        self.assertEqual(needs_of(self.doc["jobs"]["publish"]), ["generate", "rehearse", "bootstrap_approval"])
 
     def test_images_built_from_the_tags_commit_pass(self):
         result = self.run_check()

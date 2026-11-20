@@ -22,9 +22,17 @@
 #     build digest is compared: each image's revision label must be the tag's
 #     commit, and each image the chart's images lock names must have its
 #     locked digest. An image the lock does not name is signed with a warning
-#     that only its revision label vouches for it.
+#     that only its revision label vouches for it. The explicit `bootstrap`
+#     option is only for the first stable-channel signed manifest: it skips the
+#     compatibility rehearsal and publishes the existing uncertified/manual
+#     manifest without a proof. It does not skip any release, image, chart,
+#     deployment or signing checks. Normal runs remain fail-closed when no
+#     supported signed predecessor exists.
 # bin/update trusts exactly one signer, this file at the release tag, so a
 # run from any other ref is refused before it signs.
+# Recovery note: an existing pre-fix release tag cannot run this bootstrap logic;
+# this workflow is checked out at that exact tag. Publish a new recovery tag that
+# contains this fix, then run the bootstrap from that new tag.
 #
 #   generate  resolves every image digest of the release (read-only, no
 #             registry login), cross-checks each against the digest its build
@@ -63,22 +71,41 @@ on:
         description: Stable or beta/rc platform tag whose images and versioned chart are published
         required: true
         type: string
+      bootstrap:
+        description: Explicitly publish the first uncertified/manual signed manifest without compatibility proof
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
         description: Stable or beta/rc platform tag (run the workflow from that same tag)
         required: true
         type: string
+      bootstrap:
+        description: Explicitly publish the first uncertified/manual signed manifest without compatibility proof
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-update-manifest-${{ inputs.version }}
+  # Bootstrap attempts share one queue, while normal releases only serialize
+  # retries of the same version. cancel-in-progress=false preserves a running
+  # publication; unrelated normal releases never evict one another.
+  group: ${{ inputs.bootstrap == true && 'release-update-manifest-bootstrap' || format('release-update-manifest-{0}', inputs.version) }}
   cancel-in-progress: false
 
 env:
   OIDC_ISSUER: https://token.actions.githubusercontent.com
+  # Normalize the input once. The only triggers are workflow_dispatch and
+  # workflow_call, and inside a called workflow github.event_name is the
+  # caller's event (push or workflow_dispatch), never workflow_call, so the
+  # input itself is the signal. release-images.yml passes false on a tag push.
+  # A bootstrap run never downloads or attaches a compatibility proof.
+  BOOTSTRAP_MODE: ${{ inputs.bootstrap == true }}
 
 jobs:
   generate:
@@ -118,6 +145,57 @@ jobs:
           gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
             jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
               '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
+
+      - name: Bootstrap is only the initial stable channel
+        if: ${{ env.BOOTSTRAP_MODE == 'true' }}
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$VERSION" in
+            *-beta.* | *-rc.*)
+              echo "::error::bootstrap is only allowed for the initial stable channel; $VERSION is a prerelease"
+              exit 1
+              ;;
+          esac
+
+      - name: Bootstrap is the first stable-channel signed manifest
+        if: ${{ env.BOOTSTRAP_MODE == 'true' }}
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ignore drafts, prereleases, and the current target release. The
+          # target may already contain one asset when a partial upload resumes.
+          stable_tag_re='^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})$'
+          existing=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -r --arg version "$VERSION" --arg stable_tag_re "$stable_tag_re" '
+              .[]
+              | select(.tag_name != $version)
+              | select(.tag_name | test($stable_tag_re))
+              | select(.draft == false and .prerelease == false and .published_at != null)
+              | [
+                  .tag_name,
+                  (any(.assets[]?; .name == "future-agi-update-manifest.json")),
+                  (any(.assets[]?; .name == "future-agi-update-manifest.sigstore.json"))
+                ]
+              | select(.[1] or .[2])
+              | @tsv')
+          if [ -n "$existing" ]; then
+            while IFS=$'\t' read -r tag has_manifest has_bundle; do
+              if [ "$has_manifest" = true ] && [ "$has_bundle" = true ]; then
+                detail="both signed-manifest assets"
+              else
+                detail="a partial signed-manifest pair (manifest=$has_manifest, bundle=$has_bundle)"
+              fi
+              echo "::error::bootstrap is only allowed before the first stable-channel signed manifest; published stable release $tag already has $detail"
+              exit 1
+            done <<< "$existing"
+          fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -311,17 +389,46 @@ jobs:
   rehearse:
     name: exact-image compatibility rehearsal
     needs: generate
-    if: github.repository == 'future-agi/future-agi'
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      inputs.bootstrap != true
     permissions:
       contents: read
     uses: ./.github/workflows/update-compatibility-proof.yml
     with:
       produce: true
 
+  # A direct dispatch of this file does not pass through release-images.yml's
+  # approve job, so it needs its own Production approval. When release-images.yml
+  # calls this workflow, github.workflow is the caller's name ("release-images"),
+  # which already waited on the production environment: this job is skipped there
+  # so a bootstrap asks for Production approval exactly once.
+  bootstrap_approval:
+    name: approve direct bootstrap
+    needs: generate
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      github.workflow == 'release-update-manifest' && inputs.bootstrap == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Production approval received
+        run: echo 'Direct bootstrap approved by the Production environment'
+
   publish:
     name: sign and attach
-    needs: [generate, rehearse]
-    if: github.repository == 'future-agi/future-agi'
+    needs: [generate, rehearse, bootstrap_approval]
+    if: >-
+      always() && !cancelled() && github.repository == 'future-agi/future-agi' &&
+      needs.generate.result == 'success' &&
+      (
+        (inputs.bootstrap == true &&
+          (needs.bootstrap_approval.result == 'success' || github.workflow != 'release-update-manifest')) ||
+        (inputs.bootstrap != true && needs.rehearse.result == 'success')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -362,6 +469,92 @@ jobs:
           gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
             jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
               '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
+
+      - name: Normal release cannot publish the first stable-channel manifest
+        if: ${{ env.BOOTSTRAP_MODE != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Bootstrap and normal releases intentionally use separate concurrency
+          # groups. This pre-sign check is the cross-group invariant: normal
+          # publication requires a complete signed pair already on another
+          # stable release, or a current-target asset that is being resumed.
+          # A partial pair on another release is an orphan and fails closed.
+          stable_tag_re='^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})$'
+          inventory=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -r --arg stable_tag_re "$stable_tag_re" '
+              .[]
+              | select(.tag_name | test($stable_tag_re))
+              | select(.draft == false and .prerelease == false and .published_at != null)
+              | [
+                  .tag_name,
+                  (any(.assets[]?; .name == "future-agi-update-manifest.json")),
+                  (any(.assets[]?; .name == "future-agi-update-manifest.sigstore.json"))
+                ]
+              | select(.[1] or .[2])
+              | @tsv')
+          target_has_asset=false
+          other_releases=()
+          while IFS=$'\t' read -r tag has_manifest has_bundle; do
+            [ -n "$tag" ] || continue
+            if [ "$tag" = "$VERSION" ]; then
+              target_has_asset=true
+            else
+              other_releases+=("$tag"$'\t'"$has_manifest"$'\t'"$has_bundle")
+            fi
+          done <<< "$inventory"
+          if [ "${#other_releases[@]}" -eq 0 ] && [ "$target_has_asset" != true ]; then
+            echo '::error::normal release cannot publish the first stable-channel signed manifest; run the explicit bootstrap path'
+            exit 1
+          fi
+          for row in "${other_releases[@]}"; do
+            IFS=$'\t' read -r tag has_manifest has_bundle <<< "$row"
+            if [ "$has_manifest" != true ] || [ "$has_bundle" != true ]; then
+              echo "::error::normal release refuses the orphaned signed-manifest pair on stable release $tag; repair or resume that release before publishing"
+              exit 1
+            fi
+          done
+
+      - name: Bootstrap is still the first stable-channel signed manifest
+        if: ${{ env.BOOTSTRAP_MODE == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Repeat the guard after the Production approval may have waited.
+          # Ignore drafts, prereleases, and this target release so a partial
+          # current-release upload can be resumed, but fail on another release.
+          stable_tag_re='^v(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})$'
+          existing=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -r --arg version "$VERSION" --arg stable_tag_re "$stable_tag_re" '
+              .[]
+              | select(.tag_name != $version)
+              | select(.tag_name | test($stable_tag_re))
+              | select(.draft == false and .prerelease == false and .published_at != null)
+              | [
+                  .tag_name,
+                  (any(.assets[]?; .name == "future-agi-update-manifest.json")),
+                  (any(.assets[]?; .name == "future-agi-update-manifest.sigstore.json"))
+                ]
+              | select(.[1] or .[2])
+              | @tsv')
+          if [ -n "$existing" ]; then
+            while IFS=$'\t' read -r tag has_manifest has_bundle; do
+              if [ "$has_manifest" = true ] && [ "$has_bundle" = true ]; then
+                detail="both signed-manifest assets"
+              else
+                detail="a partial signed-manifest pair (manifest=$has_manifest, bundle=$has_bundle)"
+              fi
+              echo "::error::bootstrap is only allowed before the first stable-channel signed manifest; published stable release $tag already has $detail"
+              exit 1
+            done <<< "$existing"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: future-agi/future-agi
@@ -379,9 +572,18 @@ jobs:
         with:
           cosign: "true"
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Qualified manifest
+        if: ${{ env.BOOTSTRAP_MODE != 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: update-manifest
+          path: ${{ runner.temp }}/new
+
+      - name: Bootstrap manifest
+        if: ${{ env.BOOTSTRAP_MODE == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-candidate
           path: ${{ runner.temp }}/new
 
       - name: Original frozen candidate
@@ -391,6 +593,7 @@ jobs:
           path: ${{ runner.temp }}/frozen
 
       - name: Compatibility proof from generation
+        if: ${{ env.BOOTSTRAP_MODE != 'true' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: update-compatibility-proof
@@ -418,7 +621,29 @@ jobs:
           assert os.environ["GITHUB_REF"] == "refs/tags/" + target["version"]
           proof = root / PROOF_ASSET
           validation = target.get("compatibility", {}).get("validation")
-          if validation is not None:
+          if os.environ.get("BOOTSTRAP_MODE", "false") == "true":
+              # Bootstrap is the deliberate first signed manifest: it may omit
+              # only compatibility evidence and must remain the existing
+              # uncertified/manual candidate. No proof may be attached. Use
+              # explicit checks rather than assert, which Python can remove
+              # under optimization.
+              def require(condition, message):
+                  if not condition:
+                      raise SystemExit(message)
+
+              require(validation is None, "bootstrap manifest must be uncertified")
+              require(not proof.exists(), "unexpected proof on bootstrap release")
+              require(target["migration"] == {"requires_bootstrap": True, "rollback": "manual"},
+                      "bootstrap manifest must require operator initialization")
+              require(target["compatibility"]["automatic_apply"] is False,
+                      "bootstrap manifest must not enable automatic apply")
+              require(target["compatibility"]["requires_operator_initialization"] is True,
+                      "bootstrap manifest must require operator initialization")
+              require(target["compatibility"]["predecessors"] == [],
+                      "bootstrap manifest must not claim predecessors")
+              require(target["compatibility"]["automatic_rollback"] == {"strategy": "never"},
+                      "bootstrap manifest must disable automatic rollback")
+          elif validation is not None:
               assert validation["run_id"] == int(os.environ["GITHUB_RUN_ID"])
               validated = validate_release_proof(read_bytes(proof), target, repository=os.environ["GITHUB_REPOSITORY"])
               if validated['schema_version'] == 2:
