@@ -393,22 +393,27 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
                 f"Path parameter mismatch for {name}: expected "
                 f"{sorted(path_fields)}, mapped {sorted(mapped_path_fields)}"
             )
-        generated_tools.append(
-            {
-                "name": name,
-                "description": description,
-                "group": entry["group"],
-                "inputSchema": input_schema,
-                "annotations": annotations,
-                "request": {
-                    "method": method.upper(),
-                    "path": path,
-                    "parameters": request_mapping,
-                },
-                "response": _response_policy(entry, operation, contract),
-                "source": {"operationId": operation.get("operationId")},
-            }
-        )
+        tool = {
+            "name": name,
+            "description": description,
+            "group": entry["group"],
+            "inputSchema": input_schema,
+            "annotations": annotations,
+            "request": {
+                "method": method.upper(),
+                "path": path,
+                "parameters": request_mapping,
+            },
+            "response": _response_policy(entry, operation, contract),
+            "source": {"operationId": operation.get("operationId")},
+        }
+        # The EE feature the tool's REST view checks; listing hides the tool
+        # from an organization without it.
+        if "entitlement" in entry:
+            if not isinstance(entry["entitlement"], str) or not entry["entitlement"]:
+                raise ToolGenerationError(f"Invalid entitlement for {name}")
+            tool["entitlement"] = entry["entitlement"]
+        generated_tools.append(tool)
 
     contract_bytes = contract_path.read_bytes()
     return {

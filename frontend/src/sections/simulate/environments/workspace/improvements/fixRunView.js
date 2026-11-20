@@ -87,6 +87,11 @@ export function gradingNote(fix) {
 export const fixName = (fix) =>
   fix.number == null ? "Epoch" : `Epoch ${fix.number}`;
 
+// What shipping a winner does, as its button says: a GitHub agent's winner opens a
+// pull request, and an uploaded agent's becomes the environment's default.
+export const shipLabel = (fix) =>
+  fix.agent?.kind === "github" ? "Open pull request" : "Make default";
+
 export function identityLine(fix) {
   const agent = [`agent v${fix.agent.version_number}`, fix.agent.ref]
     .filter(Boolean)
@@ -120,7 +125,7 @@ const whenEnded = (fix) =>
     : "before any candidate ran";
 
 // Failures that are ours, not the agent's: the user can only retry.
-const OUR_FAILURES = new Set([
+export const OUR_FAILURES = new Set([
   "fix_engine_failed",
   "fix_engine_died",
   "fix_watch_failed",
@@ -149,10 +154,13 @@ export function endingText(fix) {
   if (fix.state !== "failed") return null;
   if (code === "fix_deadline")
     return `This epoch ran out of its time limit ${whenEnded(fix)}. Nothing changed. Run a new epoch with a longer time limit.`;
-  // A failed epoch can be retried once; after that, the next one starts from the run.
-  const again = fix.retryable
-    ? "Retry it"
-    : "It was retried once already. Run a new epoch from the run's Debug failures";
+  // A failed epoch can be retried once; after that, the next one starts from the run. A
+  // retry takes it once it started: one that never started leaves it, and offers it too.
+  const next = "Run a new epoch from the run's Debug failures";
+  let again = `It was retried once already. ${next}`;
+  if (fix.retryable) again = "Retry it";
+  else if (fix.retried_from_id && fix.started_at)
+    again = `This epoch was the retry. ${next}`;
   if (code === "fix_queue_timeout")
     return `Too many epochs were running, so this one could not start. Nothing changed. ${again}${fix.retryable ? " in a few minutes" : ""}.`;
   if (!code || OUR_FAILURES.has(code))

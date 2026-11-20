@@ -98,6 +98,11 @@ import type {
   AgentFixCheckRunRequestApi,
   AgentFixEngineReportApi,
   AgentFixEngineStateApi,
+  AgentFixIssueCreateApi,
+  AgentFixIssueJobDetailApi,
+  AgentFixIssuePlanApi,
+  AgentFixIssueRunApi,
+  AgentFixIssueStatusListApi,
   AgentFixLaunchApi,
   AgentFixLaunchOptionsApi,
   AgentFixMakeDefaultApi,
@@ -1281,6 +1286,8 @@ import type {
   SimulateApiAgentFixEngineCandidatesBodyOne,
   SimulateApiAgentFixEngineCandidatesBodyTwo,
   SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  SimulateApiAgentFixIssuesListParams,
+  SimulateApiAgentFixIssuesPlanParams,
   SimulateApiAgentFixRunsLaunchOptionsParams,
   SimulateApiAgentFixRunsListParams,
   SimulateApiAgentPromptOptimiserList200,
@@ -59836,6 +59843,319 @@ export const simulateApiAgentFixEngineV1ChatCompletionsCreate = async (
   );
 };
 
+export type simulateApiAgentFixIssuesListResponse200 = {
+  data: AgentFixIssueStatusListApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesListResponseSuccess =
+  simulateApiAgentFixIssuesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesListResponseError =
+  simulateApiAgentFixIssuesListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesListResponse =
+  | simulateApiAgentFixIssuesListResponseSuccess
+  | simulateApiAgentFixIssuesListResponseError;
+
+export const getSimulateApiAgentFixIssuesListUrl = (
+  params: SimulateApiAgentFixIssuesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-issues/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-issues/`;
+};
+
+/**
+ * Each named issue's newest job, for the issue list's epoch icon: one call per
+page of issues. Without ``project_id`` the ids are read in every project the
+caller may read, so a page across projects is one call too; each result names
+its project.
+ */
+export const simulateApiAgentFixIssuesList = async (
+  params: SimulateApiAgentFixIssuesListParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesListResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesListResponse>(
+    getSimulateApiAgentFixIssuesListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesCreateResponse201 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixIssuesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixIssuesCreateResponseSuccess =
+  simulateApiAgentFixIssuesCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesCreateResponseError =
+  simulateApiAgentFixIssuesCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesCreateResponse =
+  | simulateApiAgentFixIssuesCreateResponseSuccess
+  | simulateApiAgentFixIssuesCreateResponseError;
+
+export const getSimulateApiAgentFixIssuesCreateUrl = () => {
+  return `/simulate/api/agent-fix-issues/`;
+};
+
+/**
+ * Start Run Epoch from an issue: import the picked traces as evidence for the
+environment and ask its builder to draft them. One builder turn, billed as
+authoring credits.
+ */
+export const simulateApiAgentFixIssuesCreate = async (
+  agentFixIssueCreateApi: AgentFixIssueCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesCreateResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesCreateResponse>(
+    getSimulateApiAgentFixIssuesCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixIssueCreateApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesPlanResponse200 = {
+  data: AgentFixIssuePlanApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesPlanResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesPlanResponseSuccess =
+  simulateApiAgentFixIssuesPlanResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesPlanResponseError =
+  simulateApiAgentFixIssuesPlanResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesPlanResponse =
+  | simulateApiAgentFixIssuesPlanResponseSuccess
+  | simulateApiAgentFixIssuesPlanResponseError;
+
+export const getSimulateApiAgentFixIssuesPlanUrl = (
+  params: SimulateApiAgentFixIssuesPlanParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-issues/plan/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-issues/plan/`;
+};
+
+/**
+ * What Run Epoch on an issue shows before anything is drafted: the environment,
+a sample of the issue's traces with why each was picked, and the launch form's
+defaults. It reads the picked traces' roots once, and calls no model.
+ */
+export const simulateApiAgentFixIssuesPlan = async (
+  params: SimulateApiAgentFixIssuesPlanParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesPlanResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesPlanResponse>(
+    getSimulateApiAgentFixIssuesPlanUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesReadResponse200 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesReadResponseSuccess =
+  simulateApiAgentFixIssuesReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesReadResponseError =
+  simulateApiAgentFixIssuesReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesReadResponse =
+  | simulateApiAgentFixIssuesReadResponseSuccess
+  | simulateApiAgentFixIssuesReadResponseError;
+
+export const getSimulateApiAgentFixIssuesReadUrl = (id: string) => {
+  return `/simulate/api/agent-fix-issues/${id}/`;
+};
+
+/**
+ * Run Epoch from an Error Feed issue: plan it, start it from the picked traces,
+follow it, run it after the review, and stop it before its epoch starts.
+ */
+export const simulateApiAgentFixIssuesRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesReadResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesReadResponse>(
+    getSimulateApiAgentFixIssuesReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesRunResponse202 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 202;
+};
+
+export type simulateApiAgentFixIssuesRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiAgentFixIssuesRunResponseSuccess =
+  simulateApiAgentFixIssuesRunResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesRunResponseError =
+  simulateApiAgentFixIssuesRunResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesRunResponse =
+  | simulateApiAgentFixIssuesRunResponseSuccess
+  | simulateApiAgentFixIssuesRunResponseError;
+
+export const getSimulateApiAgentFixIssuesRunUrl = (id: string) => {
+  return `/simulate/api/agent-fix-issues/${id}/run/`;
+};
+
+/**
+ * Run Epoch after the review: the kept drafts join the environment's suite, and
+the current version runs on the kept scenarios. The epoch starts from that run
+once it finishes.
+ */
+export const simulateApiAgentFixIssuesRun = async (
+  id: string,
+  agentFixIssueRunApi: AgentFixIssueRunApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesRunResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesRunResponse>(
+    getSimulateApiAgentFixIssuesRunUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixIssueRunApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesStopResponse200 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesStopResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesStopResponseSuccess =
+  simulateApiAgentFixIssuesStopResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesStopResponseError =
+  simulateApiAgentFixIssuesStopResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesStopResponse =
+  | simulateApiAgentFixIssuesStopResponseSuccess
+  | simulateApiAgentFixIssuesStopResponseError;
+
+export const getSimulateApiAgentFixIssuesStopUrl = (id: string) => {
+  return `/simulate/api/agent-fix-issues/${id}/stop/`;
+};
+
+/**
+ * Stop before the epoch starts: drafting is dropped, or the baseline canceled.
+A started epoch stops on its own route.
+ */
+export const simulateApiAgentFixIssuesStop = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesStopResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesStopResponse>(
+    getSimulateApiAgentFixIssuesStopUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateApiAgentFixRunsListResponse200 = {
   data: AgentFixRunListApi;
   status: 200;
@@ -64005,8 +64325,9 @@ export const getSimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersUrl = (
 };
 
 /**
- * The scenarios in one suite version, by number; a coding agent's read leaves
-out the held-back cases.
+ * The scenarios in one suite version, by number, each with the Error Feed
+issue it came from, if any; a coding agent's read leaves out the held-back
+cases.
  */
 export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
   id: string,

@@ -98,6 +98,8 @@ AGENT_FIX_WATCH_TICK_SECONDS = 120
 AGENT_FIX_VARIATIONS_WRITE_MINUTES = 60
 AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES = 15
 AGENT_FIX_VARIATIONS_TICK_SECONDS = 60
+# Run Epoch from an Error Feed issue: the wait between looks at its baseline run.
+AGENT_FIX_ISSUE_TICK_SECONDS = 60
 
 
 # =============================================================================

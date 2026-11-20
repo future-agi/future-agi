@@ -1,22 +1,10 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Box,
-  Button,
-  Checkbox,
-  Chip,
-  FormControlLabel,
-  InputBase,
-  MenuItem,
-  Select,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import {
   fixErrorOf,
@@ -25,15 +13,14 @@ import {
 } from "src/api/simulate-environments/fixRuns";
 
 import SideDrawer from "../../components/SideDrawer";
+import LaunchLimits, { ChipsInput, Row, SurfacesRow } from "./LaunchLimits";
 import ScenarioPicker from "./ScenarioPicker";
-import { formatCredits, formatMinutes } from "./fixRunView";
 import {
   NO_MODELS_NOTE,
   UNMEASURED_NOTE,
   UNTRACED_NOTE,
   blockedByDraft,
   blockedReason as blockedReasonOf,
-  budgetSteps,
   costLimitOf,
   countsLine,
   isTraced,
@@ -41,106 +28,9 @@ import {
   seesModels,
   tracesUnreadable,
   launchError,
-  marginSteps,
-  minuteSteps,
   reviewSentence,
   variationsNote,
 } from "./launchFormView";
-
-const selectSx = {
-  height: 34,
-  typography: "s2",
-  "& .MuiSelect-select": { typography: "s2", py: 0.75 },
-};
-function Row({ k, center = false, children }) {
-  return (
-    <Stack
-      direction="row"
-      spacing={1.5}
-      alignItems={center ? "center" : "flex-start"}
-      sx={{
-        py: 1,
-        minHeight: 38,
-        borderTop: "1px solid",
-        borderColor: "divider",
-        "&:first-of-type": { borderTop: 0, pt: 0 },
-      }}
-    >
-      <Typography
-        sx={{
-          typography: "s2",
-          color: "text.subtitle",
-          width: 110,
-          flexShrink: 0,
-        }}
-      >
-        {k}
-      </Typography>
-      <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box>
-    </Stack>
-  );
-}
-Row.propTypes = {
-  k: PropTypes.string.isRequired,
-  center: PropTypes.bool,
-  children: PropTypes.node,
-};
-
-// Values typed one at a time, each added by Enter, a comma or leaving the field.
-function ChipsInput({ values, onChange, label, placeholder, testId }) {
-  const add = (input) => {
-    const v = input.value.trim().replace(/,$/, "").trim();
-    if (!v) return;
-    onChange([...new Set([...values, v])]);
-    input.value = "";
-  };
-  return (
-    <Stack
-      direction="row"
-      flexWrap="wrap"
-      alignItems="center"
-      gap={0.75}
-      data-testid={testId}
-    >
-      {values.map((p) => (
-        <Chip
-          key={p}
-          size="small"
-          label={p}
-          onDelete={() => onChange(values.filter((x) => x !== p))}
-        />
-      ))}
-      <InputBase
-        placeholder={
-          values.length ? "Add another, then press Enter" : placeholder
-        }
-        inputProps={{ "aria-label": label }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            add(e.target);
-          }
-        }}
-        onChange={(e) => {
-          if (e.target.value.endsWith(",")) add(e.target);
-        }}
-        onBlur={(e) => add(e.target)}
-        sx={{
-          flex: 1,
-          minWidth: 180,
-          "& .MuiInputBase-input": { typography: "s2", p: 0, height: 22 },
-        }}
-      />
-    </Stack>
-  );
-}
-ChipsInput.propTypes = {
-  values: PropTypes.array.isRequired,
-  onChange: PropTypes.func.isRequired,
-  label: PropTypes.string.isRequired,
-  placeholder: PropTypes.string.isRequired,
-  testId: PropTypes.string,
-};
 
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
 // write (launch) starts it. The user decides the cases to fix and protect, the
@@ -358,43 +248,11 @@ export default function LaunchFixDialog({
                 />
               )}
             </Row>
-            <Row k="May change" center>
-              <Stack direction="row" flexWrap="wrap" columnGap={2}>
-                {options.surfaces.map((s) => (
-                  <CustomTooltip
-                    key={s.id}
-                    show={!s.allowed && !!s.reason}
-                    title={s.reason || ""}
-                    size="small"
-                    arrow
-                  >
-                    <Box component="span">
-                      <FormControlLabel
-                        label={s.label}
-                        disabled={!s.allowed}
-                        control={
-                          <Checkbox
-                            size="small"
-                            checked={surfaces.includes(s.id)}
-                            onChange={() =>
-                              setSurfaces((cur) =>
-                                cur.includes(s.id)
-                                  ? cur.filter((x) => x !== s.id)
-                                  : [...cur, s.id],
-                              )
-                            }
-                          />
-                        }
-                        sx={{
-                          mr: 0,
-                          "& .MuiFormControlLabel-label": { typography: "s2" },
-                        }}
-                      />
-                    </Box>
-                  </CustomTooltip>
-                ))}
-              </Stack>
-            </Row>
+            <SurfacesRow
+              surfaces={options.surfaces}
+              value={surfaces}
+              onChange={setSurfaces}
+            />
             <Row k="Locked files" center>
               <ChipsInput
                 values={locked}
@@ -404,117 +262,32 @@ export default function LaunchFixDialog({
                 testId="locked-files"
               />
             </Row>
-            <Row k="Models" center>
-              {lockable ? (
-                <ChipsInput
-                  values={models}
-                  onChange={setModels}
-                  label="Add an allowed model"
-                  placeholder="The models it may call. Press Enter to add each."
-                  testId="allowed-models"
-                />
-              ) : (
-                <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                  {tracesUnreadable(options)
+            <LaunchLimits
+              limits={limits}
+              modelsNote={
+                lockable
+                  ? null
+                  : tracesUnreadable(options)
                     ? options.blocked.message
                     : callsUnmeasured(options)
                       ? UNMEASURED_NOTE
                       : isTraced(options)
                         ? NO_MODELS_NOTE
-                        : UNTRACED_NOTE}
-                </Typography>
-              )}
-            </Row>
-            <Row k="Reply time" center>
-              <Select
-                size="small"
-                value={latencyMargin}
-                onChange={(e) => setLatencyMargin(Number(e.target.value))}
-                sx={{ ...selectSx, width: 220 }}
-                inputProps={{ "aria-label": "Reply time margin" }}
-              >
-                {marginSteps(latencyMargin).map((n) => (
-                  <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                    {n === 0 ? "No increase" : `Up to ${n}% slower than now`}
-                  </MenuItem>
-                ))}
-              </Select>
-            </Row>
-            <Row k="Agent's cost" center>
-              <Stack direction="row" spacing={1.5} alignItems="center">
-                <Select
-                  size="small"
-                  value={costMargin}
-                  onChange={(e) => setCostMargin(Number(e.target.value))}
-                  sx={{ ...selectSx, width: 220 }}
-                  inputProps={{ "aria-label": "Agent's cost margin" }}
-                >
-                  {marginSteps(costMargin).map((n) => (
-                    <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                      {n === 0 ? "No increase" : `Up to ${n}% more than now`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                  and at most $
-                </Typography>
-                <InputBase
-                  value={costLimit}
-                  onChange={(e) => setCostLimit(e.target.value)}
-                  placeholder="no limit"
-                  inputProps={{
-                    "aria-label": "Agent's cost limit per conversation",
-                    inputMode: "decimal",
-                  }}
-                  sx={{
-                    width: 80,
-                    "& .MuiInputBase-input": {
-                      typography: "s2",
-                      p: 0,
-                      height: 22,
-                    },
-                  }}
-                />
-                <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-                  a conversation
-                </Typography>
-              </Stack>
-            </Row>
-            <Row k="Budget" center>
-              <Stack direction="row" spacing={1.5}>
-                <Select
-                  size="small"
-                  value={budget}
-                  onChange={(e) => setBudget(Number(e.target.value))}
-                  sx={{ ...selectSx, width: 220 }}
-                  inputProps={{ "aria-label": "Budget" }}
-                >
-                  {budgetSteps(budget, limits).map((n) => (
-                    <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                      {formatCredits(n)}
-                    </MenuItem>
-                  ))}
-                </Select>
-                <Select
-                  size="small"
-                  value={minutes}
-                  onChange={(e) => setMinutes(Number(e.target.value))}
-                  sx={{ ...selectSx, width: 220 }}
-                  inputProps={{ "aria-label": "Time limit" }}
-                >
-                  {minuteSteps(minutes, limits).map((n) => (
-                    <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                      {formatMinutes(n)}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </Stack>
-            </Row>
-            <Row k="Stops at">
-              <Typography sx={{ typography: "s2" }}>
-                {`${formatCredits(budget)} or ${formatMinutes(minutes)}, whichever comes first.`}
-              </Typography>
-            </Row>
+                        : UNTRACED_NOTE
+              }
+              models={models}
+              onModels={setModels}
+              latencyMargin={latencyMargin}
+              onLatencyMargin={setLatencyMargin}
+              costMargin={costMargin}
+              onCostMargin={setCostMargin}
+              costLimit={costLimit}
+              onCostLimit={setCostLimit}
+              budget={budget}
+              onBudget={setBudget}
+              minutes={minutes}
+              onMinutes={setMinutes}
+            />
           </Box>
         </Box>
 
