@@ -19,7 +19,7 @@
     "ds:optouts": "node scripts/ds-optouts.mjs",
     "tokens:build": "python3 -I design-system/tools/build_tokens.py",
     "prettier": "prettier --write \"src/**/*.{js,jsx,ts,tsx}\"",
-    "type-check": "node --max-old-space-size=4096 ./node_modules/.bin/tsc --noEmit -p tsconfig.json",
+    "type-check": "node --max-old-space-size=8192 ./node_modules/.bin/tsc --noEmit -p tsconfig.json",
     "contracts:generate": "node scripts/generate-filter-contract.mjs && node scripts/generate-api-surface-contract.mjs && node scripts/generate-openapi-contract.mjs && node scripts/generate-openapi-client.mjs && node scripts/generate-management-api-contract-debt.mjs && node scripts/generate-runtime-management-api-contract-debt.mjs",
     "contracts:check": "node scripts/generate-filter-contract.mjs --check && node scripts/generate-api-surface-contract.mjs --check && node scripts/generate-openapi-contract.mjs --check && node scripts/generate-openapi-client.mjs --check && node scripts/generate-management-api-contract-debt.mjs --check && node scripts/generate-runtime-management-api-contract-debt.mjs --check && node scripts/check-management-api-contract-coverage.mjs && node scripts/check-runtime-management-api-contract-coverage.mjs && node scripts/check-api-endpoint-registry-contract.mjs && node scripts/check-api-surface-usage.mjs",
     "test": "vitest",

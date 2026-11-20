@@ -26,7 +26,11 @@ vi.mock("src/utils/axios", () => ({
 vi.mock("src/api/project/observe-project-list", () => ({
   fetchAllObserveProjects,
 }));
-vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+// Partial: the filter panel reaches the app snackbar, which styles notistack's MaterialDesignContent.
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: vi.fn(),
+}));
 
 import ErrorFeedView from "../ErrorFeedView";
 import { useErrorFeedStore } from "../store";
