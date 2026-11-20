@@ -261,12 +261,18 @@ def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) ->
         raise HostedHarnessError(
             "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
-    added = VARIATIONS_PER_CASE * failing_cases
     suites = (source_run.suite_version_id, environment.suite_version_id)
     largest = max(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version_id=one).count()
         for one in suites
     )
+    require_variation_room(largest, failing_cases)
+
+
+def require_variation_room(largest: int, failing_cases: int) -> None:
+    """Refuse variations of ``failing_cases`` that would not fit a suite of ``largest``
+    scenarios, or one run of the cases and their variations."""
+    added = VARIATIONS_PER_CASE * failing_cases
     if largest + added > CHAT_CHECKPOINT_MAX_SCENARIOS:
         raise HostedHarnessError(
             "scenario_limit_exceeded",

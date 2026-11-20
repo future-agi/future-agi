@@ -18805,6 +18805,562 @@ export interface AgentFixEngineStateApi {
   state: string;
 }
 
+export type AgentFixIssueJobApiPhase =
+  (typeof AgentFixIssueJobApiPhase)[keyof typeof AgentFixIssueJobApiPhase];
+
+export const AgentFixIssueJobApiPhase = {
+  drafting: "drafting",
+  review: "review",
+  blocked: "blocked",
+  measuring: "measuring",
+  launched: "launched",
+  ended: "ended",
+} as const;
+
+export interface AgentFixIssueApi {
+  /** @minLength 1 */
+  cluster_id: string;
+  project_id: string;
+  title: string | null;
+}
+
+export interface AgentFixIssueEnvironmentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export type AgentFixIssueSamplePickApiUnit =
+  (typeof AgentFixIssueSamplePickApiUnit)[keyof typeof AgentFixIssueSamplePickApiUnit];
+
+export const AgentFixIssueSamplePickApiUnit = {
+  call: "call",
+  session: "session",
+  trace: "trace",
+} as const;
+
+export type AgentFixIssueSamplePickApiReason =
+  (typeof AgentFixIssueSamplePickApiReason)[keyof typeof AgentFixIssueSamplePickApiReason];
+
+export const AgentFixIssueSamplePickApiReason = {
+  example: "example",
+  cited: "cited",
+  recent: "recent",
+} as const;
+
+export interface AgentFixIssueSamplePickApi {
+  /** @minLength 1 */
+  member_id: string;
+  unit: AgentFixIssueSamplePickApiUnit;
+  /** @minLength 1 */
+  source_id: string;
+  reason: AgentFixIssueSamplePickApiReason;
+  started_at: string | null;
+}
+
+export interface AgentFixFailureApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface AgentFixIssueBaselineApi {
+  run_id: string;
+  /** @minLength 1 */
+  state: string;
+  scenarios: number;
+  completed_count: number;
+  failed_count: number;
+}
+
+export interface AgentFixIssueEpochApi {
+  id: string;
+  number: number | null;
+  environment_id: string;
+  /** @minLength 1 */
+  state: string;
+  step: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  failure_code: string | null;
+  retryable: boolean;
+  limited_validation: boolean;
+  pull_request_url: string | null;
+}
+
+export interface AgentFixIssueJobApi {
+  id: string;
+  phase: AgentFixIssueJobApiPhase;
+  issue: AgentFixIssueApi | null;
+  environment: AgentFixIssueEnvironmentApi;
+  sample: AgentFixIssueSamplePickApi[];
+  ending: AgentFixFailureApi | null;
+  baseline: AgentFixIssueBaselineApi | null;
+  epoch: AgentFixIssueEpochApi | null;
+  created_at: string;
+}
+
+export interface AgentFixIssueStatusApi {
+  /** @minLength 1 */
+  cluster_id: string;
+  project_id: string;
+  job: AgentFixIssueJobApi;
+}
+
+export interface AgentFixIssueStatusListApi {
+  results: AgentFixIssueStatusApi[];
+}
+
+export interface AgentFixIssueCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  cluster_id: string;
+  project_id: string;
+  environment_id: string;
+  /**
+   * The plan's picks after any swap: each pick's member_id.
+   * @minItems 1
+   * @maxItems 20
+   */
+  member_ids: string[];
+}
+
+export type AgentFixIssueJobDetailApiPhase =
+  (typeof AgentFixIssueJobDetailApiPhase)[keyof typeof AgentFixIssueJobDetailApiPhase];
+
+export const AgentFixIssueJobDetailApiPhase = {
+  drafting: "drafting",
+  review: "review",
+  blocked: "blocked",
+  measuring: "measuring",
+  launched: "launched",
+  ended: "ended",
+} as const;
+
+export type EvidenceImportApiSourceKind =
+  (typeof EvidenceImportApiSourceKind)[keyof typeof EvidenceImportApiSourceKind];
+
+export const EvidenceImportApiSourceKind = {
+  session: "session",
+  call: "call",
+  trace: "trace",
+  transcript: "transcript",
+  dataset: "dataset",
+} as const;
+
+export type EvidenceImportCaseApiStatus =
+  (typeof EvidenceImportCaseApiStatus)[keyof typeof EvidenceImportCaseApiStatus];
+
+export const EvidenceImportCaseApiStatus = {
+  pending: "pending",
+  unavailable: "unavailable",
+  drafted: "drafted",
+  blocked: "blocked",
+  added: "added",
+  discarded: "discarded",
+  duplicate: "duplicate",
+} as const;
+
+/**
+ * Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.
+ */
+export interface EvidenceNewCheckApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+}
+
+/**
+ * For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.
+ */
+export interface EvidenceDuplicateOfApi {
+  /** The import holding the case. */
+  import_id: string;
+  case_id: string;
+  /** Its drafted scenario's title; blank until drafted. */
+  scenario_name: string;
+}
+
+export type EvidenceTranscriptApiStatus =
+  (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
+
+export const EvidenceTranscriptApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export type EvidenceTurnApiRole =
+  (typeof EvidenceTurnApiRole)[keyof typeof EvidenceTurnApiRole];
+
+export const EvidenceTurnApiRole = {
+  user: "user",
+  agent: "agent",
+} as const;
+
+export interface EvidenceTurnApi {
+  role: EvidenceTurnApiRole;
+  text: string;
+  truncated: boolean;
+  /** Blank for a turn no trace recorded. */
+  trace_id: string;
+  at: string | null;
+}
+
+export interface EvidenceTranscriptApi {
+  status: EvidenceTranscriptApiStatus;
+  reason: string;
+  turns: EvidenceTurnApi[];
+}
+
+export type EvidenceToolCallsApiStatus =
+  (typeof EvidenceToolCallsApiStatus)[keyof typeof EvidenceToolCallsApiStatus];
+
+export const EvidenceToolCallsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export interface EvidenceToolCallApi {
+  /** @minLength 1 */
+  span_id: string;
+  /** @minLength 1 */
+  trace_id: string;
+  name: string;
+  at: string;
+  failed: boolean;
+  error: string;
+  input: string;
+  output: string;
+  input_truncated: boolean;
+  output_truncated: boolean;
+}
+
+export interface EvidenceToolCallsApi {
+  status: EvidenceToolCallsApiStatus;
+  reason: string;
+  calls: EvidenceToolCallApi[];
+}
+
+export type EvidencePartApiStatus =
+  (typeof EvidencePartApiStatus)[keyof typeof EvidencePartApiStatus];
+
+export const EvidencePartApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * Whether the tool calls recorded their inputs.
+ */
+export interface EvidencePartApi {
+  status: EvidencePartApiStatus;
+  reason: string;
+}
+
+export type EvidenceLabelsApiStatus =
+  (typeof EvidenceLabelsApiStatus)[keyof typeof EvidenceLabelsApiStatus];
+
+export const EvidenceLabelsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * row: a dataset row's label column.
+ */
+export type EvidenceLabelApiTarget =
+  (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
+
+export const EvidenceLabelApiTarget = {
+  session: "session",
+  trace: "trace",
+  span: "span",
+  row: "row",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvidenceLabelApiValue = JsonValueApi;
+
+export interface EvidenceLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  /** Any valid JSON value. */
+  value: EvidenceLabelApiValue;
+  notes: string;
+  /** row: a dataset row's label column. */
+  target: EvidenceLabelApiTarget;
+}
+
+export interface EvidenceLabelsApi {
+  status: EvidenceLabelsApiStatus;
+  reason: string;
+  labels: EvidenceLabelApi[];
+}
+
+export type EvidenceExpectedOutcomeApiStatus =
+  (typeof EvidenceExpectedOutcomeApiStatus)[keyof typeof EvidenceExpectedOutcomeApiStatus];
+
+export const EvidenceExpectedOutcomeApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * What a dataset row's expected outcome column says should happen.
+ */
+export interface EvidenceExpectedOutcomeApi {
+  status: EvidenceExpectedOutcomeApiStatus;
+  reason: string;
+  text: string;
+}
+
+export interface EvidenceImportCaseApi {
+  id: string;
+  /** @minLength 1 */
+  source_id: string;
+  /** A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source. */
+  name: string;
+  status: EvidenceImportCaseApiStatus;
+  reason: string;
+  /** False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
+  source_available: boolean;
+  /** The drafted scenario's key, once drafted. */
+  scenario_key: string;
+  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
+  scenario_name: string;
+  /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
+  new_checks: EvidenceNewCheckApi[];
+  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
+  changed_since_import: boolean | null;
+  /**
+   * How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.
+   * @minimum 0
+   */
+  also_from: number;
+  duplicate_of: EvidenceDuplicateOfApi | null;
+  trace_ids: string[];
+  started_at: string | null;
+  ended_at: string | null;
+  transcript: EvidenceTranscriptApi;
+  tool_calls: EvidenceToolCallsApi;
+  tool_inputs: EvidencePartApi;
+  tool_outputs: EvidencePartApi;
+  starting_state: EvidencePartApi;
+  labels: EvidenceLabelsApi;
+  expected_outcome: EvidenceExpectedOutcomeApi;
+}
+
+/**
+ * basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.
+ */
+export type EvidenceRedactionApiMethod =
+  (typeof EvidenceRedactionApiMethod)[keyof typeof EvidenceRedactionApiMethod];
+
+export const EvidenceRedactionApiMethod = {
+  presidio: "presidio",
+  basic: "basic",
+} as const;
+
+export type EvidenceRedactionFindingApiPart =
+  (typeof EvidenceRedactionFindingApiPart)[keyof typeof EvidenceRedactionFindingApiPart];
+
+export const EvidenceRedactionFindingApiPart = {
+  transcript: "transcript",
+  tool_calls: "tool_calls",
+  labels: "labels",
+  expected_outcome: "expected_outcome",
+} as const;
+
+export type EvidenceRedactionFindingApiField =
+  (typeof EvidenceRedactionFindingApiField)[keyof typeof EvidenceRedactionFindingApiField];
+
+export const EvidenceRedactionFindingApiField = {
+  text: "text",
+  input: "input",
+  output: "output",
+  error: "error",
+  notes: "notes",
+  value: "value",
+  name: "name",
+} as const;
+
+export interface EvidenceRedactionFindingApi {
+  case_id: string;
+  part: EvidenceRedactionFindingApiPart;
+  /** @minimum 0 */
+  index: number;
+  field: EvidenceRedactionFindingApiField;
+  /** @minLength 1 */
+  entity: string;
+  /** @minimum 0 */
+  start: number;
+  /** @minimum 0 */
+  end: number;
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  replacement: string;
+}
+
+export interface EvidenceRedactionApi {
+  /** basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses. */
+  method: EvidenceRedactionApiMethod;
+  reason: string;
+  findings: EvidenceRedactionFindingApi[];
+  /**
+   * Every finding, including those past the listed ones.
+   * @minimum 0
+   */
+  total: number;
+}
+
+export interface EvidenceImportApi {
+  id: string;
+  environment_id: string;
+  /** The Observe project; null for evidence from outside Observe. */
+  project_id: string | null;
+  /** A dataset import's dataset; null otherwise. */
+  dataset_id: string | null;
+  agent_version_id: string | null;
+  source_kind: EvidenceImportApiSourceKind;
+  created_at: string;
+  /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
+  simulated: boolean;
+  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production. */
+  production: boolean;
+  /** True while the environment's builder is drafting cases. */
+  drafting: boolean;
+  cases: EvidenceImportCaseApi[];
+  redaction: EvidenceRedactionApi;
+}
+
+export type AgentFixLaunchSurfaceApiId =
+  (typeof AgentFixLaunchSurfaceApiId)[keyof typeof AgentFixLaunchSurfaceApiId];
+
+export const AgentFixLaunchSurfaceApiId = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixLaunchSurfaceApi {
+  id: AgentFixLaunchSurfaceApiId;
+  /** @minLength 1 */
+  label: string;
+  allowed: boolean;
+  reason: string | null;
+}
+
+export interface AgentFixIssueDefaultsApi {
+  surfaces: AgentFixLaunchSurfaceApi[];
+  budget_credits: number;
+  budget_credits_max: number;
+  max_minutes_max: number;
+  reply_latency_margin_pct: number;
+  cost_margin_pct: number;
+}
+
+export interface AgentFixIssueJobDetailApi {
+  id: string;
+  phase: AgentFixIssueJobDetailApiPhase;
+  issue: AgentFixIssueApi | null;
+  environment: AgentFixIssueEnvironmentApi;
+  sample: AgentFixIssueSamplePickApi[];
+  ending: AgentFixFailureApi | null;
+  baseline: AgentFixIssueBaselineApi | null;
+  epoch: AgentFixIssueEpochApi | null;
+  created_at: string;
+  evidence_import: EvidenceImportApi;
+  defaults: AgentFixIssueDefaultsApi;
+}
+
+export interface AgentFixIssueSampleApi {
+  unit: "call" | "session" | "trace" | null;
+  picks: AgentFixIssueSamplePickApi[];
+  alternates: AgentFixIssueSamplePickApi[];
+}
+
+export interface AgentFixIssueScenariosApi {
+  held: number;
+  limit: number;
+}
+
+export interface AgentFixIssuePlanApi {
+  issue: AgentFixIssueApi;
+  environment: AgentFixIssueEnvironmentApi | null;
+  blocked: AgentFixFailureApi | null;
+  sample: AgentFixIssueSampleApi;
+  open_job_id: string | null;
+  issue_scenarios: AgentFixIssueScenariosApi | null;
+  defaults: AgentFixIssueDefaultsApi;
+}
+
+export type AgentFixIssueRunApiSurfacesItem =
+  (typeof AgentFixIssueRunApiSurfacesItem)[keyof typeof AgentFixIssueRunApiSurfacesItem];
+
+export const AgentFixIssueRunApiSurfacesItem = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixIssueRunApi {
+  /** @minItems 1 */
+  surfaces: AgentFixIssueRunApiSurfacesItem[];
+  locked_paths?: string[];
+  /**
+   * @minimum 1
+   * @maximum 50000
+   */
+  budget_credits: number;
+  /**
+   * @minimum 1
+   * @maximum 1440
+   */
+  max_minutes?: number;
+  /** @maxItems 50 */
+  allowed_models?: string[];
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  reply_latency_margin_pct?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  cost_margin_pct?: number;
+  cost_limit_usd?: number | null;
+  /**
+   * The import's cases to keep: drafted ones, and repeats of scenarios the suite already holds.
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
+}
+
 export interface AgentFixEnvironmentApi {
   /** @minLength 1 */
   name: string;
@@ -18839,20 +19395,6 @@ export const AgentFixRunApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunApiStep =
-  (typeof AgentFixRunApiStep)[keyof typeof AgentFixRunApiStep];
-
-export const AgentFixRunApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
 export type AgentFixRequestApiVariationParents = { [key: string]: string };
 
 export interface AgentFixRequestApi {
@@ -18884,11 +19426,11 @@ export interface AgentFixReportApi {
   flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 
-export interface AgentFixFailureApi {
+export interface AgentFixEpochIssueApi {
+  job_id: string;
   /** @minLength 1 */
-  code: string;
-  /** @minLength 1 */
-  message: string;
+  cluster_id: string;
+  project_id: string;
 }
 
 export interface AgentFixCheckRunApi {
@@ -18920,8 +19462,8 @@ export interface AgentFixOverrideApi {
   allowed: boolean;
   regressions: string[];
   reason: string;
-  by: HarnessVersionPersonApi;
-  at: string;
+  by: HarnessVersionPersonApi | null;
+  at: string | null;
 }
 
 export interface AgentFixCandidateApi {
@@ -18935,43 +19477,42 @@ export interface AgentFixCandidateApi {
   version_number: number;
   summary?: string;
   outcome?: AgentFixCandidateApiOutcome;
-  verdict: AgentFixVerdictApi;
+  verdict: AgentFixVerdictApi | null;
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   override?: AgentFixOverrideApi;
-  /** @maxLength 512 */
-  pull_request_url?: string;
+  pull_request_url: string;
   readonly created_at?: string;
 }
 
 export interface AgentFixRunApi {
   readonly id?: string;
-  number: number;
+  number: number | null;
   environment_id: string;
   environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
+  source_run_id: string | null;
+  source_run_number: number | null;
   base_agent_version_id: string;
   agent?: AgentFixAgentApi;
   state?: AgentFixRunApiState;
   /** @maxLength 32 */
   stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
+  step?: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  plan: AgentFixPlanApi | null;
+  diagnosis: AgentFixDiagnosisApi | null;
   request: AgentFixRequestApi;
   spent_credits: number;
   committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
+  report: AgentFixReportApi | null;
+  failure: AgentFixFailureApi | null;
+  retried_from_id: string | null;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
+  issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   readonly created_at?: string;
 }
 
@@ -19065,25 +19606,6 @@ export interface AgentFixLaunchSuggestedApi {
   protected_scenario_keys: string[];
 }
 
-export type AgentFixLaunchSurfaceApiId =
-  (typeof AgentFixLaunchSurfaceApiId)[keyof typeof AgentFixLaunchSurfaceApiId];
-
-export const AgentFixLaunchSurfaceApiId = {
-  prompt: "prompt",
-  tools: "tools",
-  settings: "settings",
-  code: "code",
-} as const;
-
-export interface AgentFixLaunchSurfaceApi {
-  id: AgentFixLaunchSurfaceApiId;
-  /** @minLength 1 */
-  label: string;
-  allowed: boolean;
-  /** @minLength 1 */
-  reason: string;
-}
-
 export type AgentFixLaunchDefaultsApiSurfacesItem =
   (typeof AgentFixLaunchDefaultsApiSurfacesItem)[keyof typeof AgentFixLaunchDefaultsApiSurfacesItem];
 
@@ -19144,20 +19666,6 @@ export const AgentFixRunDetailApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunDetailApiStep =
-  (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
-
-export const AgentFixRunDetailApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
 export type AgentFixRunDetailApiEvalGrading =
   (typeof AgentFixRunDetailApiEvalGrading)[keyof typeof AgentFixRunDetailApiEvalGrading];
 
@@ -19179,33 +19687,33 @@ export interface AgentFixEvalWarningApi {
 
 export interface AgentFixRunDetailApi {
   readonly id?: string;
-  number: number;
+  number: number | null;
   environment_id: string;
   environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
+  source_run_id: string | null;
+  source_run_number: number | null;
   base_agent_version_id: string;
   agent?: AgentFixAgentApi;
   state?: AgentFixRunDetailApiState;
   /** @maxLength 32 */
   stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunDetailApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
+  step?: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  plan: AgentFixPlanApi | null;
+  diagnosis: AgentFixDiagnosisApi | null;
   request: AgentFixRequestApi;
   spent_credits: number;
   committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
+  report: AgentFixReportApi | null;
+  failure: AgentFixFailureApi | null;
+  retried_from_id: string | null;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
+  issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
@@ -21911,6 +22419,7 @@ export type EvidenceImportListItemApiSourceKind =
 export const EvidenceImportListItemApiSourceKind = {
   session: "session",
   call: "call",
+  trace: "trace",
   transcript: "transcript",
   dataset: "dataset",
 } as const;
@@ -21959,6 +22468,7 @@ export type EvidenceImportCreateApiSourceKind =
 export const EvidenceImportCreateApiSourceKind = {
   session: "session",
   call: "call",
+  trace: "trace",
   transcript: "transcript",
   dataset: "dataset",
 } as const;
@@ -22009,10 +22519,10 @@ export interface EvidenceTranscriptInputApi {
 
 export interface EvidenceImportCreateApi {
   source_kind: EvidenceImportCreateApiSourceKind;
-  /** Session and call imports: the Observe project. */
+  /** Session, call and trace imports: the Observe project. */
   project_id?: string;
   /**
-   * Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.
+   * Session, call, trace and dataset imports: session ids, the trace ids of calls or traces, or row ids, in the order picked.
    * @minItems 1
    * @maxItems 20
    */
@@ -22028,321 +22538,6 @@ export interface EvidenceImportCreateApi {
   transcripts?: EvidenceTranscriptInputApi[];
   /** Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence. */
   production?: boolean;
-}
-
-export type EvidenceImportApiSourceKind =
-  (typeof EvidenceImportApiSourceKind)[keyof typeof EvidenceImportApiSourceKind];
-
-export const EvidenceImportApiSourceKind = {
-  session: "session",
-  call: "call",
-  transcript: "transcript",
-  dataset: "dataset",
-} as const;
-
-export type EvidenceImportCaseApiStatus =
-  (typeof EvidenceImportCaseApiStatus)[keyof typeof EvidenceImportCaseApiStatus];
-
-export const EvidenceImportCaseApiStatus = {
-  pending: "pending",
-  unavailable: "unavailable",
-  drafted: "drafted",
-  blocked: "blocked",
-  added: "added",
-  discarded: "discarded",
-  duplicate: "duplicate",
-} as const;
-
-/**
- * Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.
- */
-export interface EvidenceNewCheckApi {
-  /** @minLength 1 */
-  name: string;
-  what: string;
-}
-
-/**
- * For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.
- */
-export interface EvidenceDuplicateOfApi {
-  /** The import holding the case. */
-  import_id: string;
-  case_id: string;
-  /** Its drafted scenario's title; blank until drafted. */
-  scenario_name: string;
-}
-
-export type EvidenceTranscriptApiStatus =
-  (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
-
-export const EvidenceTranscriptApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-export type EvidenceTurnApiRole =
-  (typeof EvidenceTurnApiRole)[keyof typeof EvidenceTurnApiRole];
-
-export const EvidenceTurnApiRole = {
-  user: "user",
-  agent: "agent",
-} as const;
-
-export interface EvidenceTurnApi {
-  role: EvidenceTurnApiRole;
-  text: string;
-  truncated: boolean;
-  /** Blank for a turn no trace recorded. */
-  trace_id: string;
-  at: string | null;
-}
-
-export interface EvidenceTranscriptApi {
-  status: EvidenceTranscriptApiStatus;
-  reason: string;
-  turns: EvidenceTurnApi[];
-}
-
-export type EvidenceToolCallsApiStatus =
-  (typeof EvidenceToolCallsApiStatus)[keyof typeof EvidenceToolCallsApiStatus];
-
-export const EvidenceToolCallsApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-export interface EvidenceToolCallApi {
-  /** @minLength 1 */
-  span_id: string;
-  /** @minLength 1 */
-  trace_id: string;
-  name: string;
-  at: string;
-  failed: boolean;
-  error: string;
-  input: string;
-  output: string;
-  input_truncated: boolean;
-  output_truncated: boolean;
-}
-
-export interface EvidenceToolCallsApi {
-  status: EvidenceToolCallsApiStatus;
-  reason: string;
-  calls: EvidenceToolCallApi[];
-}
-
-export type EvidencePartApiStatus =
-  (typeof EvidencePartApiStatus)[keyof typeof EvidencePartApiStatus];
-
-export const EvidencePartApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-/**
- * Whether the tool calls recorded their inputs.
- */
-export interface EvidencePartApi {
-  status: EvidencePartApiStatus;
-  reason: string;
-}
-
-export type EvidenceLabelsApiStatus =
-  (typeof EvidenceLabelsApiStatus)[keyof typeof EvidenceLabelsApiStatus];
-
-export const EvidenceLabelsApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-/**
- * row: a dataset row's label column.
- */
-export type EvidenceLabelApiTarget =
-  (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
-
-export const EvidenceLabelApiTarget = {
-  session: "session",
-  trace: "trace",
-  span: "span",
-  row: "row",
-} as const;
-
-/**
- * Any valid JSON value.
- */
-export type EvidenceLabelApiValue = JsonValueApi;
-
-export interface EvidenceLabelApi {
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  kind: string;
-  /** Any valid JSON value. */
-  value: EvidenceLabelApiValue;
-  notes: string;
-  /** row: a dataset row's label column. */
-  target: EvidenceLabelApiTarget;
-}
-
-export interface EvidenceLabelsApi {
-  status: EvidenceLabelsApiStatus;
-  reason: string;
-  labels: EvidenceLabelApi[];
-}
-
-export type EvidenceExpectedOutcomeApiStatus =
-  (typeof EvidenceExpectedOutcomeApiStatus)[keyof typeof EvidenceExpectedOutcomeApiStatus];
-
-export const EvidenceExpectedOutcomeApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-/**
- * What a dataset row's expected outcome column says should happen.
- */
-export interface EvidenceExpectedOutcomeApi {
-  status: EvidenceExpectedOutcomeApiStatus;
-  reason: string;
-  text: string;
-}
-
-export interface EvidenceImportCaseApi {
-  id: string;
-  /** @minLength 1 */
-  source_id: string;
-  /** A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source. */
-  name: string;
-  status: EvidenceImportCaseApiStatus;
-  reason: string;
-  /** False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
-  source_available: boolean;
-  /** The drafted scenario's key, once drafted. */
-  scenario_key: string;
-  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
-  scenario_name: string;
-  /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
-  new_checks: EvidenceNewCheckApi[];
-  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
-  changed_since_import: boolean | null;
-  /**
-   * How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.
-   * @minimum 0
-   */
-  also_from: number;
-  duplicate_of: EvidenceDuplicateOfApi;
-  trace_ids: string[];
-  started_at: string | null;
-  ended_at: string | null;
-  transcript: EvidenceTranscriptApi;
-  tool_calls: EvidenceToolCallsApi;
-  tool_inputs: EvidencePartApi;
-  tool_outputs: EvidencePartApi;
-  starting_state: EvidencePartApi;
-  labels: EvidenceLabelsApi;
-  expected_outcome: EvidenceExpectedOutcomeApi;
-}
-
-/**
- * basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.
- */
-export type EvidenceRedactionApiMethod =
-  (typeof EvidenceRedactionApiMethod)[keyof typeof EvidenceRedactionApiMethod];
-
-export const EvidenceRedactionApiMethod = {
-  presidio: "presidio",
-  basic: "basic",
-} as const;
-
-export type EvidenceRedactionFindingApiPart =
-  (typeof EvidenceRedactionFindingApiPart)[keyof typeof EvidenceRedactionFindingApiPart];
-
-export const EvidenceRedactionFindingApiPart = {
-  transcript: "transcript",
-  tool_calls: "tool_calls",
-  labels: "labels",
-  expected_outcome: "expected_outcome",
-} as const;
-
-export type EvidenceRedactionFindingApiField =
-  (typeof EvidenceRedactionFindingApiField)[keyof typeof EvidenceRedactionFindingApiField];
-
-export const EvidenceRedactionFindingApiField = {
-  text: "text",
-  input: "input",
-  output: "output",
-  error: "error",
-  notes: "notes",
-  value: "value",
-  name: "name",
-} as const;
-
-export interface EvidenceRedactionFindingApi {
-  case_id: string;
-  part: EvidenceRedactionFindingApiPart;
-  /** @minimum 0 */
-  index: number;
-  field: EvidenceRedactionFindingApiField;
-  /** @minLength 1 */
-  entity: string;
-  /** @minimum 0 */
-  start: number;
-  /** @minimum 0 */
-  end: number;
-  /** @minLength 1 */
-  value: string;
-  /** @minLength 1 */
-  replacement: string;
-}
-
-export interface EvidenceRedactionApi {
-  /** basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses. */
-  method: EvidenceRedactionApiMethod;
-  reason: string;
-  findings: EvidenceRedactionFindingApi[];
-  /**
-   * Every finding, including those past the listed ones.
-   * @minimum 0
-   */
-  total: number;
-}
-
-export interface EvidenceImportApi {
-  id: string;
-  environment_id: string;
-  /** The Observe project; null for evidence from outside Observe. */
-  project_id: string | null;
-  /** A dataset import's dataset; null otherwise. */
-  dataset_id: string;
-  agent_version_id: string | null;
-  source_kind: EvidenceImportApiSourceKind;
-  created_at: string;
-  /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
-  simulated: boolean;
-  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production. */
-  production: boolean;
-  /** True while the environment's builder is drafting cases. */
-  drafting: boolean;
-  cases: EvidenceImportCaseApi[];
-  redaction: EvidenceRedactionApi;
 }
 
 export interface EvidenceDraftRefApi {
@@ -22998,6 +23193,9 @@ export interface HarnessSuiteMemberApi {
   number: number;
   name: string;
   use_case: string;
+  /** @minLength 1 */
+  issue_cluster_id: string;
+  issue_project_id: string;
 }
 
 export interface HarnessDefaultMoveApi {
@@ -45847,6 +46045,25 @@ export type SimulateApiAgentFixEngineCandidatesBodyTwo = {
 
 export type SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = {
   [key: string]: unknown;
+};
+
+export type SimulateApiAgentFixIssuesListParams = {
+  project_id?: string;
+  /**
+   * The issues' ids, comma-separated: one page of the issue list.
+   * @minLength 1
+   */
+  cluster_ids: string;
+};
+
+export type SimulateApiAgentFixIssuesPlanParams = {
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  cluster_id: string;
+  project_id: string;
+  environment_id?: string;
 };
 
 export type SimulateApiAgentFixRunsListParams = {

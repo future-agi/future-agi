@@ -33,6 +33,7 @@ from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
+    AgentFixIssueJob,
     AgentFixRun,
     AgentVersion,
     CallExecution,
@@ -1389,6 +1390,23 @@ def launch_blocker(
             " finish.",
             status_code=409,
         )
+    # An issue's baseline holds the environment for the epoch launched from it.
+    if (
+        AgentFixIssueJob.no_workspace_objects.filter(
+            environment=source_run.environment,
+            baseline_run__isnull=False,
+            fix_run__isnull=True,
+            ending__isnull=True,
+        )
+        .exclude(baseline_run=source_run)
+        .exists()
+    ):
+        return HostedHarnessError(
+            "issue_epoch_measuring",
+            "An epoch from an Error Feed issue is starting in this environment. Wait"
+            " for it, or open it.",
+            status_code=409,
+        )
     if usage:
         decision = check_harness_action(str(source_run.organization_id), "agent_fix")
         if not decision["allowed"]:
@@ -1444,8 +1462,6 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     launch_blocker; None when nothing would. The environment's builder writes them in its
     chat's workspace, which holds any unsaved scenario or setup changes, so those must be
     saved or discarded first: the variations are written from the run's cases only."""
-    from simulate.services.harness_versioning import drafts
-
     environment = source_run.environment
     if environment is None:
         return HostedHarnessError(
@@ -1467,6 +1483,18 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     moved = variations_source_moved(environment, source_run)
     if moved is not None:
         return moved
+    return environment_variations_blocker(environment)
+
+
+def environment_variations_blocker(
+    environment: HostedHarnessJob,
+) -> HostedHarnessError | None:
+    """What of the environment itself would stop its builder writing variations: its
+    chat's saved files are gone, a rebuild is pending, or unsaved changes are open.
+    A launch that writes variations asks it (variations_blocker), and so does Run
+    Epoch from an issue before its baseline is paid for."""
+    from simulate.services.harness_versioning import drafts
+
     if HostedHarnessConversation.no_workspace_objects.filter(
         job=environment, state=HostedHarnessConversation.State.RETIRED
     ).exists():
@@ -1508,6 +1536,23 @@ def variations_source_moved(
         " written from the cases as they ran.",
         status_code=409,
     )
+
+
+def launch_surfaces(offered: Iterable[Surface]) -> list[LaunchSurface]:
+    """Each part of an agent the launch form names, and whether an epoch may change it
+    on this kind of agent."""
+    allowed = set(offered)
+    return [
+        LaunchSurface(
+            id=surface,
+            label=label,
+            allowed=surface in allowed,
+            reason=None
+            if surface in allowed
+            else f"Epoch can't change the {label.lower()} of this kind of agent.",
+        )
+        for surface, label in SURFACE_LABELS.items()
+    ]
 
 
 def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
@@ -1591,17 +1636,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             ],
             protected_scenario_keys=[one.key for one in scenarios if one.passed],
         ),
-        surfaces=[
-            LaunchSurface(
-                id=surface,
-                label=label,
-                allowed=surface in offered,
-                reason=None
-                if surface in offered
-                else f"Epoch can't change the {label.lower()} of this kind of agent.",
-            )
-            for surface, label in SURFACE_LABELS.items()
-        ],
+        surfaces=launch_surfaces(offered),
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
