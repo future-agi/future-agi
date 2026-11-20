@@ -937,3 +937,22 @@ results for one pass (not a skip, expected failure or retry) and emits only
 IDs and the tested SHA. The ordinary suite runs the complement. The required
 aggregate rejects a missing cohort; raw Skills reports, attachments and
 private fixture inputs must stay on their original worker.
+
+### Registered Skills journeys on GCP
+
+`skills-e2e-gcp.yml` tests the **checked-out merge commit** for applicable internal PRs (or the selected commit on dispatch). The `Skills GCP coverage` check requires seven first-attempt Playwright passes. Each case has its own ephemeral Debian VM and stack:
+
+| Case | Stack | Evidence required |
+| --- | --- | --- |
+| SKILLS-E2E-056 | Standalone, campaigns on | Protected CLI refuses without Checkpoint P; no counts or campaign writes |
+| SKILLS-E2E-057, 058, 059 | Standalone, campaigns on, one VM per ID | Real native Codex against loopback; cold adoption, recurring rollout and recovery each complete separately. No Checkpoint P or real-GitHub claim |
+| SKILLS-E2E-063 | Standalone | Registered recovery with the SDK + support-application wheels in a separate network-isolated container guest; eight faults, not E2B |
+| J3 fixture | Distributed | Configured fixture: three v1 parents referencing v7, one pinned. **Provisioning**, not a measured J3 journey |
+| J4 driver | Distributed | Both cold and configured CLI runs exit zero and retain completed reports for the running backend image |
+
+Before enabling the workflow:
+
+1. Protect the `skills-e2e-gcp` GitHub environment with required trusted reviewers and no self-approval. Review the workflow **and** the exact tested changes before approving. Restrict the WIF provider/service-account binding to this repository's immutable ID, the approved environment subject, this workflow and the allowed events; do not authorize generic PR subjects. Set `GCP_WIF_PROVIDER` (full provider resource name) and `GCP_E2E_SERVICE_ACCOUNT` (controller service-account email) as variables or secrets. Do not set a JSON key. Fork PRs never enter this job and cannot satisfy coverage via a skip; use a reviewed internal branch for the qualification run.
+2. In `fagi-omega-staging`, set `GCP_E2E_ZONE` and `GCP_E2E_SUBNET` to a compatible isolated subnet with outbound NAT for public package/image downloads, no production access, and firewall ingress for IAP SSH only. The controller needs instance/boot disk create, inspect and delete, subnet use, IAP tunneling and OS Admin Login. It also needs object read access to **only** the paired inputs/receipts. No controller or default service account is attached to the VM. Set a project quota/budget for aggregate concurrency across PRs. Per run: at most two concurrent `e2-standard-8` VMs, seven total, 160 GB auto-deleted boot disks, three-hour GCE `DELETE` deadline independent of Actions cleanup.
+3. Supply the compatible package producer from **Pinning the Skills test packages** above. `GCP_E2E_PAIR_PREFIX` is a `gs://` prefix containing `<tested-product-sha>/pair.json` and its five named files. `GCP_E2E_RECEIPT_PREFIX` is an independently controlled `gs://` prefix containing `<tested-product-sha>.json` with `product`, `sdk`, `traceai` (full Git SHAs) and `pair_sha256` (the independent lock digest). Only the trusted producer may write receipts; neither the dispatcher nor any test process should have write access. The producer must verify the SDK source's product pin, including on merge-ref builds. J6 resolves the support application's actual wheel dependencies; a differently pinned SDK is not a substitute. A missing/mismatched receipt fails before VM creation. No pre-existing private J3 actors or customer credentials are required: the fixture creates its inputs on the guest.
+4. Require **Skills GCP coverage** in branch protection. After a dispatch or PR run, inspect the seven `skills-gcp-*` artifacts. They contain allowlisted stage timings, test count/status/duration, first error line when available, and registration digests. The controller never fetches the raw Playwright report, screenshots, traces, child logs or J3/J4 actor inputs. Check cleanup with `gcloud compute instances list --project=fagi-omega-staging --filter="labels.app=skills-e2e AND labels.run-id=$RUN_ID"`; expect no instances for that run (including after cancellation).

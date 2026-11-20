@@ -18,13 +18,15 @@ import { getJob, digest, sha256 } from './j4-registration.mjs';
 const B = '/model-hub/skills/';
 const COHORTS = (process.env.J4_COHORTS || 'cold,configured').split(',') as Array<'cold' | 'configured'>;
 
-test('J4 registered driver retains honest cold and configured reports', async ({ scopeActors, request }) => {
-  test.setTimeout(1_800_000);
+test('J4 registered driver retains honest cold and configured reports', async ({ scopeActors, request }, testInfo) => {
+  test.setTimeout(3_600_000); // Two cohorts, each with a 25-minute child budget.
   const root = resolve(import.meta.dirname, '../../..');
   const output = resolve(process.env.J4_MEASUREMENT_DIR || '/tmp/j4-evidence/measurement');
   await mkdir(output, { recursive: true });
   const manifest = JSON.parse(await readFile(process.env.J4_PROVENANCE || '/tmp/j4-provenance.json', 'utf8'));
-  const runtimeDigest = execFileSync('docker', ['image', 'inspect', 'futureagi/standalone:e2esa', '--format', '{{.Id}}'], { encoding: 'utf8' }).trim().replace(/^sha256:/, '');
+  const service = process.env.E2E_STACK === 'standalone' ? 'app' : 'backend';
+  const container = execFileSync(resolve(root, 'bin/e2e'), ['compose', 'ps', '-q', service], { encoding: 'utf8' }).trim();
+  const runtimeDigest = execFileSync('docker', ['inspect', '--type', 'container', '--format', '{{.Image}}', container], { encoding: 'utf8' }).trim().replace(/^sha256:/, '');
   const packageHashes = await Promise.all(['frontend/package.json', 'e2e/package.json'].map(async path => sha256(await readFile(resolve(root, path)))));
   const lockHashes = await Promise.all(['frontend/yarn.lock', 'e2e/yarn.lock'].map(async path => sha256(await readFile(resolve(root, path)))));
   const sourcePaths = [
@@ -143,8 +145,13 @@ test('J4 registered driver retains honest cold and configured reports', async ({
         await writeFile(resolve(output, `${runId}-cli.json`), JSON.stringify({ exitCode: executed.status, signal: executed.signal, stdout: executed.stdout, stderr: executed.stderr }, null, 2));
         const report = JSON.parse(await readFile(resolve(output, `${runId}.json`), 'utf8'));
         await writeFile(resolve(output, `${cohort}.json`), JSON.stringify(report, null, 2));
-        // The invocation must leave an actual harness report; completeness
-        // belongs to that report and the CLI exit code recorded beside it.
+        if (process.env.SKILLS_GCP_CASE === 'j4') await testInfo.attach(`registration-${cohort}`, { contentType: 'application/json', body: JSON.stringify({
+          status: report.status, provenance: report.provenance,
+        }) });
+        // Keep a failed report and still exercise the second cohort.
+        expect.soft(executed.status, `${cohort} CLI exit`).toBe(0);
+        expect.soft(report.status, `${cohort} journey`).toBe('completed');
+        expect(report.cohort).toBe(cohort);
         expect(report.run_id).toBe(runId);
         expect(report.mode).toBe('product');
         expect(report.evidence_scope).toBe('synthetic');
