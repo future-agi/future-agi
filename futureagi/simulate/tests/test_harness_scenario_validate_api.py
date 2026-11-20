@@ -238,6 +238,36 @@ def test_save_is_refused_while_a_validation_of_the_default_pair_runs(
     assert "Wait for it to finish" in during.json()["message"]
 
 
+def test_a_check_that_only_reads_the_agent_holds_runs_but_not_a_save(
+    auth_client, certified
+):
+    job = HostedHarnessJob.no_workspace_objects.get(
+        id=_post(auth_client, certified).json()["job_id"]
+    )
+    metadata = job.payload["metadata"]
+    metadata.pop("scenario_proving", None)
+    metadata["agent_reading"] = "only"
+    job.save(update_fields=["payload"])
+
+    saved = auth_client.post(
+        f"{BASE}/{certified.id}/drafts/save/",
+        {
+            "idempotency_key": "save-while-reading",
+            "drafts": [
+                {
+                    "piece": "suite",
+                    "expected_parent_id": str(certified.suite_version_id),
+                }
+            ],
+        },
+        format="json",
+    )
+
+    # Runs wait for the tools to be read; the scenarios are not being proved, so a Save goes ahead.
+    assert validation.live_validation(job.assembled_bundle_id) == job
+    assert saved.json().get("error") != "validation_running"
+
+
 def test_bad_key_is_refused(auth_client, certified):
     for keys in (["has space"], ["x;rm -rf /"], [], [f"k{n}" for n in range(51)]):
         refused = _post(auth_client, certified, {"keys": keys})

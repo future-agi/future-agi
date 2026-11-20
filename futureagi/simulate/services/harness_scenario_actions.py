@@ -527,7 +527,8 @@ class RunningValidation(TypedDict):
 
 
 def live_validation(environment: HostedHarnessJob) -> HostedHarnessJob | None:
-    """The validation still running on the environment's default pair, if any."""
+    """The validation still running on the environment's default pair, if any; a check that only reads the
+    agent's tools proves no scenario, so it is not one."""
     from simulate.models import HarnessAssembledBundle
     from simulate.services.harness_versioning import validation
 
@@ -541,7 +542,14 @@ def live_validation(environment: HostedHarnessJob) -> HostedHarnessJob | None:
         suite_version_id=suite_version.id,
     ).values_list("id", flat=True)
     return next(
-        (one for one in map(validation.live_check, bundles) if one is not None), None
+        (
+            one
+            for one in (
+                validation.live_check(bundle, reading=False) for bundle in bundles
+            )
+            if one is not None
+        ),
+        None,
     )
 
 
