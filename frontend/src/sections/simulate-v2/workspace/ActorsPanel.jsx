@@ -12,7 +12,6 @@ import {
   Collapse,
   TextField,
   MenuItem,
-  Chip,
   Menu,
 } from "@mui/material";
 import PersonasInUseDrawer from "./PersonasInUseDrawer";
@@ -47,7 +46,7 @@ import {
 } from "../_mock/actors";
 import { callerCastOf, scenarioCountsByActor } from "../_mock/subActors";
 import ActorEditor from "./ActorEditor";
-import ActorSees from "./ActorSees";
+import { TextAction } from "./scenarios/ScenarioStateBits";
 import { SectionCard, EmptyState } from "../components/primitives";
 import { clickable, focusRing } from "../components/clickable";
 
@@ -753,41 +752,28 @@ function ActorRow({
       </Stack>
 
       <Collapse in={open} unmountOnExit>
-        <Stack spacing={1.5} sx={{ px: 2.5, pb: 2 }}>
-          <ActorSees view={view} name={actor.name} />
-          {files.length > 0 && (
-            <ActorFiles
-              files={files}
-              readable={readable}
-              onToggle={onToggleFile}
-            />
-          )}
-          <Box>
-            <Label>What they do</Label>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {actor.blurb}
-            </Typography>
-          </Box>
-          {actor.tests && (
-            <Box>
-              <Label>What it tests</Label>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {actor.tests}
-              </Typography>
-            </Box>
-          )}
-          <Box>
-            <Label>When they enter</Label>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        {/* Two spec tables side by side: their part in the run, and what
+            they see. "What they do" is the line under the name, and "Can
+            approve" is the Approves row, so neither repeats. */}
+        <Box
+          sx={{
+            px: 2.5,
+            pb: 2,
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+            gap: 1.5,
+            alignItems: "start",
+          }}
+        >
+          <SpecCard title="Their part">
+            {actor.tests && <SpecRow label="Tests">{actor.tests}</SpecRow>}
+            <SpecRow label="Enters">
               {sideOf(actor) === "caller" && arrivalLineOf(actor)
                 ? comes.charAt(0).toUpperCase() + comes.slice(1)
                 : `${entry.label} — ${entry.blurb}`}
-            </Typography>
-          </Box>
-          {sideOf(actor) === "caller" && actor.voice && (
-            <Box>
-              <Label>Voice</Label>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            </SpecRow>
+            {sideOf(actor) === "caller" && actor.voice && (
+              <SpecRow label="Voice">
                 {[
                   actor.voice.gender,
                   actor.voice.age,
@@ -796,79 +782,161 @@ function ActorRow({
                 ]
                   .filter(Boolean)
                   .join(" · ")}
-              </Typography>
-            </Box>
-          )}
-          {actor.canApprove && (
-            <Box>
-              <Label>Approves</Label>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              </SpecRow>
+            )}
+            {actor.canApprove && (
+              <SpecRow
+                label="Approves"
+                trailing={
+                  onBranches ? (
+                    <TextAction onClick={onBranches}>
+                      Propose scenarios
+                    </TextAction>
+                  ) : null
+                }
+              >
                 {`${actor.approvalScope || "Requests above the limit"}${actor.timeoutMin ? ` · answers within ${actor.timeoutMin} min` : ""}`}
-              </Typography>
-              {onBranches && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={onBranches}
-                  sx={{ mt: 1, color: "text.primary", borderColor: "divider" }}
-                >
-                  Propose approval scenarios
-                </Button>
-              )}
-            </Box>
-          )}
-          <Box>
-            <Label>Traits</Label>
-            <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
-              {(actor.traits || []).map((t) => (
-                <Chip
-                  key={t}
-                  size="small"
-                  label={t}
-                  sx={{
-                    color: "text.secondary",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    bgcolor: "transparent",
-                  }}
-                />
+              </SpecRow>
+            )}
+            {(actor.traits || []).length > 0 && (
+              <SpecRow label="Traits">
+                <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.5 }}>
+                  {actor.traits.map((t) => (
+                    <Box
+                      key={t}
+                      component="span"
+                      sx={{
+                        px: 0.75,
+                        height: 20,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: "4px",
+                        typography: "s3",
+                        color: "text.secondary",
+                      }}
+                    >
+                      {t}
+                    </Box>
+                  ))}
+                </Stack>
+              </SpecRow>
+            )}
+            {(actor.versions || []).length > 0 && (
+              <SpecRow label="Versions">
+                <Stack spacing={0.25}>
+                  {actor.versions.map((v) => (
+                    <Typography
+                      key={v.label}
+                      sx={{ typography: "s2", color: "text.secondary" }}
+                    >
+                      <Box
+                        component="span"
+                        sx={{ fontWeight: 600, color: "text.primary", mr: 1 }}
+                      >
+                        {v.label}
+                      </Box>
+                      {v.note}
+                    </Typography>
+                  ))}
+                </Stack>
+              </SpecRow>
+            )}
+          </SpecCard>
+          <SpecCard title={`What ${actor.name || "they"} sees`}>
+            {view.sees
+              .filter((r) => !(actor.canApprove && /approve/i.test(r.label)))
+              .map((r) => (
+                <SpecRow key={r.label} label={r.label}>
+                  {r.text}
+                </SpecRow>
               ))}
-            </Stack>
-          </Box>
-          <Box>
-            <Label>Versions</Label>
-            <Stack spacing={0.75}>
-              {(actor.versions || []).map((v) => (
-                <Stack
-                  key={v.label}
-                  direction="row"
-                  spacing={1.5}
-                  alignItems="flex-start"
-                >
+            {files.length > 0 && (
+              <SpecRow label="Files">
+                <ActorFiles
+                  files={files}
+                  readable={readable}
+                  onToggle={onToggleFile}
+                />
+              </SpecRow>
+            )}
+            <SpecRow label="Never sees">
+              <Stack spacing={0.25}>
+                {view.never.map((t) => (
                   <Typography
-                    sx={{
-                      width: 28,
-                      flexShrink: 0,
-                      typography: "s2",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {v.label}
-                  </Typography>
-                  <Typography
+                    key={t}
                     sx={{ typography: "s2", color: "text.secondary" }}
                   >
-                    {v.note}
+                    {t}
                   </Typography>
-                </Stack>
-              ))}
-            </Stack>
-          </Box>
-        </Stack>
+                ))}
+              </Stack>
+            </SpecRow>
+          </SpecCard>
+        </Box>
       </Collapse>
     </Box>
   );
 }
+/* A titled key-value table — the spec-sheet layout used across the env. */
+function SpecCard({ title, children }) {
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
+      }}
+    >
+      <Typography
+        sx={{
+          typography: "s2",
+          fontWeight: 600,
+          px: 1.5,
+          py: 1,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        {title}
+      </Typography>
+      {children}
+    </Box>
+  );
+}
+SpecCard.propTypes = { title: PropTypes.string, children: PropTypes.node };
+
+function SpecRow({ label, children, trailing = null }) {
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: "88px minmax(0, 1fr) auto",
+        columnGap: 1.5,
+        alignItems: "baseline",
+        px: 1.5,
+        py: 0.875,
+        "& + &": { borderTop: "1px solid", borderColor: "divider" },
+      }}
+    >
+      <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+        {label}
+      </Typography>
+      <Box sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>
+        {children}
+      </Box>
+      <Box>{trailing}</Box>
+    </Box>
+  );
+}
+SpecRow.propTypes = {
+  label: PropTypes.string,
+  children: PropTypes.node,
+  trailing: PropTypes.node,
+};
+
 /* Grading-only files: answers for the grader, never for a simulated person. */
 const gradingOnly = (f) =>
   f.role === "evaluation-reference" || f.visibility === "evaluator";
@@ -878,7 +946,6 @@ const gradingOnly = (f) =>
 function ActorFiles({ files, readable, onToggle }) {
   return (
     <Box>
-      <Label>Files they can read</Label>
       <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.75 }}>
         {files.map((f) => {
           const locked = gradingOnly(f);

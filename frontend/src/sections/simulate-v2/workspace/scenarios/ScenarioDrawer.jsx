@@ -18,7 +18,6 @@ import ScenarioDetail from "../../components/ScenarioDetail";
 import { stateActionOf, STATE_ACTION_LABEL } from "../../_mock/scenarioStates";
 import { ArchivePopover, StateChip } from "./ScenarioStateBits";
 import BlockerFlag from "./BlockerFlag";
-import SourceBadge from "./SourceBadge";
 import TraceSources from "./TraceSources";
 import SourceChangedNotice from "./SourceChangedNotice";
 import { scenarioTitle } from "../../_mock/scenarios";
@@ -78,7 +77,8 @@ export default function ScenarioDrawer({
           >
             <Stack direction="row" alignItems="flex-start" spacing={1}>
               <Typography
-                title={row.summary || scenarioTitle(row.title) || row.name}
+                /* Its id on hover — the header stays to name, state, actions. */
+                title={row.name || ""}
                 sx={{
                   typography: "m2",
                   fontWeight: 600,
@@ -93,6 +93,21 @@ export default function ScenarioDrawer({
               >
                 {row.summary || scenarioTitle(row.title) || row.name}
               </Typography>
+              {!locked && onEdit && (
+                <Tooltip arrow title="Edit — saving creates a new version">
+                  <IconButton
+                    size="small"
+                    onClick={() => onEdit(row)}
+                    aria-label="Edit"
+                  >
+                    <Iconify
+                      icon="solar:pen-new-square-linear"
+                      width={18}
+                      sx={{ color: "text.secondary" }}
+                    />
+                  </IconButton>
+                </Tooltip>
+              )}
               {menuItems.length > 0 && (
                 <Tooltip arrow title="More actions">
                   <IconButton
@@ -135,43 +150,8 @@ export default function ScenarioDrawer({
                     : undefined
                 }
               />
-              <SourceBadge
-                scenario={row}
-                env={env}
-                envState={envState}
-                labelled
-              />
-              {/* Its id, quietly last — the full slug on hover. */}
-              {row.name && (row.summary || row.title) ? (
-                <Typography
-                  noWrap
-                  title={row.name}
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    fontFamily: "ui-monospace, Menlo, monospace",
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {row.name}
-                </Typography>
-              ) : (
-                <Box flex={1} />
-              )}
-              {!locked && onEdit && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => onEdit(row)}
-                  startIcon={
-                    <Iconify icon="solar:pen-new-square-linear" width={14} />
-                  }
-                  sx={{ flexShrink: 0 }}
-                >
-                  Edit
-                </Button>
-              )}
+              {/* Where it came from is in History below. */}
+              <Box flex={1} />
               {primary && (
                 <Button
                   size="small"

@@ -40,7 +40,7 @@ import {
   subGoalCountNote,
   subGoalUsageOf,
 } from "../../_mock/scenarioSubGoals";
-import { MarkToggle } from "./ScenarioStateBits";
+import { MarkToggle, TextAction } from "./ScenarioStateBits";
 import BlockerFlag from "./BlockerFlag";
 import { setBlocker } from "../../_mock/releaseBlocker";
 import { clickable, focusRing } from "../../components/clickable";
@@ -385,94 +385,59 @@ export default function ScenarioEditor({
               persona library (Environments → Personas). Callers only — a
               browser or API agent has no one on the other end. */}
           {canUseLibrary && (
-            <Stack spacing={0.75}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                px: 1.5,
+                py: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "8px",
+              }}
+            >
+              <Iconify
+                icon={
+                  origin?.kind === "generated"
+                    ? "solar:magic-stick-3-linear"
+                    : "solar:users-group-rounded-linear"
+                }
+                width={16}
+                sx={{ color: "text.tertiary", flexShrink: 0 }}
+              />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                {origin && (
+                  <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+                    {origin.label}
+                  </Typography>
+                )}
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {swapNote ||
+                    (origin?.kind === "library"
+                      ? "A copy of the library persona — edits below change this scenario only, and later library edits don't reach it."
+                      : origin?.kind === "edited"
+                        ? "Save it to the library to keep this version as a persona other environments can use."
+                        : "The builder wrote this caller. Save it to the library to reuse it in other environments.")}
+                </Typography>
+              </Box>
               <Stack
                 direction="row"
                 alignItems="center"
-                spacing={1}
-                flexWrap="wrap"
-                rowGap={1}
+                spacing={1.5}
+                sx={{ flexShrink: 0 }}
               >
-                {origin && (
-                  <Box
-                    sx={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 0.5,
-                      px: 0.875,
-                      height: 24,
-                      borderRadius: "4px",
-                      border: "1px solid",
-                      borderColor: "divider",
-                    }}
-                  >
-                    <Iconify
-                      icon={
-                        origin.kind === "generated"
-                          ? "solar:magic-stick-3-linear"
-                          : "solar:users-group-rounded-linear"
-                      }
-                      width={14}
-                      sx={{ color: "text.tertiary" }}
-                    />
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        fontWeight: 600,
-                        color: "text.secondary",
-                      }}
-                    >
-                      {origin.label}
-                    </Typography>
-                  </Box>
-                )}
-                <Box flex={1} />
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={() => setLibraryOpen(true)}
-                  startIcon={
-                    <Iconify
-                      icon="solar:users-group-rounded-linear"
-                      width={16}
-                    />
-                  }
-                  sx={{
-                    color: "text.primary",
-                    borderColor: "divider",
-                    flexShrink: 0,
-                  }}
-                >
+                <TextAction onClick={() => setLibraryOpen(true)}>
                   {draft.persona
-                    ? "Swap for a library persona"
+                    ? "Swap for library persona"
                     : "Use a library persona"}
-                </Button>
+                </TextAction>
                 {draft.persona && origin?.kind !== "library" && (
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => setSavingToLibrary(true)}
-                    startIcon={
-                      <Iconify icon="solar:bookmark-linear" width={16} />
-                    }
-                    sx={{
-                      color: "text.primary",
-                      borderColor: "divider",
-                      flexShrink: 0,
-                    }}
-                  >
+                  <TextAction onClick={() => setSavingToLibrary(true)}>
                     Save to library
-                  </Button>
+                  </TextAction>
                 )}
               </Stack>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {swapNote ||
-                  (origin?.kind === "library"
-                    ? "A copy of the library persona — edits below change this scenario only, and later library edits don't reach it."
-                    : origin?.kind === "edited"
-                      ? "Save to library keeps this version as a new persona your other environments can use."
-                      : "The builder wrote this caller for this scenario. Save to library to reuse it in other environments.")}
-              </Typography>
             </Stack>
           )}
           <TextField
@@ -1300,51 +1265,68 @@ SubGoalsEditor.propTypes = {
    material reads as private, never as part of what the agent is told). */
 const SEEN = {
   agent: {
+    tag: "Agent sees",
     icon: "solar:chat-round-line-linear",
     text: "What the agent receives",
   },
   people: {
+    tag: "Simulated people see",
     icon: "solar:users-group-rounded-linear",
     text: "What the simulated people are told — the agent never sees it",
   },
   grading: {
+    tag: "Grading only",
     icon: "solar:lock-keyhole-linear",
     text: "Private to grading — never shown to the agent or the simulated people",
   },
   world: {
+    tag: "World records",
     icon: "solar:database-linear",
     text: "The world's records — the agent reads them only through its tools",
   },
 };
 
 function SectionHeader({ title, hint, seen = null }) {
+  const who = seen ? SEEN[seen] : null;
   return (
     <Box>
-      {seen && SEEN[seen] && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={0.5}
-          sx={{ mb: 0.25, color: "text.tertiary" }}
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.375 }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.primary",
+            textTransform: "none",
+            letterSpacing: 0.6,
+          }}
         >
-          <Iconify icon={SEEN[seen].icon} width={12} />
-          <Typography sx={{ typography: "s3", color: "inherit" }}>
-            {SEEN[seen].text}
-          </Typography>
-        </Stack>
-      )}
-      <Typography
-        sx={{
-          typography: "s3",
-          fontWeight: 600,
-          color: "text.primary",
-          textTransform: "none",
-          letterSpacing: 0.6,
-          mb: 0.375,
-        }}
-      >
-        {title}
-      </Typography>
+          {title}
+        </Typography>
+        {/* Who sees this section — a quiet tag, the full line on hover. */}
+        {who && (
+          <Tooltip arrow title={who.text}>
+            <Box
+              component="span"
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.5,
+                px: 0.75,
+                height: 20,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+                typography: "s3",
+                color: "text.secondary",
+                flexShrink: 0,
+              }}
+            >
+              <Iconify icon={who.icon} width={12} />
+              {who.tag}
+            </Box>
+          </Tooltip>
+        )}
+      </Stack>
       <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
         {hint}
       </Typography>

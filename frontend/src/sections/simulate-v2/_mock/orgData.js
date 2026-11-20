@@ -43,7 +43,7 @@ export const ROLES = [
     id: "policy",
     label: "Policy or reference",
     option: "Policy or reference",
-    note: "Rules the agent must follow — sentences like “refunds over $200 need approval” become rules checked on every run.",
+    note: "Rules the agent must follow — each one is checked on every run.",
   },
   {
     /* Background the agent reads: the same role on the server (policy),
@@ -58,13 +58,13 @@ export const ROLES = [
     id: "seed",
     label: "Seed records",
     option: "Seed records",
-    note: "Rows that set up the world's starting data — what the agent's tools return.",
+    note: "Rows that fill the world's tables — what the agent's tools return.",
   },
   {
     id: "evaluation-reference",
     label: "Evaluator only",
     option: "Evaluator only",
-    note: "Grading material, like expected answers. Hidden from the agent and the simulated people.",
+    note: "Grading material, like expected answers — hidden from everyone else.",
   },
 ];
 /* The three a person picks from (the server's policy, seed_records,

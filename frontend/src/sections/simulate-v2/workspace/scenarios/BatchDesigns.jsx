@@ -4,6 +4,7 @@ import {
   Alert,
   Box,
   Button,
+  ButtonBase,
   Chip,
   IconButton,
   Stack,
@@ -210,42 +211,70 @@ function BatchContainer({
             </Typography>
             {latest && <Tag>Latest</Tag>}
           </Stack>
-          {/* How it came in, with its mark, and when — the exact time on hover. */}
-          <Tooltip
-            arrow
-            placement="bottom-start"
-            title={`${sourceOf(batch.meta.source).label} · ${stampOf(batch.meta.addedAt)}`}
+          {/* How it came in, with its mark, and when — the exact time on
+              hover; after a build, its yield on the same line (the reason
+              for the rest on hover). */}
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.625}
+            sx={{ mt: 0.25, minWidth: 0, color: "text.tertiary" }}
           >
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.625}
-              sx={{
-                mt: 0.25,
-                width: "fit-content",
-                maxWidth: "100%",
-                color: "text.tertiary",
-              }}
+            <Tooltip
+              arrow
+              placement="bottom-start"
+              title={`${sourceOf(batch.meta.source).label} · ${stampOf(batch.meta.addedAt)}`}
             >
-              <Iconify
-                icon={sourceOf(batch.meta.source).icon}
-                width={12}
-                sx={{ flexShrink: 0 }}
-              />
-              <Typography noWrap sx={{ typography: "s3", color: "inherit" }}>
-                {cap(howAndWhen(batch, version))}
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.625}
+                sx={{ minWidth: 0 }}
+              >
+                <Iconify
+                  icon={sourceOf(batch.meta.source).icon}
+                  width={12}
+                  sx={{ flexShrink: 0 }}
+                />
+                <Typography noWrap sx={{ typography: "s3", color: "inherit" }}>
+                  {cap(howAndWhen(batch, version))}
+                </Typography>
+              </Stack>
+            </Tooltip>
+            {summary?.lead && (
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "inherit", flexShrink: 0 }}
+              >
+                {`· ${summary.lead}`}
               </Typography>
-            </Stack>
-          </Tooltip>
-          {/* After a build, the yield and why the rest are held (handover:
-              Not proved right after building shouldn't read as a failure). */}
-          {summary && (
-            <Typography
-              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
-            >
-              {summary}
-            </Typography>
-          )}
+            )}
+            {summary?.held && (
+              <>
+                <Typography sx={{ typography: "s3", color: "inherit" }}>
+                  ·
+                </Typography>
+                <Tooltip arrow title={summary.why || ""}>
+                  <ButtonBase
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      summary.onHeld?.();
+                    }}
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      flexShrink: 0,
+                      textDecoration: "underline dotted",
+                      textUnderlineOffset: 3,
+                      "&:hover": { color: "text.primary" },
+                    }}
+                  >
+                    {summary.held}
+                  </ButtonBase>
+                </Tooltip>
+              </>
+            )}
+          </Stack>
         </Box>
         <Stack
           direction="row"
@@ -335,7 +364,8 @@ function BatchContainer({
   );
 }
 BatchContainer.propTypes = {
-  summary: PropTypes.string,
+  /* { lead, held?, why?, onHeld? } - a build yield. */
+  summary: PropTypes.object,
   batch: PropTypes.object,
   version: PropTypes.string,
   latest: PropTypes.bool,

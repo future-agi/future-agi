@@ -46,6 +46,7 @@ import { ScenarioRowContext } from "../workspace/scenarios/scenarioRowContext";
 import { clickable, focusRing } from "./clickable";
 import { scenarioTitle } from "../_mock/scenarios";
 import { wrongWayExamplesOf } from "../_mock/wrongWay";
+import SourceBadge from "../workspace/scenarios/SourceBadge";
 import ScenarioOrgPart from "../workspace/scenarios/ScenarioOrgPart";
 
 /**
@@ -731,7 +732,8 @@ function DrawerSheet({
         : stateActionOf(state) || !state.note
           ? null
           : `${state.note.charAt(0).toUpperCase()}${state.note.slice(1)}`;
-  const showHistory = log.length > 0 || row.proposed || hasOrigin(row);
+  /* Always: where it came from moved here from the drawer header. */
+  const showHistory = true;
   const openLatest = latest?.runId
     ? () =>
         navigate(
@@ -1108,6 +1110,14 @@ function DrawerSheet({
       {/* history — only when there is some */}
       {showHistory && (
         <Part title="History">
+          <Row label="Source">
+            <SourceBadge
+              scenario={row}
+              env={env}
+              envState={envState}
+              labelled
+            />
+          </Row>
           {hasOrigin(row) && (
             <Row label="From">
               <OriginRow row={row} />
