@@ -908,9 +908,21 @@ def test_view_no_default_storage_and_both_import_forms():
     # The signature covers the original request bytes, read once from the
     # underlying request before any parser or JSON decoding touches them.
     name = calls[0].args[0].id
+    (verifier,) = [
+        f
+        for f in ast.walk(tree)
+        if isinstance(f, ast.FunctionDef)
+        and calls[0] in ast.walk(f)
+        and not any(
+            isinstance(inner, ast.FunctionDef)
+            and inner is not f
+            and calls[0] in ast.walk(inner)
+            for inner in ast.walk(f)
+        )
+    ]
     reads = [
         n.value
-        for n in ast.walk(tree)
+        for n in ast.walk(verifier)
         if isinstance(n, ast.Assign)
         and [getattr(t, "id", None) for t in n.targets] == [name]
     ]
