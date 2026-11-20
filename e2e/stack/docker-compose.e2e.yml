@@ -107,21 +107,25 @@ services:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
   worker-tasks-s:
     networks: [default, link-public]
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
   worker-tasks-l:
     networks: [default, link-public]
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
   worker-tasks-xl:
     networks: [default, link-public]
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      METRICS_ENABLED: "1"
   worker-exact-aggregation:
     networks: [default, link-public]
     restart: "no"
