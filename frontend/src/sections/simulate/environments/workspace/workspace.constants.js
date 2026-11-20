@@ -223,7 +223,7 @@ export const VERSIONS_COPY = {
     body: "New runs use it. If this combination hasn't run before, the next run prepares it first.",
     confirm: "Make default",
     pending: "Making default…",
-    // Going back to an environment or scenario version older than the
+    // The design's wording for moving an environment or scenario version's
     // default; it moves the default the same way.
     rollBack: {
       action: (piece, label) => `Roll back to ${piece} ${label}`,

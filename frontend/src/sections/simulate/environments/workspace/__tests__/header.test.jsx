@@ -299,9 +299,9 @@ describe("EnvVersionPin", () => {
     await openPin(user);
 
     const items = screen.getAllByTestId("env-version-item");
-    // Newer than the default is a plain move; older is a roll back.
+    // Every version but the default reads as a roll back, as in the design.
     expect(
-      within(items[0]).getByRole("button", { name: "Make v3 the default" }),
+      within(items[0]).getByRole("button", { name: "Roll back to v3" }),
     ).toBeInTheDocument();
     expect(within(items[1]).queryByRole("button")).toBeNull();
     expect(

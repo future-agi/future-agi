@@ -65,13 +65,9 @@ export default function HistoryEntry({
   if (refused) {
     refusal.current = refusalText(move.error, VERSIONS_COPY.makeDefault.error);
   }
-  // Lists come newest first, so one after the default is older. Agent
-  // versions keep Make default, as in the design.
-  const older =
-    piece !== "agent" &&
-    defaultId != null &&
-    siblings.findIndex((v) => v.id === version.id) >
-      siblings.findIndex((v) => v.id === defaultId);
+  // Environment and scenario versions read as a roll back, as in the
+  // design; agent versions keep Make default.
+  const rollsBack = piece !== "agent";
   const { rollBack } = VERSIONS_COPY.makeDefault;
 
   const confirm = () =>
@@ -206,7 +202,7 @@ export default function HistoryEntry({
               setConfirming(true);
             }}
           >
-            {older
+            {rollsBack
               ? rollBack.action(rollBack.pieces[piece], named(version))
               : VERSIONS_COPY.makeDefault.action}
           </MenuItem>
@@ -225,7 +221,7 @@ export default function HistoryEntry({
         piece={piece}
         version={confirming ? version : null}
         pending={move.isPending}
-        rollBack={older}
+        rollBack={rollsBack}
         onConfirm={confirm}
         onClose={() => setConfirming(false)}
       />

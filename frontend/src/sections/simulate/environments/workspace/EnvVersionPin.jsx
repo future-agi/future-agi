@@ -50,14 +50,6 @@ export default function EnvVersionPin({ env, onHistory }) {
   };
   const { pin } = WORKSPACE_COPY;
   const { makeDefault } = VERSIONS_COPY;
-  const defaultIndex = versions.findIndex((v) => v.id === current.id);
-  // Versions are newest first, so one listed after the default is older.
-  const actionLabel = (v, index) => {
-    const label = v.label || VERSIONS_COPY.unlabelled;
-    return index > defaultIndex
-      ? pin.rollBack(label)
-      : makeDefault.actionFor(label);
-  };
   const confirmMove = () =>
     move.mutate(
       {
@@ -164,7 +156,7 @@ export default function EnvVersionPin({ env, onHistory }) {
           aria-labelledby="env-version-list-heading"
           sx={{ listStyle: "none", m: 0, p: 0 }}
         >
-          {versions.map((v, index) => (
+          {versions.map((v) => (
             <Box
               component="li"
               key={v.id}
@@ -228,7 +220,7 @@ export default function EnvVersionPin({ env, onHistory }) {
                   onClick={() => setConfirming(v)}
                   sx={{ mt: 0.75 }}
                 >
-                  {actionLabel(v, index)}
+                  {pin.rollBack(v.label || VERSIONS_COPY.unlabelled)}
                 </Button>
               )}
             </Box>
@@ -271,9 +263,7 @@ export default function EnvVersionPin({ env, onHistory }) {
         piece="environment"
         version={confirming}
         pending={move.isPending}
-        rollBack={
-          versions.findIndex((v) => v.id === confirming?.id) > defaultIndex
-        }
+        rollBack
         onConfirm={confirmMove}
         onClose={() => setConfirming(null)}
       />

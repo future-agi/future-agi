@@ -971,7 +971,7 @@ describe("VersionsPanel", () => {
 
   describe("making a version the default", () => {
     // Each row's actions menu says Roll back for an environment or scenario
-    // version older than the default, Make default otherwise.
+    // version, Make default for an agent version.
     const makeDefault = async (user, piece, label, name = "Make default") => {
       const menu = await openActions(user, piece, label);
       await user.click(within(menu).getByRole("menuitem", { name }));
@@ -1029,10 +1029,12 @@ describe("VersionsPanel", () => {
       expect(row("environment", "v1")).toHaveTextContent("runs use this");
       expect(row("environment", "v2")).not.toHaveTextContent("runs use this");
       await noMakeDefault(user, "environment", "v1");
-      // v2 is newer than the default now, so it isn't a roll back.
+      // Any other version reads as a roll back, newer ones too, as in the design.
       const menu = await openActions(user, "environment", "v2");
       expect(
-        within(menu).getByRole("menuitem", { name: "Make default" }),
+        within(menu).getByRole("menuitem", {
+          name: "Roll back to environment v2",
+        }),
       ).toBeInTheDocument();
     });
 
