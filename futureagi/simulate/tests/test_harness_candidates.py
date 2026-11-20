@@ -877,6 +877,11 @@ def test_promotion_order_and_tail(user, workspace, storage, auth_client):
         "discarded",
         str(version.id),
     )
+    # History lists the save once, as the version it became, never as a discarded draft above it.
+    from simulate.services.harness_versioning.read import list_versions
+
+    listed = [one["id"] for one in list_versions(environment)["environment"]]
+    assert str(version.id) in listed and str(draft.id) not in listed
     assert "draft_validation" not in metadata
     assert (
         _save(

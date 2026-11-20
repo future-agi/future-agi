@@ -572,9 +572,15 @@ def agent_version_item(job: HostedHarnessJob, version: AgentVersion) -> dict[str
     )
 
 
+# A draft Save promoted through its validated candidates is set aside with the version it became: it is listed once,
+# as that version.
+_SAVED_DRAFT = Q(status=VersionStatus.DISCARDED, documents__has_key="saved_version_id")
+
+
 def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
     environments = _newest_first(
         HarnessEnvironmentVersion.no_workspace_objects.filter(job=job)
+        .exclude(_SAVED_DRAFT)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
         .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
@@ -582,6 +588,7 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
     suites = _newest_first(
         # A suite version private to a fix is never listed.
         HarnessSuiteVersion.no_workspace_objects.filter(job=job, fix_run__isnull=True)
+        .exclude(_SAVED_DRAFT)
         .select_related("created_by")
         .defer(*_PIECE_DEFERRED)
         .annotate(uncertified_flag=KeyTextTransform("uncertified", "documents"))
