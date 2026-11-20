@@ -4,6 +4,7 @@ import io
 import re
 import subprocess
 import tarfile
+import threading
 from contextlib import ExitStack
 from datetime import timedelta
 from decimal import Decimal
@@ -56,6 +57,7 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     engine_brief,
     eval_review,
+    fix_runs_for_read,
     graded_check_runs,
     is_retryable,
     launch_options,
@@ -724,20 +726,130 @@ class TestRetry:
         with django_capture_on_commit_callbacks(execute=True):
             retried = retry_fix_run(failed, user=user)
         AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
-            state=State.FAILED, failure={"code": "fix_deadline", "message": "m"}
+            state=State.FAILED,
+            started_at=timezone.now(),
+            failure={"code": "fix_deadline", "message": "m"},
         )
         retried.refresh_from_db()
 
-        assert not is_retryable(retried)
+        assert (is_retryable(retried), is_retryable(failed)) == (False, False)
         with pytest.raises(HostedHarnessError) as caught:
             retry_fix_run(retried, user=user)
         assert (caught.value.code, caught.value.status_code, caught.value.message) == (
             "fix_not_retryable",
             409,
-            "This epoch was retried once already."
-            " Run a new epoch from the run's Debug failures.",
+            "This epoch was the retry. Run a new epoch from the run's Debug failures.",
         )
-        assert not retried.retries.exists()
+        assert failed.retries.count() == 1
+
+    @pytest.mark.parametrize("from_the_retry", [False, True])
+    @pytest.mark.parametrize("code", ["fix_dispatch_failed", "fix_queue_timeout"])
+    def test_a_retry_that_never_started_leaves_the_one_retry(
+        self,
+        source_run,
+        user,
+        temporal,
+        django_capture_on_commit_callbacks,
+        code,
+        from_the_retry,
+    ):
+        # It could not be scheduled, or waited too long for a slot: it spent nothing.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        unstarted = _fix_run(
+            source_run,
+            state=State.FAILED,
+            retried_from=failed,
+            failure={"code": code, "message": "m"},
+        )
+
+        assert (is_retryable(failed), is_retryable(unstarted)) == (True, True)
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(unstarted if from_the_retry else failed, user=user)
+
+        # Either Retry starts the failed epoch again, so its check runs are reused.
+        assert (retried.state, retried.retried_from_id) == (State.QUEUED, failed.id)
+        temporal.start.assert_called_once_with(str(retried.id))
+        assert (is_retryable(failed), is_retryable(unstarted)) == (False, False)
+
+    def test_a_retry_read_before_another_retry_started_is_refused(
+        self, source_run, user
+    ):
+        # Two Retry clicks at once: the second read the epoch before the first made its
+        # retry, which then started and ended before the second makes one.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        read = fix_runs_for_read(
+            AgentFixRun.no_workspace_objects.filter(id=failed.id)
+        ).get()
+        _fix_run(
+            source_run,
+            state=State.FAILED,
+            retried_from=failed,
+            started_at=timezone.now(),
+            failure={"code": "fix_sandbox_prepare_failed", "message": "m"},
+        )
+
+        assert _refusal(retry_fix_run, read, user=user) == ("fix_not_retryable", 409)
+        assert failed.retries.count() == 1
+
+    @pytest.mark.django_db(transaction=True)
+    def test_a_retry_waits_for_one_being_made_at_the_same_time(self, source_run, user):
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        holding, release = threading.Event(), threading.Event()
+        refused, made = [], []
+
+        def first():
+            # What the first Retry does under the epoch's lock: its retry starts and ends.
+            try:
+                with transaction.atomic():
+                    AgentFixRun.no_workspace_objects.select_for_update().get(
+                        id=failed.id
+                    )
+                    _fix_run(
+                        source_run,
+                        state=State.FAILED,
+                        retried_from=failed,
+                        started_at=timezone.now(),
+                        failure={"code": "fix_sandbox_prepare_failed", "message": "m"},
+                    )
+                    holding.set()
+                    release.wait(timeout=30)
+            finally:
+                connection.close()
+
+        def second():
+            try:
+                made.append(retry_fix_run(failed, user=user))
+            except HostedHarnessError as exc:
+                refused.append(exc.code)
+            finally:
+                connection.close()
+
+        holder = threading.Thread(target=first)
+        holder.start()
+        assert holding.wait(timeout=30)
+        retrier = threading.Thread(target=second)
+        retrier.start()
+        # It read the epoch before the first retry committed: without a check under the
+        # lock, it makes a second retry once the first commits.
+        retrier.join(timeout=2)
+        release.set()
+        holder.join(timeout=30)
+        retrier.join(timeout=30)
+
+        assert (refused, made) == (["fix_not_retryable"], [])
+        assert failed.retries.count() == 1
 
     @pytest.mark.parametrize(
         "state",
