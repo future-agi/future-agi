@@ -161,16 +161,7 @@ def test_f01_recording_import_fixture(case):
     assert not case["valid"]
     with pytest.raises(AttachmentError) as denied:
         replay_range_responses(scenario)
-    assert (
-        denied.value.code
-        == {
-            "source-generation-changed": "snapshot_changed",
-            "range-not-honored-whole-body": "source_unavailable",
-            "range-gap": "validation_failed",
-            "range-declared-total-mismatch": "validation_failed",
-            "missing-final-range": "source_unavailable",
-        }[case["id"]]
-    )
+    assert (denied.value.code, denied.value.status) == ("validation_failed", 422)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -273,22 +264,23 @@ def test_f01_database_import(case, project, user, settings, tmp_path, monkeypatc
     if case["stage"] == "admission" and not case["valid"]:
         with pytest.raises(AttachmentError) as denial:
             imports.submit(importer, scope_id=v.scope.id, body=body)
+        assert not jobs.exists()
         if has_budget:
             assert (denial.value.code, denial.value.status) == ("throttled", 429)
             assert counters() == [floor] * 3
         else:
-            assert denial.value.code == (
-                "source_unavailable"
+            expected = (
+                ("source_unavailable", 403)
                 if "source" in case["overrides"]
-                else "validation_failed"
+                else ("too_large", 413)
             )
-        assert not jobs.exists()
+            assert (denial.value.code, denial.value.status) == expected
         return
     if descriptor["direction"] != provider.direction:
         with pytest.raises(AttachmentError) as denial:
             imports.submit(importer, scope_id=v.scope.id, body=body)
-        assert not case["valid"] and denial.value.code == "conflict"
-        assert not jobs.exists()
+        assert not case["valid"] and not jobs.exists()
+        assert (denial.value.code, denial.value.status) == ("policy_denied", 403)
         return
     response, created = imports.submit(importer, scope_id=v.scope.id, body=body)
     assert created
@@ -311,25 +303,16 @@ def test_f01_database_import(case, project, user, settings, tmp_path, monkeypatc
         else:
             with pytest.raises(AttachmentError) as denial:
                 complete_vector(v, job, scenario, monkeypatch)
-            assert denial.value.code == COMPLETION_DENIALS[case["id"]]
             job.refresh_from_db()
             assert job.state != "ready" and job.recording.manifest_revision == 0
-
-
-COMPLETION_DENIALS = {
-    "source-length-mismatch--1": "snapshot_changed",
-    "source-length-mismatch-1": "snapshot_changed",
-    "actual-duration-mismatch": "snapshot_changed",
-    "segment-over-byte-limit": "snapshot_changed",
-    "segment-total-over-recording-budget": "too_large",
-    "negotiated-segment-size-enforced": "snapshot_changed",
-    "negotiated-upload-size-enforced": "snapshot_changed",
-    "negotiated-segment-duration-enforced": "snapshot_changed",
-    "missing-segment-size": "validation_failed",
-    "segment-over-duration-limit": "validation_failed",
-    "wrong-recording": "validation_failed",
-    "not-a-complete-manifest": "validation_failed",
-}
+            # Exact refusals from the pre-consolidation F01 oracle, not a
+            # list of whichever errors today's worker happens to produce.
+            expected = (
+                ("too_large", 413)
+                if case["id"] == "segment-total-over-recording-budget"
+                else ("validation_failed", 422)
+            )
+            assert (denial.value.code, denial.value.status) == expected
 
 
 def complete_vector(v, job, scenario, monkeypatch):
