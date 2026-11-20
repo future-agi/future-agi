@@ -1,4 +1,4 @@
-"""Verify the release owner's out-of-tree Skills pairing lock before consuming it."""
+"""Verify the producer's contract and package receipt before consuming its archives."""
 
 import argparse
 import hashlib
@@ -24,15 +24,33 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def verify_provenance(document, product):
+    branches = document.get("branches", {})
+    if set(branches) != {"sdk", "traceai"} or not all(isinstance(b, str) and b.strip() for b in branches.values()):
+        raise ValueError("Missing resolved SDK or traceAI branch")
+    contract = document.get("contract", {})
+    source = contract.get("source", {})
+    hashes = contract.get("sha256", {})
+    if (source.get("backend_commit") != product
+            or not re.fullmatch(r"[0-9a-f]{40}", source.get("non_skills_sdk_commit", ""))
+            or set(hashes) != {"swagger.json", "mcp-tools.json", "SOURCE.json"}
+            or not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (
+                *hashes.values(), source.get("openapi_sha256", ""), source.get("mcp_sha256", ""),
+                source.get("non_skills_slice_sha256", ""),
+            ))):
+        raise ValueError("Invalid regenerated contract provenance")
+
+
 def verify(dist, lock_sha, sources):
     lock = (dist / "pair.json").read_bytes()
     if not re.fullmatch(r"[a-f0-9]{64}", lock_sha) or hashlib.sha256(lock).hexdigest() != lock_sha:
         raise ValueError("Pair lock does not match the independently recorded SHA-256")
     document = json.loads(lock)
-    if document.get("schema") != 1 or document.get("sources") != sources or not all(
+    if document.get("schema") != 2 or document.get("sources") != sources or not all(
         re.fullmatch(r"[a-f0-9]{40}", value) for value in sources.values()
     ):
         raise ValueError("Pair lock does not match the three expected source revisions")
+    verify_provenance(document, sources["product"])
     artifacts = document.get("artifacts", {})
     if set(artifacts) != ROLES.keys():
         raise ValueError("Expected exactly two wheels and three npm archives")

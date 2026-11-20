@@ -155,35 +155,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
-      sdk: ${{ steps.pins.outputs.sdk }}
-      traceai: ${{ steps.pins.outputs.traceai }}
+      sdk: ${{ fromJSON(steps.refs.outputs.sources).sdk.commit }}
+      traceai: ${{ fromJSON(steps.refs.outputs.sources).traceai.commit }}
       pair_sha256: ${{ steps.build.outputs.pair_sha256 }}
       sdk_sha256: ${{ steps.build.outputs.sdk_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Require full Skills source pins
-        id: pins
+      - name: Resolve matching public branches independently
+        id: refs
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          PR_BASE: ${{ github.base_ref }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_ref }}
         run: |
-          for component in sdk traceai; do
-            key="SKILL_PAIR_${component^^}_COMMIT"
-            pin=$(jq -er --arg key "$key" '.[$key]' e2e/stack/skill-pair.lock.json)
-            [[ $pin =~ ^[0-9a-f]{40}$ && $pin != 0000000000000000000000000000000000000000 ]] || {
-              echo "::error::Missing or invalid $key; publish and pin the Skills candidate for the tested checkout."; exit 1;
-            }
-            echo "$component=$pin" >> "$GITHUB_OUTPUT"
-          done
+          if [[ $GITHUB_EVENT_NAME == merge_group ]]; then BRANCH=${QUEUE_BASE#refs/heads/}; fi
+          sources=$(python3 -I e2e/stack/resolve-skill-refs.py -- "${BRANCH:?missing target branch}" "$PR_BASE")
+          echo "sources=$sources" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: future-agi/futureagi-sdk
-          ref: ${{ steps.pins.outputs.sdk }}
+          ref: ${{ fromJSON(steps.refs.outputs.sources).sdk.commit }}
           path: .skill-sources/sdk
+          fetch-depth: 0 # Scoped sync reads the non-Skills baseline from SDK history.
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: future-agi/traceAI
-          ref: ${{ steps.pins.outputs.traceai }}
+          ref: ${{ fromJSON(steps.refs.outputs.sources).traceai.commit }}
           path: .skill-sources/traceai
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -196,11 +196,14 @@ jobs:
         with:
           version: ${{ env.SKILL_PAIR_UV_VERSION }}
           enable-cache: false
-      - name: Build and verify the five Skills packages
+      - name: Install SDK generator dependency
+        run: python3 -m pip install 'PyYAML==6.0.2'
+      - name: Check the producer and package verification controls
+        run: python3 -I -m unittest discover -s e2e/stack -p 'test_skill_*.py'
+      - name: Regenerate the SDK and build and verify the five Skills packages
         id: build
         env:
-          SDK_COMMIT: ${{ steps.pins.outputs.sdk }}
-          TRACEAI_COMMIT: ${{ steps.pins.outputs.traceai }}
+          SKILL_REFS: ${{ steps.refs.outputs.sources }}
         run: e2e/stack/build-skill-pair.sh .skill-sources/sdk .skill-sources/traceai "$RUNNER_TEMP/skill-pair"
       - uses: actions/upload-artifact@v4
         with:

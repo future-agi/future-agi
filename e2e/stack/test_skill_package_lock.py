@@ -26,6 +26,12 @@ class PairLockTests(unittest.TestCase):
             "traceai_ts": "traceai-fi-core-1.4.0.tgz",
             "semconv_ts": "traceai-fi-semantic-conventions-1.3.0.tgz",
         }
+        self.branches = {"sdk": "feat/skills", "traceai": "dev"}
+        self.contract = {
+            "source": {"backend_commit": self.sources["product"], "non_skills_sdk_commit": "d" * 40,
+                       **dict.fromkeys(("openapi_sha256", "mcp_sha256", "non_skills_slice_sha256"), "e" * 64)},
+            "sha256": dict.fromkeys(("swagger.json", "mcp-tools.json", "SOURCE.json"), "f" * 64),
+        }
         self.items = {}
         for role, name in self.names.items():
             data = role.encode()
@@ -33,7 +39,8 @@ class PairLockTests(unittest.TestCase):
             self.items[role] = {"file": name, "sha256": hashlib.sha256(data).hexdigest()}
 
     def lock(self):
-        data = json.dumps({"schema": 1, "sources": self.sources, "artifacts": self.items}).encode()
+        data = json.dumps({"schema": 2, "sources": self.sources, "branches": self.branches,
+                           "contract": self.contract, "artifacts": self.items}).encode()
         (self.dist / "pair.json").write_bytes(data)
         return hashlib.sha256(data).hexdigest()
 
@@ -56,6 +63,18 @@ class PairLockTests(unittest.TestCase):
         (self.dist / self.names["sdk_ts"]).write_bytes(b"wrong")
         with self.assertRaisesRegex(ValueError, "Package does not match"):
             verify(self.dist, expected, self.sources)
+
+    def test_missing_provenance_is_rejected(self):
+        self.contract["source"]["backend_commit"] = "1" * 40
+        with self.assertRaisesRegex(ValueError, "contract provenance"):
+            verify(self.dist, self.lock(), self.sources)
+        self.contract["source"]["backend_commit"] = self.sources["product"]
+        del self.contract["sha256"]["SOURCE.json"]
+        with self.assertRaisesRegex(ValueError, "contract provenance"):
+            verify(self.dist, self.lock(), self.sources)
+        del self.branches["sdk"]
+        with self.assertRaisesRegex(ValueError, "branch"):
+            verify(self.dist, self.lock(), self.sources)
 
     def test_missing_extra_and_wrongly_named_packages_are_rejected(self):
         self.items["sdk_python"]["file"] = "../futureagi-0.6.14-py3-none-any.whl"

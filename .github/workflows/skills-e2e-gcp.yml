@@ -118,7 +118,7 @@ jobs:
           set -eu
           [[ $SDK =~ ^[0-9a-f]{40}$ && $TRACEAI =~ ^[0-9a-f]{40}$ && $PAIR_SHA =~ ^[0-9a-f]{64}$ && $APP_SHA =~ ^[0-9a-f]{64}$ ]]
           echo "$PAIR_SHA  pair/pair.json" | sha256sum -c -
-          jq -e --arg product "$GITHUB_SHA" --arg sdk "$SDK" --arg traceai "$TRACEAI" '.schema == 1 and .sources == {$product,$sdk,$traceai}' pair/pair.json >/dev/null
+          jq -e --arg product "$GITHUB_SHA" --arg sdk "$SDK" --arg traceai "$TRACEAI" '.schema == 2 and .sources == {$product,$sdk,$traceai}' pair/pair.json >/dev/null
           jq -n --arg sdk "$SDK" --arg traceai "$TRACEAI" --arg pair_sha256 "$PAIR_SHA" --arg application_sha256 "$APP_SHA" \
             '{$sdk,$traceai,$pair_sha256,$application_sha256}' >receipt.json
           files=(receipt.json pair)

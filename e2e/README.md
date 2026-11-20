@@ -892,45 +892,51 @@ visible in ClickHouse before inspecting the bounded job window for native links.
 clean up the isolated worker with `E2E_STACK=standalone E2E_STANDALONE_NETWORK=native bin/e2e down -v`.
 This is synthetic container evidence, not E2B qualification.
 
-### Pinning the Skills test packages
+### Skills packages in required CI
 
-The build receipt binds the **tested product commit** and both pinned package
-source commits to the five built archives. The producer records the SHA-256 of `pair.json`
-independently of the package directory. Its JSON form is `{"schema":1,
-"sources":{"product":"<commit>","sdk":"<commit>","traceai":"<commit>"},
-"artifacts":{...}}`. Supply one `{"file":"<basename>","sha256":"<digest>"}`
-record for each of `sdk_python`, `traceai_python`, `sdk_ts`, `traceai_ts`, and
-`semconv_ts`. Wheels and npm archives must have their real distribution names
-and versions. Set `CTXHUB_APP_COMMIT`, `SDK_COMMIT`, `TRACEAI_COMMIT`, and
-`SKILL_TRACE_PAIR_SHA256` from the independent build receipts, then run
-`e2e/stack/prepare-skill-traces.sh packages <dist>` on the isolated standalone
-stack; `interpreters <dist> <new-dir>` prepares traced and plain Python installs.
-A self-computed checksum of unknown packages is not a release receipt.
+`skill-packages` resolves branches **independently** in the public `futureagi-sdk`
+and `traceAI` repositories. It takes the first branch that exists, not the first
+one that builds:
 
+| Product event | Branches in priority order |
+| --- | --- |
+| Pull request | PR head name, PR base name, `dev`, `main` |
+| Merge queue | Target branch, `dev`, `main` |
+| Push, dispatch or schedule | Checked-out branch name, `dev`, `main` |
 
-### Skills in required CI
+Feature branches pair by **the same name** when it exists in a package repo. An
+unpaired product PR targeting `dev` tests against SDK `dev`, the version that
+ships with it: Skills cases on `dev` require Skills support merged into SDK
+`dev`. For a PR targeting `main`, SDK `main` takes precedence over `dev`.
+A missing branch in one package repo does not change the choice in the other.
+A resolution or build failure fails the producer; it does not try an older SDK
+or skip cases. The dispatch input `sdk-ref` selects a separate live suite and
+does not override the Skills pair.
 
-`stack/skill-pair.lock.json` pins the public SDK and traceAI by full Git SHA.
-`skill-packages` checks all three actual checkout identities, builds two Python
-wheels and three npm archives, and returns the pair and SDK-wheel digests as
-job outputs, separate from the artifact. `application-wheels` builds the support
-application once and supplies its digest; 061 and 063 install those same bytes.
-`sdk-ref` selects a different, later live suite and cannot override the pair.
+**What gets built.** CI checks out both resolved full SHAs once. It runs the SDK's
+scoped sync against the OpenAPI and MCP files at the exact product checkout
+(including PR merge or merge-queue commits), preserving the non-Skills baseline
+named by the SDK. It regenerates both clients, checks for changes outside the
+generated files, and requires the SDK's baseline and MCP parity checks to pass.
+The Skills paths, methods, inherited parameters and reachable models must match
+the product; a copied tool inventory does not substitute for SDK catalog support.
+`application-wheels` builds the support application separately; 061 and 063 use
+that artifact and the same verified SDK wheel.
 
-**Contract rule.** The SDK records the backend revision used to generate it,
-not a future PR merge SHA. The lock retains the SDK's full `SOURCE.json`,
-including the original OpenAPI, MCP and non-Skills baseline digests, and a
-fingerprint of the original Skills contract. CI compares the tested checkout's
-entire Skills path set, transitively referenced models, global API settings
-(except descriptive metadata), Skills MCP tool definitions and full MCP name
-inventory with that fingerprint. It also verifies SDK snapshot metadata and
-shipped Skills operations/models against the tested files. A non-Skills-only
-change can be compatible; any change to this projection requires review and
-repinning. To obtain the fingerprint when refreshing the pair, run
-`python3 -I e2e/stack/check-skill-contract.py --source-fingerprint <sdk-checkout> <original-backend-checkout>`.
-It checks both raw file hashes against the pinned SDK before emitting a hash.
-Never derive a replacement from a failing candidate. Receipts still name the
-exact tested SHA, including ephemeral PR and merge-queue commits.
+**What to verify.** The schema-2 `pair.json` contains the three full commits in
+`sources`, the two resolved branch names in `branches`, and the regenerated
+`contract.source` (`SOURCE.json` metadata) and `contract.sha256` (hashes of
+`swagger.json`, `mcp-tools.json`, and `SOURCE.json`). `artifacts` records the
+filename and SHA-256 for each of `sdk_python`, `traceai_python`, `sdk_ts`,
+`traceai_ts`, and `semconv_ts`. The producer emits the pair receipt digest and
+SDK wheel digest separately from the artifact. Consumers verify the supplied
+bytes; they never resolve a branch or build a replacement SDK.
+
+On an isolated worker, set `CTXHUB_APP_COMMIT`, `SDK_COMMIT`, `TRACEAI_COMMIT`,
+and `SKILL_TRACE_PAIR_SHA256` from the independent producer outputs. Run
+`e2e/stack/prepare-skill-traces.sh packages <dist>` to stage the archives, or
+`interpreters <dist> <new-dir>` to prepare traced and plain Python installs.
+A checksum computed only from a downloaded package directory cannot authenticate it.
 
 Only the E2E frontend is built with `VITE_SKILL_TRACES=on`. Host cases receive
 `SKILL_TRACES_PYTHON` (SDK with telemetry) and `SKILL_TRACES_NO_OTEL_PYTHON`
