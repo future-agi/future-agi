@@ -361,6 +361,9 @@ jobs:
           FOCUSED_ATTACHMENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' }}
         run: |
           if [ -n "$ISOLATED_MODULE" ]; then
+            # The service creates only test_tfc; these modules assert their own ClickHouse database.
+            curl -sS --fail --max-time 30 "http://127.0.0.1:${FI_CH_TEST_SIDECAR_HTTP_PORT}/" \
+              --data-binary "CREATE DATABASE IF NOT EXISTS ${ISOLATED_DB}"
             exec env "$ISOLATED_GATE=1" PG_TEST_DB="$ISOLATED_DB" CH_DATABASE="$ISOLATED_DB" CH25_DATABASE="$ISOLATED_DB" \
               uv run pytest -q -ra "tracer/tests/$ISOLATED_MODULE.py" --junitxml="junit-${{ matrix.group }}.xml"
           fi
