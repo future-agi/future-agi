@@ -1641,12 +1641,12 @@ class CHSpanReader:
             settings=_TRACE_UNIT_SETTINGS,
         ).result_rows
         # The nil id is no session, as this file's other reads treat it.
-        rows = [
+        roots = [
             (trace_id, kind, None if session in (None, "", NIL_UUID) else session, at)
             for trace_id, kind, session, at in rows
         ]
         survivors = self.remap_groups(
-            "trace_session_id_remap", (row[2] for row in rows if row[2])
+            "trace_session_id_remap", (root[2] for root in roots if root[2])
         )
         return {
             str(trace_id): TraceUnit(
@@ -1654,7 +1654,7 @@ class CHSpanReader:
                 session_id=survivors.get(session, session) if session else None,
                 start_time=started,
             )
-            for trace_id, kind, session, started in rows
+            for trace_id, kind, session, started in roots
         }
 
     _CHILD_TREE_COLUMNS: tuple[tuple[str, str], ...] = (
