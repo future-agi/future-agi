@@ -10,9 +10,10 @@ from rest_framework.response import Response
 from simulate.models import AgentFixIssueJob, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix_issue import IssueLaunch
 from simulate.selectors.agent_fix_issue import (
+    OPEN_ELSEWHERE,
+    can_open,
     default_environment,
     environment_blocker,
-    is_open,
     issue_job_view,
     issue_sample,
     issue_scenarios,
@@ -20,6 +21,7 @@ from simulate.selectors.agent_fix_issue import (
     issue_view,
     jobs_of_issues,
     launch_defaults,
+    open_job,
     requested_issue,
 )
 from simulate.selectors.evidence_import import evidence_project
@@ -142,20 +144,22 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
                 issue.project, self._environments(request)
             )
         blocked = environment_blocker(environment) if environment else None
-        open_job = next(
-            (job for job in jobs_of_issues([issue]).get(issue.id, []) if is_open(job)),
-            None,
+        refusal = (
+            {"code": blocked.code, "message": blocked.message} if blocked else None
         )
+        held = open_job(issue)
+        shown = held if held and can_open(held, self._environments(request)) else None
+        if held is not None and shown is None:
+            # An epoch the caller cannot open holds the issue: nothing drafts here.
+            refusal = {"code": "issue_epoch_open", "message": OPEN_ELSEWHERE}
         plan = {
             "issue": issue_view(issue),
             "environment": {"id": environment.id, "name": environment_name(environment)}
             if environment
             else None,
-            "blocked": {"code": blocked.code, "message": blocked.message}
-            if blocked
-            else None,
+            "blocked": refusal,
             "sample": issue_sample(issue, environment).model_dump(mode="json"),
-            "open_job_id": open_job.id if open_job else None,
+            "open_job_id": shown.id if shown else None,
             "issue_scenarios": {
                 "held": len(issue_scenarios(environment)),
                 "limit": issue_scenarios_max(),
@@ -217,6 +221,7 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
         job = create_issue_job(
             issue,
             environment=environment,
+            environments=self._environments(request),
             member_ids=list(data["member_ids"]),
             user=request.user,
             endpoint_base_url=_public_base_url(request),

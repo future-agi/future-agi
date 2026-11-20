@@ -15,6 +15,7 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import transaction
+from django.db.models import QuerySet
 from django.utils import timezone
 
 from simulate.models import (
@@ -22,7 +23,6 @@ from simulate.models import (
     AgentFixRun,
     EvidenceImportCase,
     HarnessSuiteMember,
-    HostedHarnessConversation,
     HostedHarnessJob,
 )
 from simulate.pydantic_schemas.agent_fix import VARIATIONS_PER_CASE
@@ -35,30 +35,30 @@ from simulate.pydantic_schemas.agent_fix_issue import (
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     default_max_minutes,
+    environment_variations_blocker,
     fewest_failing_cases,
-    fresh_draft_pieces,
     scenario_results,
-    unsaved_changes,
 )
 from simulate.selectors.agent_fix_issue import (
+    OPEN_ELSEWHERE,
+    can_open,
     environment_blocker,
-    is_open,
     issue_job_phase,
     issue_scenarios,
     issue_scenarios_max,
     jobs_of_epochs,
-    jobs_of_issues,
     live_issue,
     measuring_job,
     member_units,
     members_of,
+    open_job,
     pick_reasons,
     runnable_cases,
 )
 from simulate.selectors.evidence_import import MAX_SOURCES
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_engine import dispatch_run
-from simulate.services.agent_fix_runs import launch_fix_run
+from simulate.services.agent_fix_runs import launch_fix_run, require_variation_room
 from simulate.services.evidence_drafts import forget, start_drafting
 from simulate.services.evidence_import import (
     add_to_suite,
@@ -71,14 +71,13 @@ from simulate.services.harness_usage import (
     require_agent_fix_usage,
     require_harness_authoring,
     require_harness_call_usage,
+    usage_limit_error,
 )
-from simulate.services.harness_versioning import drafts
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
     request_cancellation,
 )
-from simulate.services.hosted_harness_conversation import CHAT_CHECKPOINT_MAX_SCENARIOS
 from simulate.temporal.client import (
     cancel_hosted_harness_gateway_workflow,
     start_agent_fix_issue_workflow,
@@ -108,6 +107,7 @@ def create_issue_job(
     issue: TraceErrorGroup,
     *,
     environment: HostedHarnessJob,
+    environments: QuerySet[HostedHarnessJob],
     member_ids: list[str],
     user: Any,
     endpoint_base_url: str,
@@ -176,15 +176,13 @@ def create_issue_job(
         # One open job per issue, without locking the feed's own rows: grouping
         # locks those, and an epoch must never hold it up.
         advisory_xact_lock(f"agent-fix-issue:{issue.id}")
-        open_job = next(
-            (job for job in jobs_of_issues([issue]).get(issue.id, []) if is_open(job)),
-            None,
-        )
-        if open_job is not None:
+        if (held := open_job(issue)) is not None:
+            if not can_open(held, environments):
+                raise _refused("issue_epoch_open", OPEN_ELSEWHERE)
             raise _refused(
                 "issue_epoch_open",
                 "This issue already has an epoch in progress. Open it.",
-                job_id=str(open_job.id),
+                job_id=str(held.id),
             )
         evidence_import, _evidence = create_evidence_import(
             environment=environment,
@@ -314,12 +312,11 @@ def _require_launchable(
         )
     if blocked := _active_epoch_refusal(environment):
         raise blocked
-    if unsaved := unsaved_changes(fresh_draft_pieces(environment)):
-        raise _refused(
-            "fix_draft_open",
-            f"This environment has unsaved {unsaved} changes. Save or discard them,"
-            " then Run Epoch.",
-        )
+    # Drafts are made from failures, so the epoch writes variations of what fails
+    # unless at least the floor of scenarios fail. Which do is known only after the
+    # baseline, so the variations' checks run on the most there can be.
+    if blocked := environment_variations_blocker(environment):
+        raise blocked
     held = len(issue_scenarios(environment))
     limit = issue_scenarios_max()
     if held + added > limit:
@@ -333,31 +330,18 @@ def _require_launchable(
     organization_id = str(environment.organization_id)
     require_agent_fix_usage(organization_id)
     require_harness_call_usage(environment)
-    if scenarios < settings.AGENT_FIX_MIN_FAILING_CASES:
-        # The epoch writes variations of what fails: a builder turn, billed as authoring.
-        require_harness_authoring(organization_id)
-        if HostedHarnessConversation.no_workspace_objects.filter(
-            job=environment, state=HostedHarnessConversation.State.RETIRED
-        ).exists():
-            raise _refused(
-                "conversation_workspace_not_ready",
-                "This environment's saved files are no longer available; rebuild it to"
-                " write variations.",
-            )
-        drafts.require_no_rebuild(environment, piece="suite")
-        suite = HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=environment.suite_version_id
-        ).count()
-        if (
-            suite + added + VARIATIONS_PER_CASE * scenarios
-            > CHAT_CHECKPOINT_MAX_SCENARIOS
-        ):
-            raise _refused(
-                "scenario_limit_exceeded",
-                f"the variations would take the suite past"
-                f" {CHAT_CHECKPOINT_MAX_SCENARIOS} scenarios",
-                status_code=422,
-            )
+    # Writing the variations is a builder turn, billed as authoring.
+    require_harness_authoring(organization_id)
+    suite = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=environment.suite_version_id
+    ).count()
+    require_variation_room(suite + added, _variation_cases(scenarios))
+
+
+def _variation_cases(scenarios: int) -> int:
+    """The most failing cases an epoch from ``scenarios`` writes variations of: it
+    writes them only below the floor of failing cases."""
+    return min(scenarios, settings.AGENT_FIX_MIN_FAILING_CASES - 1)
 
 
 def run_issue_job(
@@ -445,13 +429,9 @@ def _run(
             suite = HarnessSuiteMember.no_workspace_objects.filter(
                 suite_version_id=environment.suite_version_id
             ).count()
-            # Every scenario of the suite is the epoch's to check, and below the floor
-            # it adds variations of each failing one.
-            variations = (
-                VARIATIONS_PER_CASE * len(keys)
-                if len(keys) < settings.AGENT_FIX_MIN_FAILING_CASES
-                else 0
-            )
+            # Every scenario of the suite is the epoch's to check, with variations of
+            # the most failing ones it can write them of.
+            variations = VARIATIONS_PER_CASE * _variation_cases(len(keys))
             launch = launch.model_copy(
                 update={"max_minutes": default_max_minutes(suite + variations)}
             )
@@ -543,10 +523,14 @@ def advance_issue_job(job_id: str) -> bool:
                 cost_margin_pct=launch.cost_margin_pct,
                 cost_limit_usd=launch.cost_limit_usd,
             )
-        except HostedHarnessError as exc:
-            if exc.retryable:
+        except Exception as exc:
+            # A plan limit is a refusal like any other, not an outage to retry.
+            refusal = (
+                exc if isinstance(exc, HostedHarnessError) else usage_limit_error(exc)
+            )
+            if refusal is None or refusal.retryable:
                 raise
-            _set_ending(job, IssueJobEnding(code=exc.code, message=exc.message))
+            _set_ending(job, IssueJobEnding(code=refusal.code, message=refusal.message))
             return True
         job.fix_run = fix_run
         job.save(update_fields=["fix_run", "updated_at"])

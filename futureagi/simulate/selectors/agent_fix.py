@@ -1453,8 +1453,6 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     launch_blocker; None when nothing would. The environment's builder writes them in its
     chat's workspace, which holds any unsaved scenario or setup changes, so those must be
     saved or discarded first: the variations are written from the run's cases only."""
-    from simulate.services.harness_versioning import drafts
-
     environment = source_run.environment
     if environment is None:
         return HostedHarnessError(
@@ -1476,6 +1474,18 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     moved = variations_source_moved(environment, source_run)
     if moved is not None:
         return moved
+    return environment_variations_blocker(environment)
+
+
+def environment_variations_blocker(
+    environment: HostedHarnessJob,
+) -> HostedHarnessError | None:
+    """What of the environment itself would stop its builder writing variations: its
+    chat's saved files are gone, a rebuild is pending, or unsaved changes are open.
+    A launch that writes variations asks it (variations_blocker), and so does Run
+    Epoch from an issue before its baseline is paid for."""
+    from simulate.services.harness_versioning import drafts
+
     if HostedHarnessConversation.no_workspace_objects.filter(
         job=environment, state=HostedHarnessConversation.State.RETIRED
     ).exists():

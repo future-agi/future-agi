@@ -25,8 +25,10 @@ from simulate.models import (
     EvidenceImport,
     EvidenceImportCase,
     HarnessSuiteMember,
+    HostedHarnessConversation,
     HostedHarnessJob,
 )
+from simulate.pydantic_schemas.agent_fix import VARIATIONS_PER_CASE
 from simulate.pydantic_schemas.agent_fix_issue import (
     SAMPLE_ALTERNATES,
     SAMPLE_PICKS,
@@ -37,11 +39,14 @@ from simulate.pydantic_schemas.agent_fix_issue import (
 from simulate.selectors import agent_fix_issue as reads
 from simulate.selectors.agent_fix import launch_blocker
 from simulate.services import agent_fix_issue as jobs
+from simulate.services import harness_usage
 from simulate.services.evidence_drafts import _proposal, scenario_key_for
 from simulate.services.harness_versioning import archives
 from simulate.services.harness_versioning.versions import suite_documents
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness_conversation import ensure_conversation
 from simulate.tests.test_agent_fix_api import BASE as RUNS
+from simulate.tests.test_agent_fix_api import _out_of_credits
 from simulate.tests.test_agent_fix_api import entitled as entitled
 from simulate.tests.test_agent_fix_services import (
     KEYS,
@@ -225,6 +230,16 @@ def _job(environment, evidence_import, **fields):
         evidence_import=evidence_import,
         **fields,
     )
+
+
+def _mine(environment):
+    """The caller's environments: the one it works in."""
+    return HostedHarnessJob.no_workspace_objects.filter(id=environment.id)
+
+
+def _kept(job):
+    """Every case of the job's import, as Run Epoch keeps them."""
+    return [str(one) for one in job.evidence_import.cases.values_list("id", flat=True)]
 
 
 def _in_review(environment, issue, user, *, drafts=1):
@@ -425,6 +440,7 @@ class TestCreate:
                 member_ids=traces[:2],
                 user=user,
                 endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
             )
 
         made = job.evidence_import
@@ -451,6 +467,7 @@ class TestCreate:
                 member_ids=traces,
                 user=user,
                 endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
             )
 
         first, repeat = job.evidence_import.cases.order_by("position")
@@ -470,10 +487,31 @@ class TestCreate:
                 member_ids=traces,
                 user=user,
                 endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
             )
 
         assert refused.value.code == "issue_epoch_open"
         assert refused.value.details == {"job_id": str(open_job.id)}
+
+    def test_an_open_job_the_caller_cannot_open_is_not_named(
+        self, environment, issue, user
+    ):
+        traces = _members(issue, 2)
+        _in_review(environment, issue, user)
+
+        with _roots(_sdk(traces)), pytest.raises(HostedHarnessError) as refused:
+            jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=traces,
+                user=user,
+                endpoint_base_url="https://platform.test",
+                environments=HostedHarnessJob.no_workspace_objects.none(),
+            )
+
+        assert refused.value.code == "issue_epoch_open"
+        assert refused.value.message == reads.OPEN_ELSEWHERE
+        assert not refused.value.details
 
     def test_a_pick_another_import_reviews_is_named_and_nothing_is_kept(
         self, environment, issue, user, boundaries
@@ -492,6 +530,7 @@ class TestCreate:
                 member_ids=[kept, reviewed],
                 user=user,
                 endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
             )
 
         assert refused.value.code == "issue_epoch_picks_in_review"
@@ -518,6 +557,7 @@ class TestCreate:
                         member_ids=picks,
                         user=user,
                         endpoint_base_url="https://platform.test",
+                        environments=_mine(environment),
                     )
                 assert refused.value.code == code
 
@@ -580,6 +620,78 @@ class TestRunEpoch:
             kept.id: "added",
             job.evidence_import.cases.exclude(id=kept.id).get().id: "discarded",
         }
+
+    # With the floor at 2 and both drafts kept, the epoch writes variations only if
+    # one passes, which the baseline has not shown yet: its checks run first anyway.
+    def test_a_builder_that_cannot_write_variations_is_named_before_the_baseline(
+        self, environment, issue, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 2
+        job, _case = _in_review(environment, issue, user, drafts=2)
+        HostedHarnessConversation.no_workspace_objects.filter(
+            id=ensure_conversation(environment).id
+        ).update(state="retired")
+        suite = environment.suite_version_id
+
+        with pytest.raises(HostedHarnessError) as refused:
+            jobs.run_issue_job(job, case_ids=_kept(job), launch=LAUNCH, user=user)
+
+        assert refused.value.code == "conversation_workspace_not_ready"
+        environment.refresh_from_db()
+        assert environment.suite_version_id == suite
+        job.refresh_from_db()
+        assert job.baseline_run_id is None
+
+    def test_the_variations_room_is_checked_on_the_most_that_can_fail(
+        self, environment, issue, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 2
+        job, _case = _in_review(environment, issue, user, drafts=2)
+        held = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).count()
+
+        # Room for the two drafts, not for variations of one of them.
+        with (
+            patch(
+                "simulate.services.agent_fix_runs.CHAT_CHECKPOINT_MAX_SCENARIOS",
+                held + 2 + VARIATIONS_PER_CASE - 1,
+            ),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            jobs.run_issue_job(job, case_ids=_kept(job), launch=LAUNCH, user=user)
+
+        assert refused.value.code == "scenario_limit_exceeded"
+        job.refresh_from_db()
+        assert job.baseline_run_id is None
+
+    def test_the_time_limit_counts_the_variations_there_can_be(
+        self, environment, issue, user, settings, django_capture_on_commit_callbacks
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 2
+        job, _case = _in_review(environment, issue, user, drafts=2)
+
+        with (
+            patch(
+                "simulate.services.agent_fix_issue.default_max_minutes",
+                side_effect=lambda cases: cases,
+            ),
+            django_capture_on_commit_callbacks(execute=True),
+        ):
+            jobs.run_issue_job(
+                job,
+                case_ids=_kept(job),
+                launch=IssueLaunch(surfaces=["prompt"], budget_credits=500),
+                user=user,
+            )
+
+        job.refresh_from_db()
+        environment.refresh_from_db()
+        suite = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).count()
+        # One of the two can fail while the other passes: variations of that one.
+        assert job.launch["max_minutes"] == suite + VARIATIONS_PER_CASE
 
     def test_fewer_scenarios_than_an_epoch_starts_from_are_refused_first(
         self, environment, issue, user, settings
@@ -678,6 +790,24 @@ class TestAdvance:
         )
         job.refresh_from_db()
         return job
+
+    def test_a_plan_limit_at_launch_ends_the_job_and_frees_the_environment(
+        self, environment, issue, user, monkeypatch
+    ):
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": False}
+        )
+        monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+
+        with patch(
+            "simulate.services.agent_fix_issue.launch_fix_run",
+            side_effect=_out_of_credits(),
+        ):
+            assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        assert job.ending["code"] == "usage_limit"
+        assert reads.measuring_job(environment) is None
 
     def test_a_baseline_that_did_not_finish_is_not_could_not_reproduce(
         self, environment, issue, user
@@ -951,6 +1081,44 @@ class TestApi:
         assert listed.json()["results"] == []
         job.refresh_from_db()
         assert (job.ending, job.baseline_run_id) == (None, None)
+
+    def test_a_caller_with_no_workspace_is_told_of_another_s_epoch_without_its_id(
+        self, api_client, environment, issue, user, organization
+    ):
+        # A caller with no workspace reads every project of its organization, but
+        # opens only the environments that have no workspace either.
+        job, _case = _in_review(environment, issue, user)
+        other = Workspace.no_workspace_objects.create(
+            name="Other workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        moved = {"workspace_id": other.id}
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(**moved)
+        Project.no_workspace_objects.filter(id=issue.project_id).update(**moved)
+        EvidenceImport.no_workspace_objects.filter(id=job.evidence_import_id).update(
+            **moved
+        )
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(**moved)
+        api_client.force_authenticate(user=user)
+
+        with _roots({}):
+            planned = api_client.get(
+                f"{ISSUES}/plan/",
+                {"cluster_id": issue.cluster_id, "project_id": str(issue.project_id)},
+            )
+        read = api_client.get(f"{ISSUES}/{job.id}/")
+
+        assert planned.status_code == 200, planned.content
+        body = planned.json()
+        assert body["open_job_id"] is None
+        assert body["blocked"] == {
+            "code": "issue_epoch_open",
+            "message": reads.OPEN_ELSEWHERE,
+        }
+        assert read.status_code == 404, read.content
 
 
 def test_the_pull_request_links_the_issue(environment, issue, source_run, settings):

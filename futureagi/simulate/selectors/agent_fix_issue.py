@@ -408,6 +408,27 @@ def jobs_of_issues(
     return found
 
 
+# An issue has one open job, whichever environment it runs in. A caller who cannot
+# open that job is told only that it exists.
+OPEN_ELSEWHERE = (
+    "An epoch from this issue is already in progress in another environment."
+)
+
+
+def open_job(issue: TraceErrorGroup) -> AgentFixIssueJob | None:
+    """The issue's open job, in whichever environment it runs."""
+    return next(
+        (job for job in jobs_of_issues([issue]).get(issue.id, []) if is_open(job)),
+        None,
+    )
+
+
+def can_open(job: AgentFixIssueJob, environments: QuerySet[HostedHarnessJob]) -> bool:
+    """Whether ``job`` runs in one of the caller's ``environments``: only then is its id
+    named to the caller."""
+    return environments.filter(id=job.environment_id).exists()
+
+
 def jobs_of_epochs(
     fix_runs: Iterable[AgentFixRun],
 ) -> dict[UUID, AgentFixIssueJob]:
