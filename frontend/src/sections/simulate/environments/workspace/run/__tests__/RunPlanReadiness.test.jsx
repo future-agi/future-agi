@@ -220,6 +220,17 @@ describe("RunDialog with Ready to run", () => {
     ]);
   });
 
+  it("asks for Validate before any Save when the drafts say a save needs it", () => {
+    state.view = view();
+    state.drafts = { ...openDrafts(), validationRequired: true };
+    renderDialog();
+    expect(screen.getByTestId("run-drafts-note")).toHaveTextContent(
+      "Validate these changes on the page first, then save them.",
+    );
+    expect(screen.getByRole("button", { name: "Save to run" })).toBeDisabled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("says the fixes are in unsaved changes only when the run left them", () => {
     state.view = view();
     state.drafts = openDrafts("2026-11-12T10:00:00Z");

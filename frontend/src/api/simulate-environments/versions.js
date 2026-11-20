@@ -808,6 +808,8 @@ export const toDrafts = (data = {}) => {
     pieces,
     any: pieces.length > 0,
     stale: pieces.some((piece) => drafts[piece].stale),
+    // A plain Save would be refused: the changes go through Validate first.
+    validationRequired: Boolean(data?.validation_required),
     // Where the validation of the reviewed changes stands, and what it built.
     validation: data?.validation
       ? {

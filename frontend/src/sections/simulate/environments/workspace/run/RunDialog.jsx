@@ -446,7 +446,7 @@ export default function RunDialog({
   // which holds that flow; Save to run can't save them.
   const needsValidate =
     saveDrafts.error?.error === "validation_required" ||
-    Boolean(drafts?.validation);
+    Boolean(drafts?.validationRequired || drafts?.validation);
   const saveDraftsNow = () =>
     saveDrafts.mutate(
       drafts.pieces.map((piece) => ({
