@@ -400,3 +400,252 @@ def test_meteor_one_empty_reports_missing():
     r = _meteor_full_path("the cat sat", "")
     assert r["score"] == 0.0
     assert "missing" in r["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# numeric_similarity
+# ---------------------------------------------------------------------------
+
+
+def test_numeric_similarity_reads_grouped_and_exponent_numbers():
+    ev = _load_eval("numeric_similarity")
+    for a, b in [
+        ("1,234", "1234"),
+        ("$1,234.56", "1234.56"),
+        ("1,234,567.89", "1234567.89"),
+        ("1e5", "100000"),
+        ("1.5E3", "1500"),
+        ("2e-3", "0.002"),
+        (".5", "0.5"),
+        ("The total is 1,234 units", "1234"),
+    ]:
+        assert ev(None, a, b, None)["score"] == 1.0, (a, b)
+        assert ev(None, b, a, None)["score"] == 1.0, (b, a)
+
+
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ("Rs.500", 500),
+        ("Rs.1,234", 1234),
+        (".5", 0.5),
+        ("price: -.5e2", -50),
+        ("10000000000000000 bytes", "1e16"),
+        ("10,000,000,000,000,000 bytes", "1e16"),
+        ("1e16 bytes", 10**16),
+    ],
+)
+def test_numeric_similarity_measurement_spellings(text, value):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right in [(text, value), (value, text)]:
+        assert evaluate(None, left, right, None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+
+
+@pytest.mark.parametrize(("interval", "lower"), [("lower bound 2..10", 2), ("0..9", 0)])
+def test_numeric_similarity_reads_first_bound_of_integer_range(interval, lower):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right in [(interval, lower), (lower, interval)]:
+        assert evaluate(None, left, right, None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+
+
+def test_numeric_similarity_grouped_scientific_mantissa():
+    evaluate = _load_eval("numeric_similarity")
+    for text in ("1,234.e2", "1234.e2", "1,234.0e2"):
+        for left, right in [(text, 123400), (123400, text)]:
+            assert evaluate(None, left, right, None) == {
+                "score": 1.0,
+                "reason": "Numeric Similarity: 1.000",
+            }
+
+
+def test_numeric_similarity_long_id_label_not_measurement():
+    evaluate = _load_eval("numeric_similarity")
+    first, second = "1234567890123456", "1234567890123457"
+    for text in (first, f"invoice total: {first}"):
+        assert evaluate(None, text, int(first), None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+    assert evaluate(None, f"invoice ID {first}", f"invoice ID {second}", None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output; Long integer identifier in expected",
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ("version: 2.1", "Version identifier"),
+        ("VERSION = 2.1", "Version identifier"),
+        ("invoice ID: 1234567890123456", "Long integer identifier"),
+        ("identifier #1234567890123456", "Long integer identifier"),
+    ],
+)
+def test_numeric_similarity_explicit_identifier_on_either_side(value, reason):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right, name in [(value, 2.1, "output"), (2.1, value, "expected")]:
+        assert evaluate(None, left, right, None) == {
+            "score": 0.0,
+            "reason": f"Cannot calculate: {reason} in {name}",
+        }
+
+
+def test_numeric_similarity_comma_without_thousands_group():
+    ev = _load_eval("numeric_similarity")
+    for a, b in [("1,2345", "1"), ("12,34", "12"), ("1,5", "1")]:
+        assert ev(None, a, b, None)["score"] == 1.0, (a, b)
+
+
+def test_numeric_similarity_relative_difference():
+    ev = _load_eval("numeric_similarity")
+    assert ev(None, "-10", "-20", None)["score"] == pytest.approx(0.5)
+    assert ev(None, "1,500", "1000", None)["score"] == pytest.approx(1 - 500 / 1500)
+    assert ev(None, 42, "42", None)["score"] == 1.0
+    r = ev(None, "no digits here", "5", None)
+    assert r["score"] == 0.0 and "No numeric value found" in r["reason"]
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ("1e400", "Non-finite number"),
+        ("-3E+400", "Non-finite number"),
+        (10**400, "Non-finite number"),
+        (float("nan"), "Non-finite number"),
+        (float("inf"), "Non-finite number"),
+        ("order 9007199254740993", "Long integer identifier"),
+        ("ID 0000000000000000001", "Long integer identifier"),
+        ("release 1.2.3", "Version identifier"),
+        ("release v1.2", "Version identifier"),
+    ],
+)
+def test_numeric_similarity_reports_unscorable_operands(value, reason):
+    evaluate = _load_eval("numeric_similarity")
+    for output, expected, name in [(value, 1, "output"), (1, value, "expected")]:
+        assert evaluate(None, output, expected, None) == {
+            "score": 0.0,
+            "reason": f"Cannot calculate: {reason} in {name}",
+        }
+
+
+def test_numeric_similarity_preserves_first_number_and_scale():
+    evaluate = _load_eval("numeric_similarity")
+    for output, expected, score in [
+        ("was -12.5, now 400", -10, 0.8),
+        (0, 0, 1),
+        ("42.", 42, 1),
+        ("9007199254740991", 9007199254740991, 1),
+        ("loss: -.25", 0, 0.75),
+        ("first +1,250.5e-1 then 4", 125.05, 1),
+    ]:
+        result = evaluate(None, output, expected, None)
+        assert result["score"] == pytest.approx(score), (output, expected)
+        assert result["reason"] == f"Numeric Similarity: {score:.3f}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Please order 1000000000000000 units",
+        "Please order 1,000,000,000,000,000 units",
+        "Please order 1e15 units",
+    ],
+)
+def test_numeric_similarity_order_verb_is_not_an_identifier_label(text):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right in [(text, "1e15"), ("1e15", text)]:
+        assert evaluate(None, left, right, None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Order number: 9007199254740992", "Order number: 9007199254740993"),
+        ("9007199254740992 bytes", "9007199254740993 bytes"),
+    ],
+)
+def test_numeric_similarity_distinct_large_integers_never_match(first, second):
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, first, second, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in expected",
+    }
+    assert evaluate(None, second, first, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+
+
+def test_numeric_similarity_plain_integers_above_2_53_compare_exactly():
+    # Plain digit strings above 2**53 must not read as equal when they differ.
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, "9007199254740993", "9007199254740992", None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+    assert evaluate(None, "9007199254740992", "9007199254740993", None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in expected",
+    }
+    assert evaluate(None, "9007199254740992", "9007199254740992", None) == {
+        "score": 1.0,
+        "reason": "Numeric Similarity: 1.000",
+    }
+
+
+@pytest.mark.parametrize(
+    "other",
+    ["Order number: 9,007,199,254,740,993", "Order number: 9007199254740993e0"],
+)
+def test_numeric_similarity_large_integer_never_matches_a_rounded_spelling(other):
+    # 9007199254740992 is exact as a float; the other value only rounds to it.
+    evaluate = _load_eval("numeric_similarity")
+    exact = "Order number: 9007199254740992"
+    assert evaluate(None, exact, other, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+    assert evaluate(None, other, exact, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in expected",
+    }
+    assert evaluate(None, exact, "9,007,199,254,740,992", None)["score"] == 1.0
+
+
+@pytest.mark.parametrize("length", [400, 5000])
+def test_numeric_similarity_very_long_digit_run_is_an_identifier(length):
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, "9" * length, 1, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "value"), [("v.-2", -2), ("version.+3", 3), ("Rs.-5", -5)]
+)
+def test_numeric_similarity_signed_number_after_word_dot(text, value):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right in [(text, value), (value, text)]:
+        assert evaluate(None, left, right, None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+
+
+@pytest.mark.parametrize("text", ["v.2", "version.2"])
+def test_numeric_similarity_version_after_dot(text):
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, text, 2, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Version identifier in output",
+    }

@@ -1,0 +1,52 @@
+eval_id: 107
+name: numeric_similarity
+description: Extracts numeric values from generated text and computes the normalized difference from the reference number.
+  Returns the normalized numeric similarity.
+criteria: Computes the normalized similarity between numbers in the generated and reference text.
+eval_tags:
+- NLP Metrics
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc: {}
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import re
+        pred = kwargs.get("output", output)
+        ref = kwargs.get("expected", expected)
+        def _to_number(value, name):
+            if value is None:
+                return None, f"{name} is None"
+            if isinstance(value, (int, float)):
+                return float(value), None
+            value_str = str(value).strip()
+            if not value_str:
+                return None, f"{name} is empty"
+            match = re.search(r'-?\d+\.?\d*', value_str)
+            if match:
+                return float(match.group()), None
+            return None, f"No numeric value found in {name}"
+        pred_num, pred_error = _to_number(pred, "output")
+        ref_num, ref_error = _to_number(ref, "expected")
+        errors = []
+        if pred_error:
+            errors.append(pred_error)
+        if ref_error:
+            errors.append(ref_error)
+        if errors:
+            return {"score": 0.0, "reason": f"Cannot calculate: {'; '.join(errors)}"}
+        diff = abs(pred_num - ref_num)
+        normalized_diff = diff / max(abs(pred_num), abs(ref_num), 1)
+        similarity = max(0.0, 1.0 - normalized_diff)
+        return {"score": float(similarity), "reason": f"Numeric Similarity: {similarity:.3f}"}

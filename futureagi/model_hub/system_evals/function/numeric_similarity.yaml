@@ -22,30 +22,70 @@ config:
   config_params_desc: {}
   code: |
     def evaluate(input, output, expected, context, **kwargs):
+        import math
         import re
+        from decimal import Decimal
         pred = kwargs.get("output", output)
         ref = kwargs.get("expected", expected)
-        def _to_number(value, name):
+        def to_number(value, name):
+            # Returns (number, error, value as written, identifier error held back).
             if value is None:
-                return None, f"{name} is None"
-            if isinstance(value, (int, float)):
-                return float(value), None
-            value_str = str(value).strip()
-            if not value_str:
-                return None, f"{name} is empty"
-            match = re.search(r'-?\d+\.?\d*', value_str)
-            if match:
-                return float(match.group()), None
-            return None, f"No numeric value found in {name}"
-        pred_num, pred_error = _to_number(pred, "output")
-        ref_num, ref_error = _to_number(ref, "expected")
-        errors = []
-        if pred_error:
-            errors.append(pred_error)
-        if ref_error:
-            errors.append(ref_error)
+                return None, f"{name} is None", None, None
+            held = None
+            if not isinstance(value, (int, float)):
+                text = str(value).strip()
+                if not text:
+                    return None, f"{name} is empty", None, None
+                # A decimal point may end a mantissa (2.e3), but not start a range (2..10).
+                # A leading decimal stands alone (.5); after a word the dot is punctuation (Rs.500).
+                match = re.search(
+                    r'[-+]?(?:(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.(?!\.)\d*)?|(?<!\w)\.\d+)(?:[eE][-+]?\d+)?',
+                    text,
+                )
+                if not match:
+                    return None, f"No numeric value found in {name}", None, None
+                token = match.group()
+                prefix = text[:match.start()]
+                if token[0].isdigit() and re.search(r'\w\.$', prefix):
+                    prefix = prefix[:-1]
+                # A dotted version is not a decimal; don't score just its prefix.
+                if (re.match(r'\.\d', text[match.end():])
+                        or re.search(r'\b(?:v|version\s*[:=]?\s*)$', prefix, re.I)):
+                    return None, f"Version identifier in {name}", None, None
+                # Long ungrouped digit strings can be IDs, not measurements.
+                # Converting them to float can even equate two different IDs,
+                # so only integers a float holds exactly are read as numbers.
+                if re.fullmatch(r'[-+]?\d{16,}\.?', token):
+                    digits = token.strip('+-.')
+                    integer = int(digits) if len(digits) <= 309 else None
+                    spare = integer.bit_length() - 53 if integer is not None else 0
+                    if (re.search(r'\b(?:id|identifier)\s*[:=#]?\s*$', prefix, re.I)
+                            or digits.startswith('0') or integer is None
+                            or integer.bit_length() > 1024
+                            or (spare > 0 and integer % (1 << spare))):
+                        return None, f"Long integer identifier in {name}", None, None
+                    if integer >= 2**53:
+                        held = f"Long integer identifier in {name}"
+                value = token.replace(",", "")
+            try:
+                number = float(value)
+            except OverflowError:
+                return None, f"Non-finite number in {name}", None, None
+            if not math.isfinite(number):
+                return None, f"Non-finite number in {name}", None, None
+            return number, None, Decimal(value), held
+        prediction = to_number(pred, "output")
+        reference = to_number(ref, "expected")
+        errors = [error for error in (prediction[1], reference[1]) if error]
         if errors:
             return {"score": 0.0, "reason": f"Cannot calculate: {'; '.join(errors)}"}
+        # A large integer must not match a different value that rounds to the same float.
+        if prediction[0] == reference[0] and prediction[2] != reference[2]:
+            errors = [error for error in (prediction[3], reference[3]) if error]
+            if errors:
+                return {"score": 0.0, "reason": f"Cannot calculate: {'; '.join(errors)}"}
+        pred_num = prediction[0]
+        ref_num = reference[0]
         diff = abs(pred_num - ref_num)
         normalized_diff = diff / max(abs(pred_num), abs(ref_num), 1)
         similarity = max(0.0, 1.0 - normalized_diff)
