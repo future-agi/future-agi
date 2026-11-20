@@ -36,6 +36,7 @@ import {
   openNudgesIn,
 } from "../_mock/nudgeEffects";
 import { useSimStore } from "../store";
+import { defaultsAfterSave } from "../_mock/defaultAfterSave";
 
 const CHANGE_ICON = {
   instructions: "solar:document-text-linear",
@@ -548,6 +549,11 @@ export default function AgentSyncDialog({
 
         {phase === "saved" && (
           <Stack spacing={1}>
+            <DefaultAfterSave
+              envs={envs}
+              byEnv={state.byEnv}
+              version={saved.version}
+            />
             {/* "Nothing needs your input" would contradict a blocked scenario below. */}
             {(saved.announcement.count > 0 || !saved.blocking?.length) && (
               <Box
@@ -785,4 +791,73 @@ AgentSyncDialog.propTypes = {
   /* Accepted for older callers; the add nudge now says what the world lacks. */
   worldTools: PropTypes.array,
   envVersionLabel: PropTypes.string,
+};
+
+/* Which version each environment now tests by default, and why when it
+   isn't the one just saved (handover: an upload marked "make default" could
+   stay active but not the default, and nobody could tell). */
+function DefaultAfterSave({ envs, byEnv, version }) {
+  if (!envs?.length || !version) return null;
+  const rows = defaultsAfterSave(envs, byEnv, version);
+  return (
+    <Box
+      sx={{
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        overflow: "hidden",
+      }}
+    >
+      <Typography
+        sx={{
+          typography: "s2",
+          fontWeight: 600,
+          px: 1.75,
+          py: 1.125,
+          bgcolor: "background.neutral",
+        }}
+      >
+        Default version after this save
+      </Typography>
+      {rows.map((r) => (
+        <Box
+          key={r.id}
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto",
+            columnGap: 1.5,
+            px: 1.75,
+            py: 0.875,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Box minWidth={0}>
+            <Typography noWrap sx={{ typography: "s3" }}>
+              {r.name}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              {r.why}
+            </Typography>
+          </Box>
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: r.isNew ? "text.primary" : "warning.main",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {r.isNew ? `${r.label} · default` : `Stays ${r.label}`}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+DefaultAfterSave.propTypes = {
+  envs: PropTypes.array,
+  byEnv: PropTypes.object,
+  version: PropTypes.object,
 };
