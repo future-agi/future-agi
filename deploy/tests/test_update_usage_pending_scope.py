@@ -542,10 +542,11 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
             elif row['name'] in ('0118_instant_eval_answers','0117_cohort_sampling'): expected_row={'tracer_eval_task'}
             elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
             elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+            elif row['name']=='0116_agent_fix_issue_job': expected_row={'tracer_trace_error_group'}  # Relation to the source issue.
             else: expected_row=set()
             self.assertEqual(names,expected_row,(row['app_label'],row['name']))
 
-    def test_undeclared_opaque_operations_remain_a_full_plan_scope_blocker(self):
+    def test_opaque_operations_without_a_declaration_remain_a_plan_scope_blocker(self):
         expected = {
             '0126_derived_metric_refresh': ('RunPython',),
             '0127_metric_lifecycle_safety': ('RunPython', 'RunSQL'),
@@ -555,7 +556,9 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
             env = scope_environment(state)
             for name, kinds in expected.items():
                 tree = ast.parse(migration_path('tracer', name).read_text())
-                self.assertFalse(any(isinstance(node, ast.Assign) and
+                # Reviewed declarations now cover these migrations; the opaque
+                # operations must still block a plan that carries no declaration.
+                self.assertTrue(any(isinstance(node, ast.Assign) and
                     any(isinstance(target, ast.Name) and target.id == 'UPDATE_SAFETY'
                         for target in node.targets) for node in tree.body))
                 cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
