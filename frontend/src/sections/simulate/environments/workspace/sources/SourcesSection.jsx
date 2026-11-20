@@ -231,7 +231,13 @@ export default function SourcesSection({
           )}
         </Stack>
       }
-      sx={{ mb: 2 }}
+      // With no rows the header's border sits on the card's own.
+      sx={{
+        mb: 2,
+        ...(!sources.length && {
+          "& > div:first-of-type": { borderBottom: 0 },
+        }),
+      }}
     >
       <AddSourceMenu
         anchorEl={anchor}
