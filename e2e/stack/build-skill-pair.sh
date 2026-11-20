@@ -20,17 +20,24 @@ contract=$(python3 -IB "$root/e2e/stack/check-skill-contract.py" "$root" "$sdk" 
 mkdir -p "$dist"
 for repo in "$sdk" "$traceai"; do uv build --python 3.11 --wheel "$repo/python" --out-dir "$dist"; done
 # Use the pnpm major matching each checkout's frozen lock format, not a floating CLI.
-pnpm_locked() {
+pnpm_version() {
   case $(sed -n "s/^lockfileVersion: ['\"]*\([0-9]*\).*/\1/p" pnpm-lock.yaml) in
-    6) npx --yes pnpm@8.15.0 "$@" ;;
-    9) npx --yes pnpm@10.30.1 "$@" ;;
+    6) echo 8.15.0 ;;
+    9) echo 10.30.1 ;;
     *) echo 'Unsupported pnpm lockfile version' >&2; return 1 ;;
   esac
 }
+pnpm_locked() { local version; version=$(pnpm_version) && npx --yes "pnpm@$version" "$@"; }
 (cd "$sdk/typescript/futureagi"
  pnpm_locked install --ignore-workspace --frozen-lockfile --ignore-scripts
  pnpm_locked run build
- npm pack --ignore-scripts --pack-destination "$dist")
+ # Some npm releases still run the package's prepare script (`pnpm run build`)
+ # during pack; give it the lockfile's pnpm instead of a missing global CLI.
+ shim=$(mktemp -d)
+ printf '#!/bin/sh\nexec npx --yes pnpm@%s "$@"\n' "$(pnpm_version)" > "$shim/pnpm"
+ chmod +x "$shim/pnpm"
+ PATH="$shim:$PATH" npm pack --ignore-scripts --pack-destination "$dist"
+ rm -rf "$shim")
 (cd "$traceai/typescript"
  pnpm_locked --filter '@traceai/fi-core...' install --frozen-lockfile --ignore-scripts
  pnpm_locked --workspace-concurrency=1 --filter '@traceai/fi-core...' run build
