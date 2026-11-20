@@ -944,11 +944,12 @@ function PathCell({ eyebrow, title, body, unlocks, done, action, secondary }) {
       {action && (
         <Stack direction="row" spacing={0.5} sx={{ pt: 0.75 }}>
           <Tooltip arrow title={action.tooltip || ""}>
+            {/* The way forward is the card's one main action. */}
             <Button
               size="small"
-              variant="outlined"
+              variant="contained"
+              color="primary"
               onClick={action.onClick}
-              sx={{ color: "text.primary", borderColor: "divider" }}
             >
               {action.label}
             </Button>
