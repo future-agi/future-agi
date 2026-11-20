@@ -27,8 +27,15 @@ else
 fi
 if (( rc != 0 )); then
   echo "Skills $cohort failed at suite (exit $rc)" >&2
+  # The native runner's own stage messages (fixed strings it prints) are safe to show.
+  if [[ $cohort == native && -s $tmp/native.log ]]; then
+    grep -E '^(Native |Usage)' "$tmp/native.log" | tail -3 >&2 || true
+  fi
   # The checker names only manifest identities (never Playwright errors, argv or output).
   if [[ -s $tmp/results.json ]]; then
+    # IDs, status, error class and spec file:line only; raw messages stay on this machine.
+    echo "Skills $cohort results:" >&2
+    python3 -I "$coverage" summary "$tmp/results.json" >&2 || true
     python3 -I "$coverage" receipt "$tmp/results.json" "$cohort" "$GITHUB_SHA" "$tmp/not-for-upload.json" || true
   fi
   exit "$rc"

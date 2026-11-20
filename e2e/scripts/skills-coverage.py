@@ -93,6 +93,36 @@ def passed(report, cohort):
     return sorted(seen)
 
 
+ERROR_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:Error|Exception)\b")
+
+
+def failure_summary(report):
+    """Allowlisted outcome of every Skills test: identity, status, error type and location.
+
+    Error messages, stdout/stderr and attachments can carry request details, so
+    only the error's class name and its spec file:line are emitted.
+    """
+    lines = []
+    for spec in specs(report.get("suites", [])):
+        for test in spec.get("tests", []):
+            status = test.get("status", "unknown")
+            results = test.get("results", [])
+            last = results[-1] if results else {}
+            where, kind = "", ""
+            for error in last.get("errors", []) or ([last["error"]] if last.get("error") else []):
+                loc = error.get("location") or {}
+                if loc.get("file"):
+                    where = f"{Path(loc['file']).name}:{loc.get('line', '?')}"
+                found = ERROR_NAME.search(str(error.get("message", ""))[:120])
+                kind = found[0] if found else "Error"
+                break
+            lines.append(f"{identity(spec)} | {status} | {last.get('status', 'not run')} | {kind} {where}".rstrip())
+    for error in report.get("errors", []):
+        loc = error.get("location") or {}
+        lines.append(f"(suite) | error | {Path(loc.get('file', '?')).name}:{loc.get('line', '?')}")
+    return lines
+
+
 # These cases are executed on registered GCP workers, not a hosted runner
 # claiming a GCP environment. Their reporter checks the exact Playwright test,
 # expected status and single attempt before emitting its allowlisted result.
@@ -174,6 +204,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("ordinary")
+    p = sub.add_parser("summary")
+    p.add_argument("report", type=Path)
     for cmd in ["pattern", "receipt"]:
         p = sub.add_parser(cmd)
         p.add_argument("report", type=Path)
@@ -193,7 +225,9 @@ if __name__ == "__main__":
     p.add_argument("--application-sha", required=True)
     args = parser.parse_args()
     try:
-        if args.cmd == "ordinary":
+        if args.cmd == "summary":
+            print("\n".join(failure_summary(json.loads(args.report.read_text()))))
+        elif args.cmd == "ordinary":
             print(pattern(None, "ordinary"))
         elif args.cmd == "pattern":
             print(pattern(json.loads(args.report.read_text()), args.cohort))

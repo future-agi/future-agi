@@ -116,5 +116,19 @@ class RequiredCoverage(unittest.TestCase):
                 coverage['reconcile'](folder, commit)
 
 
+class FailureSummaryTests(unittest.TestCase):
+    def test_summary_names_cases_and_locations_but_never_messages(self):
+        secret = 'Bearer sk-live-should-not-appear'
+        report = {'suites': [{'specs': [{
+            'title': 'SKILLS-E2E-101: F1 inspect', 'file': 'flows/skills/skill-traces.spec.ts',
+            'tests': [{'status': 'unexpected', 'results': [{'status': 'failed', 'errors': [{
+                'message': f'TimeoutError: waiting for {secret}',
+                'location': {'file': '/runner/e2e/flows/skills/skill-traces.spec.ts', 'line': 42}}]}]}]}]}],
+            'errors': [{'message': secret, 'location': {'file': '/runner/e2e/lib/x.ts', 'line': 7}}]}
+        lines = coverage['failure_summary'](report)
+        self.assertEqual(lines[0], 'SKILLS-E2E-101 | unexpected | failed | TimeoutError skill-traces.spec.ts:42')
+        self.assertEqual(lines[1], '(suite) | error | x.ts:7')
+        self.assertNotIn('sk-live', '\n'.join(lines))
+
 if __name__ == '__main__':
     unittest.main()
