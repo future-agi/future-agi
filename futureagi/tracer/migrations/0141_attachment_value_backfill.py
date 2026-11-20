@@ -70,7 +70,7 @@ UPDATE_SAFETY = {
 BATCH = 250
 HISTORICAL_FILES = {
     "0136_attachment_control_records": "9632b3082a904290f4a413d36b73cb9e2ae1144e77e36c97745a0994645a5c02",
-    "0137_attachment_fences": "78a7069c6c7ba315a8369df5df7b513b5c0aeee3c04be1f83290c0eedf7188c7",
+    "0137_attachment_fences": "39e13ae91471a79f2892ab176643983b4e20947516df1fd48ebfa905961e7db9",
     "0138_attachment_binding_claims": "2b21dbc43a56ec9b42d3fd0daf0e9ce14cc4418745bfa51f574812f1ed42232e",
     "0139_attachment_recordings": "f8dde92abd8f54f0a6345cea8fc2e0ef8b7cfe2b6eab5bf77cee60a5a2e1890a",
 }
