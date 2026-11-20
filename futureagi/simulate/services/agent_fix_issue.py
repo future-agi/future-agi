@@ -78,6 +78,7 @@ from simulate.services.hosted_harness import (
     create_selected_harness_run,
     request_cancellation,
 )
+from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 from simulate.temporal.client import (
     cancel_hosted_harness_gateway_workflow,
     start_agent_fix_issue_workflow,
@@ -566,11 +567,14 @@ def _end(job_id: Any, ending: IssueJobEnding) -> AgentFixIssueJob | None:
 
 
 def _cancel_run(run: HostedHarnessJob) -> None:
+    """Cancel the baseline. Nothing but its workflow reads the cancel request, so when
+    the workflow cannot be told, the gateway cancels the run itself."""
     request_cancellation(run, "user_canceled")
     try:
         cancel_hosted_harness_gateway_workflow(str(run.id))
-    except Exception:  # noqa: BLE001 - the run's own deadline still ends it
+    except Exception:
         logger.exception("agent_fix_issue_baseline_cancel_failed", run=str(run.id))
+        HostedHarnessGateway().cancel(run, reason="user_canceled")
 
 
 def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
@@ -599,10 +603,21 @@ def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
                 fix_run_id=str(locked.fix_run_id),
             )
         if phase == IssueJobPhase.ENDED:
-            return locked
-        if phase != IssueJobPhase.MEASURING:
-            discard_evidence_import(locked.evidence_import)
-        _set_ending(locked, STOPPED)
-    if phase == IssueJobPhase.MEASURING and locked.baseline_run is not None:
-        _cancel_run(locked.baseline_run)
+            # Asked again after a cancel failed: a baseline the ended job left
+            # running is canceled again.
+            stray = (
+                locked.baseline_run
+                if locked.fix_run_id is None
+                and locked.baseline_run is not None
+                and locked.baseline_run.state not in FINISHED_RUN_STATES
+                else None
+            )
+        else:
+            if phase != IssueJobPhase.MEASURING:
+                discard_evidence_import(locked.evidence_import)
+            # Ended first, under the job's lock, so the epoch cannot launch from it.
+            _set_ending(locked, STOPPED)
+            stray = locked.baseline_run if phase == IssueJobPhase.MEASURING else None
+    if stray is not None:
+        _cancel_run(stray)
     return locked

@@ -293,7 +293,9 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
         </Row>
         <Row k="Traces">
           <Typography sx={{ typography: "s2" }}>
-            {`${plural(picks.length, unit)} from this issue, picked to vary. Each becomes a scenario the builder drafts when you start.`}
+            {picks.length
+              ? `${plural(picks.length, unit)} from this issue, picked to vary. Each becomes a scenario the builder drafts when you start.`
+              : "No trace of this issue can be drafted in this environment."}
           </Typography>
           <Box sx={{ mt: 0.5 }}>
             {picks.map((pick, i) => (
@@ -317,6 +319,24 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
             {`You set the epoch's budget and limits after the review, before anything runs. It stops at your budget, ${plan.defaults.budget_credits.toLocaleString("en-US")} credits by default.`}
           </Typography>
         </Row>
+        {!blocked && !picks.length ? (
+          <Alert
+            severity="info"
+            sx={{ mt: 1.5 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={onChangeEnvironment}
+              >
+                Pick another environment
+              </Button>
+            }
+          >
+            Its traces may have expired, or another import in this environment
+            is still reviewing them.
+          </Alert>
+        ) : null}
         {blocked ? (
           <Alert
             severity="warning"
@@ -386,6 +406,17 @@ function NewPlan({ clusterId, projectId }) {
   if (picking) {
     if (environments.isLoading) {
       return <ContentSkeleton variant="rows" rows={3} sx={{ mx: 3 }} />;
+    }
+    // A failed read is not an empty list: building an environment would not help.
+    if (environments.isError) {
+      return (
+        <Box sx={{ mx: 3 }}>
+          <ErrorState
+            title="Could not load your environments."
+            onRetry={() => environments.refetch()}
+          />
+        </Box>
+      );
     }
     if (!environments.data?.length) return <NoEnvironment />;
     return (

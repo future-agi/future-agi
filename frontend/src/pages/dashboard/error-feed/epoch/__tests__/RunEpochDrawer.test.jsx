@@ -223,6 +223,42 @@ describe("RunEpochDrawer: the plan", () => {
     expect(() => SimulateApiAgentFixIssuesCreateBody.parse(body)).not.toThrow();
   });
 
+  it("says the environments could not be read, instead of offering to build one", async () => {
+    const reads = answer;
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.reject(new Error("network down"))
+        : reads(url, config),
+    );
+    renderDrawer();
+    expect(
+      await screen.findByText("Could not load your environments."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(
+      screen.queryByText("No environment can run an epoch yet"),
+    ).toBeNull();
+  });
+
+  it("says why nothing can be drafted when no trace is left to pick, and offers another environment", async () => {
+    plans.none = {
+      ...plans[ENV],
+      sample: { unit: "trace", picks: [], alternates: [] },
+    };
+    const user = userEvent.setup();
+    renderDrawer();
+    expect(
+      await screen.findByText(
+        "No trace of this issue can be drafted in this environment.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("epoch-draft-scenarios")).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Pick another environment" }),
+    );
+    expect(await screen.findByTestId("epoch-environments")).toBeInTheDocument();
+  });
+
   it("says why a code-agent environment can't take it, and drafts nothing", async () => {
     plans.none = {
       ...plans[ENV],

@@ -1626,7 +1626,8 @@ class CHSpanReader:
             " start_time FROM ("
             " SELECT trace_id, id,"
             " argMax(observation_type, _version) AS observation_type,"
-            " argMax(trace_session_id, _version) AS trace_session_id,"
+            # A tuple keeps a latest NULL: argMax skips NULL values themselves.
+            " argMax(tuple(trace_session_id), _version).1 AS trace_session_id,"
             " argMax(start_time, _version) AS start_time,"
             " argMax(is_deleted, _version) AS latest_is_deleted"
             " FROM spans"

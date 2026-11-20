@@ -22,7 +22,18 @@ def world():
     client = _client()
     project, other = _ids(2)
     session, old_session, new_session = _ids(3)
-    names = ["call", "chained", "alone", "nil", "old", "new", "moved", "gone", "other"]
+    names = [
+        "call",
+        "chained",
+        "alone",
+        "nil",
+        "old",
+        "new",
+        "moved",
+        "left",
+        "gone",
+        "other",
+    ]
     t = dict(zip(names, _ids(len(names)), strict=True))
     try:
         _root(
@@ -49,6 +60,10 @@ def world():
         moved = str(uuid.uuid4())
         _root(client, project, t["moved"], id=moved)
         _root(client, project, t["moved"], session=session, id=moved, _version=2)
+        # A root that left its session in a later version has none now.
+        left = str(uuid.uuid4())
+        _root(client, project, t["left"], session=session, id=left)
+        _root(client, project, t["left"], id=left, _version=2)
         # A root deleted in its latest version.
         gone = str(uuid.uuid4())
         _root(client, project, t["gone"], id=gone)
@@ -96,6 +111,7 @@ def test_each_trace_reads_its_root_as_it_is_now(world):
         t["old"]: ("agent", survivor),
         t["new"]: ("agent", survivor),
         t["moved"]: ("agent", world["session"]),
+        t["left"]: ("agent", None),
     }
     assert {unit.start_time.replace(tzinfo=None) for unit in units.values()} == {
         START.replace(tzinfo=None)

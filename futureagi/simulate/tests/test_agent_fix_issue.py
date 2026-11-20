@@ -923,6 +923,44 @@ class TestStop:
         assert baseline.cancel_reason == "user_canceled"
         boundaries.cancel.assert_called_once_with(str(baseline.id))
 
+    def test_a_baseline_its_workflow_cannot_be_told_of_is_canceled_at_the_gateway(
+        self, environment, issue, user, boundaries
+    ):
+        job, _case = _in_review(environment, issue, user)
+        baseline = _run(environment, key="baseline-unreachable", state="running")
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(
+            baseline_run=baseline
+        )
+        job.refresh_from_db()
+        boundaries.cancel.side_effect = RuntimeError("temporal is unreachable")
+
+        with patch("simulate.services.agent_fix_issue.HostedHarnessGateway") as gateway:
+            jobs.stop_issue_job(job)
+
+        (canceled,) = gateway.return_value.cancel.call_args.args
+        assert canceled.id == baseline.id
+        assert gateway.return_value.cancel.call_args.kwargs == {
+            "reason": "user_canceled"
+        }
+        job.refresh_from_db()
+        assert job.ending["code"] == "stopped"
+
+    def test_stopping_again_cancels_a_baseline_the_first_stop_left_running(
+        self, environment, issue, user, boundaries
+    ):
+        job, _case = _in_review(environment, issue, user)
+        baseline = _run(environment, key="baseline-again", state="running")
+        AgentFixIssueJob.no_workspace_objects.filter(id=job.id).update(
+            baseline_run=baseline, ending=jobs.STOPPED.model_dump()
+        )
+        job.refresh_from_db()
+
+        jobs.stop_issue_job(job)
+
+        baseline.refresh_from_db()
+        assert baseline.cancel_reason == "user_canceled"
+        boundaries.cancel.assert_called_once_with(str(baseline.id))
+
     def test_a_started_epoch_stops_on_its_own_page(
         self, environment, issue, user, source_run
     ):
