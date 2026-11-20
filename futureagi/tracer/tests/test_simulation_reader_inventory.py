@@ -1863,6 +1863,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "CHSpanReader.trace_aggregate": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.trace_aggregate_with_stddev": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.trace_ids_for_span_ids": _READS_THE_IDS_IT_IS_GIVEN,
+        "CHSpanReader.trace_units": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.trace_session_ids_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
         "_dedup_sql": filed(
             BY_ID_ALONE,
@@ -3235,6 +3236,7 @@ ROW_TYPES = {
     "model_hub.AnnotationQueue.project": USER_MADE,
     "model_hub.AnnotationsLabels.project": USER_MADE,
     "prism.AgentccProject.tracer_project": USER_MADE,
+    "simulate.AgentDefinition.production_project": USER_MADE,
     "tracer.CustomEvalConfig.project": USER_MADE,
     "tracer.EndUser.project": TRACE_STORE_ROW,
     "tracer.ErrorFeedAlertRule.project": USER_MADE,

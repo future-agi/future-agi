@@ -1065,11 +1065,11 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
-### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV and its analysis as Markdown
 
-**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+**Goal:** A developer downloads an issue's traces and its stored analysis from the issue page, and uploads the traces file unchanged as a dataset (detail and overview responses stubbed)
 
-**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:36`
 
 **Tags:** —
 
@@ -1077,8 +1077,12 @@
 
 1. open the issue page
 2. click Export
-3. save the downloaded CSV
-4. upload the downloaded CSV using the Add Dataset form
+3. choose Traces
+4. save the downloaded CSV
+5. click Export
+6. choose Analysis
+7. save the downloaded Markdown
+8. upload the downloaded CSV using the Add Dataset form
 
 **Backend state verified:**
 
@@ -1087,8 +1091,9 @@
 
 **Browser observations:**
 
-- the export requests the issue overview once, with rep_limit=200
+- the traces export requests the issue overview once, with rep_limit=200, and the analysis export once more, with rep_limit=10
 - the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the analysis is named error-feed-<issue>-analysis.md, holds the stubbed likely cause, suggested change and wrong-if under their headings, and samples exactly the two stubbed traces
 - the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
 - the snackbar reports exactly the exported trace count
 - the uploaded dataset's grid shows exactly the exported trace ids
@@ -1107,7 +1112,7 @@
 2. read the issue on Overview
 3. pick another trace in Traces affected
 4. open a trace from the Traces tab
-5. open the Trends and Fix tabs
+5. open the Trends and Root cause tabs
 6. open a restricted share link while signed out
 
 **Browser observations:**
@@ -1116,7 +1121,41 @@
 - the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
 - picking a trace reads the sidebar through the share token for exactly that trace
 - opening a trace reads it through the share token and shows its spans
+- Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
+
+### ERR-E2E-006 — a developer runs an Epoch from an Error Feed issue and follows it from the issue
+
+**Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
+
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:130`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue
+2. press Run Epoch
+3. pick the environment
+4. read the plan and swap one trace
+5. press Draft scenarios
+6. untick one drafted scenario
+7. press Run Epoch in the review
+8. read the status strip
+9. reload once the epoch is ready
+10. read the header action
+11. press View Epoch 3
+12. reload the epoch page
+13. open the issue list and hover the epoch icon
+
+**Browser observations:**
+
+- the plan is read only after Run Epoch, first with the issue and project, then with the picked environment, and the picker lists only the code agent's environment
+- the create POST body is exactly the issue, project, environment and the picks after the swap
+- the run POST body is exactly the kept scenario and the review's launch rows at their defaults
+- the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
+- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
@@ -3364,4 +3403,4 @@
 - the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session
 - the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
 - B reading A's import answers 404, through A's environment and through B's own
-- a viewer of A's workspace is refused the import and the draft with 403 (Write access denied to this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+- a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending

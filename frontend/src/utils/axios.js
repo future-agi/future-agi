@@ -1624,7 +1624,72 @@ export const endpoints = {
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/",
         { agent_id: id, version_id: version },
       ),
+    changeVersion: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/versions/change/", {
+        agent_id: id,
+      }),
+    productionVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/",
+        { agent_id: id, version_id: version },
+      ),
+    retryVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/",
+        { agent_id: id, version_id: version },
+      ),
+    discardVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/",
+        { agent_id: id, version_id: version },
+      ),
+    buildPreflight: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/build-preflight/", {
+        agent_id: id,
+      }),
+    foundCheck: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/found-check/", {
+        agent_id: id,
+      }),
+    scan: apiPath("/simulate/agents/scan/"),
+    scanDetail: (id) =>
+      apiPath("/simulate/agents/scan/{scan_id}/", { scan_id: id }),
+    connect: apiPath("/simulate/agents/connect/"),
+    connectAvailability: apiPath("/simulate/agents/connect/availability/"),
+    codeTree: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/",
+        { agent_id: id, version_id: version },
+      ),
+    codeFile: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/",
+        { agent_id: id, version_id: version },
+      ),
+    codeChanges: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/",
+        { agent_id: id, version_id: version },
+      ),
+    codeCompare: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/",
+        { agent_id: id, version_id: version },
+      ),
+    codePatches: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/",
+        { agent_id: id, version_id: version },
+      ),
+    environmentAgentPolicy: (environmentId) =>
+      apiPath("/simulate/api/harness-environments/{id}/agent-policy/", {
+        id: environmentId,
+      }),
     delete: apiPath("/simulate/agent-definitions/"),
+    deleteOne: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/delete/", {
+        agent_id: id,
+      }),
     getTestAnalytics: (agent, version) =>
       apiPath(
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/",
@@ -1836,6 +1901,14 @@ export const endpoints = {
         "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/",
         { id, candidate_id: candidateId },
       ),
+  },
+  // An epoch run from an Error Feed issue, before and after it launches.
+  agentFixIssues: {
+    list: () => apiPath("/simulate/api/agent-fix-issues/"),
+    plan: () => apiPath("/simulate/api/agent-fix-issues/plan/"),
+    detail: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/", { id }),
+    run: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/run/", { id }),
+    stop: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/stop/", { id }),
   },
   runResultsV3: {
     calls: (id) =>
@@ -2200,6 +2273,10 @@ export const endpoints = {
           connection_id: id,
         }),
     },
+    github: {
+      install: apiPath("/integrations/github/install/"),
+      installComplete: apiPath("/integrations/github/install/complete/"),
+    },
     connections: {
       list: apiPath("/integrations/connections/"),
       create: apiPath("/integrations/connections/"),
@@ -2212,6 +2289,15 @@ export const endpoints = {
         apiPath("/integrations/connections/{id}/pause/", { id: id }),
       resume: (id) =>
         apiPath("/integrations/connections/{id}/resume/", { id: id }),
+      repositories: (id) =>
+        apiPath("/integrations/connections/{connection_id}/repositories/", {
+          connection_id: id,
+        }),
+      branches: (id, repositoryId) =>
+        apiPath(
+          "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/",
+          { connection_id: id, repository_id: repositoryId },
+        ),
     },
     validate: apiPath("/integrations/connections/validate/"),
     syncLogs: apiPath("/integrations/sync-logs/"),
