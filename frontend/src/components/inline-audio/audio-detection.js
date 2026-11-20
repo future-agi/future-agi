@@ -27,8 +27,8 @@ export function isAudioUrlString(val) {
   const lower = val.toLowerCase();
   if (lower.startsWith("data:audio")) return true;
   if (!/^https?:\/\//.test(lower) && !lower.startsWith("blob:")) return false;
-  // Strip query string before checking extension
-  const withoutQs = lower.split("?")[0];
+  // Strip query string and fragment before checking extension
+  const withoutQs = lower.split("?")[0].split("#")[0];
   return /\.(mp3|wav|ogg|m4a|aac|flac|webm)$/.test(withoutQs);
 }
 
