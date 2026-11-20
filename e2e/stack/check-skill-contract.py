@@ -73,7 +73,10 @@ def effective_operation(doc, method, path):
     parameters = {}
     for param in [*item.get('parameters', []), *op.pop('parameters', [])]:
         param = inline_reusable(doc, param)
-        parameters[param['in'], param['name']] = param
+        name = param['name'].lower() if param['in'] == 'header' else param['name']
+        if param['in'] == 'header':
+            param = {**param, 'name': name}  # HTTP header names are case-insensitive
+        parameters[param['in'], name] = param
     return {**inline_reusable(doc, op), 'parameters': parameters}
 
 
@@ -117,6 +120,9 @@ def check_tool(name, endpoint, declared, tool):
     # Other explicit fields (including group or stability) must have an equal
     # backend value. Do not silently accept new, unmapped catalog settings.
     for key in declared.keys() - {'access', 'open_world', 'max_page_size'}:
+        # The SDK defaults an omitted stability to 'stable' and the backend omits it.
+        if key == 'stability' and declared[key] == 'stable' and tool.get(key, 'stable') == 'stable':
+            continue
         if key not in tool or declared[key] != tool[key]:
             raise ValueError(f'SDK Skills MCP {key} differs for {name}')
 
@@ -191,8 +197,16 @@ def regenerate(root, sdk, product):
     metadata = contracts / 'SOURCE.json'
     baseline_args = []
     expected_source = {'backend_commit': product, 'openapi_sha256': api_hash, 'mcp_sha256': mcp_hash}
-    if metadata.exists():
-        baseline = json.loads(metadata.read_bytes())['non_skills_sdk_commit']
+    recorded = json.loads(metadata.read_bytes()) if metadata.exists() else {}
+    scoped_keys = {'non_skills_sdk_commit', 'non_skills_slice_sha256'} & recorded.keys()
+    if scoped_keys and len(scoped_keys) != 2:
+        raise ValueError('SDK SOURCE.json has partial Skills baseline metadata')
+    # Scoped preview: both baseline fields present. Full commit-pinned sync (SOURCE.json
+    # without them) and released checkouts (no SOURCE.json) regenerate in full mode.
+    if scoped_keys:
+        baseline = recorded['non_skills_sdk_commit']
+        if not re.fullmatch(r'[0-9a-f]{40}', str(baseline)):
+            raise ValueError('SDK SOURCE.json baseline is not a full commit')
         baseline_hash = sha(blob(sdk, baseline, 'sdkgen/contracts/swagger.json'))
         expected_source.update(non_skills_sdk_commit=baseline, non_skills_slice_sha256=baseline_hash)
         baseline_args = ['--skills-baseline-sdk', baseline]

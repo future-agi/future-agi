@@ -128,6 +128,22 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'bound differently'):
             self.check()
 
+    def test_header_names_are_case_insensitive_for_overrides(self):
+        inherited = {'in': 'header', 'name': 'X-Context-Resolution', 'type': 'string', 'enum': ['a']}
+        override = {'in': 'header', 'name': 'x-context-resolution', 'type': 'string', 'enum': ['b']}
+        for doc in (self.api, self.swagger):
+            doc['paths'][self.path]['parameters'] = [inherited]
+            doc['paths'][self.path]['get']['parameters'] = [override]
+        self.check()
+        # Only the effective (method) declaration counts on each side.
+        self.swagger['paths'][self.path]['get']['parameters'] = [{**override, 'enum': ['c']}]
+        with self.assertRaisesRegex(ValueError, 'operation differs'):
+            self.check()
+
+    def test_explicit_stable_equals_the_default(self):
+        self.entry['surfaces']['mcp']['stability'] = 'stable'
+        self.check()
+
     def test_released_sdk_syncs_committed_inputs_without_a_preview_baseline(self):
         regenerate = checker['regenerate']
         with tempfile.TemporaryDirectory() as tmp:
@@ -174,6 +190,19 @@ class ContractTests(unittest.TestCase):
             with patch.dict(regenerate.__globals__, run_sdk=fixture_run):
                 receipt = regenerate(product, sdk, revision)
             self.assertEqual(receipt['sync_mode'], 'full')
+            # A full commit-pinned sync leaves SOURCE.json without baseline fields; it also selects full mode.
+            (sdk / 'sdkgen/contracts/SOURCE.json').write_text(json.dumps({'backend_commit': 'f' * 40}))
+            subprocess.check_call(['git', '-C', sdk, 'add', '.'])
+            subprocess.check_call(['git', '-C', sdk, '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'full sync'])
+            calls.clear()
+            with patch.dict(regenerate.__globals__, run_sdk=fixture_run):
+                self.assertEqual(regenerate(product, sdk, revision)['sync_mode'], 'full')
+            # Partial baseline metadata is rejected rather than guessed.
+            (sdk / 'sdkgen/contracts/SOURCE.json').write_text(json.dumps({'non_skills_sdk_commit': 'a' * 40}))
+            subprocess.check_call(['git', '-C', sdk, 'add', '.'])
+            subprocess.check_call(['git', '-C', sdk, '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'partial'])
+            with patch.dict(regenerate.__globals__, run_sdk=fixture_run), self.assertRaisesRegex(ValueError, 'partial'):
+                regenerate(product, sdk, revision)
             self.assertEqual(receipt['source'], source)
             self.assertEqual(calls[1:], [('sdkgen/generate.py', '--only', 'python', 'typescript'),
                                          ('sdkgen/generate.py', '--check', '--only', 'python', 'typescript')])

@@ -919,11 +919,14 @@ PR merge and merge-queue commits). Both SDK layouts use `--backend-commit`
 and `--mcp-tools` to record those inputs:
 
 - **Scoped preview:** `sdkgen/contracts/SOURCE.json` names the non-Skills SDK
-  baseline. CI supplies that commit via `--skills-baseline-sdk` and requires
-  the SDK's non-Skills baseline check to pass.
-- **Released checkout:** a release sync records `BACKEND_VERSION` and removes
-  `SOURCE.json`. CI runs a full commit-pinned sync without a preview baseline;
-  it does not change the release pin.
+  baseline (`non_skills_sdk_commit` and `non_skills_slice_sha256`). CI supplies
+  that commit via `--skills-baseline-sdk` and requires the SDK's non-Skills
+  baseline check to pass.
+- **Full sync or released checkout:** `SOURCE.json` either lacks both baseline
+  fields (a full commit-pinned sync) or is absent (a release sync, which records
+  `BACKEND_VERSION`). CI runs a full commit-pinned sync without a preview
+  baseline; it does not change the release pin. A `SOURCE.json` with only one of
+  the two baseline fields fails the build.
 
 Both modes regenerate and check the Python and TypeScript clients and reject
 changes outside the generator-owned files. Product CI checks the **shipped
