@@ -449,7 +449,18 @@ executor must complete all six suites on real product images, retain genuine
 measurements and verify cleanup before producing that proof. Merging code or
 passing bounded milestones does not establish release eligibility. Without usable
 proof, an opted-in installation checks, verifies and reports releases but leaves
-them notify-only with a reason such as `uncertified_release`.
+them notify-only with a reason such as `uncertified_release`. The first signed
+manifest may be published deliberately uncertified/manual by starting
+`release-update-manifest.yml` from its exact release tag with its explicit
+`bootstrap` dispatch input enabled (or by dispatching `release-images.yml`
+from that tag with `components=update-manifest` and `bootstrap=true`). The
+bootstrap path first verifies that no signed update-manifest asset exists in
+any GitHub Release. It skips only the compatibility rehearsal and proof; it
+still performs the exact tag/ref, release metadata, image revision and digest,
+chart, deployment-hash, and keyless-signing checks. The resulting manifest
+remains notify-only/manual and requires operator initialization. Normal
+releases do not fall back to bootstrap: if the rehearsal cannot find a
+supported signed predecessor, it remains fail-closed.
 
 ### Supported installations
 

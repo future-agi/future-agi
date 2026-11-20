@@ -22,7 +22,12 @@
 #     build digest is compared: each image's revision label must be the tag's
 #     commit, and each image the chart's images lock names must have its
 #     locked digest. An image the lock does not name is signed with a warning
-#     that only its revision label vouches for it.
+#     that only its revision label vouches for it. The explicit `bootstrap`
+#     dispatch option is only for the first signed manifest: it skips the
+#     compatibility rehearsal and publishes the existing uncertified/manual
+#     manifest without a proof. It does not skip any release, image, chart,
+#     deployment or signing checks. Normal runs remain fail-closed when no
+#     supported signed predecessor exists.
 # bin/update trusts exactly one signer, this file at the release tag, so a
 # run from any other ref is refused before it signs.
 #
@@ -63,18 +68,29 @@ on:
         description: Stable or beta/rc platform tag whose images and versioned chart are published
         required: true
         type: string
+      bootstrap:
+        description: Explicitly publish the first uncertified/manual signed manifest without compatibility proof
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
         description: Stable or beta/rc platform tag (run the workflow from that same tag)
         required: true
         type: string
+      bootstrap:
+        description: Explicitly publish the first uncertified/manual signed manifest without compatibility proof
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-update-manifest-${{ inputs.version }}
+  # Manifest publication, including bootstrap, is one global ordered operation.
+  group: release-update-manifest
   cancel-in-progress: false
 
 env:
@@ -118,6 +134,23 @@ jobs:
           gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
             jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
               '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
+
+      - name: Bootstrap is the first signed manifest
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap }}
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -r --arg version "$VERSION" \
+              '.[] | select(.tag_name != $version) | select(any(.assets[]?; .name == "future-agi-update-manifest.json" or .name == "future-agi-update-manifest.sigstore.json")) | .tag_name')
+          if [ -n "$existing" ]; then
+            echo "::error::bootstrap is only allowed before the first signed update manifest; found: $(printf '%s' "$existing" | tr '\n' ' ')"
+            exit 1
+          fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -311,7 +344,9 @@ jobs:
   rehearse:
     name: exact-image compatibility rehearsal
     needs: generate
-    if: github.repository == 'future-agi/future-agi'
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.bootstrap)
     permissions:
       contents: read
     uses: ./.github/workflows/update-compatibility-proof.yml
@@ -321,7 +356,11 @@ jobs:
   publish:
     name: sign and attach
     needs: [generate, rehearse]
-    if: github.repository == 'future-agi/future-agi'
+    if: >-
+      always() && !cancelled() && github.repository == 'future-agi/future-agi' &&
+      needs.generate.result == 'success' &&
+      (needs.rehearse.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.bootstrap))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -336,6 +375,7 @@ jobs:
       CERT_REF: refs/tags/${{ inputs.version }}
       MANIFEST: future-agi-update-manifest.json
       BUNDLE: future-agi-update-manifest.sigstore.json
+      BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap }}
     steps:
       - name: Release version
         shell: bash
@@ -362,6 +402,23 @@ jobs:
           gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
             jq -e --arg version "$VERSION" --argjson prerelease "$prerelease" \
               '.tagName == $version and .isDraft == false and .isPrerelease == $prerelease' >/dev/null
+
+      - name: Bootstrap is still the first signed manifest
+        if: ${{ env.BOOTSTRAP == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -r --arg version "$VERSION" \
+              '.[] | select(.tag_name != $version) | select(any(.assets[]?; .name == "future-agi-update-manifest.json" or .name == "future-agi-update-manifest.sigstore.json")) | .tag_name')
+          if [ -n "$existing" ]; then
+            echo "::error::bootstrap is only allowed before the first signed update manifest; found: $(printf '%s' "$existing" | tr '\n' ' ')"
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: future-agi/future-agi
@@ -379,9 +436,18 @@ jobs:
         with:
           cosign: "true"
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Qualified manifest
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.bootstrap }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: update-manifest
+          path: ${{ runner.temp }}/new
+
+      - name: Bootstrap manifest
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-candidate
           path: ${{ runner.temp }}/new
 
       - name: Original frozen candidate
@@ -391,6 +457,7 @@ jobs:
           path: ${{ runner.temp }}/frozen
 
       - name: Compatibility proof from generation
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.bootstrap }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: update-compatibility-proof
@@ -418,7 +485,29 @@ jobs:
           assert os.environ["GITHUB_REF"] == "refs/tags/" + target["version"]
           proof = root / PROOF_ASSET
           validation = target.get("compatibility", {}).get("validation")
-          if validation is not None:
+          if os.environ["BOOTSTRAP"] == "true":
+              # Bootstrap is the deliberate first signed manifest: it may omit
+              # only compatibility evidence and must remain the existing
+              # uncertified/manual candidate. No proof may be attached. Use
+              # explicit checks rather than assert, which Python can remove
+              # under optimization.
+              def require(condition, message):
+                  if not condition:
+                      raise SystemExit(message)
+
+              require(validation is None, "bootstrap manifest must be uncertified")
+              require(not proof.exists(), "unexpected proof on bootstrap release")
+              require(target["migration"] == {"requires_bootstrap": True, "rollback": "manual"},
+                      "bootstrap manifest must require operator initialization")
+              require(target["compatibility"]["automatic_apply"] is False,
+                      "bootstrap manifest must not enable automatic apply")
+              require(target["compatibility"]["requires_operator_initialization"] is True,
+                      "bootstrap manifest must require operator initialization")
+              require(target["compatibility"]["predecessors"] == [],
+                      "bootstrap manifest must not claim predecessors")
+              require(target["compatibility"]["automatic_rollback"] == {"strategy": "never"},
+                      "bootstrap manifest must disable automatic rollback")
+          elif validation is not None:
               assert validation["run_id"] == int(os.environ["GITHUB_RUN_ID"])
               validated = validate_release_proof(read_bytes(proof), target, repository=os.environ["GITHUB_REPOSITORY"])
               if validated['schema_version'] == 2:
