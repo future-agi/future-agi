@@ -86,7 +86,7 @@ def ensure_configured_document(agent_version_id: UUID | str) -> bool:
     from simulate.services.harness_versioning.assembly import legacy_runtime
 
     if AgentVersionSetup.no_workspace_objects.filter(
-        agent_version_id=agent_version_id
+        agent_version__id=agent_version_id
     ).exists():
         return False
     runtime = (
@@ -94,7 +94,7 @@ def ensure_configured_document(agent_version_id: UUID | str) -> bool:
             "agent_version__agent_definition"
         )
         .defer("credential_blob", "diff")
-        .filter(agent_version_id=agent_version_id)
+        .filter(agent_version__id=agent_version_id)
         .first()
     )
     if (

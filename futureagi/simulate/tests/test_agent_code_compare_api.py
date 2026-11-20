@@ -7,6 +7,7 @@ from simulate.models import HarnessAgentVersionRuntime
 from simulate.services import agent_code_compare
 from simulate.services.agent_code_compare import (
     AUTO_LOAD_LINES,
+    DIFF_BUDGET_SECONDS,
     MAX_COMPARE_FILES,
     MAX_DIFF_LINES,
     MAX_PATCH_BATCH,
@@ -189,7 +190,7 @@ def test_a_big_diff_is_collapsed_and_a_huge_one_is_too_large(
     assert files["agents/support/medium.py"]["kind"] == "text"
     assert files["agents/support/medium.py"]["additions"] == AUTO_LOAD_LINES + 1
     assert files["agents/support/huge.py"]["kind"] == "too_large"
-    assert files["agents/support/huge.py"]["additions"] == MAX_DIFF_LINES + 1
+    assert files["agents/support/huge.py"]["additions"] is None
     patches = _patches(
         auth_client,
         agent,
@@ -199,6 +200,112 @@ def test_a_big_diff_is_collapsed_and_a_huge_one_is_too_large(
     ).json()["files"]
     assert len(patches[0]["hunks"][0]["lines"]) == AUTO_LOAD_LINES + 1
     assert (patches[1]["kind"], patches[1]["hunks"]) == ("too_large", [])
+
+
+def test_a_file_past_the_line_cap_is_too_large_without_being_diffed(
+    auth_client,
+    storage,
+    agent,  # noqa: F811
+):
+    repeated = "x = 1\n" * (MAX_DIFF_LINES + 1)
+    older, newer = _pair(
+        agent,
+        {"agents/support/huge.py": repeated},
+        {"agents/support/huge.py": repeated + "y = 2\n"},
+    )
+
+    with patch.object(
+        agent_code_compare.difflib,
+        "SequenceMatcher",
+        wraps=agent_code_compare.difflib.SequenceMatcher,
+    ) as matcher:
+        [row] = _compare(auth_client, agent, newer, older)["files"]
+        [one] = _patches(
+            auth_client, agent, newer, older, ["agents/support/huge.py"]
+        ).json()["files"]
+
+    assert (row["kind"], row["additions"], row["deletions"]) == (
+        "too_large",
+        None,
+        None,
+    )
+    assert (one["kind"], one["hunks"]) == ("too_large", [])
+    matcher.assert_not_called()
+
+
+def _past_the_budget_after_the_first_file():
+    return patch.object(
+        agent_code_compare.time,
+        "monotonic",
+        side_effect=[0.0] + [DIFF_BUDGET_SECONDS + 1] * 10,
+    )
+
+
+def test_files_past_the_time_budget_wait_for_load_and_the_summary_is_not_kept(
+    auth_client,
+    storage,
+    agent,  # noqa: F811
+):
+    older, newer = _pair(
+        agent,
+        {"agents/support/a.py": "a = 1\n", "agents/support/b.py": "b = 1\n"},
+        {"agents/support/a.py": "a = 2\n", "agents/support/b.py": "b = 2\n"},
+    )
+
+    with _past_the_budget_after_the_first_file():
+        first = {
+            one["path"]: one
+            for one in _compare(auth_client, agent, newer, older)["files"]
+        }
+    with patch.object(
+        agent_code_compare.difflib,
+        "SequenceMatcher",
+        wraps=agent_code_compare.difflib.SequenceMatcher,
+    ) as matcher:
+        second = {
+            one["path"]: one
+            for one in _compare(auth_client, agent, newer, older)["files"]
+        }
+
+    assert (
+        first["agents/support/a.py"]["additions"],
+        first["agents/support/a.py"]["collapsed"],
+    ) == (1, False)
+    assert first["agents/support/b.py"] == {
+        "path": "agents/support/b.py",
+        "previous_path": None,
+        "status": "modified",
+        "kind": "text",
+        "additions": None,
+        "deletions": None,
+        "collapsed": True,
+    }
+    assert [second[path]["additions"] for path in sorted(second)] == [1, 1]
+    assert matcher.call_count == 1
+
+
+def test_a_patch_batch_past_the_time_budget_stops_diffing(
+    auth_client,
+    storage,
+    agent,  # noqa: F811
+):
+    older, newer = _pair(
+        agent,
+        {"agents/support/a.py": "a = 1\n", "agents/support/b.py": "b = 1\n"},
+        {"agents/support/a.py": "a = 2\n", "agents/support/b.py": "b = 2\n"},
+    )
+
+    with _past_the_budget_after_the_first_file():
+        files = _patches(
+            auth_client,
+            agent,
+            newer,
+            older,
+            ["agents/support/a.py", "agents/support/b.py"],
+        ).json()["files"]
+
+    assert files[0]["kind"] == "text" and files[0]["hunks"]
+    assert (files[1]["kind"], files[1]["hunks"]) == ("too_large", [])
 
 
 def test_past_the_file_cap_the_summary_says_it_is_truncated(

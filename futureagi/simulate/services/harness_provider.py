@@ -32,6 +32,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.selectors.runs import user_runs
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
@@ -722,8 +723,10 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
     """
     from simulate.services.harness_credential_probes import (
         probe_all,
+        probe_livekit_phone_routing,
         probe_provider_target,
     )
+    from simulate.services.phone_telephony import platform_phone_telephony
 
     if secret_payload["source"]["kind"] == "remote":
         return []
@@ -758,6 +761,14 @@ def _preflight_credential_probe(secret_payload) -> list[dict[str, Any]]:
         )
         if target is not None:
             results.append(target)
+    if connector == "phone" and mode == "connect_only":
+        routing = probe_livekit_phone_routing(
+            str(config.get("phone_number") or ""),
+            secret_values,
+            platform_phone_telephony().get("SIP_OUTBOUND_FROM_NUMBER", ""),
+        )
+        if routing is not None:
+            results.append(routing)
     return [result.as_dict() for result in results]
 
 
@@ -955,10 +966,14 @@ def _preflight_checks(
             )
         )
     target_probes = []
+    routing_probes = []
     key_probes = []
     for item in probe:
-        if str(item.get("provider") or "").endswith("_target"):
+        provider = str(item.get("provider") or "")
+        if provider.endswith("_target"):
             target_probes.append(item)
+        elif provider == "livekit_routing":
+            routing_probes.append(item)
         else:
             key_probes.append(item)
     checks.append(
@@ -979,6 +994,16 @@ def _preflight_checks(
             "Check the agent ID belongs to the account behind {aliases}",
         )
     )
+    if routing_probes:
+        checks.append(
+            _probe_check(
+                "phone_routing",
+                "Phone number reaches the agent",
+                routing_probes,
+                "",
+                "Fix the number, trunk or dispatch rule named above on your LiveKit project",
+            )
+        )
     checks.append(_dialer_check(connector))
     return checks
 
@@ -1332,7 +1357,7 @@ def _builds_connected_agent(organization, workspace, payload) -> bool:
         AgentDefinition.no_workspace_objects.filter(
             id=definition_id,
             organization=organization,
-            workspace_id=getattr(workspace, "id", None),
+            workspace=getattr(workspace, "id", None),
             deleted=False,
         )
         .only("id", "agent_type")
@@ -1461,6 +1486,7 @@ class HostedHarnessProvider:
         payload = request.validated_data
         # Taken out first: values never reach the checks, the digest or the job.
         secret_values = payload.pop("credential_values", None) or {}
+        client_digest = canonical_digest(payload)
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -1497,14 +1523,15 @@ class HostedHarnessProvider:
                 payload,
                 idempotency_key=idempotency_key,
                 workspace=workspace,
+                request_digest=client_digest,
             )
             if replayed is None and versioning_enabled() and not connected_build:
                 from simulate.services.harness_agent_changes import (
-                    validate_public_github_source,
+                    validate_github_source,
                 )
 
                 # Before the source is cloned; GitHub is asked once replays are out.
-                validate_public_github_source(payload, lookup=False)
+                validate_github_source(payload, lookup=False)
             if replayed is None:
                 _validate_github_installation(
                     organization.id, getattr(workspace, "id", None), payload
@@ -1553,18 +1580,19 @@ class HostedHarnessProvider:
                     payload,
                     idempotency_key=idempotency_key,
                     workspace=workspace,
+                    request_digest=client_digest,
                 )
                 on_create = None
                 if replayed is None and versioning_enabled():
                     from simulate.services.harness_agent_changes import (
-                        validate_public_github_source,
+                        validate_github_source,
                     )
 
                     # A replay answers with its job, whatever GitHub says now.
                     repository_id = (
                         None
                         if connected_build
-                        else validate_public_github_source(
+                        else validate_github_source(
                             payload,
                             organization_id=organization.id,
                             workspace_id=getattr(workspace, "id", None),
@@ -1587,6 +1615,7 @@ class HostedHarnessProvider:
                     idempotency_key=idempotency_key,
                     workspace=workspace,
                     on_create=on_create,
+                    request_digest=client_digest,
                 )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -2246,6 +2275,15 @@ class HostedHarnessProvider:
         }
     )
 
+    @classmethod
+    def _behavioural_fields(cls) -> frozenset[str]:
+        """The behavioural fields an amend takes: `faults` only while actors are on."""
+        from simulate.services.harness_versioning.versions import actors_enabled
+
+        if actors_enabled():
+            return cls._BEHAVIOURAL_FIELDS
+        return cls._BEHAVIOURAL_FIELDS - {"faults"}
+
     def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
         from simulate.models.agent_definition import AgentDefinition
@@ -2253,7 +2291,7 @@ class HostedHarnessProvider:
         from simulate.services.harness_scenarios import NOISE_LABELS
 
         # A call has no turn budget; a chat has no accent or room behind the caller.
-        behavioural = self._BEHAVIOURAL_FIELDS - (
+        behavioural = self._behavioural_fields() - (
             {"max_turns"} if spoken else {"background_noise"}
         )
         persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
@@ -2601,7 +2639,7 @@ class HostedHarnessProvider:
                     field = str(change.get("field") or "")
                     if field in self._DESCRIPTIVE_FIELDS:
                         pass
-                    elif field in self._BEHAVIOURAL_FIELDS:
+                    elif field in self._behavioural_fields():
                         if not rework:
                             receipts.append(
                                 {

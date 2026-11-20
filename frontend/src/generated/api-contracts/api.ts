@@ -15710,7 +15710,7 @@ export const getAgentccGuardrailPoliciesApplyUrl = (id: string) => {
 };
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const agentccGuardrailPoliciesApply = async (
   id: string,
@@ -57314,9 +57314,14 @@ export type simulateAgentDefinitionsFoundCheckCreateResponse404 = {
   status: 404;
 };
 
+export type simulateAgentDefinitionsFoundCheckCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsFoundCheckCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 409>;
 };
 
 export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
@@ -57326,6 +57331,7 @@ export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
 export type simulateAgentDefinitionsFoundCheckCreateResponseError = (
   | simulateAgentDefinitionsFoundCheckCreateResponse403
   | simulateAgentDefinitionsFoundCheckCreateResponse404
+  | simulateAgentDefinitionsFoundCheckCreateResponse409
   | simulateAgentDefinitionsFoundCheckCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -59876,7 +59882,7 @@ export const getSimulateApiAgentFixRunsListUrl = (
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsList = async (
@@ -59920,7 +59926,7 @@ export const getSimulateApiAgentFixRunsCreateUrl = () => {
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCreate = async (
@@ -60028,7 +60034,7 @@ export const getSimulateApiAgentFixRunsReadUrl = (id: string) => {
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsRead = async (
@@ -60075,7 +60081,7 @@ export const getSimulateApiAgentFixRunsCandidatesMakeDefaultUrl = (
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
@@ -60268,7 +60274,7 @@ export const getSimulateApiAgentFixRunsStopUrl = (id: string) => {
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsStop = async (

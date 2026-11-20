@@ -873,14 +873,18 @@ def create_agent_version(
         payload["source_access"] = copy.deepcopy(access)
         asking = env is not None and activate
         # A version checked by its caller (a rerun's) is never made a default by it.
-        payload["requested_by_environments"] = [str(env.id)] if asking else []
+        payload["requested_by_environments"] = (
+            [str(env.id)] if asking and env is not None else []
+        )
         # Each asking environment's default then: a later move of it is not undone.
         payload["requested_defaults"] = (
-            {str(env.id): _default_id(env)} if asking else {}
+            {str(env.id): _default_id(env)} if asking and env is not None else {}
         )
         requested_at = timezone.now()
         payload["requested_at"] = (
-            {str(env.id): requested_at.isoformat()} if asking else {}
+            {str(env.id): requested_at.isoformat()}
+            if asking and env is not None
+            else {}
         )
         if env is not None:
             payload["created_for_environment"] = str(env.id)
@@ -2506,6 +2510,7 @@ def promote_to_production(version: AgentVersion) -> list[Any]:
             "This version was discarded; it can't be made production",
             status_code=409,
         )
+    assert isinstance(moved, list)
     return moved
 
 

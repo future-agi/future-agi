@@ -1,4 +1,4 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 from django.db.models import (
@@ -26,10 +26,17 @@ from simulate.models import (
 from simulate.selectors.runs import user_executions
 from simulate.services.harness_environment import environment_name, run_summaries
 
+if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
 ENVIRONMENTS_PER_ROW = 5
 
 
-def _environment_jobs() -> QuerySet[HostedHarnessJob]:
+class _JobOwner(TypedDict):
+    _owner: Any
+
+
+def _environment_jobs() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
     # An environment of a deleted test is gone from the page, so it is not
     # counted, as recent runs leave its runs out. One not yet given a test
     # still holds the agent through the version it pins.
@@ -44,7 +51,7 @@ def _environment_jobs() -> QuerySet[HostedHarnessJob]:
     )
 
 
-def _environments() -> QuerySet[HostedHarnessJob]:
+def _environments() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
     return _environment_jobs().filter(_owner=OuterRef("pk"))
 
 
@@ -73,6 +80,7 @@ def annotate_agent_rows(
     )
     return queryset.annotate(
         _agent_kind=Subquery(stored_setups.values("agent_kind")[:1]),
+        _version_source_kind=Subquery(version_source_kinds[:1]),
         _build_source_kind=Coalesce(
             Subquery(source_kinds[:1]),
             Subquery(version_source_kinds[:1]),
@@ -97,6 +105,14 @@ def annotate_agent_rows(
     ).annotate(
         _source=Case(
             When(_agent_kind="source", then=F("_build_source_kind")),
+            When(
+                _agent_kind__isnull=True,
+                _version_source_kind__in=[
+                    HarnessAgentVersionRuntime.SourceKind.GITHUB,
+                    HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
+                ],
+                then=F("_version_source_kind"),
+            ),
             When(
                 Q(provider__isnull=True) | Q(provider=""),
                 then=F("_build_source_kind"),
@@ -144,7 +160,7 @@ def observe_project(agent: AgentDefinition, kind: str | None) -> dict[str, str] 
         project = agent.production_project
         if project is None or project.deleted:
             return None
-    elif observability_on(agent):
+    elif observability_on(agent) and agent.observability_provider is not None:
         project = agent.observability_provider.project
     else:
         return None

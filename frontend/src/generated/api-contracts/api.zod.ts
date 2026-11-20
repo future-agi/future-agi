@@ -6285,6 +6285,7 @@ export const AgentccGuardrailPoliciesListResponse = zod.object({
         .optional(),
       applied_keys: zod.object({}).passthrough().optional(),
       applied_projects: zod.object({}).passthrough().optional(),
+      runs_on_gateway: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -6370,6 +6371,7 @@ export const AgentccGuardrailPoliciesReadResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6426,6 +6428,7 @@ export const AgentccGuardrailPoliciesUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6489,6 +6492,7 @@ export const AgentccGuardrailPoliciesPartialUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6504,7 +6508,7 @@ export const AgentccGuardrailPoliciesDeleteParams = zod.object({
 });
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const AgentccGuardrailPoliciesApplyParams = zod.object({
   id: zod
@@ -37468,7 +37472,7 @@ export const SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = zod.record(
 );
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 
@@ -37848,7 +37852,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysItemMax = 255;
@@ -38020,7 +38024,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsReadParams = zod.object({
@@ -38369,7 +38373,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsCandidatesMakeDefaultParams = zod.object({
@@ -38442,7 +38446,7 @@ export const SimulateApiAgentFixRunsRetryParams = zod.object({
 export const SimulateApiAgentFixRunsRetryBody = zod.object({});
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsStopParams = zod.object({
@@ -62838,6 +62842,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
       ),
   }),
+  actors_enabled: zod
+    .boolean()
+    .describe(
+      "Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view.",
+    ),
   comparable: zod
     .boolean()
     .describe(
@@ -76196,6 +76205,8 @@ export const TracerFeedIssuesReadResponse = zod.object({
       external_issue_id: zod.string().min(1),
     }),
     description: zod.string().min(1),
+    fix_hypothesis: zod.string().min(1),
+    falsifier: zod.string().min(1),
     success_trace: zod.object({
       trace_id: zod.string().min(1),
       input: zod.string().min(1),
@@ -76296,6 +76307,8 @@ export const TracerFeedIssuesPartialUpdateResponse = zod.object({
       external_issue_id: zod.string().min(1),
     }),
     description: zod.string().min(1),
+    fix_hypothesis: zod.string().min(1),
+    falsifier: zod.string().min(1),
     success_trace: zod.object({
       trace_id: zod.string().min(1),
       input: zod.string().min(1),
@@ -86712,6 +86725,8 @@ export const TracerSharedReadResponse = zod.object({
           external_issue_id: zod.string().min(1),
         }),
         description: zod.string().min(1),
+        fix_hypothesis: zod.string().min(1),
+        falsifier: zod.string().min(1),
         success_trace: zod.object({
           trace_id: zod.string().min(1),
           input: zod.string().min(1),

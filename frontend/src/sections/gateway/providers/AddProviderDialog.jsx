@@ -89,7 +89,7 @@ const PROVIDER_PRESETS = {
     baseUrl: "",
     apiFormat: "azure",
     keyPlaceholder: "Enter your Azure API key",
-    supportedFormats: ["openai", "anthropic"],
+    supportedFormats: ["azure"],
   },
   cohere: {
     label: "Cohere",
@@ -180,10 +180,14 @@ const PROVIDER_PRESETS = {
   },
 };
 
+// Saved custom provider names can also be names inherited from Object.
+const providerPresetFor = (name) =>
+  Object.hasOwn(PROVIDER_PRESETS, name) ? PROVIDER_PRESETS[name] : undefined;
+
 // The built-in models of a System One preset, or none for any other provider.
 // A copy, so state never aliases the preset.
 const systemOneModelsFor = (providerName) => {
-  const preset = PROVIDER_PRESETS[providerName];
+  const preset = providerPresetFor(providerName);
   return isSystemOneFormat(preset?.apiFormat) ? [...preset.models] : [];
 };
 
@@ -455,7 +459,7 @@ const AddProviderDialog = ({
       // admin API defaults to openai) is shown, and saved, as System One rather
       // than with a blank, locked format.
       const storedFormat = isSystemOneFormat(
-        PROVIDER_PRESETS[provider.name]?.apiFormat,
+        providerPresetFor(provider.name)?.apiFormat,
       )
         ? SYSTEMONE_API_FORMAT
         : normalizeApiFormat(c.api_format ?? c.apiFormat ?? "openai");
@@ -487,7 +491,7 @@ const AddProviderDialog = ({
         setFetchError("");
         setKeyFetchError("");
         setHasFetched(false);
-      } else if (provider.name !== "vertex") {
+      } else if (provider.name !== "vertex" && storedFormat !== "azure") {
         doFetchModels({
           providerName: provider.name,
           format: storedFormat,
@@ -506,8 +510,9 @@ const AddProviderDialog = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEditMode]);
 
-  const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
-  const isVertexAuth = PROVIDER_PRESETS[name]?.authType === "gcp";
+  const isAwsAuth = providerPresetFor(name)?.authType === "aws";
+  const isVertexAuth = providerPresetFor(name)?.authType === "gcp";
+  const requiresDeploymentIds = apiFormat === "azure";
   const isSystemOne = isSystemOneFormat(apiFormat);
   const keyIsOptional = allowsKeylessSystemOne(name, apiFormat, baseUrl);
 
@@ -515,8 +520,14 @@ const AddProviderDialog = ({
   // typed key replaces the stored one, so it has to list models before Save.
   // Skip auto-fetch for AWS providers (Bedrock models must be entered manually)
   useEffect(() => {
-    if (isAwsAuth || isVertexAuth) {
+    if (isAwsAuth || isVertexAuth || requiresDeploymentIds) {
+      // Azure's model catalogue is not a list of callable deployment names.
+      if (requiresDeploymentIds) setModelOptions([]);
+      fetchSeqRef.current += 1;
       setFetchScheduled(false);
+      setFetchError("");
+      setKeyFetchError("");
+      setHasFetched(false);
       return;
     }
     // System One providers are never probed, so a key cannot start a billed
@@ -557,7 +568,7 @@ const AddProviderDialog = ({
       return;
     }
     // Don't fetch if base URL is required but empty (azure, custom)
-    const preset = PROVIDER_PRESETS[name];
+    const preset = providerPresetFor(name);
     if (preset && !preset.baseUrl && !baseUrl.trim()) {
       setFetchScheduled(false);
       return;
@@ -584,6 +595,7 @@ const AddProviderDialog = ({
     isEditMode,
     isAwsAuth,
     isVertexAuth,
+    requiresDeploymentIds,
   ]);
 
   // Editing the prefix moves the discovery URL, so the stored-credential
@@ -592,7 +604,13 @@ const AddProviderDialog = ({
   useEffect(() => {
     if (!open || !isEditMode || !provider) return;
     if (apiKey.trim()) return;
-    if (isAwsAuth || isVertexAuth || provider.name === "vertex") return;
+    if (
+      isAwsAuth ||
+      isVertexAuth ||
+      requiresDeploymentIds ||
+      provider.name === "vertex"
+    )
+      return;
     // null until the hydrating fetch records one, so opening the dialog is not
     // mistaken for a change.
     if (byNameFetchPrefix.current === null) return;
@@ -607,7 +625,15 @@ const AddProviderDialog = ({
     }, 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiPathPrefix, apiKey, open, isEditMode, isAwsAuth, isVertexAuth]);
+  }, [
+    apiPathPrefix,
+    apiKey,
+    open,
+    isEditMode,
+    isAwsAuth,
+    isVertexAuth,
+    requiresDeploymentIds,
+  ]);
 
   const resetForm = () => {
     const defaultPreset = PROVIDER_PRESETS.openai;
@@ -646,19 +672,25 @@ const AddProviderDialog = ({
   const handleProviderChange = (newName) => {
     fetchSeqRef.current += 1;
     setName(newName);
-    const preset = PROVIDER_PRESETS[newName];
+    const preset = providerPresetFor(newName);
     if (preset) {
       if (preset.authType === "aws") {
         setBaseUrl(`https://bedrock-runtime.${awsRegion}.amazonaws.com`);
       } else {
         setBaseUrl(preset.baseUrl);
       }
-      // Reset apiFormat to preset default if the current value isn't supported
-      setApiFormat((prev) =>
-        preset.supportedFormats && !preset.supportedFormats.includes(prev)
-          ? preset.apiFormat
-          : prev,
-      );
+      if (newName === "custom") {
+        // Custom is the one multi-format preset — keep whatever format the
+        // user already had if custom still supports it, instead of
+        // snapping back to openai. Named presets below stay deterministic.
+        setApiFormat((prev) =>
+          preset.supportedFormats?.includes(prev) ? prev : preset.apiFormat,
+        );
+      } else {
+        // Named presets pick their upstream adapter deterministically — the
+        // previous provider's format must never carry over (see issue #2281).
+        setApiFormat(preset.apiFormat);
+      }
     }
     setApiKey("");
     setGcpProject("");
@@ -740,11 +772,8 @@ const AddProviderDialog = ({
     }
   };
 
-  // A model the provider never offered was typed in by hand, overriding an
-  // empty listing: the azure and custom presets are probed with a plain
-  // `{base_url}/models` a working endpoint need not serve, so an empty list
-  // there is no proof the key is bad. Derived, so removing the chip re-arms
-  // the gate.
+  // A hand-entered model overrides an empty listing: a working custom endpoint
+  // need not serve a model catalogue. Removing the chip re-arms the gate.
   const manualModels = models.some((m) => !offeredModels.current.has(m));
 
   const validate = (timeoutSeconds) => {
@@ -794,7 +823,7 @@ const AddProviderDialog = ({
       }
     } else {
       // Base URL validation — required for providers without a preset URL
-      const preset = PROVIDER_PRESETS[name];
+      const preset = providerPresetFor(name);
       const needsBaseUrl = !preset || !preset.baseUrl;
       if (needsBaseUrl && !baseUrl.trim()) {
         newErrors.baseUrl =
@@ -919,7 +948,7 @@ const AddProviderDialog = ({
     !apiKey.trim() &&
     !manualModels;
 
-  const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
+  const preset = providerPresetFor(name) || PROVIDER_PRESETS.custom;
 
   // A key FIELD_LABELS does not know goes last rather than dropping silently.
   const errorKeys = Object.keys(errors).filter((key) => errors[key]);
@@ -1184,12 +1213,16 @@ const AddProviderDialog = ({
           )}
 
           {(() => {
-            const currentPreset = PROVIDER_PRESETS[name];
-            const visibleFormats = currentPreset?.supportedFormats?.length
-              ? API_FORMATS.filter((f) =>
-                  currentPreset.supportedFormats.includes(f),
-                )
-              : API_FORMATS;
+            const currentPreset = providerPresetFor(name);
+            // Keep a saved adapter until the user explicitly chooses the native one.
+            const visibleFormats =
+              currentPreset && name !== "custom"
+                ? [...new Set([apiFormat, currentPreset.apiFormat])]
+                : currentPreset?.supportedFormats?.length
+                  ? API_FORMATS.filter((f) =>
+                      currentPreset.supportedFormats.includes(f),
+                    )
+                  : API_FORMATS;
             const isFiltered = visibleFormats.length < API_FORMATS.length;
             const isSingleOption = visibleFormats.length === 1;
             return (
@@ -1201,9 +1234,11 @@ const AddProviderDialog = ({
                 onChange={(e) => setApiFormat(e.target.value)}
                 disabled={isSingleOption}
                 helperText={
-                  isFiltered
-                    ? "Restricted to compatible formats for this provider"
-                    : undefined
+                  isSingleOption
+                    ? "Use Custom / Self-hosted to choose a different API format"
+                    : isFiltered
+                      ? "Restricted to compatible formats for this provider"
+                      : undefined
                 }
               >
                 {visibleFormats.map((f) => (
@@ -1303,14 +1338,21 @@ const AddProviderDialog = ({
               renderInput={(params) => (
                 <TextField
                   {...params}
+                  helperText={
+                    requiresDeploymentIds
+                      ? "Enter the deployment names from your Azure resource, not catalogue model IDs."
+                      : undefined
+                  }
                   placeholder={
                     modelsLoading
                       ? "Fetching models..."
-                      : modelOptions.length > 0
-                        ? "Select models..."
-                        : isAwsAuth || isVertexAuth || isSystemOne
-                          ? "Type or paste comma-separated model IDs"
-                          : "Enter API key to load models, or type manually"
+                      : requiresDeploymentIds
+                        ? "Type or paste Azure deployment names"
+                        : modelOptions.length > 0
+                          ? "Select models..."
+                          : isAwsAuth || isVertexAuth || isSystemOne
+                            ? "Type or paste comma-separated model IDs"
+                            : "Enter API key to load models, or type manually"
                   }
                   onPaste={(e) => {
                     const pasted = e.clipboardData.getData("text");
@@ -1333,11 +1375,9 @@ const AddProviderDialog = ({
                 {fetchError}
               </Alert>
             )}
-            {!isAwsAuth && !isVertexAuth && (
-              // Where the options come from — and, when any are tagged, which
-              // endpoint they are served on. AWS and Vertex are left out:
-              // neither is listed live. System One is never listed either, so
-              // it says where its list comes from instead.
+            {!isAwsAuth && !isVertexAuth && !requiresDeploymentIds && (
+              // Manual-entry providers have no live list. System One uses its
+              // preset list instead; other providers offer live discovery.
               <Typography
                 variant="caption"
                 color="text.secondary"

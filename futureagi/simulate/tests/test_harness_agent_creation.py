@@ -83,7 +83,7 @@ def gates():
 
         on("simulate.services.harness_provider._validate_known_hosted_egress")
         on(
-            "simulate.services.harness_agent_changes.validate_public_github_source",
+            "simulate.services.harness_agent_changes.validate_github_source",
             return_value=None,
         )
         on("simulate.services.harness_provider._validate_phone_connectivity")

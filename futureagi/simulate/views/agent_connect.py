@@ -192,6 +192,7 @@ class AgentFoundCheckView(_ConnectView):
         responses={
             200: AgentFoundCheckResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
         },
     )
     def post(self, request, agent_id, *args, **kwargs):

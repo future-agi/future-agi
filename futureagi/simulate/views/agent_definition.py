@@ -471,20 +471,22 @@ class AgentDefinitionDetailView(APIView):
                     active_version, context=context
                 ).data
 
+            agent_kind = getattr(agent, "_agent_kind", None)
+            source = getattr(agent, "_source", None)
             return Response(
                 {
                     **agent_data,
                     "versions": versions_data,
                     "active_version": active_version_data,
                     "version_count": agent.version_count,
-                    "agent_kind": agent._agent_kind,
-                    "source": agent._source,
+                    "agent_kind": agent_kind,
+                    "source": source,
                     "environment_count": agent._environment_count,
                     "observability_enabled": observability_on(agent),
-                    "observe_project": observe_project(agent, agent._agent_kind),
+                    "observe_project": observe_project(agent, agent_kind),
                     "connected": connected_agent(agent.id),
                     "managed_by": (
-                        (environment_refs([agent]).get(agent.id) or [None])[0]
+                        next(iter(environment_refs([agent]).get(agent.id) or []), None)
                         if environment_owned(agent.id)
                         else None
                     ),
@@ -494,7 +496,7 @@ class AgentDefinitionDetailView(APIView):
                     },
                     "source_checked_at": agent.source_checked_at,
                     "source_check_interval_seconds": (
-                        poll_interval_seconds() if agent._source == "github" else None
+                        poll_interval_seconds() if source == "github" else None
                     ),
                 },
                 status=status.HTTP_200_OK,

@@ -1071,14 +1071,14 @@ def acquire_source_archive(
                 status_code=413,
             )
         body = archive.getvalue()
-        stored = store_commit_archive(
+        archived = store_commit_archive(
             organization_id=organization_id,
             workspace_id=workspace_id,
             repository=repository,
             commit_sha=commit_sha,
             body=body,
         )
-        if require_stored and not stored:
+        if require_stored and not archived:
             raise HostedHarnessError(
                 "code_archive_not_stored",
                 "The agent's code could not be stored; it is tried again",
@@ -1580,10 +1580,18 @@ def _simulation_mark(
 def _with_simulation_mark(
     payload: Mapping[str, Any], mark: Mapping[str, str]
 ) -> dict[str, Any]:
-    """A copy of the document that carries the mark, replacing any value already there."""
+    """A copy of the document that carries the mark and the actors switch, replacing any value already there."""
+    from simulate.services.harness_versioning.versions import actors_enabled
+
     document = dict(payload)
     metadata = dict(document.get("metadata") or {})
     metadata["customer_code_environment"] = dict(mark)
+    # Every job document says whether the harness may author, play and apply actors and test conditions.
+    on = actors_enabled()
+    metadata["actors"] = {
+        "enabled": on,
+        "share": list(settings.HARNESS_ACTORS_SHARE) if on else [0.0, 0.0],
+    }
     document["metadata"] = metadata
     return document
 
@@ -4638,8 +4646,8 @@ class HostedHarnessGateway:
                     attempt.provider_ref,
                 )
                 return None
-            kept = self._keep_delivered_results(attempt)
-            if not kept:
+            results_kept = self._keep_delivered_results(attempt)
+            if not results_kept:
                 attempt.terminal_stage = "failed"
                 attempt.terminal_failure = {
                     "domain": "infrastructure",
@@ -4667,7 +4675,7 @@ class HostedHarnessGateway:
             try:
                 return self._delete_and_record(
                     attempt,
-                    retry_pending=not kept
+                    retry_pending=not results_kept
                     and self._should_retry(attempt, "infrastructure"),
                 )
             except SandboxConflictError:
