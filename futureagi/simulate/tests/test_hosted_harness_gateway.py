@@ -1938,6 +1938,24 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
     assert job.attempts.count() == 1
 
 
+_ENTRYPOINTS = (
+    "python -m fi.alk.harness.hosted_authoring_entrypoint ",
+    "python -m fi.alk.harness.hosted_entrypoint ",
+)
+
+
+def assert_only_the_entrypoints_are_harness_steps(steps):
+    """In every chain the steps that start an agent-learning-kit entrypoint, and no others, are
+    harness steps, and the run's entrypoint is the last one: without the grant it would run every
+    customer process as one fixed user, without a word."""
+    assert steps[-1].harness
+    assert steps[-1].command.startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    for step in steps:
+        assert step.harness == any(entry in step.command for entry in _ENTRYPOINTS), (
+            step.command
+        )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
@@ -2016,6 +2034,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     # Only the two agent-learning-kit entrypoints may run each customer process as its own user:
     # the bundle author between them holds no such means.
     request = client.sandbox.process.session_request
+    assert_only_the_entrypoints_are_harness_steps(request.steps)
     harness = [step.command for step in request.steps if step.harness]
     assert len(harness) == 2
     assert harness[0].startswith("if [ ! -f /work/authoring/contract.json ]; then ")

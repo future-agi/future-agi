@@ -44,7 +44,10 @@ from simulate.tests.test_harness_versioning_backfill import (
 )
 from simulate.tests.test_harness_versioning_record import _authoring, _scenario
 from simulate.tests.test_harness_versioning_runs import _run
-from simulate.tests.test_hosted_harness_gateway import _Daytona
+from simulate.tests.test_hosted_harness_gateway import (
+    _Daytona,
+    assert_only_the_entrypoints_are_harness_steps,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -508,6 +511,7 @@ class TestLaunchHit:
         checking = [step for step in steps if check in step.command]
         assert len(checking) == 1 and not checking[0].harness
         assert len([step for step in steps if step.harness]) == 2
+        assert_only_the_entrypoints_are_harness_steps(steps)
         assert "sys.exit(78)" in command
         assert "--certify-only" not in command
         assert "/work/certify-job.json" not in gateway.client.sandbox.fs.uploads
@@ -521,6 +525,30 @@ class TestLaunchHit:
         assert "generic-harness/certification.json" in files
         assert f"scenarios/{NAMES[0]}/scenario.json" in files
         assert run.bundle_digest == BUNDLE_DIGEST
+
+    def test_an_extend_runs_after_authoring_without_the_grant(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _environment(user, workspace, "asm-launch-extend", storage)
+        run = _run(environment)
+        payload = dict(run.payload)
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            "scenario_extend": {"target_count": 3, "guidance": ["add a refund case"]},
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(payload=payload)
+        run.refresh_from_db()
+
+        _launch(gateway, run)
+
+        # The scenarios CLI, its sub-agents and their tools hold no means to start another user.
+        steps = gateway.client.sandbox.process.session_request.steps
+        extend = [
+            step for step in steps if "fi.alk.harness.cli scenarios" in step.command
+        ]
+        assert len(extend) == 1 and not extend[0].harness
+        assert steps.index(extend[0]) == 1
+        assert_only_the_entrypoints_are_harness_steps(steps)
 
     def test_a_second_run_reuses_the_assembled_archive(
         self, user, workspace, storage, monkeypatch
@@ -1213,6 +1241,7 @@ class TestLaunchMiss:
         assert [step.command for step in steps if not step.harness] == [
             step.command for step in assembly.certify_steps() if not step.harness
         ]
+        assert_only_the_entrypoints_are_harness_steps(steps)
         assert "--target-secrets" not in command
         assert "--provider-profile-cache" not in command
         uploads = gateway.client.sandbox.fs.uploads
