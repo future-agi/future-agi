@@ -797,6 +797,61 @@ jobs:
           actual=$(docker buildx imagetools inspect "futureagi/omega-error-feed-worker:$VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
           test "$actual" = "$EXPECTED_DIGEST"
 
+  # The Insights agent image (private omega-insights-agent), released for each
+  # platform version from vars.INSIGHTS_AGENT_RELEASE_REF, like the worker. It is
+  # optional while the agent is disabled in both regions: the job runs only once
+  # that variable is set, it never fails the release run, and bump-deployment
+  # pins it only when a verified receipt exists (and refuses to bump without one
+  # only for a region whose values enable the agent).
+  release-insights-agent:
+    needs: [guard, approve, build, backend, code-executor]
+    if: >-
+      always() && needs.approve.result == 'success' &&
+      contains(needs.guard.outputs.components, '"bump"') &&
+      vars.INSIGHTS_AGENT_RELEASE_REF != '' &&
+      (github.event_name == 'workflow_dispatch' ||
+        (needs.build.result == 'success' && needs.backend.result == 'success' &&
+          needs.code-executor.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    environment: production-auto
+    outputs:
+      digest: ${{ steps.agent.outputs.digest }}
+      source_sha: ${{ steps.agent.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: omega-insights-agent
+          permission-contents: write
+          permission-actions: read
+      - name: Build the Insights agent and verify its release receipt (retry only verifies)
+        id: agent
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          INSIGHTS_AGENT_RELEASE_REF: ${{ vars.INSIGHTS_AGENT_RELEASE_REF }}
+          RELEASE_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: python3 scripts/release-insights-agent.py
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Verify the registry still serves the tested digest
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          EXPECTED_DIGEST: ${{ steps.agent.outputs.digest }}
+        run: |
+          set -eu
+          actual=$(docker buildx imagetools inspect "futureagi/omega-insights-agent:$VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
+          test "$actual" = "$EXPECTED_DIGEST"
+
   dispatch-docs:
     needs: [guard, approve, build, backend, code-executor]
     if: ${{ !cancelled() && !failure() && needs.approve.result == 'success' && contains(needs.guard.outputs.components, '"docs"') }}
@@ -1061,7 +1116,9 @@ jobs:
         run: python3 scripts/image_size_budget.py report --tag "$VERSION"
 
   bump-deployment:
-    needs: [guard, dispatch-ee, resolve-sdk, simulation-runner, release-worker]
+    # release-insights-agent is listed only for its outputs; its result is not in
+    # the condition below, so a missing or failed agent build never blocks the bump.
+    needs: [guard, dispatch-ee, resolve-sdk, simulation-runner, release-worker, release-insights-agent]
     if: >-
       always() &&
       needs.guard.result == 'success' &&
@@ -1077,6 +1134,8 @@ jobs:
       SDK_WHEEL_SHA256: ${{ needs.resolve-sdk.outputs.sdk_wheel_sha256 }}
       WORKER_DIGEST: ${{ needs.release-worker.outputs.digest }}
       WORKER_SOURCE_SHA: ${{ needs.release-worker.outputs.source_sha }}
+      INSIGHTS_DIGEST: ${{ needs.release-insights-agent.outputs.digest }}
+      INSIGHTS_SOURCE_SHA: ${{ needs.release-insights-agent.outputs.source_sha }}
       # yq paths of every platform-image tag per values file. If a path list
       # drifts from the values files, the sanity check below fails the job
       # rather than silently bumping a subset.
@@ -1218,6 +1277,34 @@ jobs:
             test "$(yq '.errorFeed.image.digest' "$file")" != 'null'
             yq -i '.errorFeed.image.digest = strenv(WORKER_DIGEST)' "$file"
           done
+      # Separate from the bump above on purpose: insightsAgent is absent from
+      # deployment main until its chart lands, and the bump above refuses any
+      # missing path. A region without the block is skipped. While a region has
+      # the agent disabled, a missing receipt only warns and leaves its pins as
+      # they are; once a region enables it, no receipt means no bump, so the
+      # backend can never move to a version whose agent was not built.
+      - name: Pin the Insights agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          for region in eu us; do
+            file="$region/gcp/deployment/values.yaml"
+            if [ "$(yq '.insightsAgent.image | type' "$file")" != '!!map' ]; then
+              echo "$region: no insightsAgent block; skipped"
+              continue
+            fi
+            test "$(yq '.insightsAgent.image.repository' "$file")" = 'futureagi/omega-insights-agent'
+            enabled="$(yq '.insightsAgent.enabled // false' "$file")"
+            if [[ "$INSIGHTS_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              yq -i '.insightsAgent.image.tag = strenv(VERSION) | .insightsAgent.image.digest = strenv(INSIGHTS_DIGEST)' "$file"
+              echo "$region: Insights agent pinned to ${VERSION}@${INSIGHTS_DIGEST} (enabled=${enabled})"
+            elif [ "$enabled" = true ]; then
+              echo "::error::$region enables the Insights agent but no verified agent image exists for ${VERSION}; refusing to bump"
+              exit 1
+            else
+              echo "::warning::$region: no verified Insights agent image for ${VERSION}; its pins are unchanged (the agent is disabled)"
+            fi
+          done
       - name: Verify no platform image was left behind
         run: |
           set -eu
@@ -1255,7 +1342,7 @@ jobs:
             fi
             gh pr create --repo future-agi/deployment --base main --head "$branch" \
               --title "chore(release): bump platform to ${VERSION}" \
-              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide."
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. ${INSIGHTS_DIGEST:+Insights agent: ${VERSION}, commit ${INSIGHTS_SOURCE_SHA}, digest ${INSIGHTS_DIGEST}. }Review release notes (check for the migrations callout) before deploying per the deployment guide."
           else
             echo "bump PR already open"
           fi

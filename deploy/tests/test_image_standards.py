@@ -1768,6 +1768,7 @@ class Workflows(unittest.TestCase):
             "simulation-runner": "simulation-runner",
             "dispatch-ee": "ee",
             "release-worker": "bump",
+            "release-insights-agent": "bump",
             "dispatch-docs": "docs",
             "helm-chart": "helm-chart",
             "build-digests": "update-manifest",
@@ -1802,6 +1803,16 @@ class Workflows(unittest.TestCase):
         for built in ("release-worker", "dispatch-ee", "simulation-runner"):
             with self.subTest(job="bump-deployment", built=built):
                 self.assertIn(f"needs.{built}.result == 'success'", bump)
+        # The Insights agent is optional while disabled: the bump takes its outputs
+        # but never its result, and the agent job never fails the release run.
+        self.assertIn("release-insights-agent", jobs["bump-deployment"]["needs"])
+        self.assertNotIn("needs.release-insights-agent.result", bump)
+        agent = jobs["release-insights-agent"]
+        self.assertIs(agent["continue-on-error"], True)
+        self.assertIn("vars.INSIGHTS_AGENT_RELEASE_REF != ''", " ".join(agent["if"].split()))
+        for built in ("build", "backend", "code-executor"):
+            with self.subTest(job="release-insights-agent", built=built):
+                self.assertIn(f"needs.{built}.result == 'success'", " ".join(agent["if"].split()))
         # The runner's base: the backend this run built, else the registry's.
         (digest,) = [
             s for s in jobs["resolve-sdk"]["steps"] if s.get("id") == "backend"
