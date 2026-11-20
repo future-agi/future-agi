@@ -453,14 +453,32 @@ them notify-only with a reason such as `uncertified_release`. The first signed
 manifest may be published deliberately uncertified/manual by starting
 `release-update-manifest.yml` from its exact release tag with its explicit
 `bootstrap` dispatch input enabled (or by dispatching `release-images.yml`
-from that tag with `components=update-manifest` and `bootstrap=true`). The
-bootstrap path first verifies that no signed update-manifest asset exists in
-any GitHub Release. It skips only the compatibility rehearsal and proof; it
-still performs the exact tag/ref, release metadata, image revision and digest,
-chart, deployment-hash, and keyless-signing checks. The resulting manifest
-remains notify-only/manual and requires operator initialization. Normal
-releases do not fall back to bootstrap: if the rehearsal cannot find a
-supported signed predecessor, it remains fail-closed.
+from that tag with `components=update-manifest` and `bootstrap=true`). A
+direct bootstrap dispatch pauses at the `production` environment approval;
+normal reusable releases retain the approval performed by `release-images.yml`.
+The bootstrap path is restricted to the initial stable channel. It first verifies
+that no published, non-draft stable GitHub Release other than the current
+target has either signed-manifest asset. A partial manifest/bundle pair on
+another stable release fails clearly; a partial pair on the current target is
+allowed so the upload can resume. It skips only the compatibility rehearsal and
+proof; it still performs the exact tag/ref, release metadata, image revision
+and digest, chart, deployment-hash, and keyless-signing checks. The resulting
+manifest remains notify-only/manual and requires operator initialization.
+Normal releases do not fall back to bootstrap: if the rehearsal cannot find a
+supported signed predecessor, it remains fail-closed. Bootstrap attempts use a
+separate concurrency group from normal releases, while normal retries are
+serialized per version. Because those groups intentionally do not evict
+unrelated pending releases, the normal publish job repeats a pre-sign inventory
+guard: it requires a complete stable signed pair already published (or an asset
+on its current target for a partial-pair resume), and rejects an orphaned pair
+on another release. That cross-group guard makes bootstrap the only path that
+can publish the first manifest without replacing the useful per-version
+concurrency behavior.
+
+The workflow is checked out at the exact release tag before signing, so an
+existing pre-fix tag cannot run new bootstrap logic. If recovery is needed,
+first create a new recovery tag containing the fix, then run bootstrap from
+that tag.
 
 ### Supported installations
 
