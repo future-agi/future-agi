@@ -1529,6 +1529,9 @@ def save_drafts(
         if replayed is not None:
             return replayed
         require_idle(locked, next(piece for piece in DRAFT_PIECES if piece in pieces))
+        from simulate.services.harness_scenario_actions import require_no_validation
+
+        require_no_validation(locked)
         expected_review_digest = next(
             (
                 one.expected_review_digest

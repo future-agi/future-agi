@@ -1745,6 +1745,19 @@ def publish_conversation_workspace(
         }
     job = conversation.job
     environment = job.environment or job
+    from simulate.services.harness_scenario_actions import (
+        VALIDATION_RUNNING,
+        live_validation,
+    )
+    from simulate.services.harness_versioning import drafts as draft_store
+
+    # Outside drafts this publish saves new defaults: never while a validation of the default pair runs.
+    if not draft_store.drafts_apply(environment) and live_validation(environment):
+        return {
+            "applied": False,
+            "code": "validation_running",
+            "message": VALIDATION_RUNNING,
+        }
     before = _suite_snapshot(environment)
     try:
         published = promote_latest_checkpoint(conversation, retire_runtime=False)

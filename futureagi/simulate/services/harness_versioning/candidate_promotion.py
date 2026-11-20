@@ -141,6 +141,9 @@ def promote_candidates(
         if replayed is not None:
             return replayed
         require_idle(locked, "environment")
+        from simulate.services.harness_scenario_actions import require_no_validation
+
+        require_no_validation(locked)
         entry = live_set(locked)
         if entry is None or any(
             str(candidates.get(f"{piece}_version_id") or "")
