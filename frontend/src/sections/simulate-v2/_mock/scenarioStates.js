@@ -37,7 +37,7 @@ import { backForAgentOf, staleForAgentOf } from "./decoupled";
 
 /* Outdated is the one state that earns colour — the existing red, used
    sparingly. Everything else stays neutral. */
-export const STATE_TONE = { outdated: "#DC2626" };
+export const STATE_TONE = { outdated: "#DC2626", kept: "#D97706" };
 
 /* The states this tab adds to the doc's. */
 export const EXTRA_STATES = {
@@ -50,9 +50,12 @@ export const EXTRA_STATES = {
   active: { label: "Active", note: "proved and saved — it runs" },
   /* Saved without a proof — the check couldn't run. It runs, labelled. A
      proof that ran and failed is never this; it stays Not proved. */
+  /* Karthik's handover: part of the proof can't run here (its tools live
+     inside the agent's own code, or only an AI judge grades it), or it was
+     saved before proofs existed. It runs, labelled not proved. */
   kept: {
     label: "Kept as written",
-    note: "saved without a proof — it runs, but nothing showed its checks can catch a wrong answer",
+    note: "runs, but not proved",
   },
   /* Viewing an older environment version: added after it. Not a state the
      filter offers — "new" is a compare band, not a scenario state. */
@@ -153,14 +156,24 @@ export const ruleChangesOnFlow = (row, { env, envState, tools } = {}) => {
  * agentLabel }.
  */
 export const scenarioStateFor = (row, status, ctx = {}) => {
-  const base = baseStateFor(row, status, ctx);
+  const raw = baseStateFor(row, status, ctx);
+  const base = raw;
   /* Never proved, but saved and still runnable: Kept as written. */
   const state =
     base.id === "recheck" &&
     base.canRun !== false &&
     !row?.provedAt &&
     !(row?.provedOn || []).length
-      ? { ...base, id: "kept", ...EXTRA_STATES.kept }
+      ? {
+          ...base,
+          id: "kept",
+          ...EXTRA_STATES.kept,
+          why: row?.judgedOnly
+            ? "Kept as written: only an AI judge grades this case, so no wrong-way example can be played against it."
+            : row?.toolsInAgent
+              ? "Kept as written: its tools run inside the agent's own code, so they have nothing to call here."
+              : "Kept as written: no wrong-way example to prove the check can fail.",
+        }
       : base;
   /* Blocked on an earlier agent version, and its tool is back: say so on
      the row, with the history it kept. */
@@ -295,7 +308,8 @@ export const stateActionOf = (state) => {
 };
 
 export const STATE_ACTION_LABEL = {
-  reprove: "Re-prove",
+  /* The plan's wording for one scenario. */
+  reprove: "Validate scenario against the environment",
   rewrite: "Rewrite",
   edit: "Update",
   restore: "Restore",
@@ -317,7 +331,10 @@ export const archiveScenario = (row, note) => {
 
 export const restoreScenario = (row) => {
   const { retired, archived, ...rest } = row;
-  /* Counted so the suite version keeps climbing — restoring is a change too. */
+  /* Counted so the suite version keeps climbing — restoring is a change too.
+     It comes back Not proved: validate it to run it (handover, 20 Nov). */
+  /* The saved set still holds it, so it comes straight back with its
+     proof: "Restored. It runs again." (handover). */
   return { ...rest, restores: (row.restores || 0) + 1 };
 };
 
@@ -409,8 +426,9 @@ export const proofGatesOf = (row, env, { stale, broken } = {}) => {
           },
           {
             id: "vacuous",
-            label: "Wrong answer fails",
-            detail: "An empty call fails it.",
+            label: "Wrong-way example caught",
+            detail:
+              "A deliberately wrong call fails the judge, so it can catch a mistake.",
           },
         ]
       : [
@@ -427,8 +445,9 @@ export const proofGatesOf = (row, env, { stale, broken } = {}) => {
           },
           {
             id: "vacuous",
-            label: "Wrong answer fails",
-            detail: "An empty or wrong run fails it, so the checks can fail.",
+            label: "Wrong-way example caught",
+            detail:
+              "A deliberately wrong answer — like refunding the wrong amount — fails its checks, so they can catch a mistake.",
           },
         ]
   ).map((g) => {
@@ -450,6 +469,19 @@ export const proofGatesOf = (row, env, { stale, broken } = {}) => {
       const ok = result(g.id === "evidence" ? "vacuous" : g.id);
       if (failedReason && ok !== null)
         return { ...g, core: true, ok: false, reason: failedReason };
+      /* The handover's words: Caught, Not caught, Not run. */
+      if (g.id === "vacuous")
+        return {
+          ...g,
+          core: true,
+          ok,
+          label:
+            ok === true
+              ? "Wrong-way example caught"
+              : ok === false
+                ? "Wrong-way example not caught"
+                : "Wrong-way example not run",
+        };
       return { ...g, core: true, ok };
     })
     .concat(admissionGatesOf(row, env, { stale, broken }));

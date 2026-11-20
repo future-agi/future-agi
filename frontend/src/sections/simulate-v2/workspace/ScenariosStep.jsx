@@ -493,11 +493,15 @@ export default function ScenariosStep({
       /* The same states the chips show, so the line and the rows agree. */
       const id = stateOf(r).id;
       if (id === "valid" || id === "active") c.proved += 1;
-      else if (id === "kept") c.kept += 1;
-      else if (id !== "archived") c.notProved += 1;
+      else if (id === "kept") {
+        c.kept += 1;
+        /* Older ones with nothing to prove their checks can fail — what to
+           strengthen (the API's legacy_without_control). */
+        if (!r.judgedOnly && !r.toolsInAgent) c.noControl += 1;
+      } else if (id !== "archived") c.notProved += 1;
       return c;
     },
-    { proved: 0, kept: 0, notProved: 0 },
+    { proved: 0, kept: 0, notProved: 0, noControl: 0 },
   );
   const staleCount = live.filter((r) => stateOf(r).id === "stale").length;
   const backCount = live.filter((r) => stateOf(r).back).length;
@@ -1246,8 +1250,8 @@ export default function ScenariosStep({
     replaceRows(reproveScenarios(rows, { env, envState: viewState, toolsOf }));
     enqueueSnackbar(
       rows.length === 1
-        ? `Re-proved "${rows[0].name || rows[0].title || "scenario"}" on ${envDisplay}`
-        : `Re-proved ${rows.length} scenarios on ${envDisplay}`,
+        ? `Validated "${rows[0].name || rows[0].title || "scenario"}" on ${envDisplay}`
+        : `Validated ${rows.length} scenarios on ${envDisplay}`,
       { variant: "success" },
     );
   };
@@ -1611,7 +1615,7 @@ export default function ScenariosStep({
           },
           !ro &&
             review.reprovable.length > 0 && {
-              label: `Re-prove ${review.reprovable.length}`,
+              label: `Validate ${review.reprovable.length}`,
               onClick: () => reprove(review.reprovable),
             },
         ].filter(Boolean),
@@ -2432,9 +2436,56 @@ export default function ScenariosStep({
                               fontVariantNumeric: "tabular-nums",
                             }}
                           >
-                            {`${proofCounts.proved} proved · ${proofCounts.kept} kept as written · ${proofCounts.notProved} not proved`}
+                            {`${proofCounts.proved} proved · ${proofCounts.kept} kept as written · ${proofCounts.notProved} not proved${proofCounts.noControl ? ` · ${proofCounts.noControl} without a wrong-way example` : ""}`}
                           </Typography>
                         </Tooltip>
+                      }
+                      actions={
+                        ro ? null : (
+                          <>
+                            {/* Validate proves what isn't proved yet; Re-prove
+                                all proves every scenario again (handover). */}
+                            {review?.reprovable?.length > 0 && (
+                              <Tooltip
+                                arrow
+                                title="Runs each one's proof in a test sandbox — no paid agent run. Scenarios that don't pass stay Not proved."
+                              >
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => reprove(review.reprovable)}
+                                  sx={{
+                                    height: 24,
+                                    typography: "s3",
+                                    color: "text.primary",
+                                    borderColor: "divider",
+                                  }}
+                                >
+                                  Validate cases not yet proved
+                                </Button>
+                              </Tooltip>
+                            )}
+                            <Tooltip
+                              arrow
+                              title="Proves every scenario again, including the ones already proved."
+                            >
+                              <Button
+                                size="small"
+                                color="inherit"
+                                onClick={() => reprove(live)}
+                                sx={{
+                                  height: 24,
+                                  typography: "s3",
+                                  color: "text.secondary",
+                                  minWidth: 0,
+                                  px: 0.75,
+                                }}
+                              >
+                                Re-prove all
+                              </Button>
+                            </Tooltip>
+                          </>
+                        )
                       }
                     />
                   )}

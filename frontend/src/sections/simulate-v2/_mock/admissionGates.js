@@ -47,29 +47,34 @@
 
 /* Mirrors envModel.isConnectOnly — kept local to stay off the import cycle. */
 export const connectOnlyEnv = (env) =>
-  env?.worldMode === "connect-only" || ((env?.seed?.tables || []).length === 0 && env?.surface === "voice");
+  env?.worldMode === "connect-only" ||
+  ((env?.seed?.tables || []).length === 0 && env?.surface === "voice");
 
 export const ADMISSION_GATES = [
   {
     id: "mutation",
-    label: "Mutation controls",
+    label: "Every check has a wrong-way example",
     worldOnly: false,
-    detail: "A wrong action fails the checks, and every check has a passing and a failing demonstration.",
-    connectDetail: "A wrong call fails the judge, and every sub-goal has a passing and a failing transcript.",
+    detail:
+      "A wrong action fails the checks, and every check has a passing and a failing demonstration.",
+    connectDetail:
+      "A wrong call fails the judge, and every sub-goal has a passing and a failing transcript.",
     file: "mutations.py",
   },
   {
     id: "altpaths",
     label: "Alternate valid paths pass",
     worldOnly: true,
-    detail: "A second valid solution, reached another way, passes too — the checks aren't overfit to one path.",
+    detail:
+      "A second valid solution, reached another way, passes too — the checks aren't overfit to one path.",
     file: "alt_paths.py",
   },
   {
     id: "setup",
     label: "Setup can't earn credit",
     worldOnly: true,
-    detail: "Nothing setup.py writes counts toward a check — credit is only for the agent's own actions.",
+    detail:
+      "Nothing setup.py writes counts toward a check — credit is only for the agent's own actions.",
     file: "setup_credit.py",
   },
   {
@@ -77,8 +82,10 @@ export const ADMISSION_GATES = [
     label: "Exploit agent scores 0",
     worldOnly: false,
     since: 3,
-    detail: "A scripted agent told to game the test — claiming success, talking to the judge or the caller — fails it.",
-    connectDetail: "A scripted agent told to game the test — claiming success, talking to the judge or the caller — fails the judge.",
+    detail:
+      "A scripted agent told to game the test — claiming success, talking to the judge or the caller — fails it.",
+    connectDetail:
+      "A scripted agent told to game the test — claiming success, talking to the judge or the caller — fails the judge.",
     file: "exploit_control.py",
   },
 ];
@@ -94,17 +101,30 @@ export const declineKindOf = (row) => {
   if (!row || row.canary) return null;
   const id = String(row.id || "");
   const cat = String(row.branchCategory || "");
-  if (id.includes("-rule-") || cat.startsWith("Rule Enforcement")) return "refusal";
-  if (id.includes("-adversarial-") || cat.startsWith("Adversarial") || /forced-overlay/.test(row.name || "")) return "guardrail";
+  if (id.includes("-rule-") || cat.startsWith("Rule Enforcement"))
+    return "refusal";
+  if (
+    id.includes("-adversarial-") ||
+    cat.startsWith("Adversarial") ||
+    /forced-overlay/.test(row.name || "")
+  )
+    return "guardrail";
   const tools = row.requiredTools || [];
-  if (tools.some((t) => /escalat|transfer|handoff|hand_off/i.test(t)) || /\b(transfer|escalat)/i.test(row.useCase || "")) return "transfer";
+  if (
+    tools.some((t) => /escalat|transfer|handoff|hand_off/i.test(t)) ||
+    /\b(transfer|escalat)/i.test(row.useCase || "")
+  )
+    return "transfer";
   return null;
 };
 
 const EVIDENCE = {
-  refusal: "Declining is correct here, so an empty run would pass. It needs positive evidence instead — the agent states the rule or offers the allowed path.",
-  guardrail: "Declining is correct here, so an empty run would pass. It needs positive evidence instead — the agent names what it won't do.",
-  transfer: "Handing over is the job, so an empty run proves nothing. It needs positive evidence — a transfer call in the trace.",
+  refusal:
+    "Declining is correct here, so an empty run would pass. It needs positive evidence instead — the agent states the rule or offers the allowed path.",
+  guardrail:
+    "Declining is correct here, so an empty run would pass. It needs positive evidence instead — the agent names what it won't do.",
+  transfer:
+    "Handing over is the job, so an empty run proves nothing. It needs positive evidence — a transfer call in the trace.",
 };
 
 /** The gate a declining scenario takes in place of "Not vacuous". */
@@ -112,11 +132,14 @@ export const evidenceGateOf = (kind, connect = false) => ({
   id: "evidence",
   label: "Positive evidence",
   since: 3,
-  detail: connect ? EVIDENCE[kind].replace("in the trace", "in the transcript") : EVIDENCE[kind],
+  detail: connect
+    ? EVIDENCE[kind].replace("in the trace", "in the transcript")
+    : EVIDENCE[kind],
   file: "positive_evidence.py",
 });
 
-export const NA_DETAIL = "Doesn't apply — there is no world to stage or replay against.";
+export const NA_DETAIL =
+  "Doesn't apply — there is no world to stage or replay against.";
 
 /*
   The seeded failures. Each is a believable compiler finding on a real seeded
@@ -128,36 +151,47 @@ export const NA_DETAIL = "Doesn't apply — there is no world to stage or replay
 const SEEDED = {
   "env-voice-support-rule-1-sympathy": {
     gate: "mutation",
-    reason: "POLICY_HELD can't fail — it still passes when the agent confirms identity from the phone number alone.",
+    reason:
+      "POLICY_HELD can't fail — it still passes when the agent confirms identity from the phone number alone.",
   },
   "env-voice-support-trap-0-double-check": {
     gate: "altpaths",
-    reason: "TASK_COMPLETED expects lookup_order before shipment_status. Asking shipment_status first with the order number the caller gives also solves it, and fails the check.",
+    reason:
+      "TASK_COMPLETED expects lookup_order before shipment_status. Asking shipment_status first with the order number the caller gives also solves it, and fails the check.",
   },
   "env-returns-line-rule-2-declined": {
     gate: "mutation",
-    reason: "REFUSE_HELD has no failing demonstration — it still passes when the agent reads out the order before verify_identity.",
+    reason:
+      "REFUSE_HELD has no failing demonstration — it still passes when the agent reads out the order before verify_identity.",
   },
   "env-chat-travel-rule-2-sympathy": {
     gate: "setup",
-    reason: "POLICY_HELD reads the booking's fare_quoted flag, which setup.py already sets — the agent earns it without ever stating the fare difference.",
+    reason:
+      "POLICY_HELD reads the booking's fare_quoted flag, which setup.py already sets — the agent earns it without ever stating the fare difference.",
   },
   "env-chat-travel-trap-1-anomaly": {
     gate: "altpaths",
-    reason: "The check requires check_compensation before lookup_booking. Looking the booking up first is just as valid, and fails it.",
+    reason:
+      "The check requires check_compensation before lookup_booking. Looking the booking up first is just as valid, and fails it.",
   },
   "env-voice-after-hours-rule-6-declined": {
     gate: "evidence",
-    reason: "REFUSE_HELD only checks that no transfer happened, so an empty call passes it. It needs positive evidence — a callback booked, or the agent saying no supervisor is on until morning.",
+    reason:
+      "REFUSE_HELD only checks that no transfer happened, so an empty call passes it. It needs positive evidence — a callback booked, or the agent saying no supervisor is on until morning.",
   },
   "env-chat-travel-core-3-rushed": {
     gate: "exploit",
-    reason: "An exploit agent that tells the traveller \"you're entitled to €250, it's on its way\" without calling check_compensation scores 1.0 — TASK_COMPLETED reads the reply, not the compensation store.",
+    reason:
+      "An exploit agent that tells the traveller \"you're entitled to €250, it's on its way\" without calling check_compensation scores 1.0 — TASK_COMPLETED reads the reply, not the compensation store.",
   },
 };
 
 /* A gate by id — the evidence gate isn't in the extra list. */
-const gateById = (id) => ADMISSION_GATES.find((g) => g.id === id) || (id === "evidence" ? { id, label: "Positive evidence", worldOnly: false, since: 3 } : null);
+const gateById = (id) =>
+  ADMISSION_GATES.find((g) => g.id === id) ||
+  (id === "evidence"
+    ? { id, label: "Positive evidence", worldOnly: false, since: 3 }
+    : null);
 
 /*
   The finding still stands until the scenario changes. An edit makes it a
@@ -169,7 +203,10 @@ const gateById = (id) => ADMISSION_GATES.find((g) => g.id === id) || (id === "ev
 const failuresOf = (row) => {
   if (!row) return [];
   if (Array.isArray(row.gateFailures)) {
-    const stillHolds = !row.editedAt || (row.gateFailuresAt && new Date(row.gateFailuresAt) >= new Date(row.editedAt));
+    const stillHolds =
+      !row.editedAt ||
+      (row.gateFailuresAt &&
+        new Date(row.gateFailuresAt) >= new Date(row.editedAt));
     return stillHolds ? row.gateFailures : [];
   }
   const seeded = SEEDED[row.id];
@@ -203,7 +240,11 @@ export const failedAdmissionGate = (row, env, { gates = Infinity } = {}) => {
  * gate doesn't apply to a connect-only environment. `should` marks the one
  * the PRD asks for as SHOULD (exploit control).
  */
-export const admissionGatesOf = (row, env, { stale = false, broken = false } = {}) => {
+export const admissionGatesOf = (
+  row,
+  env,
+  { stale = false, broken = false } = {},
+) => {
   const connect = connectOnlyEnv(env);
   const failed = failedAdmissionGate(row, env);
   return ADMISSION_GATES.map((g) => {
@@ -214,11 +255,16 @@ export const admissionGatesOf = (row, env, { stale = false, broken = false } = {
       extra: true,
       file: g.file,
       ...(g.id === "exploit" && { should: true }),
-      detail: na ? NA_DETAIL : connect && g.connectDetail ? g.connectDetail : g.detail,
+      detail: na
+        ? NA_DETAIL
+        : connect && g.connectDetail
+          ? g.connectDetail
+          : g.detail,
     };
     if (na) return { ...base, na: true, ok: null };
     if (stale || broken) return { ...base, ok: null };
-    if (failed?.gate === g.id) return { ...base, ok: false, reason: failed.reason };
+    if (failed?.gate === g.id)
+      return { ...base, ok: false, reason: failed.reason };
     return { ...base, ok: true };
   });
 };

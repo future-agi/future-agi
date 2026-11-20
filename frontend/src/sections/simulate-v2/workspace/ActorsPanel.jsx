@@ -207,6 +207,10 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
      states the card has to be able to say. */
   const loadState = envState.actorsLoad || "ready";
 
+  /* The world's files, from Sources — the one place files are added. An
+     actor reads only the ones ticked for it; grading-only files never. */
+  const worldFiles = (envState.sources || []).filter((x) => !x.archived);
+
   /* One actor's row, with what it takes to edit, reset, accept or remove it. */
   const renderRow = (a) => (
     <Box key={a.id} sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
@@ -227,6 +231,24 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         onEdit={locked ? null : () => setEditing(a)}
         onReset={locked || !a.edited ? null : () => reset(a.id)}
         onBranches={locked ? null : () => proposeBranches(a)}
+        files={worldFiles}
+        readable={(envState.actorFiles || {})[a.id] || []}
+        onToggleFile={
+          locked
+            ? null
+            : (fileId) => {
+                const all = envState.actorFiles || {};
+                const mine = all[a.id] || [];
+                patch({
+                  actorFiles: {
+                    ...all,
+                    [a.id]: mine.includes(fileId)
+                      ? mine.filter((x) => x !== fileId)
+                      : [...mine, fileId],
+                  },
+                });
+              }
+        }
         action={
           !locked && (
             <Tooltip arrow title="Remove from this environment">
@@ -565,6 +587,9 @@ function ActorRow({
   proposed = false,
   onAccept,
   scenarioCount = null,
+  files = [],
+  readable = [],
+  onToggleFile = null,
 }) {
   const [open, setOpen] = useState(false);
   const pressure = getPressure(actor.pressure);
@@ -730,6 +755,13 @@ function ActorRow({
       <Collapse in={open} unmountOnExit>
         <Stack spacing={1.5} sx={{ px: 2.5, pb: 2 }}>
           <ActorSees view={view} name={actor.name} />
+          {files.length > 0 && (
+            <ActorFiles
+              files={files}
+              readable={readable}
+              onToggle={onToggleFile}
+            />
+          )}
           <Box>
             <Label>What they do</Label>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -837,12 +869,87 @@ function ActorRow({
     </Box>
   );
 }
+/* Grading-only files: answers for the grader, never for a simulated person. */
+const gradingOnly = (f) =>
+  f.role === "evaluation-reference" || f.visibility === "evaluator";
+
+/* Which of the world's files this actor can read. Files are added in
+   Sources; here they're only granted. */
+function ActorFiles({ files, readable, onToggle }) {
+  return (
+    <Box>
+      <Label>Files they can read</Label>
+      <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.75 }}>
+        {files.map((f) => {
+          const locked = gradingOnly(f);
+          const on = !locked && readable.includes(f.id);
+          return (
+            <Tooltip
+              key={f.id}
+              arrow
+              title={
+                locked
+                  ? "Grading only — never shown to a simulated person."
+                  : on
+                    ? "They can read it. Click to take it away."
+                    : "Click to let them read it."
+              }
+            >
+              <Box
+                component="button"
+                type="button"
+                disabled={locked || !onToggle}
+                onClick={() => onToggle?.(f.id)}
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  px: 0.875,
+                  height: 24,
+                  border: "1px solid",
+                  borderColor: on ? "text.secondary" : "divider",
+                  borderRadius: "6px",
+                  bgcolor: on ? "action.selected" : "transparent",
+                  color: locked ? "text.disabled" : "text.primary",
+                  cursor: locked || !onToggle ? "default" : "pointer",
+                  font: "inherit",
+                  typography: "s3",
+                }}
+              >
+                <Iconify
+                  icon={
+                    locked
+                      ? "solar:lock-keyhole-linear"
+                      : on
+                        ? "solar:check-circle-linear"
+                        : "solar:document-linear"
+                  }
+                  width={12}
+                />
+                {f.name}
+              </Box>
+            </Tooltip>
+          );
+        })}
+      </Stack>
+    </Box>
+  );
+}
+ActorFiles.propTypes = {
+  files: PropTypes.array,
+  readable: PropTypes.array,
+  onToggle: PropTypes.func,
+};
+
 ActorRow.propTypes = {
   env: PropTypes.object,
   envState: PropTypes.object,
   cast: PropTypes.array,
   proposed: PropTypes.bool,
   onAccept: PropTypes.func,
+  files: PropTypes.array,
+  readable: PropTypes.array,
+  onToggleFile: PropTypes.func,
   actor: PropTypes.object,
   action: PropTypes.node,
   onEdit: PropTypes.func,

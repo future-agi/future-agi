@@ -9,7 +9,7 @@ const num = { fontVariantNumeric: "tabular-nums" };
   the batches. Most of a large set is protected because it passes today;
   marking is for what must never break.
 */
-export function ProtectionLine({ tally, trailing = null }) {
+export function ProtectionLine({ tally, trailing = null, actions = null }) {
   if (!tally?.total) return trailing;
   const held = tally.marked + tally.memory + tally.passing;
   const parts = [
@@ -60,10 +60,12 @@ export function ProtectionLine({ tally, trailing = null }) {
       )}
       {/* Right of the line: the proof counts, moved out of the toolbar. */}
       {trailing && <Box sx={{ ml: "auto !important" }}>{trailing}</Box>}
+      {actions}
     </Stack>
   );
 }
 ProtectionLine.propTypes = {
   tally: PropTypes.object,
   trailing: PropTypes.node,
+  actions: PropTypes.node,
 };

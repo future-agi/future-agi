@@ -496,15 +496,14 @@ export default function RunPlanDialog({
     (fromSuite?.blocked || 0) +
     (fromSuite?.excluded || 0);
   const heldN = totalN - runCount;
-  const countText = [
-    outParts.length
-      ? `${runCount} of ${totalN} will run`
-      : `All ${runCount} will run`,
+  /* The count leads; the notes follow (handover: the dialog led with notes). */
+  const countLead = outParts.length
+    ? `${runCount} of ${totalN} will run`
+    : `All ${runCount} will run`;
+  const countRest = [
     outParts.length ? `${heldN} won't: ${outParts.join(", ")}` : null,
     staleN > 0 ? `${staleN} stale` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter(Boolean);
   const pairVal = compat?.validation;
   const pairState = checkingCompat ? "validating" : pairVal?.state;
   const areasNow = compat
@@ -555,22 +554,27 @@ export default function RunPlanDialog({
           : pairState === "unavailable"
             ? {
                 dot: "cancelled",
-                title: countText,
-                rest: "the check couldn't run on our side, so nothing is held",
+                title: countLead,
+                rest: [
+                  ...countRest,
+                  "the check couldn't run on our side, so nothing is held",
+                ].join(" · "),
               }
             : pairState === "stale"
               ? {
                   dot: "queued",
                   hollow: true,
-                  title: compat.staleWhy,
-                  rest: countText,
+                  title: countLead,
+                  rest: [...countRest, compat.staleWhy].join(" · "),
                 }
               : anyUnchecked && !anyBlocker && !pairVal
                 ? {
                     dot: "queued",
                     hollow: true,
-                    title: "Not checked for this agent yet",
-                    rest: countText,
+                    title: countLead,
+                    rest: [...countRest, "not checked for this agent yet"].join(
+                      " · ",
+                    ),
                   }
                 : outParts.length
                   ? {
@@ -1862,7 +1866,8 @@ export default function RunPlanDialog({
                   ? "Starting…"
                   : submit === "rejected"
                     ? "Try again"
-                    : "Start run"}
+                    : /* Name what runs (handover): held cases are never sent. */
+                      `Run ${runCount} ${runCount === 1 ? "scenario" : "scenarios"}`}
               </Button>
             </span>
           </Tooltip>
