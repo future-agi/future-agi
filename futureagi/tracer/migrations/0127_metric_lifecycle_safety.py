@@ -103,6 +103,35 @@ def guard_downgrade(apps, schema_editor):
         raise RuntimeError("cannot downgrade after durable revocation")
 
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration", "index", "constraint", "not_null"],
+    "tables": [
+        "postgres:accounts_organization",
+        "postgres:tracer_project",
+        "postgres:tracer_derivedmetricrun",
+        "postgres:tracer_derivedmetricversion",
+        "postgres:tracer_metricerasurerequest",
+        "postgres:tracer_metricgenerationpin",
+        "postgres:tracer_metricprojectrefresh",
+        "postgres:tracer_metricreadmanifest",
+        "postgres:tracer_metricrefreshattempt",
+    ],
+    "mitigation": "Runs in one atomic migration on the schema-editor alias. Backfill runs "
+    "before NOT NULL; iterator reads do not bound transaction length: "
+    "per-row writes and parent lookups span existing erasure/ancestry rows, "
+    "plus per-head updates and a set-based pin invalidation. Stable copies "
+    "and invalidated_at=NULL make retry after atomic failure safe. The SQL "
+    "makes deferred checks immediate before remaining DDL. Downgrade "
+    "refuses orphaned/new-scope erasure, detached ancestry or durable "
+    "revocation; it does not undo pin invalidations. Use the sealed cold "
+    "backup for failed-update recovery.",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+    "large_volume_rehearsal": True,
+}
+
+
 class Migration(migrations.Migration):
     dependencies = [("tracer", "0126_derived_metric_refresh")]
     # The forward data step is last, avoiding ALTER TABLE with pending deferred

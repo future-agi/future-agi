@@ -19,6 +19,39 @@ def level_from_legacy_selection_unit(apps, schema_editor):
     DerivedMetricVersion.objects.filter(selection_unit="span").update(level="span")
 
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration", "index", "constraint", "not_null"],
+    "tables": [
+        "postgres:accounts_organization",
+        "postgres:accounts_user",
+        "postgres:tracer_project",
+        "postgres:tracer_derivedmetric",
+        "postgres:tracer_derivedmetricmonitordelivery",
+        "postgres:tracer_derivedmetricrun",
+        "postgres:tracer_derivedmetricversion",
+        "postgres:tracer_metricattemptbatch",
+        "postgres:tracer_metricattemptledgerchunk",
+        "postgres:tracer_metricerasurerequest",
+        "postgres:tracer_metricgenerationpin",
+        "postgres:tracer_metricprojectrefresh",
+        "postgres:tracer_metricreadmanifest",
+        "postgres:tracer_metricrefreshattempt",
+    ],
+    "mitigation": "Runs once in Django's default atomic PostgreSQL migration. The only "
+    "explicit data update is a deterministic assignment on legacy span "
+    "versions; it is not batched and can scan and write across tenants. DDL "
+    "also changes existing metric tables and can hold locks while adding "
+    "indexes or validating constraints; new control tables start empty. "
+    "Failure rolls back the transaction. Reverse does not reconstruct level "
+    "and drops new fields/tables, so use the shipping cold restore for a "
+    "failed transition rather than reversing populated target state.",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+    "large_volume_rehearsal": True,
+}
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
