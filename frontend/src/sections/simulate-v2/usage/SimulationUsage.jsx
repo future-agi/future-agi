@@ -230,7 +230,7 @@ export default function SimulationUsage() {
             Simulation
           </Typography>
           <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-            {`${RANGES.find((r) => r.id === range).label} · ${fmt(total)} credits over ${fmt(entries.length - improvements)} runs${epochs ? `, ${fmt(improvements)} improvements` : ""} and ${fmt(calls)} calls · priced as each one's Cost tab`}
+            {`${RANGES.find((r) => r.id === range).label} · ${fmt(total)} credits over ${fmt(entries.length - improvements)} runs${improvements ? `, ${fmt(improvements)} ${improvements === 1 ? "epoch" : "epochs"}` : ""} and ${fmt(calls)} calls · priced as each one's Cost tab`}
           </Typography>
         </Box>
         <Stack direction="row" alignItems="center" gap={1} flexShrink={0}>
