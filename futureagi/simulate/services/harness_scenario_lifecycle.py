@@ -30,6 +30,7 @@ from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_scenario_needs import case_needs
 from simulate.services.harness_scenario_sources import SourceView, bare_ref, file_path
 from simulate.services.harness_versioning.versions import (
+    OTHER_AGENTS,
     control_ran,
     legacy_verdict,
     proof_passes,
@@ -508,7 +509,7 @@ def scenario_lifecycle(
     made with another agent version reads Draft until the case is validated with this one."""
     from simulate.services.harness_scenario_sources import resolve
     from simulate.services.harness_versioning import validation
-    from simulate.services.harness_versioning.versions import OTHER_AGENTS, suite_cases
+    from simulate.services.harness_versioning.versions import suite_cases
 
     if suite_version is None or environment_version is None:
         return {}
@@ -678,7 +679,9 @@ def scenario_lifecycle(
             if isinstance(one, Mapping)
         ]
         view["sources"] = [SourceView(**one) for one in resolved.get(key) or []]
-        view["source_changed"] = changed.get(key, [])
+        view["source_changed"] = (
+            [] if _checked_here(proofs, key) else changed.get(key, [])
+        )
         if view["source_changed"]:
             view["source_changed_version"] = environment_version.version_number
             view["source_changed_version_id"] = str(environment_version.id)
@@ -769,6 +772,24 @@ def scenario_lifecycle(
             proof["suite_version_id"] = str(suite_version.id)
         views[key] = view
     return views
+
+
+def _checked_here(proofs: Any, key: str) -> bool:
+    """Whether a proof made on this pair reached the case: it read the case's sources against this environment
+    version, so a source that changed from the parent version has been checked since. Any agent version's proof
+    counts, since sources belong to the environment."""
+    entry = proofs.get(key) if isinstance(proofs, Mapping) else None
+    entries = [entry] if isinstance(entry, Mapping) else []
+    if entries:
+        entries += [
+            one
+            for one in (entries[0].get(OTHER_AGENTS) or {}).values()
+            if isinstance(one, Mapping)
+        ]
+    return any(
+        one.get("format") == 2 and one.get("blocked_reason") != "validation_incomplete"
+        for one in entries
+    )
 
 
 # Reasons a case is held because something could not be read, never because a proof found anything.

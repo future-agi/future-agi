@@ -564,6 +564,39 @@ def test_source_changed_rule_and_file(user, workspace, storage):
     assert views[REFUND_KEYS[2]]["state"] == "draft"
 
 
+def test_a_case_proved_on_the_changed_environment_no_longer_reads_source_changed(
+    user, workspace, storage
+):
+    environment = _environment(user, workspace, storage, "lc-source-reproved")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(
+        environment.environment_version, ["Never refund after 14 days."], {}
+    )
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, ["Never refund after 30 days."], {})
+    cited = [{"kind": "rule", "ref": "rule:0", "quote": "Never refund after"}]
+    _cite(environment, {REFUND_KEYS[0]: cited, REFUND_KEYS[1]: cited})
+    # Proved again on the changed version: its sources were read against the new rule. The other was never reached.
+    _proofs(
+        environment,
+        {
+            REFUND_KEYS[0]: PROVED,
+            REFUND_KEYS[1]: {
+                "format": 2,
+                "proved": False,
+                "blocked_reason": "validation_incomplete",
+            },
+        },
+        version=child,
+    )
+
+    views = _views(environment, version=child)
+
+    assert views[REFUND_KEYS[0]]["source_changed"] == []
+    assert views[REFUND_KEYS[0]]["source_changed_version"] is None
+    assert views[REFUND_KEYS[1]]["source_changed"] == ["rule:0"]
+
+
 def test_counts_call_only_a_run_proof_proved():
     from simulate.services.harness_scenario_lifecycle import lifecycle_counts
 
