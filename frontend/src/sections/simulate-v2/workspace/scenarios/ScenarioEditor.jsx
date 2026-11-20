@@ -41,7 +41,7 @@ import {
   subGoalUsageOf,
 } from "../../_mock/scenarioSubGoals";
 import { MarkToggle } from "./ScenarioStateBits";
-import BlockerFlag from "./BlockerFlag";
+import MustPassBadge from "./MustPassBadge";
 import { setBlocker } from "../../_mock/releaseBlocker";
 import { clickable, focusRing } from "../../components/clickable";
 
@@ -262,9 +262,8 @@ export default function ScenarioEditor({
               <Typography sx={{ typography: "m2", fontWeight: 600 }}>
                 Edit scenario
               </Typography>
-              <BlockerFlag
+              <MustPassBadge
                 row={draft}
-                size={15}
                 onToggle={() => toggleMustPass(!draft.critical)}
               />
             </Stack>
@@ -960,20 +959,14 @@ function SetMarks({ row, onMustPass }) {
         borderColor: "divider",
       }}
     >
-      <Iconify
-        icon={
-          row.critical ? "solar:shield-check-bold" : "solar:shield-check-linear"
-        }
-        width={16}
-        sx={{
-          color: row.critical ? "text.primary" : "text.disabled",
-          mt: "2px",
-          flexShrink: 0,
-        }}
-      />
+      {row.critical ? (
+        <MustPassBadge row={row} />
+      ) : (
+        <Box sx={{ width: 24, flexShrink: 0 }} />
+      )}
       <Box flex={1} minWidth={0}>
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          Must-pass
+          Must pass
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
           An epoch that breaks it is rejected, however much else it lifts.
@@ -983,7 +976,7 @@ function SetMarks({ row, onMustPass }) {
         size="small"
         checked={!!row.critical}
         onChange={(e) => onMustPass(e.target.checked)}
-        inputProps={{ "aria-label": "Must-pass" }}
+        inputProps={{ "aria-label": "Must pass" }}
         sx={{ flexShrink: 0, mt: "-2px" }}
       />
     </Stack>

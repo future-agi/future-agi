@@ -17,7 +17,7 @@ import SideDrawer from "../../components/SideDrawer";
 import ScenarioDetail from "../../components/ScenarioDetail";
 import { stateActionOf, STATE_ACTION_LABEL } from "../../_mock/scenarioStates";
 import { ArchivePopover, StateChip } from "./ScenarioStateBits";
-import BlockerFlag from "./BlockerFlag";
+import MustPassBadge from "./MustPassBadge";
 import TraceSources from "./TraceSources";
 import SourceChangedNotice from "./SourceChangedNotice";
 import { scenarioTitle } from "../../_mock/scenarios";
@@ -140,9 +140,9 @@ export default function ScenarioDrawer({
             >
               {state && <StateChip state={state} />}
               {/* Must-pass, toggled here as in the table — locked like every other edit. */}
-              <BlockerFlag
+              <MustPassBadge
                 row={row}
-                size={15}
+                label
                 locked={locked || !!row.archived}
                 onToggle={
                   onAction

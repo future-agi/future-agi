@@ -188,7 +188,7 @@ export default function SelectionBar({
           }
           sx={BTN_SX}
         >
-          {allMustPass ? "Remove must-pass" : "Must-pass"}
+          {allMustPass ? "Remove must pass" : "Must pass"}
         </Button>
       )}
       {/* Edit and Delete as icons — the bar keeps room for the run. */}

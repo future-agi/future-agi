@@ -23,7 +23,7 @@ import { subGoalsOfScenario } from "../../_mock/envModel";
 import { admissionOf } from "../../_mock/coverage";
 import { versionNumber } from "../../_mock/versions";
 import { ScenarioRowContext } from "./scenarioRowContext";
-import BlockerFlag from "./BlockerFlag";
+import MustPassBadge from "./MustPassBadge";
 import SourceBadge from "./SourceBadge";
 import {
   StateChip,
@@ -133,10 +133,10 @@ const COLUMNS = [
   },
   {
     id: "mustPass",
-    label: "Must-pass",
+    label: "Must pass",
     w: 84,
     align: "center",
-    tip: "An epoch that breaks a must-pass scenario is rejected",
+    tip: "Must pass: a run fails if this scenario fails. Optional scenarios show nothing.",
   },
   {
     id: "runs",
@@ -256,6 +256,15 @@ function RowMenu({
             "solar:refresh-linear",
             STATE_ACTION_LABEL[fix],
             () => onStateAction(fix, row),
+            locked,
+          )}
+        {!archived &&
+          onStateAction &&
+          item(
+            "blocker",
+            "solar:shield-check-linear",
+            row.critical ? "Remove must pass" : "Mark must pass",
+            () => onStateAction("blocker", row, !row.critical),
             locked,
           )}
         {item(
@@ -922,11 +931,10 @@ export default function ScenarioTable({
                       />
                     </TableCell>
 
-                    {/* MUST-PASS — the triangle, toggled in place; hollow on hover. */}
+                    {/* REQUIREMENT — the must-pass badge; optional rows show nothing. */}
                     <TableCell align="center" sx={cellSx} onClick={stop}>
-                      <BlockerFlag
+                      <MustPassBadge
                         row={row}
-                        size={14}
                         locked={locked || !!row.archived}
                         onToggle={
                           onStateAction

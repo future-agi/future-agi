@@ -13,7 +13,7 @@ export function ProtectionLine({ tally, trailing = null, actions = null }) {
   if (!tally?.total) return trailing;
   const held = tally.marked + tally.memory + tally.passing;
   const parts = [
-    tally.marked && `${tally.marked} must-pass`,
+    tally.marked && `${tally.marked} must pass`,
     tally.memory && `${tally.memory} regression memory`,
     tally.passing &&
       `${tally.passing} pass every repeat${tally.latestName ? ` in ${tally.latestName}` : " today"}`,
