@@ -28226,6 +28226,8 @@ export interface CallExecutionV3DetailResponseApi {
   /** The simulated person spoke in the call; false when an actor's message or the scenario's task started it and the person never spoke. */
   has_customer: boolean;
   trial_state: TrialStateApi;
+  /** Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view. */
+  actors_enabled: boolean;
   /** False when the trial did not start from the seeded records; it is then left out of repeatability, pass^k and run comparisons. */
   comparable: boolean;
   /** @minLength 1 */
@@ -32231,6 +32233,10 @@ export interface FeedDetailCoreApi {
   row: FeedListRowApi;
   /** @minLength 1 */
   description: string;
+  /** @minLength 1 */
+  fix_hypothesis: string;
+  /** @minLength 1 */
+  falsifier: string;
   success_trace: TracePreviewApi;
   representative_trace: TracePreviewApi;
   rca?: RcaSummaryApi;

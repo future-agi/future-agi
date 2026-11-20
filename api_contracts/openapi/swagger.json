@@ -50267,7 +50267,7 @@
         "/simulate/api/agent-fix-runs/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_list",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
+                "description": "A user's epochs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "environment_id",
@@ -50314,7 +50314,7 @@
             },
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_create",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
+                "description": "A user's epochs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50385,7 +50385,7 @@
         "/simulate/api/agent-fix-runs/{id}/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_read",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
+                "description": "A user's epochs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -50418,7 +50418,7 @@
         "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_candidates_make_default",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
+                "description": "A user's epochs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50597,7 +50597,7 @@
         "/simulate/api/agent-fix-runs/{id}/stop/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_stop",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
+                "description": "A user's epochs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -161776,6 +161776,7 @@
                 "participants",
                 "has_customer",
                 "trial_state",
+                "actors_enabled",
                 "comparable",
                 "not_comparable_reason",
                 "scoring_status",
@@ -162272,6 +162273,11 @@
                 },
                 "trial_state": {
                     "$ref": "#/definitions/TrialState"
+                },
+                "actors_enabled": {
+                    "title": "Actors enabled",
+                    "description": "Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view.",
+                    "type": "boolean"
                 },
                 "comparable": {
                     "title": "Comparable",
@@ -172203,6 +172209,8 @@
             "required": [
                 "row",
                 "description",
+                "fix_hypothesis",
+                "falsifier",
                 "success_trace",
                 "representative_trace"
             ],
@@ -172213,6 +172221,18 @@
                 },
                 "description": {
                     "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "fix_hypothesis": {
+                    "title": "Fix hypothesis",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "falsifier": {
+                    "title": "Falsifier",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

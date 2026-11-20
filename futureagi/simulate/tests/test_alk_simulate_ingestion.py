@@ -2010,6 +2010,86 @@ class TestTextModeIngestion:
         cmd = call.conversation_metrics_data or {}
         assert cmd.get("turn_count") == 1
 
+    def test_text_result_ingest_keeps_the_receipt_times_on_chat_messages(
+        self, auth_client, text_run_test
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from simulate.models.chat_message import ChatMessageModel
+
+        started = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        _, call_ids = _start_and_batch(auth_client, text_run_test)
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "started_at": started.isoformat(),
+                "ended_at": (started + timedelta(seconds=10)).isoformat(),
+                "duration_seconds": 10,
+                "transcript": [
+                    {"speaker_role": "user", "content": "Where is my order?"},
+                    {"speaker_role": "assistant", "content": "It ships today."},
+                    {"speaker_role": "user", "content": "Can I change the address?"},
+                    {"speaker_role": "assistant", "content": "Yes, done."},
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.started_at == started
+        assert call.duration_seconds == 10
+        rows = list(
+            ChatMessageModel.objects.filter(call_execution=call).order_by("created_at")
+        )
+        # The transcript carries no per-message offsets, so each message is one
+        # second after the previous one, starting at the receipt's start time.
+        assert [(r.role, r.messages, r.created_at) for r in rows] == [
+            ("user", ["Where is my order?"], started),
+            ("assistant", ["It ships today."], started + timedelta(seconds=1)),
+            ("user", ["Can I change the address?"], started + timedelta(seconds=2)),
+            ("assistant", ["Yes, done."], started + timedelta(seconds=3)),
+        ]
+
+        detail = auth_client.get(f"/simulate/call-executions/{call.id}/")
+        assert detail.status_code == 200, detail.content
+        body = detail.json()
+        body = body.get("result", body)
+        assert body["start_time"].startswith("2026-01-02T03:04:05")
+        assert body["duration_seconds"] == 10
+        assert body["duration"] == 3.0
+
+    def test_text_result_ingest_places_chat_messages_at_their_receipt_offsets(
+        self, auth_client, text_run_test
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from simulate.models.chat_message import ChatMessageModel
+
+        started = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+        _, call_ids = _start_and_batch(auth_client, text_run_test)
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "started_at": started.isoformat(),
+                "ended_at": (started + timedelta(seconds=15)).isoformat(),
+                "transcript": _transcript_payload(),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        rows = ChatMessageModel.objects.filter(call_execution_id=call_ids[0]).order_by(
+            "created_at"
+        )
+        assert [(r.role, r.created_at) for r in rows] == [
+            ("user", started),
+            ("assistant", started + timedelta(seconds=6)),
+            ("user", started + timedelta(seconds=12)),
+        ]
+
     def test_text_result_ingest_folds_tool_calls_into_agent_turn(
         self, auth_client, text_run_test
     ):
@@ -2652,6 +2732,62 @@ class TestBuildVoiceRunnerJob:
         else:
             with pytest.raises(HostedRunnerBuildError):
                 self._build(organization, workspace, simulator_agent, agent)
+
+    @pytest.mark.parametrize(
+        "draft", [True, False], ids=["active-not-latest", "credential-provider"]
+    )
+    def test_records_dispatched_voice_target(
+        self, organization, workspace, simulator_agent, draft
+    ):
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_call_execution_batch,
+            create_alk_sim_test_execution,
+            precreate_alk_sim_call_executions,
+        )
+        from simulate.services.call_provider import (
+            call_agent_provider,
+            call_agent_provider_expression,
+            execution_agent_provider,
+        )
+        from simulate.services.hosted_runner import build_start_runner_job
+
+        provider = "vapi" if draft else "retell"
+        agent = self._voice_agent(
+            organization, workspace, provider=provider, assistant_id="target"
+        )
+        active = agent.create_version("active", "published", status="active")
+        if draft:
+            agent.provider = "retell"
+            agent.save(update_fields=["provider"])
+            agent.create_version("draft", "later", status="draft")
+        else:
+            active.configuration_snapshot.pop("provider", None)
+            active.save(update_fields=["configuration_snapshot"])
+        scenario = self._scenario(organization, workspace, agent, simulator_agent)
+        rt = self._run_test(organization, workspace, agent, simulator_agent, scenario)
+        te = create_alk_sim_test_execution(rt)
+        # Hosted RunTest creation only carries an explicit run pin, unlike SDK creation.
+        te.agent_version = None
+        te.save(update_fields=["agent_version"])
+        ids = precreate_alk_sim_call_executions(te)
+        job = build_start_runner_job(
+            test_execution_id=str(te.id),
+            run_test_id=str(rt.id),
+            scenario_ids=[str(scenario.id)],
+            mode="voice_webrtc",
+        )
+        assert job["metadata"]["provider"] == provider
+        assert create_alk_sim_call_execution_batch(te).call_execution_ids == ids
+        call = te.calls.get()
+        assert call.agent_version_id == active.id
+        assert call_agent_provider(call) == provider
+        assert (
+            te.calls.annotate(result_provider=call_agent_provider_expression())
+            .get()
+            .result_provider
+            == provider
+        )
+        assert execution_agent_provider(te) == provider
 
     def test_pinned_version_snapshot_wins_over_definition_in_full_build(
         self, organization, workspace, simulator_agent

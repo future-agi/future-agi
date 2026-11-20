@@ -4236,15 +4236,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         output_metadata = row.get("output_metadata")
         if not output_metadata or not isinstance(output_metadata, dict):
             output_metadata = {}
+        localization = self._observe_localization_payload(
+            row.get("id"), output_metadata, _get_request_organization(self.request)
+        )
 
         # Handle error case — consistent with retrieve() and _retrieve_clickhouse()
         if row.get("error") or row.get("output_str") == "ERROR":
             return self._gm.success_response(
                 {
-                    "error_analysis": output_metadata.get("error_analysis"),
-                    "selected_input_key": output_metadata.get("selected_input_key"),
-                    "input_data": output_metadata.get("input_data"),
-                    "input_types": output_metadata.get("input_types"),
+                    **localization,
                     "score": None,
                     "explanation": row.get("error_message"),
                     "error": True,
@@ -4268,14 +4268,52 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(
             {
-                "error_analysis": output_metadata.get("error_analysis"),
-                "selected_input_key": output_metadata.get("selected_input_key"),
-                "input_data": output_metadata.get("input_data"),
-                "input_types": output_metadata.get("input_types"),
+                **localization,
                 "score": evaluation_result,
                 "explanation": evaluation_explanation,
             }
         )
+
+    @staticmethod
+    def _observe_localization_payload(eval_logger_id, output_metadata, organization):
+        """Localization fields for one span eval result.
+
+        The result's ``output_metadata`` carries a finished analysis once CDC
+        has copied the worker's write to ClickHouse; the localization task
+        carries its status and the failure or skip reason, which never reach
+        ``output_metadata``. A completed task also fills the analysis while
+        ClickHouse still lags behind the write.
+        """
+        from model_hub.selectors.error_localizer import (
+            get_observe_error_localizer_state,
+        )
+
+        payload = {
+            "error_analysis": output_metadata.get("error_analysis"),
+            "selected_input_key": output_metadata.get("selected_input_key"),
+            "input_data": output_metadata.get("input_data"),
+            "input_types": output_metadata.get("input_types"),
+            "error_localizer_status": None,
+            "error_localizer_message": None,
+        }
+        state = get_observe_error_localizer_state(
+            eval_logger_id, organization=organization
+        )
+        if state is None:
+            return payload
+        status_value = state.get("error_localizer_status")
+        payload["error_localizer_status"] = status_value
+        if status_value in ("failed", "skipped", "completed"):
+            payload["error_localizer_message"] = state.get("error_localizer_message")
+        if status_value == "completed" and not payload["error_analysis"]:
+            for key in (
+                "error_analysis",
+                "selected_input_key",
+                "input_data",
+                "input_types",
+            ):
+                payload[key] = state.get(key)
+        return payload
 
     @validated_request(
         responses={

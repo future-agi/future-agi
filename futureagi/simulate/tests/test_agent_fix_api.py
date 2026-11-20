@@ -1,7 +1,9 @@
 """Fix my agent over HTTP: the user's fixes, the engine's calls from its sandbox, and
 the run lists that leave a fix's check runs out."""
 
+import base64
 import json
+import os
 import subprocess
 from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import timedelta
@@ -146,6 +148,126 @@ def _git(cwd, *args):
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
     ).stdout.strip()
+
+
+def _reply(status, body, headers=None):
+    return SimpleNamespace(
+        status_code=status,
+        json=lambda: body,
+        text=json.dumps(body),
+        headers=headers or {},
+    )
+
+
+class _GitData:
+    """GitHub's Git Data API over a bare repository: objects kept by their content, a
+    commit made as GitHub makes one for an App, and a ref created once, never moved.
+    ``fail`` answers the next write of a kind with ``(status, body, headers)``."""
+
+    def __init__(self, bare):
+        self.bare = bare
+        self.writes = []
+        self.made = []
+        self.fail = {}
+        self.before_ref = None
+
+    def __call__(self, method, url, **kwargs):
+        kind, _, rest = url.split("/repos/acme/agent/git/", 1)[1].partition("/")
+        if method == "GET":
+            return self._ref(rest) if kind == "ref" else self._commit(rest)
+        body = kwargs["json"]
+        self.writes.append((kind, body))
+        if kind in self.fail:
+            return _reply(*self.fail.pop(kind))
+        return getattr(self, f"_{kind}")(body)
+
+    def _run(self, *args, env=None, data=None):
+        return (
+            subprocess.run(
+                ["git", *args],
+                cwd=self.bare,
+                env=env,
+                input=data,
+                check=True,
+                capture_output=True,
+            )
+            .stdout.decode()
+            .strip()
+        )
+
+    def _head(self, ref):
+        found = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", ref],
+            cwd=self.bare,
+            capture_output=True,
+            text=True,
+        )
+        return found.stdout.strip() or None
+
+    def _ref(self, rest):
+        sha = self._head(f"refs/{rest}")
+        if sha is None:
+            return _reply(404, {"message": "Not Found"})
+        return _reply(200, {"object": {"sha": sha}})
+
+    def _commit(self, sha):
+        lines = self._run("cat-file", "-p", sha).splitlines()
+        tree = next(line.split()[1] for line in lines if line.startswith("tree "))
+        parents = [line.split()[1] for line in lines if line.startswith("parent ")]
+        return _reply(
+            200,
+            {
+                "sha": sha,
+                "tree": {"sha": tree},
+                "parents": [{"sha": p} for p in parents],
+            },
+        )
+
+    def _blobs(self, body):
+        content = base64.b64decode(body["content"])
+        return _reply(
+            201, {"sha": self._run("hash-object", "-w", "--stdin", data=content)}
+        )
+
+    def _trees(self, body):
+        index = self.bare / "fake-index"
+        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+        self._run("read-tree", body["base_tree"], env=env)
+        # A bare repository has no work tree: entries go in as index lines, and a
+        # removed path as mode 0 with the null sha.
+        lines = "".join(
+            f"{entry['mode'] if entry['sha'] else 0} {entry['sha'] or '0' * 40}"
+            f"\t{entry['path']}\n"
+            for entry in body["tree"]
+        )
+        self._run("update-index", "--index-info", env=env, data=lines.encode())
+        sha = self._run("write-tree", env=env)
+        index.unlink()
+        return _reply(201, {"sha": sha})
+
+    def _commits(self, body):
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "acme[bot]",
+            "GIT_AUTHOR_EMAIL": "7+acme[bot]@users.noreply.github.com",
+            "GIT_COMMITTER_NAME": "GitHub",
+            "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        }
+        parents = [arg for parent in body["parents"] for arg in ("-p", parent)]
+        sha = self._run(
+            "commit-tree", body["tree"], *parents, "-m", body["message"], env=env
+        )
+        self.made.append(sha)
+        return _reply(201, {"sha": sha, "verification": {"verified": True}})
+
+    def _refs(self, body):
+        if self.before_ref is not None:
+            self.before_ref(body["sha"])
+            self.before_ref = None
+        if self._head(body["ref"]) is not None:
+            return _reply(422, {"message": "Reference already exists"})
+        self._run("update-ref", body["ref"], body["sha"])
+        return _reply(201, {"ref": body["ref"], "object": {"sha": body["sha"]}})
 
 
 def _engine_candidate(client, fix_run, tree, patch_body):
@@ -1345,6 +1467,35 @@ class TestUserApi:
         temporal.start.assert_called_once_with(retried["id"])
         assert auth_client.get(f"{BASE}/{failed.id}/").json()["retryable"] is False
 
+    def test_a_failed_retry_offers_and_takes_no_second_retry(
+        self, auth_client, source_run, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(
+            source_run,
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = auth_client.post(
+                f"{BASE}/{failed.id}/retry/", {}, format="json"
+            ).json()
+        AgentFixRun.no_workspace_objects.filter(id=retried["id"]).update(
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+
+        read = auth_client.get(f"{BASE}/{retried['id']}/").json()
+        again = auth_client.post(f"{BASE}/{retried['id']}/retry/", {}, format="json")
+
+        assert read["retryable"] is False
+        assert (again.status_code, again.json()["error"]) == (409, "fix_not_retryable")
+        assert (
+            AgentFixRun.no_workspace_objects.filter(
+                environment=failed.environment
+            ).count()
+            == 2
+        )
+
     def test_a_candidates_patch_downloads(self, auth_client, source_run, storage):
         fix_run = _fix_run(source_run)
         candidate = AgentFixCandidate.no_workspace_objects.create(
@@ -1513,23 +1664,30 @@ class TestUserApi:
         HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
             payload=payload
         )
+        self.git_data = _GitData(bare)
         return SimpleNamespace(bare=bare, commit=commit)
+
+    # The repository's Git Data API, once the github fixture made the repository.
+    git_data = None
 
     def _ship(
         self, auth_client, fix_run, candidate, replies, *, head=None, tag=None, **body
     ):
         """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn.
         A branch's head and a tag's commit are the fix's commit unless ``head`` or ``tag``
-        says otherwise; the repository's default branch is main."""
+        says otherwise; the repository's default branch is main. The commit and its
+        branch go through the repository's Git Data API, kept out of the calls."""
         calls = []
         source = HostedHarnessJob.no_workspace_objects.get(id=fix_run.source_run_id)
         commit = (source.payload.get("source") or {}).get("commit_sha")
         reads = {
-            "/git/ref/heads/": {"object": {"sha": head or commit}},
-            "/commits/": {"sha": tag or commit},
+            "/git/ref/heads/main": {"object": {"sha": head or commit}},
+            "/repos/acme/agent/commits/": {"sha": tag or commit},
         }
 
         def answer(method, url, **kwargs):
+            if "/repos/acme/agent/git/" in url and not url.endswith("/heads/main"):
+                return self.git_data(method, url, **kwargs)
             if method == "GET":
                 found = next(
                     (body for part, body in reads.items() if part in url), None
@@ -1537,12 +1695,9 @@ class TestUserApi:
                 if found is None and url.endswith("/repos/acme/agent"):
                     found = {"default_branch": "main"}
                 if found is not None:
-                    return SimpleNamespace(status_code=200, json=lambda: found, text="")
+                    return _reply(200, found)
             calls.append((method, url, kwargs))
-            status, body = replies.pop(0)
-            return SimpleNamespace(
-                status_code=status, json=lambda: body, text=json.dumps(body)
-            )
+            return _reply(*replies.pop(0))
 
         with patch(
             "simulate.services.agent_fix_github.requests.request", side_effect=answer
@@ -1574,6 +1729,13 @@ class TestUserApi:
             _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'refund first'"
         )
         assert _git(github.bare, "rev-parse", f"{branch}~1") == github.commit
+        # GitHub signs a commit the App makes with no author, committer or signature of
+        # its own: it reads Verified, under the App's name and icon.
+        [made] = [body for kind, body in self.git_data.writes if kind == "commits"]
+        assert (sorted(made), made["parents"]) == (
+            ["message", "parents", "tree"],
+            [github.commit],
+        )
         [(method, url, sent)] = calls
         assert (method, url) == (
             "POST",
@@ -1637,6 +1799,9 @@ class TestUserApi:
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "held_back_scenario_keys": ["held-0", "held-1"]}
+        )
 
         response, [(_, _, sent)] = self._ship(
             auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
@@ -1648,7 +1813,35 @@ class TestUserApi:
         assert sent["json"]["body"].startswith("**Limited validation.**")
         assert "Verified by" not in sent["json"]["body"]
 
-    def test_a_verified_fix_ships_as_a_normal_pull_request(
+    def test_a_fix_with_nothing_held_back_ships_as_a_draft_proven_on_the_targets_only(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        # With nothing held back the verdict has only the targets' rate.
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            verdict={"reason": "passed every tier", "target_pass_rate": [0, 0.625]}
+        )
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["draft"] is True
+        assert "proven on the targets only" in sent["json"]["title"]
+        assert sent["json"]["body"].startswith(
+            "**Proven on the targets only.** No failing cases were held back from the"
+            " epoch to verify it; it takes 4 or more."
+        )
+        assert (
+            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            in (sent["json"]["body"])
+        )
+        assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
+        assert "limited validation" not in sent["json"]["body"].lower()
+        assert "Verified" not in sent["json"]["body"]
+
+    def test_a_normal_result_ships_as_a_ready_pull_request_with_no_label(
         self, auth_client, source_run, github
     ):
         fix_run, candidate = self._proven(source_run, "github")
@@ -1673,10 +1866,12 @@ class TestUserApi:
 
         assert response.status_code == 200, response.content
         assert sent["json"]["draft"] is False
-        assert "limited validation" not in sent["json"]["title"].lower()
-        assert "limited validation" not in sent["json"]["body"].lower()
+        # A normal result carries no strength label, and never says Verified.
+        for label in ("limited validation", "proven on the targets only", "verified"):
+            assert label not in sent["json"]["title"].lower()
+            assert label not in sent["json"]["body"].lower()
         assert (
-            "Verified by Epoch: held-back pass rate 0% → 61%, target pass rate"
+            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
             " 0% → 63%, broke none\n" in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
@@ -1702,7 +1897,7 @@ class TestUserApi:
 
         assert response.status_code == 200, response.content
         assert [sent["json"]["draft"] for _, _, sent in calls] == [True, False]
-        assert "limited validation" in calls[1][2]["json"]["title"]
+        assert "proven on the targets only" in calls[1][2]["json"]["title"]
 
     def test_a_pull_request_github_already_has_is_found_not_duplicated(
         self, auth_client, source_run, github
@@ -1712,10 +1907,12 @@ class TestUserApi:
         branch = _git(
             github.bare, "rev-parse", f"futureagi/fix-{str(fix_run.id)[:8]}-1"
         )
-        # The URL was not kept: the same commit is pushed again and GitHub's PR is found.
+        # The URL was not kept: the branch already holds the change, so nothing is
+        # written again, and GitHub's PR is found.
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             pull_request_url=""
         )
+        written = len(self.git_data.writes)
 
         response, calls = self._ship(
             auth_client,
@@ -1740,6 +1937,137 @@ class TestUserApi:
             _git(github.bare, "rev-parse", f"futureagi/fix-{str(fix_run.id)[:8]}-1")
             == branch
         )
+        assert len(self.git_data.writes) == written
+
+    def test_a_retry_whose_description_changed_keeps_the_branch_it_pushed(
+        self, auth_client, source_run, github
+    ):
+        # The body says more once the evals finish grading; the change is the same.
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        self.git_data.fail["refs"] = (500, {"message": "Server Error"})
+        failed, _ = self._ship(auth_client, fix_run, candidate, [])
+        self.git_data.fail.clear()
+        # The ref did go through on GitHub's side before it answered.
+        [sha] = self.git_data.made
+        _git(github.bare, "update-ref", f"refs/heads/{branch}", sha)
+
+        with patch.object(
+            agent_fix_github, "_description", return_value=("Epoch: change", "new")
+        ):
+            response, calls = self._ship(
+                auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+            )
+
+        assert (failed.status_code, failed.json()["error"]) == (
+            502,
+            "fix_github_push_failed",
+        )
+        assert response.status_code == 200, response.content
+        assert _git(github.bare, "rev-parse", branch) == sha
+        assert self.git_data.made == [sha]
+
+    def test_a_branch_made_by_another_ship_at_the_same_time_is_kept(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        # Another ship of the same candidate made the branch first, with the same change.
+        self.git_data.before_ref = lambda sha: _git(
+            github.bare, "update-ref", f"refs/heads/{branch}", sha
+        )
+
+        response, _ = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert (
+            _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'refund first'"
+        )
+
+    @pytest.mark.parametrize(
+        ("kind", "reply", "refusal"),
+        [
+            (
+                "blobs",
+                (403, {"message": "Resource not accessible by integration"}),
+                (422, "fix_github_no_write_access", False),
+            ),
+            (
+                "blobs",
+                (
+                    403,
+                    {"message": "API rate limit exceeded"},
+                    {"x-ratelimit-remaining": "0"},
+                ),
+                (502, "fix_github_rate_limited", True),
+            ),
+            (
+                "trees",
+                (429, {"message": "secondary rate limit"}, {"retry-after": "60"}),
+                (502, "fix_github_rate_limited", True),
+            ),
+            (
+                "trees",
+                (502, {"message": "Bad Gateway"}),
+                (502, "fix_github_push_failed", True),
+            ),
+            (
+                "commits",
+                (422, {"message": "Tree SHA does not exist"}),
+                (502, "fix_github_push_failed", False),
+            ),
+            # GitHub's tree is not the one the patch made here: nothing is committed.
+            ("trees", (201, {"sha": "0" * 40}), (502, "fix_github_push_failed", False)),
+        ],
+    )
+    def test_a_write_github_refuses_fails_the_ship_and_moves_no_branch(
+        self, auth_client, source_run, github, kind, reply, refusal
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        self.git_data.fail[kind] = reply
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [])
+
+        status, code, retryable = refusal
+        assert (
+            response.status_code,
+            response.json()["error"],
+            response.json().get("retryable", False),
+            calls,
+        ) == (status, code, retryable, [])
+        assert "refs" not in [kind for kind, _ in self.git_data.writes]
+        assert self.git_data._head(f"refs/heads/{branch}") is None
+
+    def test_a_candidate_that_deletes_a_file_ships_without_it(
+        self, api_client, auth_client, source_run, storage, github
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        tree = {"policy.md": b"Refund first.\n"}
+        # Only the tree is checked; the engine's patch is beside it.
+        engine_patch = (
+            b"diff --git a/agent.py b/agent.py\ndeleted file mode 100644\n"
+            b"--- a/agent.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-PROMPT = ''\n"
+        )
+        candidate = _engine_candidate(api_client, fix_run, tree, engine_patch)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=AgentFixCandidate.Outcome.WINNER
+        )
+        close_fix_run(fix_run.id, AgentFixRun.State.READY)
+
+        response, _ = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        assert _git(github.bare, "ls-tree", "-r", "--name-only", branch) == "policy.md"
+        [trees] = [body for kind, body in self.git_data.writes if kind == "trees"]
+        assert {"path": "agent.py", "mode": "100644", "type": "blob", "sha": None} in (
+            trees["tree"]
+        )
 
     def test_a_branch_someone_changed_is_not_overwritten(
         self, auth_client, source_run, github, tmp_path
@@ -1760,6 +2088,8 @@ class TestUserApi:
             [],
         )
         assert _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'mine'"
+        # Checked before anything is uploaded.
+        assert self.git_data.writes == []
 
     def test_a_repository_name_that_could_leave_its_path_is_refused(
         self, auth_client, source_run, github
@@ -2333,7 +2663,7 @@ def test_a_plan_refusal_names_the_feature_epoch():
 
 
 @pytest.mark.parametrize(
-    "held_back, limited", [(0, True), (3, True), (4, False), (6, False)]
+    "held_back, limited", [(0, False), (3, True), (4, False), (6, False)]
 )
 def test_too_few_held_back_cases_limit_a_fix_s_validation(
     auth_client, environment, source_run, held_back, limited

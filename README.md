@@ -164,8 +164,8 @@ copy the new API key and secret key from the creation dialog before closing it.
 **3. Send your first trace**
 
 ```bash
-pip install fi-instrumentation-otel
-export FI_API_KEY="<your API key>" FI_SECRET_KEY="<your secret key>" FI_BASE_URL="http://localhost:4318"
+pip install -U "fi-instrumentation-otel>=1.5.0"
+export FI_API_KEY="<your API key>" FI_SECRET_KEY="<your secret key>" FI_BASE_URL="http://localhost:8000" FI_TRACES_URL="http://localhost:4318"
 ```
 
 ```python
@@ -179,8 +179,11 @@ tracer_provider.force_flush()
 ```
 
 Open **Tracing** in the sidebar: `my-first-project` holds your first span.
-`http://localhost:4318` is this install's trace collector; it listens on this
-machine only.
+`FI_BASE_URL` is this install's API and `FI_TRACES_URL` its trace collector
+(`http://localhost:4318`, which listens on this machine only). `FI_TRACES_URL`
+needs fi-instrumentation-otel 1.5.0+ (Python) or @traceai/fi-core 1.4.0+
+(TypeScript, `npm install "@traceai/fi-core@^1.4.0"`); with an older SDK, set
+`FI_BASE_URL` to the collector URL instead.
 
 | | **Standalone** (default) | **Distributed** (at scale) |
 | --- | --- | --- |
