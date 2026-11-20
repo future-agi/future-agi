@@ -104,7 +104,7 @@ class _FixRunPages(ExtendedPageNumberPagination):
 
 
 class AgentFixRunViewSet(viewsets.ViewSet):
-    """A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+    """A user's epochs: start one from a finished run, follow it, stop it,
     and ship its winner: the environment's default, or a GitHub pull request."""
 
     permission_classes = [IsAuthenticated]

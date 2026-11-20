@@ -37291,7 +37291,7 @@ export const SimulateApiAgentFixIssuesStopResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 
@@ -37717,7 +37717,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysItemMax = 255;
@@ -37889,7 +37889,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsReadParams = zod.object({
@@ -38272,7 +38272,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
 });
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsCandidatesMakeDefaultParams = zod.object({
@@ -38345,7 +38345,7 @@ export const SimulateApiAgentFixRunsRetryParams = zod.object({
 export const SimulateApiAgentFixRunsRetryBody = zod.object({});
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsStopParams = zod.object({
@@ -62615,6 +62615,11 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         "How the trial ran that the person should know, e.g. a scenario fault that did not take effect.",
       ),
   }),
+  actors_enabled: zod
+    .boolean()
+    .describe(
+      "Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view.",
+    ),
   comparable: zod
     .boolean()
     .describe(
