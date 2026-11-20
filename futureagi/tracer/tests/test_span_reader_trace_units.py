@@ -60,7 +60,8 @@ def world():
         moved = str(uuid.uuid4())
         _root(client, project, t["moved"], id=moved)
         _root(client, project, t["moved"], session=session, id=moved, _version=2)
-        # A root that left its session in a later version has none now.
+        # A root that left its session in a later version has none now (while the
+        # two versions sit in separate parts; a merge keeps only the latest).
         left = str(uuid.uuid4())
         _root(client, project, t["left"], session=session, id=left)
         _root(client, project, t["left"], id=left, _version=2)
@@ -137,6 +138,10 @@ def test_the_read_is_pinned_and_capped():
     kwargs = reader._client.query.call_args.kwargs
     assert "PREWHERE project_id = %(pid)s AND trace_id IN %(tids)s" in sql
     assert "FINAL" not in sql
+    # argMax skips a NULL argument, so a root that left its session would keep the
+    # old one; the tuple keeps the latest NULL. The real-ClickHouse row ("left")
+    # shows it only while its two versions are not merged yet, so this pins it.
+    assert "argMax(tuple(trace_session_id), _version).1 AS trace_session_id" in sql
     assert kwargs["parameters"] == {"pid": "p", "tids": (trace,)}
     assert kwargs["settings"]["max_execution_time"] > 0
     assert kwargs["settings"]["max_memory_usage"] > 0
