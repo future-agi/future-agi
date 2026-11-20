@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 import uuid
 import zlib
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -778,6 +778,31 @@ def _in_agent_reach(member_name: str, subfolder: str | None) -> bool:
     return parent in {"/".join(parts[:depth]) for depth in range(len(parts))}
 
 
+def _source_texts(archive: bytes, subfolder: str | None) -> Iterator[str]:
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+        scanned = 0
+        for member in tar:
+            if not member.isfile() or member.size > _SOURCE_SCAN_MAX_FILE_BYTES:
+                continue
+            if not _in_agent_reach(member.name, subfolder):
+                continue
+            path = "/" + member.name.lower()
+            if any(skip in path for skip in _SOURCE_SCAN_SKIP_DIRS):
+                continue
+            name = path.rsplit("/", 1)[-1]
+            if name not in _SOURCE_SCAN_NAMES and not name.endswith(
+                _SOURCE_SCAN_SUFFIXES
+            ):
+                continue
+            handle = tar.extractfile(member)
+            if handle is None:
+                continue
+            scanned += 1
+            yield handle.read().decode("utf-8", "ignore")
+            if scanned >= _SOURCE_SCAN_MAX_FILES:
+                return
+
+
 def detect_source_credentials(
     archive: bytes, *, subfolder: str | None = None
 ) -> tuple[list[str], list[str], int]:
@@ -787,35 +812,31 @@ def detect_source_credentials(
     required_files: set[str] = set()
     scanned = 0
     try:
-        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
-            for member in tar:
-                if not member.isfile() or member.size > _SOURCE_SCAN_MAX_FILE_BYTES:
-                    continue
-                if not _in_agent_reach(member.name, subfolder):
-                    continue
-                path = "/" + member.name.lower()
-                if any(skip in path for skip in _SOURCE_SCAN_SKIP_DIRS):
-                    continue
-                name = path.rsplit("/", 1)[-1]
-                if name not in _SOURCE_SCAN_NAMES and not name.endswith(
-                    _SOURCE_SCAN_SUFFIXES
-                ):
-                    continue
-                handle = tar.extractfile(member)
-                if handle is None:
-                    continue
-                text = handle.read().decode("utf-8", "ignore")
-                scanned += 1
-                for connector, signature in _CONNECTOR_SIGNATURES.items():
-                    if connector not in found and signature.search(text):
-                        found.add(connector)
-                if any(signature.search(text) for signature in _VERTEX_ADC_SIGNATURES):
-                    required_files.add(TARGET_GOOGLE_ADC_ALIAS)
-                if scanned >= _SOURCE_SCAN_MAX_FILES:
-                    break
+        for text in _source_texts(archive, subfolder):
+            scanned += 1
+            for connector, signature in _CONNECTOR_SIGNATURES.items():
+                if connector not in found and signature.search(text):
+                    found.add(connector)
+            if any(signature.search(text) for signature in _VERTEX_ADC_SIGNATURES):
+                required_files.add(TARGET_GOOGLE_ADC_ALIAS)
     except (tarfile.TarError, OSError, EOFError):
         return [], [], scanned
     return sorted(found), sorted(required_files), scanned
+
+
+_API_KEY_NAME = re.compile(r"\b([A-Z][A-Z0-9_]*_API_KEY)\b")
+
+
+def detect_source_api_keys(
+    archive: bytes, *, subfolder: str | None = None
+) -> list[str]:
+    names: set[str] = set()
+    try:
+        for text in _source_texts(archive, subfolder):
+            names.update(_API_KEY_NAME.findall(text))
+    except (tarfile.TarError, OSError, EOFError):
+        return []
+    return sorted(names)
 
 
 def detect_source_connectors(archive: bytes) -> tuple[list[str], int]:

@@ -1338,6 +1338,7 @@ def _run_preflight(
             list(scan.get("detected_connectors") or []),
             list(scan.get("required_files") or []),
             int(scan.get("scanned_files") or 0),
+            list(scan.get("api_keys") or []),
         )
         if scan is not None
         else None
@@ -1347,7 +1348,7 @@ def _run_preflight(
             organization, secret_payload, analysis, workspace_id=workspace_id
         )
     )
-    detected, required_files, scanned = analysis
+    detected, required_files, scanned, api_keys = analysis
     passed = not any(check["status"] == "failed" for check in secret_checks)
     error = source_error.code if source_error is not None else None
     found = (
@@ -1355,6 +1356,7 @@ def _run_preflight(
             "detected_connectors": sorted(str(name) for name in detected),
             "required_files": sorted(str(name) for name in required_files),
             "scanned_files": int(scanned or 0),
+            "api_keys": sorted(str(name) for name in api_keys),
         }
         if source_error is None
         else None
@@ -2669,17 +2671,21 @@ def check_creation_credentials(
     """Check a creation's credentials live, reusing its source scan; refused with 422
     when they fail."""
     from simulate.serializers.harness_job import present_provider_aliases
-    from simulate.services.harness_provider import _connector_credential_readiness
+    from simulate.services.harness_provider import (
+        _connector_credential_readiness,
+        scan_parts,
+    )
 
-    detected, required_files, scanned = (
+    detected, required_files, scanned, api_keys = scan_parts(
         source_analysis
-        if isinstance(source_analysis, tuple | list) and len(source_analysis) == 3
-        else ([], [], 0)
+        if isinstance(source_analysis, tuple | list) and len(source_analysis) in (3, 4)
+        else ([], [], 0, [])
     )
     scan = {
         "detected_connectors": sorted(str(name) for name in detected or []),
         "required_files": sorted(str(name) for name in required_files or []),
         "scanned_files": int(scanned or 0),
+        "api_keys": sorted(str(name) for name in api_keys or []),
     }
     try:
         passed, report = _run_preflight(
@@ -2708,6 +2714,7 @@ def check_creation_credentials(
         scan["detected_connectors"],
         scan["scanned_files"],
         scan["required_files"],
+        scan["api_keys"],
     )
     agent = payload["agent"]
     # A name public config meets (a LiveKit URL) is never asked of the credentials.

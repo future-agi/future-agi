@@ -600,6 +600,7 @@ def _connector_credential_readiness(
     detected_connectors=(),
     scanned_files=0,
     required_credential_files=(),
+    source_api_keys=(),
 ):
     """Readiness report the create form renders: which target aliases are still missing.
 
@@ -624,6 +625,17 @@ def _connector_credential_readiness(
     present = present_provider_aliases(agent)
     required_files = set() if remote else set(required_credential_files)
     missing.extend(sorted(required_files - present))
+    provided = present | {
+        str(name).upper()
+        for name in (payload["source"].get("environment_values") or {})
+    }
+    family_aliases = {
+        alias for aliases in CONNECTOR_ALIASES.values() for alias in aliases
+    }
+    api_keys = (
+        [] if remote else sorted(set(source_api_keys) - family_aliases - required_files)
+    )
+    api_missing = [name for name in api_keys if name not in provided]
     if connector == "auto":
         families = dict(CONNECTOR_ALIASES)
         # A complete family of any kind satisfies the run (see missing_provider_credentials),
@@ -663,6 +675,15 @@ def _connector_credential_readiness(
         }
         for alias in sorted(required_files)
     )
+    requirements.extend(
+        {
+            "environment_name": name,
+            "purpose": "API key the agent's code reads",
+            "required": True,
+            "status": "missing" if name in api_missing else "configured",
+        }
+        for name in api_keys
+    )
     choices = []
     if connector == "auto" and len(required) > 1:
         choices.append(
@@ -678,7 +699,7 @@ def _connector_credential_readiness(
             }
         )
     return {
-        "missing": missing,
+        "missing": [*missing, *api_missing],
         "report": {
             "scanned_files": scanned_files,
             "detected_connectors": detected if connector == "auto" else [connector],
@@ -693,6 +714,7 @@ def _preflight_source_connectors(organization, payload, workspace_id=None):
     credential family the agent actually uses instead of every family."""
     from simulate.services.hosted_harness_gateway import (
         HostedSourceAcquirer,
+        detect_source_api_keys,
         detect_source_credentials,
     )
 
@@ -700,17 +722,30 @@ def _preflight_source_connectors(organization, payload, workspace_id=None):
     # is checked through its authenticated target lookup below, not by invoking
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
-        return [], [], 0
+        return [], [], 0, []
     probe = HostedHarnessJob(
         organization=organization, workspace_id=workspace_id, payload=payload
     )
     archive, _commit = HostedSourceAcquirer().acquire(probe)
+    subfolder = payload["source"].get("subfolder")
     detected, required_files, scanned = detect_source_credentials(
-        archive, subfolder=payload["source"].get("subfolder")
+        archive, subfolder=subfolder
     )
+    api_keys = detect_source_api_keys(archive, subfolder=subfolder)
     if payload["agent"]["connector"] != "auto":
         detected = []
-    return detected, required_files, scanned
+    return detected, required_files, scanned, api_keys
+
+
+def scan_parts(analysis) -> tuple[list[str], list[str], int, list[str]]:
+    if len(analysis) == 2:
+        detected, scanned = analysis
+        return list(detected), [], scanned, []
+    if len(analysis) == 3:
+        detected, required_files, scanned = analysis
+        return list(detected), list(required_files), scanned, []
+    detected, required_files, scanned, api_keys = analysis
+    return list(detected), list(required_files), scanned, list(api_keys)
 
 
 def _validate_required_credential_files(
@@ -721,7 +756,7 @@ def _validate_required_credential_files(
     from simulate.services.hosted_harness import HostedHarnessError
 
     analysis = _preflight_source_connectors(organization, payload, workspace_id)
-    required_files = analysis[1] if len(analysis) == 3 else []
+    required_files = scan_parts(analysis)[1]
     present = {
         str(alias).upper()
         for alias in (*(payload["agent"].get("secret_refs") or {}), *available_names)
@@ -1051,16 +1086,10 @@ def run_preflight_checks(
             )
         except HostedHarnessError as exc:
             source_error = exc
-            analysis = ([], [], 0)
-    # Keep two-item patched return values compatible with tests and custom
-    # providers written before credential-file discovery was added.
-    if len(analysis) == 2:
-        detected, scanned = analysis
-        required_files = []
-    else:
-        detected, required_files, scanned = analysis
+            analysis = ([], [], 0, [])
+    detected, required_files, scanned, api_keys = scan_parts(analysis)
     secret_readiness = _connector_credential_readiness(
-        secret_payload, detected, scanned, required_files
+        secret_payload, detected, scanned, required_files, api_keys
     )
     secret_probe = _preflight_credential_probe(secret_payload)
     secret_readiness["report"]["probe"] = secret_probe
@@ -1078,7 +1107,7 @@ def run_preflight_checks(
         secret_readiness,
         secret_probe,
         source_error,
-        (detected, required_files, scanned),
+        (detected, required_files, scanned, api_keys),
     )
 
 
