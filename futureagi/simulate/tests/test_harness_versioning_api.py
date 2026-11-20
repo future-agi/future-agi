@@ -440,7 +440,9 @@ class TestVersionsList:
         version_selects = [
             re.sub(
                 r"\"documents\" -> '(stage_outputs|release_checks)'"
-                r"|\"documents\" ->> 'uncertified'",
+                r"|\"documents\" ->> 'uncertified'"
+                # Whether a set-aside draft became a saved version: a key test, never the column.
+                r"|\"documents\" \? 'saved_version_id'",
                 "",
                 re.sub(r"\"simulate_harness_environment_version\"\.", "", sql),
             )
