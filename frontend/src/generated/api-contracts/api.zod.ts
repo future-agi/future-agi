@@ -44713,12 +44713,36 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
             id: zod.string().uuid().optional(),
             label: zod.string().min(1).optional(),
           }),
+          checked: zod
+            .boolean()
+            .describe(
+              "The saved versions were re-checked; else the state is unconfirmed.",
+            ),
           fix_id: zod.string().uuid(),
         })
         .optional()
         .describe(
           "What a saved fix did for this row, on the versions it saved from.",
         ),
+      fix_action: zod
+        .object({
+          available: zod
+            .boolean()
+            .describe("The builder chat can fix this row and no fix is on it."),
+          held: zod
+            .enum([
+              "fix_needs_defaults",
+              "chat_unavailable",
+              "rebuild_running",
+              "fix_running",
+              "unsaved_changes",
+            ])
+            .describe(
+              "Why a fix POST would be refused now; null when it would be taken or the row is not available. Usage limits are checked on the POST only.",
+            ),
+        })
+        .optional()
+        .describe("Whether Fix can run on this row now; on live reads only."),
       needed_by: zod
         .number()
         .min(
@@ -45323,12 +45347,38 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
               id: zod.string().uuid().optional(),
               label: zod.string().min(1).optional(),
             }),
+            checked: zod
+              .boolean()
+              .describe(
+                "The saved versions were re-checked; else the state is unconfirmed.",
+              ),
             fix_id: zod.string().uuid(),
           })
           .optional()
           .describe(
             "What a saved fix did for this row, on the versions it saved from.",
           ),
+        fix_action: zod
+          .object({
+            available: zod
+              .boolean()
+              .describe(
+                "The builder chat can fix this row and no fix is on it.",
+              ),
+            held: zod
+              .enum([
+                "fix_needs_defaults",
+                "chat_unavailable",
+                "rebuild_running",
+                "fix_running",
+                "unsaved_changes",
+              ])
+              .describe(
+                "Why a fix POST would be refused now; null when it would be taken or the row is not available. Usage limits are checked on the POST only.",
+              ),
+          })
+          .optional()
+          .describe("Whether Fix can run on this row now; on live reads only."),
         needed_by: zod
           .number()
           .min(
@@ -45750,6 +45800,10 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesFixReadParams =
     id: zod.string(),
   });
 
+export const simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseFixOutcomeFixedMin = 0;
+
+export const simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseFixOutcomeTotalMin = 0;
+
 export const SimulateApiHarnessEnvironmentsCapabilitiesFixReadResponse =
   zod.object({
     fix: zod
@@ -45818,6 +45872,40 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesFixReadResponse =
         draft: zod
           .boolean()
           .describe("Ended without saving; its changes wait in unsaved edits."),
+        active: zod.boolean().describe("The run is still working."),
+        accepts_rows: zod
+          .boolean()
+          .describe(
+            "The run takes more rows in this state; each row's fix_action says whether a POST would be taken now.",
+          ),
+        outcome: zod
+          .object({
+            kind: zod
+              .enum([
+                "fixed",
+                "partly_fixed",
+                "could_not_fix",
+                "saved_unchecked",
+                "unsaved",
+                "draft_gone",
+              ])
+              .describe(
+                "fixed / partly_fixed / could_not_fix by the rows' lines; saved_unchecked: saved but the re-check didn't finish; unsaved: the fix's changes wait in unsaved changes nobody edited since; draft_gone: they no longer wait there.",
+              ),
+            fixed: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseFixOutcomeFixedMin,
+              ),
+            total: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsCapabilitiesFixReadResponseFixOutcomeTotalMin,
+              )
+              .describe("The rows the run tried."),
+            message: zod.string(),
+          })
+          .describe("How the run came out; null while it is active."),
         error: zod.object({
           code: zod.string().min(1),
           message: zod.string(),
@@ -66509,11 +66597,39 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                   id: zod.string().uuid().optional(),
                   label: zod.string().min(1).optional(),
                 }),
+                checked: zod
+                  .boolean()
+                  .describe(
+                    "The saved versions were re-checked; else the state is unconfirmed.",
+                  ),
                 fix_id: zod.string().uuid(),
               })
               .optional()
               .describe(
                 "What a saved fix did for this row, on the versions it saved from.",
+              ),
+            fix_action: zod
+              .object({
+                available: zod
+                  .boolean()
+                  .describe(
+                    "The builder chat can fix this row and no fix is on it.",
+                  ),
+                held: zod
+                  .enum([
+                    "fix_needs_defaults",
+                    "chat_unavailable",
+                    "rebuild_running",
+                    "fix_running",
+                    "unsaved_changes",
+                  ])
+                  .describe(
+                    "Why a fix POST would be refused now; null when it would be taken or the row is not available. Usage limits are checked on the POST only.",
+                  ),
+              })
+              .optional()
+              .describe(
+                "Whether Fix can run on this row now; on live reads only.",
               ),
           }),
         ),

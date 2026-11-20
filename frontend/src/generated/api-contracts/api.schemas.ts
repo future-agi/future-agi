@@ -21174,7 +21174,33 @@ export interface HarnessCapabilityFixResultApi {
   state: HarnessCapabilityFixResultApiState;
   environment: RunVersionLabelApi;
   suite: RunVersionLabelApi;
+  /** The saved versions were re-checked; else the state is unconfirmed. */
+  checked: boolean;
   fix_id: string;
+}
+
+/**
+ * Why a fix POST would be refused now; null when it would be taken or the row is not available. Usage limits are checked on the POST only.
+ */
+export type HarnessCapabilityFixActionApiHeld =
+  (typeof HarnessCapabilityFixActionApiHeld)[keyof typeof HarnessCapabilityFixActionApiHeld];
+
+export const HarnessCapabilityFixActionApiHeld = {
+  fix_needs_defaults: "fix_needs_defaults",
+  chat_unavailable: "chat_unavailable",
+  rebuild_running: "rebuild_running",
+  fix_running: "fix_running",
+  unsaved_changes: "unsaved_changes",
+} as const;
+
+/**
+ * Whether Fix can run on this row now; on live reads only.
+ */
+export interface HarnessCapabilityFixActionApi {
+  /** The builder chat can fix this row and no fix is on it. */
+  available: boolean;
+  /** Why a fix POST would be refused now; null when it would be taken or the row is not available. Usage limits are checked on the POST only. */
+  held: HarnessCapabilityFixActionApiHeld;
 }
 
 /**
@@ -21224,6 +21250,7 @@ export interface HarnessCapabilitySelectionRowApi {
   consequence: string;
   fix_progress?: HarnessCapabilityFixProgressApi;
   fix_result?: HarnessCapabilityFixResultApi;
+  fix_action?: HarnessCapabilityFixActionApi;
   /**
    * Selected cases that need this row.
    * @minimum 0
@@ -21620,6 +21647,37 @@ export interface HarnessReadinessFixSavedApi {
   suite: RunVersionLabelApi;
 }
 
+/**
+ * fixed / partly_fixed / could_not_fix by the rows' lines; saved_unchecked: saved but the re-check didn't finish; unsaved: the fix's changes wait in unsaved changes nobody edited since; draft_gone: they no longer wait there.
+ */
+export type HarnessReadinessFixOutcomeApiKind =
+  (typeof HarnessReadinessFixOutcomeApiKind)[keyof typeof HarnessReadinessFixOutcomeApiKind];
+
+export const HarnessReadinessFixOutcomeApiKind = {
+  fixed: "fixed",
+  partly_fixed: "partly_fixed",
+  could_not_fix: "could_not_fix",
+  saved_unchecked: "saved_unchecked",
+  unsaved: "unsaved",
+  draft_gone: "draft_gone",
+} as const;
+
+/**
+ * How the run came out; null while it is active.
+ */
+export interface HarnessReadinessFixOutcomeApi {
+  /** fixed / partly_fixed / could_not_fix by the rows' lines; saved_unchecked: saved but the re-check didn't finish; unsaved: the fix's changes wait in unsaved changes nobody edited since; draft_gone: they no longer wait there. */
+  kind: HarnessReadinessFixOutcomeApiKind;
+  /** @minimum 0 */
+  fixed: number;
+  /**
+   * The rows the run tried.
+   * @minimum 0
+   */
+  total: number;
+  message: string;
+}
+
 export interface HarnessReadinessFixErrorApi {
   /** @minLength 1 */
   code: string;
@@ -21663,6 +21721,11 @@ export interface HarnessReadinessFixApi {
   saved: HarnessReadinessFixSavedApi;
   /** Ended without saving; its changes wait in unsaved edits. */
   draft: boolean;
+  /** The run is still working. */
+  active: boolean;
+  /** The run takes more rows in this state; each row's fix_action says whether a POST would be taken now. */
+  accepts_rows: boolean;
+  outcome: HarnessReadinessFixOutcomeApi;
   error: HarnessReadinessFixErrorApi;
   pairing: HarnessReadinessFixPairingApi;
 }
@@ -30862,6 +30925,7 @@ export interface HarnessCapabilityRowApi {
   consequence: string;
   fix_progress?: HarnessCapabilityFixProgressApi;
   fix_result?: HarnessCapabilityFixResultApi;
+  fix_action?: HarnessCapabilityFixActionApi;
 }
 
 /**

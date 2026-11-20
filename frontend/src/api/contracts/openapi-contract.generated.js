@@ -108718,6 +108718,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         fix_result: {
           $ref: "#/definitions/HarnessCapabilityFixResult",
         },
+        fix_action: {
+          $ref: "#/definitions/HarnessCapabilityFixAction",
+        },
         needed_by: {
           title: "Needed by",
           description: "Selected cases that need this row.",
@@ -111607,6 +111610,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "lines",
         "saved",
         "draft",
+        "active",
+        "accepts_rows",
+        "outcome",
         "error",
         "pairing",
       ],
@@ -111682,6 +111688,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "Ended without saving; its changes wait in unsaved edits.",
           type: "boolean",
+        },
+        active: {
+          title: "Active",
+          description: "The run is still working.",
+          type: "boolean",
+        },
+        accepts_rows: {
+          title: "Accepts rows",
+          description:
+            "The run takes more rows in this state; each row's fix_action says whether a POST would be taken now.",
+          type: "boolean",
+        },
+        outcome: {
+          $ref: "#/definitions/HarnessReadinessFixOutcome",
         },
         error: {
           $ref: "#/definitions/HarnessReadinessFixError",
@@ -132912,6 +132932,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    HarnessCapabilityFixAction: {
+      description: "Whether Fix can run on this row now; on live reads only.",
+      required: ["available", "held"],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          description: "The builder chat can fix this row and no fix is on it.",
+          type: "boolean",
+        },
+        held: {
+          title: "Held",
+          description:
+            "Why a fix POST would be refused now; null when it would be taken or the row is not available. Usage limits are checked on the POST only.",
+          type: "string",
+          enum: [
+            "fix_needs_defaults",
+            "chat_unavailable",
+            "rebuild_running",
+            "fix_running",
+            "unsaved_changes",
+          ],
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessCapabilityFixProgress: {
       description: "Where a fix run stands on this row; on live reads only.",
       required: ["state", "reason", "waiting_on", "fix_id"],
@@ -132950,7 +132997,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     HarnessCapabilityFixResult: {
       description:
         "What a saved fix did for this row, on the versions it saved from.",
-      required: ["state", "environment", "suite", "fix_id"],
+      required: ["state", "environment", "suite", "checked", "fix_id"],
       type: "object",
       properties: {
         state: {
@@ -132963,6 +133010,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         suite: {
           $ref: "#/definitions/RunVersionLabel",
+        },
+        checked: {
+          title: "Checked",
+          description:
+            "The saved versions were re-checked; else the state is unconfirmed.",
+          type: "boolean",
         },
         fix_id: {
           title: "Fix id",
@@ -134116,6 +134169,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    HarnessReadinessFixOutcome: {
+      description: "How the run came out; null while it is active.",
+      required: ["kind", "fixed", "total", "message"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          description:
+            "fixed / partly_fixed / could_not_fix by the rows' lines; saved_unchecked: saved but the re-check didn't finish; unsaved: the fix's changes wait in unsaved changes nobody edited since; draft_gone: they no longer wait there.",
+          type: "string",
+          enum: [
+            "fixed",
+            "partly_fixed",
+            "could_not_fix",
+            "saved_unchecked",
+            "unsaved",
+            "draft_gone",
+          ],
+        },
+        fixed: {
+          title: "Fixed",
+          type: "integer",
+          minimum: 0,
+        },
+        total: {
+          title: "Total",
+          description: "The rows the run tried.",
+          type: "integer",
+          minimum: 0,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
     },
     HarnessReadinessFixPairing: {
       description: "The environment and suite versions the run started from.",
@@ -144711,6 +144801,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         fix_result: {
           $ref: "#/definitions/HarnessCapabilityFixResult",
+        },
+        fix_action: {
+          $ref: "#/definitions/HarnessCapabilityFixAction",
         },
       },
     },
