@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"net"
@@ -472,5 +473,203 @@ func TestCertReloaderRefusesAnExpiredCertificate(t *testing.T) {
 	}
 	if got := servedSerial(t, r); got != 1 {
 		t.Errorf("serial = %d, want the previous 1", got)
+	}
+}
+
+const broadKeyWarning = "TLS private key file is readable or writable beyond its owner and group"
+
+func chmod(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A key readable by its owner, or also by its group as a Kubernetes Secret
+// volume with an fsGroup mounts it, loads quietly. A broader key still loads
+// and is served, with a warning that names the file and its mode.
+func TestCertReloaderWarnsAboutABroadKeyFileMode(t *testing.T) {
+	tests := []struct {
+		mode os.FileMode
+		warn bool
+	}{
+		{0o400, false},
+		{0o600, false},
+		{0o440, false}, // Secret volume, fsGroup, mode 0440
+		{0o640, false},
+		{0o644, true}, // Secret volume default mode
+		{0o604, true},
+		{0o660, true},
+		{0o666, true},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%04o", tt.mode), func(t *testing.T) {
+			logs := captureLogs(t)
+			pki := newTestPKI(t)
+			cert, key := pki.issue(t, 1)
+			certFile, keyFile := writePair(t, t.TempDir(), cert, key)
+			chmod(t, keyFile, tt.mode)
+
+			r := newCertReloader(certFile, keyFile, time.Minute)
+			if err := r.Load(); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := servedSerial(t, r); got != 1 {
+				t.Errorf("serial = %d, want 1", got)
+			}
+			out := logs.String()
+			warned := strings.Contains(out, broadKeyWarning)
+			if warned != tt.warn {
+				t.Fatalf("warned = %v, want %v:\n%s", warned, tt.warn, out)
+			}
+			if tt.warn {
+				for _, want := range []string{"level=WARN", "key_file=" + keyFile, fmt.Sprintf("mode=%04o", tt.mode)} {
+					if !strings.Contains(out, want) {
+						t.Errorf("warning lacks %q:\n%s", want, out)
+					}
+				}
+			}
+			checkNoKeyMaterial(t, out, cert, key)
+		})
+	}
+}
+
+// The mode checked is the key's own, behind a Secret volume's symlinks, and
+// a rotation to a broad key is served with the warning. A broad key that
+// does not load is not reported as served.
+func TestCertReloaderChecksTheKeyModeBehindASecretSymlink(t *testing.T) {
+	logs := captureLogs(t)
+	pki := newTestPKI(t)
+	dir := t.TempDir()
+	modes := []os.FileMode{0o440, 0o644}
+	for i, serial := range []int64{1, 2} {
+		cert, key := pki.issue(t, serial)
+		data := filepath.Join(dir, "..data_"+string(rune('a'+i)))
+		if err := os.Mkdir(data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_, keyFile := writePair(t, data, cert, key)
+		chmod(t, keyFile, modes[i])
+	}
+	link := func(target string) {
+		tmp := filepath.Join(dir, "..data_tmp")
+		if err := os.Symlink(target, tmp); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, filepath.Join(dir, "..data")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link("..data_a")
+	for _, name := range []string{"tls.crt", "tls.key"} {
+		if err := os.Symlink(filepath.Join("..data", name), filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keyFile := filepath.Join(dir, "tls.key")
+	r := newCertReloader(filepath.Join(dir, "tls.crt"), keyFile, time.Minute)
+	if err := r.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), broadKeyWarning) {
+		t.Fatalf("a 0440 key behind a symlink was reported as broad:\n%s", logs.String())
+	}
+
+	link("..data_b")
+	if changed, err := r.reload(false); !changed || err != nil {
+		t.Fatalf("after the symlink swap: changed=%v err=%v", changed, err)
+	}
+	if got := servedSerial(t, r); got != 2 {
+		t.Errorf("serial = %d, want 2", got)
+	}
+	out := logs.String()
+	if !strings.Contains(out, broadKeyWarning) || !strings.Contains(out, "key_file="+keyFile) || !strings.Contains(out, "mode=0644") {
+		t.Fatalf("no warning for the rotated 0644 key:\n%s", out)
+	}
+
+	// An invalid renewal with a broad key keeps the last good pair and warns
+	// about nothing but the failed reload.
+	before := strings.Count(out, broadKeyWarning)
+	data := filepath.Join(dir, "..data_c")
+	if err := os.Mkdir(data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cert, _ := pki.issue(t, 3)
+	_, badKey := writePair(t, data, cert, []byte("not a key"))
+	chmod(t, badKey, 0o666)
+	link("..data_c")
+	if changed, err := r.reload(false); changed || err == nil {
+		t.Fatalf("invalid renewal: changed=%v err=%v", changed, err)
+	}
+	if got := servedSerial(t, r); got != 2 {
+		t.Errorf("serial = %d after an invalid renewal, want the previous 2", got)
+	}
+	if after := strings.Count(logs.String(), broadKeyWarning); after != before {
+		t.Errorf("a key that did not load was reported as broad:\n%s", logs.String())
+	}
+}
+
+// An unreadable or missing key is refused at startup and keeps the last good
+// pair afterwards, as before; neither is reported as a broad mode.
+func TestCertReloaderUnreadableOrMissingKey(t *testing.T) {
+	pki := newTestPKI(t)
+	cases := []struct {
+		name     string
+		breakKey func(t *testing.T, keyFile string)
+		want     string
+	}{
+		{"unreadable", func(t *testing.T, keyFile string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads a 0000 file")
+			}
+			chmod(t, keyFile, 0o000)
+		}, "permission denied"},
+		{"missing", func(t *testing.T, keyFile string) {
+			if err := os.Remove(keyFile); err != nil {
+				t.Fatal(err)
+			}
+		}, "no such file"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" at startup", func(t *testing.T) {
+			logs := captureLogs(t)
+			cert, key := pki.issue(t, 1)
+			certFile, keyFile := writePair(t, t.TempDir(), cert, key)
+			tc.breakKey(t, keyFile)
+			r := newCertReloader(certFile, keyFile, time.Minute)
+			err := r.Load()
+			if err == nil || !strings.Contains(err.Error(), "server.tls: reading "+keyFile) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Load = %v, want a reading error naming %s and %q", err, keyFile, tc.want)
+			}
+			if _, err := r.GetCertificate(nil); err == nil {
+				t.Error("a certificate is served after a failed load")
+			}
+			if strings.Contains(logs.String(), broadKeyWarning) {
+				t.Errorf("reported as a broad mode:\n%s", logs.String())
+			}
+		})
+		t.Run(tc.name+" after a rotation", func(t *testing.T) {
+			logs := captureLogs(t)
+			dir := t.TempDir()
+			cert, key := pki.issue(t, 1)
+			certFile, keyFile := writePair(t, dir, cert, key)
+			r := newCertReloader(certFile, keyFile, time.Minute)
+			if err := r.Load(); err != nil {
+				t.Fatal(err)
+			}
+			cert, key = pki.issue(t, 2)
+			writePair(t, dir, cert, key)
+			tc.breakKey(t, keyFile)
+			if changed, err := r.reload(false); changed || err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("reload: changed=%v err=%v, want %q", changed, err, tc.want)
+			}
+			if got := servedSerial(t, r); got != 1 {
+				t.Errorf("serial = %d, want the previous 1", got)
+			}
+			out := logs.String()
+			if !strings.Contains(out, "TLS certificate not reloaded; still serving the previous one") || strings.Contains(out, broadKeyWarning) {
+				t.Errorf("unexpected logs:\n%s", out)
+			}
+		})
 	}
 }
