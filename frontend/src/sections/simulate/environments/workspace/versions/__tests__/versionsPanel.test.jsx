@@ -890,6 +890,24 @@ describe("VersionsPanel", () => {
     }
   });
 
+  it("shows the kind a link names, and lets the reader pick another", async () => {
+    const user = userEvent.setup();
+    window.history.pushState({}, "", "/?tab=versions&kind=agent");
+    try {
+      render(<VersionsPanel env={ENV} />);
+      const agent = screen.getByRole("button", { name: "Agent" });
+      expect(agent).toHaveAttribute("aria-pressed", "true");
+      // Used once, so the reader's own pick isn't undone.
+      expect(new URLSearchParams(window.location.search).has("kind")).toBe(
+        false,
+      );
+      await user.click(screen.getByRole("button", { name: "Scenarios" }));
+      expect(agent).toHaveAttribute("aria-pressed", "false");
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
   it("ignores a link to a version that is no longer listed", () => {
     window.history.pushState({}, "", "/?tab=versions&version=suite:gone");
     try {

@@ -125,7 +125,10 @@ export default function WorkspaceHeader({
             </CustomTooltip>
           )}
           {/* The default environment version; hidden while versioning is off. */}
-          <EnvVersionPin env={env} onHistory={() => setTab("versions")} />
+          <EnvVersionPin
+            env={env}
+            onHistory={() => setTab("versions", { kind: "environment" })}
+          />
         </Stack>
         <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
           {env.tagline}

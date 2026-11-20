@@ -725,7 +725,7 @@ describe("VersionBar", () => {
     expect(screen.getByText("12 scenarios")).toBeInTheDocument();
   });
 
-  it("opens the history from the environment version", async () => {
+  it("opens the history of each version it names", async () => {
     const user = userEvent.setup();
     versionsResponse.current = VERSIONS;
     const onHistory = vi.fn();
@@ -736,8 +736,14 @@ describe("VersionBar", () => {
         onHistory={onHistory}
       />,
     );
+    await user.click(screen.getByRole("button", { name: "Agent v4" }));
     await user.click(screen.getByRole("button", { name: "environment v2" }));
-    expect(onHistory).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "scenarios v3" }));
+    expect(onHistory.mock.calls).toEqual([
+      ["agent"],
+      ["environment"],
+      ["suite"],
+    ]);
   });
 
   it("says before versioning when the environment has no versions yet", () => {

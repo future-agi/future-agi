@@ -89,6 +89,17 @@ export default function VersionsPanel({ env }) {
   const [linkedPiece, linkedId] = (params.get("version") || "").split(":");
   const [picked, setPicked] = useState(null);
   const [kind, setKind] = useState("environment");
+  // A link (the version bar) may name the kind to show; used once, so the
+  // reader's own pick isn't undone.
+  const linkedKind = params.get("kind");
+  useEffect(() => {
+    if (!linkedKind) return;
+    if (VERSION_PIECES.includes(linkedKind)) setKind(linkedKind);
+    const q = new URLSearchParams(params);
+    q.delete("kind");
+    setParams(q, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedKind]);
   useEffect(() => {
     if (!linkedId) return;
     setPicked({ piece: linkedPiece, id: linkedId });

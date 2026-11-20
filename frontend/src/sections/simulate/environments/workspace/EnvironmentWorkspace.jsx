@@ -600,7 +600,7 @@ export default function EnvironmentWorkspace() {
         <VersionBar
           env={env}
           envState={envState}
-          onHistory={() => setTab("versions")}
+          onHistory={(kind) => setTab("versions", { kind })}
         />
       )}
       <DraftBar

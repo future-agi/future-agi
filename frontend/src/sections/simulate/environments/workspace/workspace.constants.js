@@ -165,8 +165,7 @@ export const WORKSPACE_COPY = {
           ? `The environment's default agent version is ${agentLabel}; other agent versions can run against the same environment.`
           : "No default agent version is set for this environment.",
       ].join(" "),
-    historyHint:
-      "Click the environment version for its history and to roll back.",
+    historyHint: "Click a version for its history and to roll back.",
     noVersionsTooltip:
       "This environment has no versions yet. One is recorded the next time it is built or saved.",
     subjectTooltip:

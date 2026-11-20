@@ -18,6 +18,42 @@ const Strong = ({ children }) => (
 );
 Strong.propTypes = { children: PropTypes.node };
 
+// A version in the bar that opens the History tab on its kind, as the design
+// does for the environment version. Plain text without somewhere to go.
+function HistoryLink({ kind, onHistory, children }) {
+  if (!onHistory) return children;
+  return (
+    <ButtonBase
+      component="span"
+      onClick={() => onHistory(kind)}
+      sx={{
+        // Inline, not the default inline-flex, so the space before the label
+        // stays.
+        display: "inline",
+        font: "inherit",
+        color: "inherit",
+        verticalAlign: "baseline",
+        textDecoration: "underline dotted",
+        textUnderlineOffset: "3px",
+        borderRadius: "2px",
+        "&:hover": { color: "text.primary" },
+        "&.Mui-focusVisible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: 2,
+        },
+      }}
+    >
+      {children}
+    </ButtonBase>
+  );
+}
+HistoryLink.propTypes = {
+  kind: PropTypes.oneOf(["agent", "environment", "suite"]).isRequired,
+  onHistory: PropTypes.oneOfType([PropTypes.func, PropTypes.bool]),
+  children: PropTypes.node,
+};
+
 const Dot = () => (
   <Typography sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}>
     ·
@@ -56,13 +92,6 @@ export default function VersionBar({ env, envState, onHistory }) {
   const envLabel = envV ? named(envV) : versionBar.beforeVersioning;
   const agentLabel = agentV ? named(agentV) : versionBar.noAgent;
   const fromSuite = showPairing && suiteV?.scenarioCount != null;
-  // The environment version opens the History tab, as in the design.
-  const envLink = Boolean(onHistory && envV);
-  const envPart = (
-    <>
-      {versionBar.envPrefix} <Strong>{envLabel}</Strong>
-    </>
-  );
   const scenarioCount = fromSuite
     ? suiteV.scenarioCount
     : env?.counts?.scenarios ?? envState?.scenarios?.length ?? 0;
@@ -96,7 +125,7 @@ export default function VersionBar({ env, envState, onHistory }) {
                       envV?.summary,
                       agentV ? agentLabel : null,
                     ),
-                    envLink && versionBar.historyHint,
+                    onHistory && versionBar.historyHint,
                   ]
                     .filter(Boolean)
                     .join(" ")
@@ -117,47 +146,27 @@ export default function VersionBar({ env, envState, onHistory }) {
                 width={14}
                 sx={{ color: "text.subtitle", verticalAlign: "-2px", mr: 0.75 }}
               />
-              {versionBar.agentPrefix} <Strong>{agentLabel}</Strong>
+              <HistoryLink kind="agent" onHistory={agentV && onHistory}>
+                {versionBar.agentPrefix} <Strong>{agentLabel}</Strong>
+              </HistoryLink>
               <Box
                 component="span"
                 sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
               >
                 ×
               </Box>
-              {envLink ? (
-                <ButtonBase
-                  component="span"
-                  onClick={onHistory}
-                  sx={{
-                    // Inline, not the default inline-flex, so the space before
-                    // the label stays.
-                    display: "inline",
-                    font: "inherit",
-                    color: "inherit",
-                    verticalAlign: "baseline",
-                    textDecoration: "underline dotted",
-                    textUnderlineOffset: "3px",
-                    borderRadius: "2px",
-                    "&:hover": { color: "text.primary" },
-                    "&.Mui-focusVisible": {
-                      outline: "2px solid",
-                      outlineColor: "primary.main",
-                      outlineOffset: 2,
-                    },
-                  }}
-                >
-                  {envPart}
-                </ButtonBase>
-              ) : (
-                envPart
-              )}
+              <HistoryLink kind="environment" onHistory={envV && onHistory}>
+                {versionBar.envPrefix} <Strong>{envLabel}</Strong>
+              </HistoryLink>
             </Typography>
           </Tooltip>
           {suiteV && (
             <>
               <Dot />
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.suitePrefix} <Strong>{named(suiteV)}</Strong>
+                <HistoryLink kind="suite" onHistory={onHistory}>
+                  {versionBar.suitePrefix} <Strong>{named(suiteV)}</Strong>
+                </HistoryLink>
               </Typography>
             </>
           )}
@@ -247,7 +256,7 @@ VersionBar.propTypes = {
     }),
     counts: PropTypes.shape({ scenarios: PropTypes.number }),
   }),
-  // Opens the History tab; the environment version stays plain text without it.
+  // Opens the History tab on a kind; the versions stay plain text without it.
   onHistory: PropTypes.func,
   envState: PropTypes.shape({
     scenarios: PropTypes.arrayOf(PropTypes.any),
