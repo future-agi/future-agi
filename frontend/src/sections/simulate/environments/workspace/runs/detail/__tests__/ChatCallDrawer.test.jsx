@@ -171,10 +171,8 @@ describe("ChatCallDrawer, a call whose transcript was not kept", () => {
         onClose={vi.fn()}
       />,
     );
+    // Once above the transcript, once beside the evals.
     expect(screen.getAllByText(reason)).toHaveLength(2);
-    expect(
-      screen.queryByText("No messages captured for this conversation."),
-    ).toBeNull();
     mocks.callDetail = null;
   });
 });

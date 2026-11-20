@@ -409,7 +409,7 @@ export default function ChatCallDrawer({
                 participants={callDetail?.participants || []}
                 hasCustomer={callDetail?.hasCustomer}
                 focusTurn={focusTurn}
-                emptyReason={callDetail?.processingSkipReason}
+                notice={callDetail?.processingSkipReason}
               />
             )}
           </Box>

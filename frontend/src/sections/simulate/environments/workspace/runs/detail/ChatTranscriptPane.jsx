@@ -17,6 +17,7 @@ import WorldActorAction from "src/components/VoiceDetailDrawerV2/WorldActorActio
 import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 import { isOtherRole } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 import { seriesColor } from "src/theme/data-colors";
+import { OutcomeReason } from "./chatDrawerCells";
 
 // `task`: a scenario's start message no person or actor sent.
 const ROLE_LABEL = {
@@ -89,7 +90,7 @@ export default function ChatTranscriptPane({
   participants,
   hasCustomer,
   focusTurn = null,
-  emptyReason = null,
+  notice = null,
 }) {
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -136,6 +137,11 @@ export default function ChatTranscriptPane({
 
   return (
     <>
+      {notice && (
+        <Box sx={{ pt: 1.5 }}>
+          <OutcomeReason reason={notice} />
+        </Box>
+      )}
       {participants.length > 0 && (
         <Box sx={{ px: 2, pt: 1.25 }}>
           <CallParticipants
@@ -258,7 +264,7 @@ export default function ChatTranscriptPane({
             sx={{ px: 1.75, py: 2, typography: "s2", color: "text.subtitle" }}
           >
             {turns.length === 0
-              ? emptyReason || "No messages captured for this conversation."
+              ? "No messages captured for this conversation."
               : "No turns match that filter."}
           </Typography>
         )}
@@ -267,8 +273,8 @@ export default function ChatTranscriptPane({
   );
 }
 ChatTranscriptPane.propTypes = {
-  // The server's reason no transcript was kept, said in place of an empty pane.
-  emptyReason: PropTypes.string,
+  // The server's reason the conversation itself was not kept, said above what the pane can still show.
+  notice: PropTypes.string,
   customerName: PropTypes.string,
   // A turn to bring into view and mark: `{ turn }`, a new object each time it is asked for.
   focusTurn: PropTypes.shape({ turn: PropTypes.number }),
