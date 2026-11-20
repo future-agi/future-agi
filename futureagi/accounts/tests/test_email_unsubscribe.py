@@ -597,3 +597,21 @@ def test_monitor_alert_footer_says_why_the_address_gets_it(monitor):
 
     assert "this address is on this monitor" in html
     assert "because you have an account" not in html
+
+
+@pytest.mark.django_db
+def test_monitor_alert_rereads_recipients_before_sending(monitor):
+    """Review round 2, checkpoint 4: an address unsubscribed after the
+    monitor was loaded gets no alert."""
+    from tracer.models.monitor import UserAlertMonitor
+    from tracer.utils.monitor import _send_alert_email
+
+    loaded = UserAlertMonitor.objects.get(pk=monitor.pk)
+    eu.set_subscribed(
+        eu.Link("lead@example.com", eu.MONITOR_ALERTS, str(monitor.id)), False
+    )
+    mail.outbox = []
+
+    _send_alert_email(loaded, "Errors above threshold", "critical")
+
+    assert [m.to for m in mail.outbox] == [["oncall@example.com"]]

@@ -160,6 +160,9 @@ def _claim_send(state, field: str, now: datetime) -> bool:
     the compare-and-set on the value read lets only one of them through.
     At most once by design: a worker killed between claim and send skips
     that digest until the throttle / min gap clears, rather than doubling it.
+    For the realtime track the claim also moves the "new since" window, so
+    items from a crashed send are not repeated in a later realtime email;
+    the daily digest still lists them.
     """
     previous = getattr(state, field)
     claimed = AnnotationNotificationState.objects.filter(
@@ -260,7 +263,7 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
 
     frontend_url = _frontend_url()
     backend_url = _backend_url()
-    unsub_token = _unsubscribe_token(user.id)
+    snooze_token = _unsubscribe_token(user.id)
     template_data = {
         "user_name": (getattr(user, "name", None) or user.email),
         "annotator_total": annotator_total,
@@ -269,7 +272,7 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
         "reviewer_buckets": list(reviewer_buckets.values()),
         "queues_url": f"{frontend_url}/dashboard/annotations/queues",
         "snooze_url": (
-            f"{backend_url}/accounts/notifications/snooze/?token={unsub_token}&days=7"
+            f"{backend_url}/accounts/notifications/snooze/?token={snooze_token}&days=7"
         ),
     }
 
@@ -278,7 +281,7 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
         return False  # an overlapping run already sent this one
 
     try:
-        email_helper(
+        reached = email_helper(
             mail_subject=subject,
             template_name="annotation_realtime_digest.html",
             template_data=template_data,
@@ -292,6 +295,11 @@ def _send_realtime_for_user(user, now: datetime) -> bool:
             user_id=str(user.id),
             error=str(exc),
         )
+        return False
+    if not reached:
+        # Suppressed: the user unsubscribed after this run read their state.
+        # Nothing went out, so it must not count against the next send.
+        _release_send(state, "last_realtime_digest_at", previous, now)
         return False
     return True
 
@@ -405,7 +413,7 @@ def _send_daily_for_user(user, now: datetime) -> bool:
         return False  # an overlapping run already sent this one
 
     try:
-        email_helper(
+        reached = email_helper(
             mail_subject=subject,
             template_name="annotation_daily_digest.html",
             template_data=template_data,
@@ -419,6 +427,11 @@ def _send_daily_for_user(user, now: datetime) -> bool:
             user_id=str(user.id),
             error=str(exc),
         )
+        return False
+    if not reached:
+        # Suppressed: the user unsubscribed after this run read their state.
+        # Nothing went out, so it must not count against the next send.
+        _release_send(state, "last_daily_digest_at", previous, now)
         return False
     return True
 

@@ -540,6 +540,28 @@ class TestOverlappingRuns:
             assert _send_daily_for_user(digest_user, now) is True
         mock_send.assert_called_once()
 
+    def test_suppressed_digest_does_not_throttle_the_next_one(
+        self, digest_user, digest_queue, digest_org, digest_project
+    ):
+        """Review round 2: a send that reached nobody (the user unsubscribed
+        after this run read their state) releases its claim."""
+        from model_hub.utils.annotation_digest import _send_realtime_for_user
+
+        _create_queue_item(
+            digest_queue,
+            assigned_to=digest_user,
+            status=QueueItemStatus.PENDING.value,
+            organization=digest_org,
+            project=digest_project,
+        )
+        now = timezone.now()
+
+        with patch("model_hub.utils.annotation_digest.email_helper", return_value=0):
+            assert _send_realtime_for_user(digest_user, now) is False
+
+        state = AnnotationNotificationState.objects.get(user=digest_user)
+        assert state.last_realtime_digest_at is None
+
 
 # ---------------------------------------------------------------------------
 # Unsubscribe token
