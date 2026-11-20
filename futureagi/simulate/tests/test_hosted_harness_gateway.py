@@ -1938,6 +1938,24 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
     assert job.attempts.count() == 1
 
 
+_ENTRYPOINTS = (
+    "python -m fi.alk.harness.hosted_authoring_entrypoint ",
+    "python -m fi.alk.harness.hosted_entrypoint ",
+)
+
+
+def assert_only_the_entrypoints_are_harness_steps(steps):
+    """In every chain the steps that start an agent-learning-kit entrypoint, and no others, are
+    harness steps, and the run's entrypoint is the last one: without the grant it would run every
+    customer process as one fixed user, without a word."""
+    assert steps[-1].harness
+    assert steps[-1].command.startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    for step in steps:
+        assert step.harness == any(entry in step.command for entry in _ENTRYPOINTS), (
+            step.command
+        )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
@@ -2013,6 +2031,18 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    # Only the two agent-learning-kit entrypoints may run each customer process as its own user:
+    # the bundle author between them holds no such means.
+    request = client.sandbox.process.session_request
+    assert_only_the_entrypoints_are_harness_steps(request.steps)
+    harness = [step.command for step in request.steps if step.harness]
+    assert len(harness) == 2
+    assert harness[0].startswith("if [ ! -f /work/authoring/contract.json ]; then ")
+    assert "python -m fi.alk.harness.hosted_authoring_entrypoint " in harness[0]
+    assert harness[1].startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    assert [step for step in request.steps if "bundle_author_v2" in step.command] == [
+        step for step in request.steps if not step.harness
+    ]
     assert (
         client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
         == "gemini-3.7-flash"
@@ -4437,6 +4467,13 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
         == "/work/builder-cost.json"
     )
     assert client.deleted is False
+    # What the builder writes after the lock-down stays the harness's own: the workspace is
+    # closed before chat starts, and chat writes with a private umask.
+    prepare = next(
+        call for call in client.sandbox.process.exec_calls if "/work/authoring" in call
+    )
+    assert "chmod -R go-rwx /work/authoring" in prepare
+    assert client.sandbox.process.session_request.command.startswith("umask 077 && ")
 
 
 @pytest.mark.django_db
