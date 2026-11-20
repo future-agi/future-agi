@@ -41,8 +41,12 @@ VALIDATE_KEYS_MAX = 50
 _KEY_SHAPE = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
-def _error(code: str, message: str, status_code: int) -> HostedHarnessError:
-    return HostedHarnessError(code, message, status_code=status_code)
+def _error(
+    code: str, message: str, status_code: int, *, retryable: bool = False
+) -> HostedHarnessError:
+    return HostedHarnessError(
+        code, message, status_code=status_code, retryable=retryable
+    )
 
 
 def _write(
@@ -562,13 +566,13 @@ def require_no_validation(environment: HostedHarnessJob) -> None:
     """Refuse a Save while a validation of the default pair runs: the Save moves the defaults, and what the
     validation proves would land on the versions it left behind."""
     if live_validation(environment) is not None:
-        raise _error("validation_running", VALIDATION_RUNNING, 409)
+        raise _error("validation_running", VALIDATION_RUNNING, 409, retryable=True)
 
 
 def running_validation(environment: HostedHarnessJob) -> RunningValidation:
     """The validation still running on the default pair, the one a Validate press would return, so a page opened
-    after it started follows it; and how many cases a Validate of those not yet proved would prove, saying why when
-    none."""
+    after it started follows it, with how many cases it proves; with none running, how many cases a Validate of those
+    not yet proved would prove, saying why when none."""
     agent, environment_version, suite_version = resolve_versions(environment, {})
     if agent is None or environment_version is None or suite_version is None:
         return RunningValidation(
@@ -576,10 +580,20 @@ def running_validation(environment: HostedHarnessJob) -> RunningValidation:
         )
     job = live_validation(environment)
     needed, live = _to_prove(environment, agent, environment_version, suite_version)
-    metadata = ((job.payload or {}).get("metadata") or {}) if job is not None else {}
+    if job is not None:
+        # A Re-prove all, or a press naming its cases, proves them whatever their proofs say.
+        keys = list(
+            ((job.payload or {}).get("metadata") or {}).get("scenario_keys") or []
+        )
+        return RunningValidation(
+            job_id=str(job.id),
+            scenario_keys=keys or None,
+            to_prove=len(keys) or len(live),
+            message=None,
+        )
     return RunningValidation(
-        job_id=str(job.id) if job is not None else None,
-        scenario_keys=list(metadata.get("scenario_keys") or []) or None,
+        job_id=None,
+        scenario_keys=None,
         to_prove=len(needed),
         message=None if needed else nothing_to_prove(live),
     )

@@ -51096,12 +51096,14 @@ export const SimulateApiHarnessEnvironmentsRunningValidationResponse =
       .number()
       .min(simulateApiHarnessEnvironmentsRunningValidationResponseToProveMin)
       .describe(
-        "How many cases a Validate of the cases not yet proved would prove.",
+        "While a validation runs, how many cases it proves; otherwise how many a Validate of the cases not yet proved would prove.",
       ),
     message: zod
       .string()
       .min(1)
-      .describe("Why there is nothing to prove, when there is nothing."),
+      .describe(
+        "Why there is nothing to prove, when there is nothing and no validation runs.",
+      ),
   });
 
 /**

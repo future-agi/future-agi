@@ -71332,13 +71332,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         to_prove: {
           title: "To prove",
           description:
-            "How many cases a Validate of the cases not yet proved would prove.",
+            "While a validation runs, how many cases it proves; otherwise how many a Validate of the cases not yet proved would prove.",
           type: "integer",
           minimum: 0,
         },
         message: {
           title: "Message",
-          description: "Why there is nothing to prove, when there is nothing.",
+          description:
+            "Why there is nothing to prove, when there is nothing and no validation runs.",
           type: "string",
           minLength: 1,
           "x-nullable": true,

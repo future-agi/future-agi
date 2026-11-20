@@ -23381,12 +23381,12 @@ export interface HarnessScenarioRunningValidationApi {
   /** The cases it proves; null when it proves every case. */
   scenario_keys: string[];
   /**
-   * How many cases a Validate of the cases not yet proved would prove.
+   * While a validation runs, how many cases it proves; otherwise how many a Validate of the cases not yet proved would prove.
    * @minimum 0
    */
   to_prove: number;
   /**
-   * Why there is nothing to prove, when there is nothing.
+   * Why there is nothing to prove, when there is nothing and no validation runs.
    * @minLength 1
    */
   message: string;
