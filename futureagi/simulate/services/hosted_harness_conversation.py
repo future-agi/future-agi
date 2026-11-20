@@ -1638,6 +1638,16 @@ def conversation_overview(conversation: HostedHarnessConversation) -> dict[str, 
             )
         ],
     }
+    from simulate.services.harness_provider import _lifecycle_for_list
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+
+    # The Scenarios tab's own counts (Validate's proofs included), so the builder never counts from its sandbox.
+    lifecycle = _lifecycle_for_list(environment, {})
+    overview["lifecycle_counts"] = (
+        lifecycle_counts(list(lifecycle["views"].values()) + lifecycle["archived"])
+        if isinstance(lifecycle, dict)
+        else None
+    )
     if drafts.drafts_apply(environment):
         listed = drafts.list_drafts(environment)
         overview["drafts"] = {
