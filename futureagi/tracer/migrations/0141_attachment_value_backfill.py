@@ -811,7 +811,11 @@ def copy_jobs(apps, alias, data, bindings):
                                 "import live vector below conservative source/scratch/segment peak"
                             )
                 facts = source_values(item) if item and item.get("source") else None
-                if facts and row.recording_id is not None and facts["source_duration_ms"] is None:
+                if (
+                    facts
+                    and row.recording_id is not None
+                    and facts["source_duration_ms"] is None
+                ):
                     fail("recording import requires evidenced positive source duration")
                 if facts:
                     if (

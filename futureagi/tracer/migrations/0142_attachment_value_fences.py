@@ -205,7 +205,10 @@ def verify_copies(apps, schema_editor):
             getattr(row, f) is None
             for f in frozen.SOURCE_FIELDS
             if f != "source_duration_ms"
-        ) or (row.recording_id is not None and (row.source_duration_ms is None or row.source_duration_ms <= 0)):
+        ) or (
+            row.recording_id is not None
+            and (row.source_duration_ms is None or row.source_duration_ms <= 0)
+        ):
             frozen.fail("pending import lacks pinned original source")
         if (
             row.lease_token is not None
@@ -249,19 +252,34 @@ def verify_runtime_fences(apps, schema_editor):
             WHERE n.nspname='public' AND t.tgname='attachment_v1_guard'
               AND NOT t.tgisinternal
         """)
-        actual = {(name, enabled, function_oid, function_name) for name, enabled, function_oid, function_name in cursor.fetchall()}
+        actual = {
+            (name, enabled, function_oid, function_name)
+            for name, enabled, function_oid, function_name in cursor.fetchall()
+        }
         expected_names = {
-            "tracer_attachmentstoragebinding", "tracer_attachment", "tracer_attachmentupload",
-            "tracer_attachmentoccurrence", "tracer_capturesession", "tracer_attachmentrecording",
-            "tracer_attachmentmanifestrevision", "tracer_attachmentoutbox", "tracer_attachmentauditevent",
-            "tracer_attachmentimportjob", "tracer_attachmentrecordingsegment",
-            "tracer_attachmentrecordingderivative", "tracer_attachmentsourceenvelope",
-            "tracer_attachmentproviderconnection", "tracer_attachmentproviderrecording",
+            "tracer_attachmentstoragebinding",
+            "tracer_attachment",
+            "tracer_attachmentupload",
+            "tracer_attachmentoccurrence",
+            "tracer_capturesession",
+            "tracer_attachmentrecording",
+            "tracer_attachmentmanifestrevision",
+            "tracer_attachmentoutbox",
+            "tracer_attachmentauditevent",
+            "tracer_attachmentimportjob",
+            "tracer_attachmentrecordingsegment",
+            "tracer_attachmentrecordingderivative",
+            "tracer_attachmentsourceenvelope",
+            "tracer_attachmentproviderconnection",
+            "tracer_attachmentproviderrecording",
             "tracer_attachmentplaybackgrant",
         }
         if {name for name, _, _, _ in actual} != expected_names or len(actual) != 16:
             frozen.fail("replacement fence roster incomplete")
-        if any(enabled != 'O' or function_name != 'attachment_v1_guard' for _, enabled, _, function_name in actual):
+        if any(
+            enabled != "O" or function_name != "attachment_v1_guard"
+            for _, enabled, _, function_name in actual
+        ):
             frozen.fail("replacement fence trigger disabled or misbound")
         if len({function_oid for _, _, function_oid, _ in actual}) != 1:
             frozen.fail("replacement fence trigger functions differ")

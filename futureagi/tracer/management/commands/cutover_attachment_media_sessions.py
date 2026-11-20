@@ -28,8 +28,12 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         # AppConfig startup policy is not an invocation boundary: direct calls
         # must carry the same dedicated bootstrap/operator authorization.
-        if not operator_startup_mutation_authorized([sys.argv[0], "cutover_attachment_media_sessions"]):
-            raise CommandError("This cutover requires SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator.")
+        if not operator_startup_mutation_authorized(
+            [sys.argv[0], "cutover_attachment_media_sessions"]
+        ):
+            raise CommandError(
+                "This cutover requires SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator."
+            )
         if (
             getattr(settings, "FI_ATTACHMENTS_ENABLED", False)
             or not options["quiesced"]
