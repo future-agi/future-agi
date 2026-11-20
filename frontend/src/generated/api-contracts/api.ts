@@ -73,6 +73,15 @@ import type {
   AdminPricingListResponseApi,
   AdminPricingMutationRequestApi,
   AdminPricingMutationResponseApi,
+  AgentBuildPreflightResponseApi,
+  AgentCodeChangesResponseApi,
+  AgentCodeCompareResponseApi,
+  AgentCodeFileResponseApi,
+  AgentCodePatchesResponseApi,
+  AgentCodeTreeResponseApi,
+  AgentConnectAvailabilityResponseApi,
+  AgentConnectRequestApi,
+  AgentConnectResponseApi,
   AgentDefinitionApi,
   AgentDefinitionBulkDeleteRequestApi,
   AgentDefinitionBulkDeleteResponseApi,
@@ -97,6 +106,7 @@ import type {
   AgentFixRunDetailApi,
   AgentFixRunListApi,
   AgentFixShipApi,
+  AgentFoundCheckResponseApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
@@ -117,11 +127,18 @@ import type {
   AgentPromptOptimiserTrialPromptResponseApi,
   AgentPromptOptimiserTrialScenariosResponseApi,
   AgentRunsResponseApi,
+  AgentScanResponseApi,
+  AgentScanStartedResponseApi,
+  AgentSourceRequestApi,
+  AgentVersionActionResponseApi,
   AgentVersionActivateResponseApi,
+  AgentVersionChangeRequestApi,
+  AgentVersionChangeResponseApi,
+  AgentVersionCompatibilityResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
-  AgentVersionDeleteResponseApi,
   AgentVersionListResponseApi,
+  AgentVersionProductionResponseApi,
   AgentVersionResponseApi,
   AgentVersionRestoreResponseApi,
   AgentccAPIKeyApi,
@@ -583,6 +600,9 @@ import type {
   GenerateScenarioApi,
   GetAnnotationLabelsResponseApi,
   GetTraceAnnotationValuesResponseApi,
+  GitHubInstallCompleteApi,
+  GitHubInstallCompleteResponseApi,
+  GitHubInstallResponseApi,
   GraphCreateApi,
   GraphDetailApi,
   GraphExecutionDetailResponseApi,
@@ -614,6 +634,8 @@ import type {
   HarnessActorViewApi,
   HarnessActorWriteApi,
   HarnessAgentCredentialsResponseApi,
+  HarnessAgentPolicyApi,
+  HarnessAgentPolicyResponseApi,
   HarnessAgentVersionCreateApi,
   HarnessArtifactUploadResponseApi,
   HarnessCompareApi,
@@ -740,6 +762,7 @@ import type {
   IntegrationMessageResponseApi,
   IntegrationValidationResponseApi,
   IntegrationsConnectionsListParams,
+  IntegrationsConnectionsRepositoriesListParams,
   IntegrationsConnectionsSlackChannelsListParams,
   IntegrationsSyncLogsListParams,
   InvestigationControlErrorApi,
@@ -1246,8 +1269,14 @@ import type {
   SharedLinkUpdateApi,
   SignupRequestApi,
   SignupResponseApi,
+  SimulateAgentDefinitionsBuildPreflightListParams,
   SimulateAgentDefinitionsListParams,
   SimulateAgentDefinitionsRunsListParams,
+  SimulateAgentDefinitionsVersionsCodeChangesListParams,
+  SimulateAgentDefinitionsVersionsCodeCompareListParams,
+  SimulateAgentDefinitionsVersionsCodeComparePatchesListParams,
+  SimulateAgentDefinitionsVersionsCodeFileListParams,
+  SimulateAgentDefinitionsVersionsCompatibilityListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentFixEngineCandidatesBodyOne,
@@ -1311,6 +1340,8 @@ import type {
   SlackChannelsResponseApi,
   SlackInstallApi,
   SlackInstallResponseApi,
+  SourceBranchesResponseApi,
+  SourceRepositoriesResponseApi,
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
@@ -1630,6 +1661,7 @@ import type {
   VerifyApiKeyRequestApi,
   VerifyAssistantIdRequestApi,
   VerifyResponseApi,
+  ViewerReadOnlyErrorApi,
   WalletBalanceResponseApi,
   WebAuthnCredentialApi,
   WebhookIngestResponseApi,
@@ -21726,6 +21758,175 @@ export const integrationsConnectionsValidateCredentials = async (
   );
 };
 
+export type integrationsConnectionsRepositoriesListResponse200 = {
+  data: SourceRepositoriesResponseApi;
+  status: 200;
+};
+
+export type integrationsConnectionsRepositoriesListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type integrationsConnectionsRepositoriesListResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
+export type integrationsConnectionsRepositoriesListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type integrationsConnectionsRepositoriesListResponse502 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 502;
+};
+
+export type integrationsConnectionsRepositoriesListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type integrationsConnectionsRepositoriesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 502 | 503>;
+};
+
+export type integrationsConnectionsRepositoriesListResponseSuccess =
+  integrationsConnectionsRepositoriesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type integrationsConnectionsRepositoriesListResponseError = (
+  | integrationsConnectionsRepositoriesListResponse400
+  | integrationsConnectionsRepositoriesListResponse403
+  | integrationsConnectionsRepositoriesListResponse404
+  | integrationsConnectionsRepositoriesListResponse502
+  | integrationsConnectionsRepositoriesListResponse503
+  | integrationsConnectionsRepositoriesListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type integrationsConnectionsRepositoriesListResponse =
+  | integrationsConnectionsRepositoriesListResponseSuccess
+  | integrationsConnectionsRepositoriesListResponseError;
+
+export const getIntegrationsConnectionsRepositoriesListUrl = (
+  connectionId: string,
+  params?: IntegrationsConnectionsRepositoriesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/integrations/connections/${connectionId}/repositories/?${stringifiedParams}`
+    : `/integrations/connections/${connectionId}/repositories/`;
+};
+
+export const integrationsConnectionsRepositoriesList = async (
+  connectionId: string,
+  params?: IntegrationsConnectionsRepositoriesListParams,
+  options?: RequestInit,
+): Promise<integrationsConnectionsRepositoriesListResponse> => {
+  return apiMutator<integrationsConnectionsRepositoriesListResponse>(
+    getIntegrationsConnectionsRepositoriesListUrl(connectionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse200 = {
+  data: SourceBranchesResponseApi;
+  status: 200;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse502 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 502;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 502 | 503>;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponseSuccess =
+  integrationsConnectionsRepositoriesBranchesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type integrationsConnectionsRepositoriesBranchesListResponseError = (
+  | integrationsConnectionsRepositoriesBranchesListResponse400
+  | integrationsConnectionsRepositoriesBranchesListResponse403
+  | integrationsConnectionsRepositoriesBranchesListResponse404
+  | integrationsConnectionsRepositoriesBranchesListResponse502
+  | integrationsConnectionsRepositoriesBranchesListResponse503
+  | integrationsConnectionsRepositoriesBranchesListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse =
+  | integrationsConnectionsRepositoriesBranchesListResponseSuccess
+  | integrationsConnectionsRepositoriesBranchesListResponseError;
+
+export const getIntegrationsConnectionsRepositoriesBranchesListUrl = (
+  connectionId: string,
+  repositoryId: string,
+) => {
+  return `/integrations/connections/${connectionId}/repositories/${repositoryId}/branches/`;
+};
+
+export const integrationsConnectionsRepositoriesBranchesList = async (
+  connectionId: string,
+  repositoryId: string,
+  options?: RequestInit,
+): Promise<integrationsConnectionsRepositoriesBranchesListResponse> => {
+  return apiMutator<integrationsConnectionsRepositoriesBranchesListResponse>(
+    getIntegrationsConnectionsRepositoriesBranchesListUrl(
+      connectionId,
+      repositoryId,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type integrationsConnectionsSlackChannelsListResponse200 = {
   data: SlackChannelsResponseApi;
   status: 200;
@@ -22237,6 +22438,125 @@ export const integrationsConnectionsSyncNow = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(integrationEmptyRequestApi),
+    },
+  );
+};
+
+export type integrationsGithubInstallCreateResponse200 = {
+  data: GitHubInstallResponseApi;
+  status: 200;
+};
+
+export type integrationsGithubInstallCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type integrationsGithubInstallCreateResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
+export type integrationsGithubInstallCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403>;
+};
+
+export type integrationsGithubInstallCreateResponseSuccess =
+  integrationsGithubInstallCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type integrationsGithubInstallCreateResponseError = (
+  | integrationsGithubInstallCreateResponse400
+  | integrationsGithubInstallCreateResponse403
+  | integrationsGithubInstallCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type integrationsGithubInstallCreateResponse =
+  | integrationsGithubInstallCreateResponseSuccess
+  | integrationsGithubInstallCreateResponseError;
+
+export const getIntegrationsGithubInstallCreateUrl = () => {
+  return `/integrations/github/install/`;
+};
+
+export const integrationsGithubInstallCreate = async (
+  integrationEmptyRequestApi: IntegrationEmptyRequestApi,
+  options?: RequestInit,
+): Promise<integrationsGithubInstallCreateResponse> => {
+  return apiMutator<integrationsGithubInstallCreateResponse>(
+    getIntegrationsGithubInstallCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(integrationEmptyRequestApi),
+    },
+  );
+};
+
+export type integrationsGithubInstallCompleteCreateResponse200 = {
+  data: GitHubInstallCompleteResponseApi;
+  status: 200;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse403 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 403;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type integrationsGithubInstallCompleteCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 503>;
+};
+
+export type integrationsGithubInstallCompleteCreateResponseSuccess =
+  integrationsGithubInstallCompleteCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type integrationsGithubInstallCompleteCreateResponseError = (
+  | integrationsGithubInstallCompleteCreateResponse400
+  | integrationsGithubInstallCompleteCreateResponse403
+  | integrationsGithubInstallCompleteCreateResponse503
+  | integrationsGithubInstallCompleteCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse =
+  | integrationsGithubInstallCompleteCreateResponseSuccess
+  | integrationsGithubInstallCompleteCreateResponseError;
+
+export const getIntegrationsGithubInstallCompleteCreateUrl = () => {
+  return `/integrations/github/install/complete/`;
+};
+
+/**
+ * The signed-in user finishes the install GitHub redirected them back from.
+ */
+export const integrationsGithubInstallCompleteCreate = async (
+  gitHubInstallCompleteApi: GitHubInstallCompleteApi,
+  options?: RequestInit,
+): Promise<integrationsGithubInstallCompleteCreateResponse> => {
+  return apiMutator<integrationsGithubInstallCompleteCreateResponse>(
+    getIntegrationsGithubInstallCompleteCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(gitHubInstallCompleteApi),
     },
   );
 };
@@ -56728,6 +57048,11 @@ export type simulateAgentDefinitionsDeleteResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsDeleteResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56735,7 +57060,7 @@ export type simulateAgentDefinitionsDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteResponseSuccess =
@@ -56744,6 +57069,7 @@ export type simulateAgentDefinitionsDeleteResponseSuccess =
   };
 export type simulateAgentDefinitionsDeleteResponseError = (
   | simulateAgentDefinitionsDeleteResponse400
+  | simulateAgentDefinitionsDeleteResponse403
   | simulateAgentDefinitionsDeleteResponse500
   | simulateAgentDefinitionsDeleteResponseDefault
 ) & {
@@ -56786,6 +57112,11 @@ export type simulateAgentDefinitionsCreateCreateResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsCreateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsCreateCreateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56798,7 +57129,7 @@ export type simulateAgentDefinitionsCreateCreateResponse500 = {
 
 export type simulateAgentDefinitionsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsCreateCreateResponseSuccess =
@@ -56807,6 +57138,7 @@ export type simulateAgentDefinitionsCreateCreateResponseSuccess =
   };
 export type simulateAgentDefinitionsCreateCreateResponseError = (
   | simulateAgentDefinitionsCreateCreateResponse400
+  | simulateAgentDefinitionsCreateCreateResponse403
   | simulateAgentDefinitionsCreateCreateResponse404
   | simulateAgentDefinitionsCreateCreateResponse500
   | simulateAgentDefinitionsCreateCreateResponseDefault
@@ -56896,14 +57228,105 @@ export const simulateAgentDefinitionsRead = async (
   );
 };
 
+export type simulateAgentDefinitionsBuildPreflightListResponse200 = {
+  data: AgentBuildPreflightResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponseSuccess =
+  simulateAgentDefinitionsBuildPreflightListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsBuildPreflightListResponseError = (
+  | simulateAgentDefinitionsBuildPreflightListResponse400
+  | simulateAgentDefinitionsBuildPreflightListResponse404
+  | simulateAgentDefinitionsBuildPreflightListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponse =
+  | simulateAgentDefinitionsBuildPreflightListResponseSuccess
+  | simulateAgentDefinitionsBuildPreflightListResponseError;
+
+export const getSimulateAgentDefinitionsBuildPreflightListUrl = (
+  agentId: string,
+  params?: SimulateAgentDefinitionsBuildPreflightListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/build-preflight/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/build-preflight/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/build-preflight/?version_id=.
+ */
+export const simulateAgentDefinitionsBuildPreflightList = async (
+  agentId: string,
+  params?: SimulateAgentDefinitionsBuildPreflightListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsBuildPreflightListResponse> => {
+  return apiMutator<simulateAgentDefinitionsBuildPreflightListResponse>(
+    getSimulateAgentDefinitionsBuildPreflightListUrl(agentId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateAgentDefinitionsDeleteDeleteResponse200 = {
   data: AgentDefinitionDeleteResponseApi;
   status: 200;
 };
 
+export type simulateAgentDefinitionsDeleteDeleteResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsDeleteDeleteResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsDeleteDeleteResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
+};
+
+export type simulateAgentDefinitionsDeleteDeleteResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
 };
 
 export type simulateAgentDefinitionsDeleteDeleteResponse500 = {
@@ -56913,7 +57336,7 @@ export type simulateAgentDefinitionsDeleteDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
@@ -56921,7 +57344,10 @@ export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsDeleteDeleteResponseError = (
+  | simulateAgentDefinitionsDeleteDeleteResponse400
+  | simulateAgentDefinitionsDeleteDeleteResponse403
   | simulateAgentDefinitionsDeleteDeleteResponse404
+  | simulateAgentDefinitionsDeleteDeleteResponse409
   | simulateAgentDefinitionsDeleteDeleteResponse500
   | simulateAgentDefinitionsDeleteDeleteResponseDefault
 ) & {
@@ -56962,6 +57388,11 @@ export type simulateAgentDefinitionsEditUpdateResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsEditUpdateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsEditUpdateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56974,7 +57405,7 @@ export type simulateAgentDefinitionsEditUpdateResponse500 = {
 
 export type simulateAgentDefinitionsEditUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsEditUpdateResponseSuccess =
@@ -56983,6 +57414,7 @@ export type simulateAgentDefinitionsEditUpdateResponseSuccess =
   };
 export type simulateAgentDefinitionsEditUpdateResponseError = (
   | simulateAgentDefinitionsEditUpdateResponse400
+  | simulateAgentDefinitionsEditUpdateResponse403
   | simulateAgentDefinitionsEditUpdateResponse404
   | simulateAgentDefinitionsEditUpdateResponse500
   | simulateAgentDefinitionsEditUpdateResponseDefault
@@ -57013,6 +57445,74 @@ export const simulateAgentDefinitionsEditUpdate = async (
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(agentDefinitionEditRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponse200 = {
+  data: AgentFoundCheckResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 409>;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
+  simulateAgentDefinitionsFoundCheckCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsFoundCheckCreateResponseError = (
+  | simulateAgentDefinitionsFoundCheckCreateResponse403
+  | simulateAgentDefinitionsFoundCheckCreateResponse404
+  | simulateAgentDefinitionsFoundCheckCreateResponse409
+  | simulateAgentDefinitionsFoundCheckCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsFoundCheckCreateResponse =
+  | simulateAgentDefinitionsFoundCheckCreateResponseSuccess
+  | simulateAgentDefinitionsFoundCheckCreateResponseError;
+
+export const getSimulateAgentDefinitionsFoundCheckCreateUrl = (
+  agentId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/found-check/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/found-check/: what the first reading found is
+confirmed; the agent can be built from now.
+ */
+export const simulateAgentDefinitionsFoundCheckCreate = async (
+  agentId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsFoundCheckCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsFoundCheckCreateResponse>(
+    getSimulateAgentDefinitionsFoundCheckCreateUrl(agentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };
@@ -57140,6 +57640,92 @@ export const simulateAgentDefinitionsVersionsList = async (
   );
 };
 
+export type simulateAgentDefinitionsVersionsChangeCreateResponse200 = {
+  data: AgentVersionChangeResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse202 = {
+  data: AgentVersionChangeResponseApi;
+  status: 202;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 403 | 404 | 409 | 422>;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponseSuccess = (
+  | simulateAgentDefinitionsVersionsChangeCreateResponse200
+  | simulateAgentDefinitionsVersionsChangeCreateResponse202
+) & {
+  headers: ApiResponseHeaders;
+};
+export type simulateAgentDefinitionsVersionsChangeCreateResponseError = (
+  | simulateAgentDefinitionsVersionsChangeCreateResponse400
+  | simulateAgentDefinitionsVersionsChangeCreateResponse403
+  | simulateAgentDefinitionsVersionsChangeCreateResponse404
+  | simulateAgentDefinitionsVersionsChangeCreateResponse409
+  | simulateAgentDefinitionsVersionsChangeCreateResponse422
+  | simulateAgentDefinitionsVersionsChangeCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse =
+  | simulateAgentDefinitionsVersionsChangeCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsChangeCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsChangeCreateUrl = (
+  agentId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/change/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/change/: a new version by kind.
+ */
+export const simulateAgentDefinitionsVersionsChangeCreate = async (
+  agentId: string,
+  agentVersionChangeRequestApi: AgentVersionChangeRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsChangeCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsChangeCreateResponse>(
+    getSimulateAgentDefinitionsVersionsChangeCreateUrl(agentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentVersionChangeRequestApi),
+    },
+  );
+};
+
 export type simulateAgentDefinitionsVersionsCreateCreateResponse201 = {
   data: AgentVersionCreateResponseApi;
   status: 201;
@@ -57150,9 +57736,19 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsVersionsCreateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsVersionsCreateCreateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCreateCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
 };
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponse500 = {
@@ -57162,7 +57758,7 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess =
@@ -57171,7 +57767,9 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess =
   };
 export type simulateAgentDefinitionsVersionsCreateCreateResponseError = (
   | simulateAgentDefinitionsVersionsCreateCreateResponse400
+  | simulateAgentDefinitionsVersionsCreateCreateResponse403
   | simulateAgentDefinitionsVersionsCreateCreateResponse404
+  | simulateAgentDefinitionsVersionsCreateCreateResponse409
   | simulateAgentDefinitionsVersionsCreateCreateResponse500
   | simulateAgentDefinitionsVersionsCreateCreateResponseDefault
 ) & {
@@ -57272,9 +57870,19 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponse200 = {
   status: 200;
 };
 
+export type simulateAgentDefinitionsVersionsActivateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateAgentDefinitionsVersionsActivateCreateResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsActivateCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
 };
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponse500 = {
@@ -57284,7 +57892,7 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess =
@@ -57292,7 +57900,9 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsActivateCreateResponseError = (
+  | simulateAgentDefinitionsVersionsActivateCreateResponse403
   | simulateAgentDefinitionsVersionsActivateCreateResponse404
+  | simulateAgentDefinitionsVersionsActivateCreateResponse409
   | simulateAgentDefinitionsVersionsActivateCreateResponse500
   | simulateAgentDefinitionsVersionsActivateCreateResponseDefault
 ) & {
@@ -57451,14 +58061,522 @@ export const simulateAgentDefinitionsVersionsCallExecutionsList = async (
   );
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse200 = {
-  data: AgentVersionDeleteResponseApi;
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse200 = {
+  data: AgentCodeChangesResponseApi;
   status: 200;
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse400 = {
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse400 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeChangesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCodeChangesListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeChangesListResponse400
+  | simulateAgentDefinitionsVersionsCodeChangesListResponse404
+  | simulateAgentDefinitionsVersionsCodeChangesListResponse503
+  | simulateAgentDefinitionsVersionsCodeChangesListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse =
+  | simulateAgentDefinitionsVersionsCodeChangesListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeChangesListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeChangesListUrl = (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeChangesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/changes/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/changes/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/changes/?against=.
+ */
+export const simulateAgentDefinitionsVersionsCodeChangesList = async (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeChangesListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeChangesListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeChangesListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeChangesListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse200 = {
+  data: AgentCodeCompareResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 422 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeCompareListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCodeCompareListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse400
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse404
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse422
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse503
+  | simulateAgentDefinitionsVersionsCodeCompareListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse =
+  | simulateAgentDefinitionsVersionsCodeCompareListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeCompareListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeCompareListUrl = (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeCompareListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/compare/?against=.
+ */
+export const simulateAgentDefinitionsVersionsCodeCompareList = async (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeCompareListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeCompareListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeCompareListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeCompareListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse200 =
+  {
+    data: AgentCodePatchesResponseApi;
+    status: 200;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse400 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 400;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse404 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 404;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse422 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 422;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse503 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 503;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 422 | 503>;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeComparePatchesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponseError =
+  (
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse400
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse404
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse422
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse503
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse =
+  | simulateAgentDefinitionsVersionsCodeComparePatchesListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeComparePatchesListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeComparePatchesListUrl = (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeComparePatchesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/patches/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/patches/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/compare/patches/?against=&path=.
+ */
+export const simulateAgentDefinitionsVersionsCodeComparePatchesList = async (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeComparePatchesListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeComparePatchesListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeComparePatchesListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeComparePatchesListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse200 = {
+  data: AgentCodeFileResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeFileListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCodeFileListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeFileListResponse400
+  | simulateAgentDefinitionsVersionsCodeFileListResponse404
+  | simulateAgentDefinitionsVersionsCodeFileListResponse503
+  | simulateAgentDefinitionsVersionsCodeFileListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse =
+  | simulateAgentDefinitionsVersionsCodeFileListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeFileListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeFileListUrl = (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeFileListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/file/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/file/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/file/?path=.
+ */
+export const simulateAgentDefinitionsVersionsCodeFileList = async (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeFileListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeFileListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeFileListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeFileListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse200 = {
+  data: AgentCodeTreeResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeTreeListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCodeTreeListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeTreeListResponse404
+  | simulateAgentDefinitionsVersionsCodeTreeListResponse503
+  | simulateAgentDefinitionsVersionsCodeTreeListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse =
+  | simulateAgentDefinitionsVersionsCodeTreeListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeTreeListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeTreeListUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/tree/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/tree/.
+ */
+export const simulateAgentDefinitionsVersionsCodeTreeList = async (
+  agentId: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeTreeListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeTreeListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeTreeListUrl(agentId, versionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse200 = {
+  data: AgentVersionCompatibilityResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCompatibilityListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
+};
+
+export type simulateAgentDefinitionsVersionsCompatibilityListResponseSuccess =
+  simulateAgentDefinitionsVersionsCompatibilityListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCompatibilityListResponseError = (
+  | simulateAgentDefinitionsVersionsCompatibilityListResponse400
+  | simulateAgentDefinitionsVersionsCompatibilityListResponse404
+  | simulateAgentDefinitionsVersionsCompatibilityListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse =
+  | simulateAgentDefinitionsVersionsCompatibilityListResponseSuccess
+  | simulateAgentDefinitionsVersionsCompatibilityListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCompatibilityListUrl = (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCompatibilityListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/compatibility/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/compatibility/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=.
+ */
+export const simulateAgentDefinitionsVersionsCompatibilityList = async (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCompatibilityListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCompatibilityListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCompatibilityListResponse>(
+    getSimulateAgentDefinitionsVersionsCompatibilityListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse204 = {
+  data: void;
+  status: 204;
 };
 
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponse404 = {
@@ -57466,24 +58584,23 @@ export type simulateAgentDefinitionsVersionsDeleteDeleteResponse404 = {
   status: 404;
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse500 = {
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse410 = {
   data: ApiErrorWithDetailsResponseApi;
-  status: 500;
+  status: 410;
 };
 
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 204 | 404 | 410>;
 };
 
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess =
-  simulateAgentDefinitionsVersionsDeleteDeleteResponse200 & {
+  simulateAgentDefinitionsVersionsDeleteDeleteResponse204 & {
     headers: ApiResponseHeaders;
   };
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseError = (
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponse400
   | simulateAgentDefinitionsVersionsDeleteDeleteResponse404
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponse500
+  | simulateAgentDefinitionsVersionsDeleteDeleteResponse410
   | simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -57501,7 +58618,10 @@ export const getSimulateAgentDefinitionsVersionsDeleteDeleteUrl = (
 };
 
 /**
- * Soft delete an agent version.
+ * Versions are kept so environments can stay pinned to them; this answers 410
+for one release so a caller learns why, and is then removed.
+ * @deprecated
+ * @summary DELETE /agent-definitions/{id}/versions/{version_id}/delete/: removed.
  */
 export const simulateAgentDefinitionsVersionsDeleteDelete = async (
   agentId: string,
@@ -57513,6 +58633,75 @@ export const simulateAgentDefinitionsVersionsDeleteDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse200 = {
+  data: AgentVersionActionResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 409>;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponseSuccess =
+  simulateAgentDefinitionsVersionsDiscardCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsDiscardCreateResponseError = (
+  | simulateAgentDefinitionsVersionsDiscardCreateResponse403
+  | simulateAgentDefinitionsVersionsDiscardCreateResponse404
+  | simulateAgentDefinitionsVersionsDiscardCreateResponse409
+  | simulateAgentDefinitionsVersionsDiscardCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse =
+  | simulateAgentDefinitionsVersionsDiscardCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsDiscardCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsDiscardCreateUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/discard/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/discard/.
+ */
+export const simulateAgentDefinitionsVersionsDiscardCreate = async (
+  agentId: string,
+  versionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsDiscardCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsDiscardCreateResponse>(
+    getSimulateAgentDefinitionsVersionsDiscardCreateUrl(agentId, versionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };
@@ -57577,6 +58766,75 @@ export const simulateAgentDefinitionsVersionsEvalSummaryList = async (
   );
 };
 
+export type simulateAgentDefinitionsVersionsProductionCreateResponse200 = {
+  data: AgentVersionProductionResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 409>;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponseSuccess =
+  simulateAgentDefinitionsVersionsProductionCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsProductionCreateResponseError = (
+  | simulateAgentDefinitionsVersionsProductionCreateResponse403
+  | simulateAgentDefinitionsVersionsProductionCreateResponse404
+  | simulateAgentDefinitionsVersionsProductionCreateResponse409
+  | simulateAgentDefinitionsVersionsProductionCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponse =
+  | simulateAgentDefinitionsVersionsProductionCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsProductionCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsProductionCreateUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/production/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/production/.
+ */
+export const simulateAgentDefinitionsVersionsProductionCreate = async (
+  agentId: string,
+  versionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsProductionCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsProductionCreateResponse>(
+    getSimulateAgentDefinitionsVersionsProductionCreateUrl(agentId, versionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateAgentDefinitionsVersionsRestoreCreateResponse200 = {
   data: AgentVersionRestoreResponseApi;
   status: 200;
@@ -57585,6 +58843,11 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponse200 = {
 export type simulateAgentDefinitionsVersionsRestoreCreateResponse400 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsRestoreCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
 };
 
 export type simulateAgentDefinitionsVersionsRestoreCreateResponse404 = {
@@ -57599,7 +58862,7 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess =
@@ -57608,6 +58871,7 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess =
   };
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseError = (
   | simulateAgentDefinitionsVersionsRestoreCreateResponse400
+  | simulateAgentDefinitionsVersionsRestoreCreateResponse403
   | simulateAgentDefinitionsVersionsRestoreCreateResponse404
   | simulateAgentDefinitionsVersionsRestoreCreateResponse500
   | simulateAgentDefinitionsVersionsRestoreCreateResponseDefault
@@ -57642,6 +58906,299 @@ export const simulateAgentDefinitionsVersionsRestoreCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse202 = {
+  data: AgentVersionActionResponseApi;
+  status: 202;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 403 | 404 | 409>;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponseSuccess =
+  simulateAgentDefinitionsVersionsRetryCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsRetryCreateResponseError = (
+  | simulateAgentDefinitionsVersionsRetryCreateResponse403
+  | simulateAgentDefinitionsVersionsRetryCreateResponse404
+  | simulateAgentDefinitionsVersionsRetryCreateResponse409
+  | simulateAgentDefinitionsVersionsRetryCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse =
+  | simulateAgentDefinitionsVersionsRetryCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsRetryCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsRetryCreateUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/retry/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/retry/.
+ */
+export const simulateAgentDefinitionsVersionsRetryCreate = async (
+  agentId: string,
+  versionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsRetryCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsRetryCreateResponse>(
+    getSimulateAgentDefinitionsVersionsRetryCreateUrl(agentId, versionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentsConnectCreateResponse200 = {
+  data: AgentConnectResponseApi;
+  status: 200;
+};
+
+export type simulateAgentsConnectCreateResponse201 = {
+  data: AgentConnectResponseApi;
+  status: 201;
+};
+
+export type simulateAgentsConnectCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentsConnectCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateAgentsConnectCreateResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentsConnectCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201 | 400 | 403 | 422>;
+};
+
+export type simulateAgentsConnectCreateResponseSuccess = (
+  | simulateAgentsConnectCreateResponse200
+  | simulateAgentsConnectCreateResponse201
+) & {
+  headers: ApiResponseHeaders;
+};
+export type simulateAgentsConnectCreateResponseError = (
+  | simulateAgentsConnectCreateResponse400
+  | simulateAgentsConnectCreateResponse403
+  | simulateAgentsConnectCreateResponse422
+  | simulateAgentsConnectCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentsConnectCreateResponse =
+  | simulateAgentsConnectCreateResponseSuccess
+  | simulateAgentsConnectCreateResponseError;
+
+export const getSimulateAgentsConnectCreateUrl = () => {
+  return `/simulate/agents/connect/`;
+};
+
+/**
+ * POST /agents/connect/: the agent and its first version, read on their own.
+ */
+export const simulateAgentsConnectCreate = async (
+  agentConnectRequestApi: AgentConnectRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentsConnectCreateResponse> => {
+  return apiMutator<simulateAgentsConnectCreateResponse>(
+    getSimulateAgentsConnectCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentConnectRequestApi),
+    },
+  );
+};
+
+export type simulateAgentsConnectAvailabilityListResponse200 = {
+  data: AgentConnectAvailabilityResponseApi;
+  status: 200;
+};
+
+export type simulateAgentsConnectAvailabilityListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateAgentsConnectAvailabilityListResponseSuccess =
+  simulateAgentsConnectAvailabilityListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentsConnectAvailabilityListResponseError =
+  simulateAgentsConnectAvailabilityListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateAgentsConnectAvailabilityListResponse =
+  | simulateAgentsConnectAvailabilityListResponseSuccess
+  | simulateAgentsConnectAvailabilityListResponseError;
+
+export const getSimulateAgentsConnectAvailabilityListUrl = () => {
+  return `/simulate/agents/connect/availability/`;
+};
+
+export const simulateAgentsConnectAvailabilityList = async (
+  options?: RequestInit,
+): Promise<simulateAgentsConnectAvailabilityListResponse> => {
+  return apiMutator<simulateAgentsConnectAvailabilityListResponse>(
+    getSimulateAgentsConnectAvailabilityListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentsScanCreateResponse202 = {
+  data: AgentScanStartedResponseApi;
+  status: 202;
+};
+
+export type simulateAgentsScanCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentsScanCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateAgentsScanCreateResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentsScanCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 400 | 403 | 422>;
+};
+
+export type simulateAgentsScanCreateResponseSuccess =
+  simulateAgentsScanCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentsScanCreateResponseError = (
+  | simulateAgentsScanCreateResponse400
+  | simulateAgentsScanCreateResponse403
+  | simulateAgentsScanCreateResponse422
+  | simulateAgentsScanCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentsScanCreateResponse =
+  | simulateAgentsScanCreateResponseSuccess
+  | simulateAgentsScanCreateResponseError;
+
+export const getSimulateAgentsScanCreateUrl = () => {
+  return `/simulate/agents/scan/`;
+};
+
+/**
+ * POST /agents/scan/: find the agents in a source; the drawer polls the result.
+ */
+export const simulateAgentsScanCreate = async (
+  agentSourceRequestApi: AgentSourceRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentsScanCreateResponse> => {
+  return apiMutator<simulateAgentsScanCreateResponse>(
+    getSimulateAgentsScanCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentSourceRequestApi),
+    },
+  );
+};
+
+export type simulateAgentsScanReadResponse200 = {
+  data: AgentScanResponseApi;
+  status: 200;
+};
+
+export type simulateAgentsScanReadResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentsScanReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentsScanReadResponseSuccess =
+  simulateAgentsScanReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentsScanReadResponseError = (
+  | simulateAgentsScanReadResponse404
+  | simulateAgentsScanReadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentsScanReadResponse =
+  | simulateAgentsScanReadResponseSuccess
+  | simulateAgentsScanReadResponseError;
+
+export const getSimulateAgentsScanReadUrl = (scanId: string) => {
+  return `/simulate/agents/scan/${scanId}/`;
+};
+
+/**
+ * GET /agents/scan/{id}/.
+ */
+export const simulateAgentsScanRead = async (
+  scanId: string,
+  options?: RequestInit,
+): Promise<simulateAgentsScanReadResponse> => {
+  return apiMutator<simulateAgentsScanReadResponse>(
+    getSimulateAgentsScanReadUrl(scanId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -58032,9 +59589,19 @@ export type simulateApiAgentDefinitionOperationsDeleteResponse204 = {
   status: 204;
 };
 
+export type simulateApiAgentDefinitionOperationsDeleteResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
 export type simulateApiAgentDefinitionOperationsDeleteResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
+};
+
+export type simulateApiAgentDefinitionOperationsDeleteResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
 };
 
 export type simulateApiAgentDefinitionOperationsDeleteResponse500 = {
@@ -58044,7 +59611,7 @@ export type simulateApiAgentDefinitionOperationsDeleteResponse500 = {
 
 export type simulateApiAgentDefinitionOperationsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 204 | 400 | 404 | 409 | 500>;
 };
 
 export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess =
@@ -58052,7 +59619,9 @@ export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateApiAgentDefinitionOperationsDeleteResponseError = (
+  | simulateApiAgentDefinitionOperationsDeleteResponse400
   | simulateApiAgentDefinitionOperationsDeleteResponse404
+  | simulateApiAgentDefinitionOperationsDeleteResponse409
   | simulateApiAgentDefinitionOperationsDeleteResponse500
   | simulateApiAgentDefinitionOperationsDeleteResponseDefault
 ) & {
@@ -60233,19 +61802,26 @@ export type simulateApiHarnessEnvironmentsPartialUpdateResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsPartialUpdateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess =
   simulateApiHarnessEnvironmentsPartialUpdateResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsPartialUpdateResponseError =
-  simulateApiHarnessEnvironmentsPartialUpdateResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseError = (
+  | simulateApiHarnessEnvironmentsPartialUpdateResponse403
+  | simulateApiHarnessEnvironmentsPartialUpdateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsPartialUpdateResponse =
   | simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess
@@ -60284,19 +61860,26 @@ export type simulateApiHarnessEnvironmentsDeleteResponse204 = {
   status: 204;
 };
 
+export type simulateApiHarnessEnvironmentsDeleteResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
   simulateApiHarnessEnvironmentsDeleteResponse204 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsDeleteResponseError =
-  simulateApiHarnessEnvironmentsDeleteResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsDeleteResponseError = (
+  | simulateApiHarnessEnvironmentsDeleteResponse403
+  | simulateApiHarnessEnvironmentsDeleteResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsDeleteResponse =
   | simulateApiHarnessEnvironmentsDeleteResponseSuccess
@@ -60739,6 +62322,89 @@ export const simulateApiHarnessEnvironmentsDeleteActor = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse200 = {
+  data: HarnessAgentPolicyResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse502 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 502;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 502 | 503>;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponseSuccess =
+  simulateApiHarnessEnvironmentsAgentPolicyResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsAgentPolicyResponseError = (
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse400
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse403
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse404
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse409
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse502
+  | simulateApiHarnessEnvironmentsAgentPolicyResponse503
+  | simulateApiHarnessEnvironmentsAgentPolicyResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse =
+  | simulateApiHarnessEnvironmentsAgentPolicyResponseSuccess
+  | simulateApiHarnessEnvironmentsAgentPolicyResponseError;
+
+export const getSimulateApiHarnessEnvironmentsAgentPolicyUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/agent-policy/`;
+};
+
+/**
+ * Follow the agent's production version, or pin this environment to one.
+ */
+export const simulateApiHarnessEnvironmentsAgentPolicy = async (
+  id: string,
+  harnessAgentPolicyApi: HarnessAgentPolicyApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsAgentPolicyResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsAgentPolicyResponse>(
+    getSimulateApiHarnessEnvironmentsAgentPolicyUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessAgentPolicyApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsCompareResponse200 = {
   data: HarnessCompareApi;
   status: 200;
@@ -60852,19 +62518,26 @@ export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess =
   simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError =
-  simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError = (
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse403
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
   | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess
@@ -60901,19 +62574,26 @@ export type simulateApiHarnessEnvironmentsDiscardDraftResponse204 = {
   status: 204;
 };
 
+export type simulateApiHarnessEnvironmentsDiscardDraftResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsDiscardDraftResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsDiscardDraftResponseSuccess =
   simulateApiHarnessEnvironmentsDiscardDraftResponse204 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsDiscardDraftResponseError =
-  simulateApiHarnessEnvironmentsDiscardDraftResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsDiscardDraftResponseError = (
+  | simulateApiHarnessEnvironmentsDiscardDraftResponse403
+  | simulateApiHarnessEnvironmentsDiscardDraftResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsDiscardDraftResponse =
   | simulateApiHarnessEnvironmentsDiscardDraftResponseSuccess
@@ -60948,19 +62628,26 @@ export type simulateApiHarnessEnvironmentsAddEvaluationResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessEnvironmentsAddEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsAddEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsAddEvaluationResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsAddEvaluationResponseError =
-  simulateApiHarnessEnvironmentsAddEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsAddEvaluationResponse403
+  | simulateApiHarnessEnvironmentsAddEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsAddEvaluationResponse =
   | simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess
@@ -61053,10 +62740,16 @@ export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespon
     status: 200;
   };
 
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200>;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess =
@@ -61064,7 +62757,10 @@ export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespon
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError =
-  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse403
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -61103,19 +62799,26 @@ export type simulateApiHarnessEnvironmentsEditEvaluationResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsEditEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsEditEvaluationResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsEditEvaluationResponseError =
-  simulateApiHarnessEnvironmentsEditEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsEditEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsEditEvaluationResponse403
+  | simulateApiHarnessEnvironmentsEditEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponse =
   | simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess
@@ -61153,19 +62856,26 @@ export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
   status: 204;
 };
 
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 204 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError =
-  simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponse403
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse =
   | simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess
@@ -61639,19 +63349,26 @@ export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseSuccess =
   simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseError =
-  simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseError = (
+  | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse403
+  | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse =
   | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseSuccess
@@ -61689,19 +63406,26 @@ export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseSuccess =
   simulateApiHarnessEnvironmentsNudgesStopNudgeResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseError =
-  simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseError = (
+  | simulateApiHarnessEnvironmentsNudgesStopNudgeResponse403
+  | simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse =
   | simulateApiHarnessEnvironmentsNudgesStopNudgeResponseSuccess
@@ -61803,19 +63527,26 @@ export type simulateApiHarnessEnvironmentsRunResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessEnvironmentsRunResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsRunResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsRunResponseSuccess =
   simulateApiHarnessEnvironmentsRunResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsRunResponseError =
-  simulateApiHarnessEnvironmentsRunResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsRunResponseError = (
+  | simulateApiHarnessEnvironmentsRunResponse403
+  | simulateApiHarnessEnvironmentsRunResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsRunResponse =
   | simulateApiHarnessEnvironmentsRunResponseSuccess
@@ -61849,20 +63580,27 @@ export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError =
-  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse403
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse =
   | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess
@@ -61901,10 +63639,16 @@ export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse2
     status: 202;
   };
 
+export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseSuccess =
@@ -61912,7 +63656,10 @@ export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseS
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseError =
-  simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponse403
+    | simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -62192,10 +63939,16 @@ export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse202 
     status: 202;
   };
 
+export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseSuccess =
@@ -62203,7 +63956,10 @@ export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseSucc
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseError =
-  simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse403
+    | simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -62244,10 +64000,16 @@ export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespon
     status: 200;
   };
 
+export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200>;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuccess =
@@ -62255,7 +64017,10 @@ export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespon
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseError =
-  simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse403
+    | simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -62299,10 +64064,16 @@ export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse
     status: 202;
   };
 
+export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202>;
+    status: Exclude<HTTPStatusCodes, 202 | 403>;
   };
 
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseSuccess =
@@ -62310,7 +64081,10 @@ export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseError =
-  simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault & {
+  (
+    | simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse403
+    | simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault
+  ) & {
     headers: ApiResponseHeaders;
   };
 
@@ -62406,19 +64180,26 @@ export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess =
   simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError =
-  simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse403
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
   | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess
@@ -62580,19 +64361,26 @@ export type simulateApiHarnessJobsCreateResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessJobsCreateResponseSuccess =
   simulateApiHarnessJobsCreateResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsCreateResponseError =
-  simulateApiHarnessJobsCreateResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsCreateResponseError = (
+  | simulateApiHarnessJobsCreateResponse403
+  | simulateApiHarnessJobsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsCreateResponse =
   | simulateApiHarnessJobsCreateResponseSuccess
@@ -62673,19 +64461,26 @@ export type simulateApiHarnessJobsPreflightResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessJobsPreflightResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsPreflightResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessJobsPreflightResponseSuccess =
   simulateApiHarnessJobsPreflightResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsPreflightResponseError =
-  simulateApiHarnessJobsPreflightResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsPreflightResponseError = (
+  | simulateApiHarnessJobsPreflightResponse403
+  | simulateApiHarnessJobsPreflightResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsPreflightResponse =
   | simulateApiHarnessJobsPreflightResponseSuccess
@@ -62721,19 +64516,26 @@ export type simulateApiHarnessJobsSecretFileUploadResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsSecretFileUploadResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsSecretFileUploadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsSecretFileUploadResponseSuccess =
   simulateApiHarnessJobsSecretFileUploadResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsSecretFileUploadResponseError =
-  simulateApiHarnessJobsSecretFileUploadResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsSecretFileUploadResponseError = (
+  | simulateApiHarnessJobsSecretFileUploadResponse403
+  | simulateApiHarnessJobsSecretFileUploadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsSecretFileUploadResponse =
   | simulateApiHarnessJobsSecretFileUploadResponseSuccess
@@ -62781,19 +64583,26 @@ export type simulateApiHarnessJobsSecretValuesResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsSecretValuesResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsSecretValuesResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessJobsSecretValuesResponseSuccess =
   simulateApiHarnessJobsSecretValuesResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsSecretValuesResponseError =
-  simulateApiHarnessJobsSecretValuesResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsSecretValuesResponseError = (
+  | simulateApiHarnessJobsSecretValuesResponse403
+  | simulateApiHarnessJobsSecretValuesResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsSecretValuesResponse =
   | simulateApiHarnessJobsSecretValuesResponseSuccess
@@ -62828,19 +64637,26 @@ export type simulateApiHarnessJobsSourceUploadResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsSourceUploadResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsSourceUploadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsSourceUploadResponseSuccess =
   simulateApiHarnessJobsSourceUploadResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsSourceUploadResponseError =
-  simulateApiHarnessJobsSourceUploadResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsSourceUploadResponseError = (
+  | simulateApiHarnessJobsSourceUploadResponse403
+  | simulateApiHarnessJobsSourceUploadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsSourceUploadResponse =
   | simulateApiHarnessJobsSourceUploadResponseSuccess
@@ -62933,19 +64749,26 @@ export type simulateApiHarnessJobsAdjustResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsAdjustResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsAdjustResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsAdjustResponseSuccess =
   simulateApiHarnessJobsAdjustResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsAdjustResponseError =
-  simulateApiHarnessJobsAdjustResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsAdjustResponseError = (
+  | simulateApiHarnessJobsAdjustResponse403
+  | simulateApiHarnessJobsAdjustResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsAdjustResponse =
   | simulateApiHarnessJobsAdjustResponseSuccess
@@ -62982,19 +64805,26 @@ export type simulateApiHarnessJobsCancelResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessJobsCancelResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsCancelResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessJobsCancelResponseSuccess =
   simulateApiHarnessJobsCancelResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsCancelResponseError =
-  simulateApiHarnessJobsCancelResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsCancelResponseError = (
+  | simulateApiHarnessJobsCancelResponse403
+  | simulateApiHarnessJobsCancelResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsCancelResponse =
   | simulateApiHarnessJobsCancelResponseSuccess
@@ -63031,6 +64861,11 @@ export type simulateApiHarnessJobsConversationConversationMessageResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsConversationConversationMessageResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
   data: ApiTextErrorResponseApi;
   status: 409;
@@ -63039,7 +64874,7 @@ export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
 export type simulateApiHarnessJobsConversationConversationMessageResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202 | 409>;
+    status: Exclude<HTTPStatusCodes, 202 | 403 | 409>;
   };
 
 export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess =
@@ -63048,6 +64883,7 @@ export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess
   };
 export type simulateApiHarnessJobsConversationConversationMessageResponseError =
   (
+    | simulateApiHarnessJobsConversationConversationMessageResponse403
     | simulateApiHarnessJobsConversationConversationMessageResponse409
     | simulateApiHarnessJobsConversationConversationMessageResponseDefault
   ) & {
@@ -63091,19 +64927,26 @@ export type simulateApiHarnessJobsExtendResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessJobsExtendResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsExtendResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
 };
 
 export type simulateApiHarnessJobsExtendResponseSuccess =
   simulateApiHarnessJobsExtendResponse201 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsExtendResponseError =
-  simulateApiHarnessJobsExtendResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsExtendResponseError = (
+  | simulateApiHarnessJobsExtendResponse403
+  | simulateApiHarnessJobsExtendResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsExtendResponse =
   | simulateApiHarnessJobsExtendResponseSuccess
@@ -63140,19 +64983,26 @@ export type simulateApiHarnessJobsRunsResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessJobsRunsResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsRunsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 202 | 403>;
 };
 
 export type simulateApiHarnessJobsRunsResponseSuccess =
   simulateApiHarnessJobsRunsResponse202 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsRunsResponseError =
-  simulateApiHarnessJobsRunsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsRunsResponseError = (
+  | simulateApiHarnessJobsRunsResponse403
+  | simulateApiHarnessJobsRunsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsRunsResponse =
   | simulateApiHarnessJobsRunsResponseSuccess
@@ -63235,19 +65085,26 @@ export type simulateApiHarnessJobsScenariosAmendScenariosResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
   simulateApiHarnessJobsScenariosAmendScenariosResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
-  simulateApiHarnessJobsScenariosAmendScenariosResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseError = (
+  | simulateApiHarnessJobsScenariosAmendScenariosResponse403
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponse =
   | simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess
@@ -64285,7 +66142,7 @@ export const getSimulateApiHarnessGithubWebhookCreateUrl = () => {
 };
 
 /**
- * GitHub App push webhook, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.
+ * GitHub App webhook for push and installation events, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.
  */
 export const simulateApiHarnessGithubWebhookCreate = async (
   options?: RequestInit,
@@ -67234,6 +69091,11 @@ export type simulateRunTestsCreateCreateResponse400 = {
   status: 400;
 };
 
+export type simulateRunTestsCreateCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateRunTestsCreateCreateResponse404 = {
   data: RunTestErrorResponseApi;
   status: 404;
@@ -67246,7 +69108,7 @@ export type simulateRunTestsCreateCreateResponse500 = {
 
 export type simulateRunTestsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateRunTestsCreateCreateResponseSuccess =
@@ -67255,6 +69117,7 @@ export type simulateRunTestsCreateCreateResponseSuccess =
   };
 export type simulateRunTestsCreateCreateResponseError = (
   | simulateRunTestsCreateCreateResponse400
+  | simulateRunTestsCreateCreateResponse403
   | simulateRunTestsCreateCreateResponse404
   | simulateRunTestsCreateCreateResponse500
   | simulateRunTestsCreateCreateResponseDefault
@@ -68368,6 +70231,11 @@ export type simulateRunTestsExecuteCreateResponse400 = {
   status: 400;
 };
 
+export type simulateRunTestsExecuteCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateRunTestsExecuteCreateResponse404 = {
   data: RunTestErrorResponseApi;
   status: 404;
@@ -68380,7 +70248,7 @@ export type simulateRunTestsExecuteCreateResponse500 = {
 
 export type simulateRunTestsExecuteCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
 };
 
 export type simulateRunTestsExecuteCreateResponseSuccess =
@@ -68389,6 +70257,7 @@ export type simulateRunTestsExecuteCreateResponseSuccess =
   };
 export type simulateRunTestsExecuteCreateResponseError = (
   | simulateRunTestsExecuteCreateResponse400
+  | simulateRunTestsExecuteCreateResponse403
   | simulateRunTestsExecuteCreateResponse404
   | simulateRunTestsExecuteCreateResponse500
   | simulateRunTestsExecuteCreateResponseDefault
@@ -69898,6 +71767,11 @@ export type simulateTestExecutionsCancelCreateResponse400 = {
   status: 400;
 };
 
+export type simulateTestExecutionsCancelCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateTestExecutionsCancelCreateResponse404 = {
   data: ErrorResponseApi;
   status: 404;
@@ -69915,7 +71789,7 @@ export type simulateTestExecutionsCancelCreateResponse500 = {
 
 export type simulateTestExecutionsCancelCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type simulateTestExecutionsCancelCreateResponseSuccess =
@@ -69924,6 +71798,7 @@ export type simulateTestExecutionsCancelCreateResponseSuccess =
   };
 export type simulateTestExecutionsCancelCreateResponseError = (
   | simulateTestExecutionsCancelCreateResponse400
+  | simulateTestExecutionsCancelCreateResponse403
   | simulateTestExecutionsCancelCreateResponse404
   | simulateTestExecutionsCancelCreateResponse409
   | simulateTestExecutionsCancelCreateResponse500

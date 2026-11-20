@@ -690,6 +690,67 @@ async def _start_agent_fix_workflow_async(fix_run_id: str) -> str:
     return workflow_id
 
 
+def start_agent_version_workflow(version_id: str) -> str:
+    return async_to_sync(_start_agent_version_workflow_async)(version_id)
+
+
+async def _start_agent_version_workflow_async(version_id: str) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.types.agent_version import AgentVersionInput
+    from simulate.temporal.workflows.agent_version_workflow import (
+        AgentVersionWorkflow,
+    )
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    workflow_id = f"agent-version-{version_id}"
+    # A run already going is joined (a second Sync coalesces); a finished one is
+    # started again (a retry).
+    await client.start_workflow(
+        AgentVersionWorkflow.run,
+        AgentVersionInput(version_id=str(version_id)),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return workflow_id
+
+
+def cancel_agent_version_workflow(version_id: str) -> None:
+    """Ask a version's workflow to stop between steps; nothing when it has none."""
+    from temporalio.service import RPCError, RPCStatusCode
+
+    try:
+        async_to_sync(_cancel_agent_version_workflow_async)(version_id)
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            logger.info(
+                "agent_version_workflow_not_running", version_id=str(version_id)
+            )
+            return
+        logger.warning(
+            "agent_version_workflow_cancel_failed",
+            version_id=str(version_id),
+            exc_info=True,
+        )
+    except Exception:  # noqa: BLE001 - the discard is committed; never undo it here
+        logger.warning(
+            "agent_version_workflow_cancel_failed",
+            version_id=str(version_id),
+            exc_info=True,
+        )
+
+
+async def _cancel_agent_version_workflow_async(version_id: str) -> None:
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"agent-version-{version_id}")
+    await handle.signal("cancel")
+
+
 def cancel_agent_fix_workflow(fix_run_id: str) -> None:
     async_to_sync(_cancel_agent_fix_workflow_async)(fix_run_id)
 
