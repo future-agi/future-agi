@@ -1618,10 +1618,7 @@ def test_preflight_fails_on_an_api_key_the_code_reads_but_was_not_given(settings
 
     assert response.data["state"] == "failed"
     assert by_id["credentials_present"]["status"] == "failed"
-    assert by_id["credentials_present"]["missing"] == [
-        "ANTHROPIC_API_KEY",
-        "FI_API_KEY",
-    ]
+    assert by_id["credentials_present"]["missing"] == ["ANTHROPIC_API_KEY"]
     requirements = {
         item["environment_name"]: item
         for item in response.data["credentials"]["requirements"]
@@ -1629,7 +1626,6 @@ def test_preflight_fails_on_an_api_key_the_code_reads_but_was_not_given(settings
     }
     assert {name: item["status"] for name, item in requirements.items()} == {
         "ANTHROPIC_API_KEY": "missing",
-        "FI_API_KEY": "missing",
     }
     assert all(item["required"] for item in requirements.values())
 
@@ -1647,6 +1643,17 @@ def test_preflight_passes_once_every_api_key_is_given(settings):
     )
 
     assert by_id["credentials_present"]["status"] == "passed"
+
+
+def test_only_keys_the_platform_can_verify_are_required(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    response, by_id = _preflight_with_api_keys(
+        {}, ["OPENAI_API_KEY", "WEATHER_API_KEY", "FI_API_KEY"]
+    )
+
+    assert by_id["credentials_present"]["missing"] == ["OPENAI_API_KEY"]
 
 
 def test_a_voice_provider_key_keeps_its_own_rule(settings):

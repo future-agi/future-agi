@@ -629,11 +629,19 @@ def _connector_credential_readiness(
         str(name).upper()
         for name in (payload["source"].get("environment_values") or {})
     }
+    from simulate.services.harness_credential_probes import PROVIDER_PROBES
+
     family_aliases = {
         alias for aliases in CONNECTOR_ALIASES.values() for alias in aliases
     }
+    verifiable = {
+        alias
+        for probe in PROVIDER_PROBES.values()
+        for alias in probe.aliases
+        if alias.endswith("_API_KEY")
+    } - family_aliases
     api_keys = (
-        [] if remote else sorted(set(source_api_keys) - family_aliases - required_files)
+        [] if remote else sorted((set(source_api_keys) & verifiable) - required_files)
     )
     api_missing = [name for name in api_keys if name not in provided]
     if connector == "auto":
