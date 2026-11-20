@@ -1658,3 +1658,34 @@ def test_scheduling_rotates_before_claim_without_spending_an_attempt(env, monkey
         assert job.attempts == job.lease_epoch == 0
         assert job.lease_token is None and job.lease_until is None
         assert job.state == "importing" and job.reservation_settled_at is None
+
+
+@pytest.mark.parametrize("outcome", ["expired", "rejected"])
+def test_single_terminal_import_fences_upload_and_asset_without_early_release(
+    env, outcome
+):
+    data = wav_bytes(seconds=1)
+    current = session(env)
+    source = envelope(env, data, current=current, lifetime=timedelta(seconds=12))
+    whole = body(current, data=data, envelope_id=source)
+    upload = {
+        k: v
+        for k, v in whole["recording"].items()
+        if k not in {"recording_id", "declared_duration_ms"}
+    }
+    upload.update(attachment_id=str(uuid.uuid4()), occurrence_id=str(uuid.uuid4()))
+    _, job = submit_job(
+        env[2], scope_id=env[0].id, body={"upload": upload, "source": whole["source"]}
+    )
+    held = budgets()
+    assert set(held.values()) != {IDLE}
+    if outcome == "expired":
+        wait_for_db(job.deadline + timedelta(seconds=1))
+        assert imports._expire(job.id, timezone.now())
+    else:
+        assert drive(job, Store(), data[:-2]) == outcome
+    job.refresh_from_db()
+    assert job.state == job.upload.state == job.upload.attachment.state == outcome
+    assert job.lease_phase == "terminal" and job.lease_token is None
+    assert job.reservation_settled_at is job.upload.reservation_settled_at is None
+    assert budgets() == held
