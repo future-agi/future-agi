@@ -770,7 +770,7 @@ def authority(monkeypatch):
     ]
     session_ids = [uuid4(), uuid4()]
     spans = {
-        parent.span_id: NS(
+        (str(parent.trace_id), parent.span_id): NS(
             project_id=scope.project_id,
             trace_id=parent.trace_id,
             id=parent.span_id,
@@ -810,7 +810,7 @@ def test_parent_authority_failure_never_grants_batch_entry(
     authority, monkeypatch, failure
 ):
     parent = authority.parents[1]
-    span = authority.spans[parent.span_id]
+    span = authority.spans[(str(parent.trace_id), parent.span_id)]
 
     def retention(org, start):
         return start + timedelta(days=1)
@@ -856,7 +856,11 @@ def test_batches_do_not_cache_a_previous_operation(authority, monkeypatch):
     monkeypatch.setattr(
         sys.modules["tracer.services.attachments.session_deletion"],
         "deleted_session_ids",
-        lambda *args: {str(authority.spans[parent.span_id].trace_session_id)},
+        lambda *args: {
+            str(
+                authority.spans[(str(parent.trace_id), parent.span_id)].trace_session_id
+            )
+        },
     )
     assert (
         authority.env["authorize_parent_batch"](**kwargs)[

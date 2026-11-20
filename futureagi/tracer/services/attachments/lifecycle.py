@@ -207,28 +207,22 @@ def sweep(*, now=None):
     return dict(counts)
 
 
-def clickhouse_spans(project_id, span_ids):
-    """``{span_id: trace_id}`` of the live spans among ``span_ids``.
-
-    ``spans FINAL`` drops deleted rows, so a missing id means the span is gone.
-    Lean projection: fat voice spans never enter the merge.
-    """
+def clickhouse_spans(project_id, parents):
+    """Live (trace_id, span_id) pairs; reader failures propagate to the sweep."""
     from tracer.services.clickhouse.v2 import get_reader
 
     rows = get_reader().list_by_ids(
-        list(span_ids),
+        sorted({span for _, span in parents}),
+        trace_ids=sorted({str(trace) for trace, _ in parents}),
         include_heavy=False,
         project_id=str(project_id),
-        columns=["id", "trace_id"],
+        columns=["id", "trace_id", "is_deleted"],
     )
-    return {str(row["id"]): str(row["trace_id"]) for row in rows}
-
-
-def _same_trace(value, trace_id):
-    try:
-        return UUID(str(value)) == trace_id
-    except (TypeError, ValueError):
-        return False
+    return {
+        (UUID(str(row["trace_id"])), str(row["id"]))
+        for row in rows
+        if not row["is_deleted"]
+    }
 
 
 def orphan_grace():
@@ -331,15 +325,15 @@ def sweep_orphans(
                 ],
             )
         try:
-            live = span_reader(project_id, {row["span_id"] for row in group})
+            live = span_reader(
+                project_id, {(row["trace_id"], row["span_id"]) for row in group}
+            )
         except Exception:  # noqa: BLE001 - ClickHouse boundary; never tombstone on a failed read
             logger.warning("attachment_orphan_read_failed")
             counts["read_failed"] += 1
             continue
         missing = [
-            row
-            for row in group
-            if not _same_trace(live.get(row["span_id"]), row["trace_id"])
+            row for row in group if (row["trace_id"], row["span_id"]) not in live
         ]
         missing_pks = {row["pk"] for row in missing}
         pg_traces, pg_spans = set(), set()

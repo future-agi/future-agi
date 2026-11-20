@@ -612,9 +612,19 @@ def test_full_manifest_not_truncated_to_metadata_page(service, monkeypatch):
             }
         ],
     }
-    monkeypatch.setattr(service.v, "enrich_observations", Mock())
     request = NS(organization=NS(id=uid()), workspace=NS(id=uid()))
-    reader = NS(recording_manifest=Mock(return_value=data))
+    target = service.v.ReadTarget(
+        service.v._request_scope(request, project), service.v.Parent(trace, span)
+    )
+    monkeypatch.setattr(
+        service.v,
+        "enrich_observations",
+        Mock(return_value=([(target, root["attachments"])], False)),
+    )
+    reader = NS(
+        recording_manifest=Mock(return_value=data),
+        recording_is_unique=Mock(return_value=True),
+    )
     result = {"project_id": project, "observation_span": [root]}
     service.v.enrich_voice_detail(request=request, result=result, reader=reader)
     projection = result["recording_attachment"]

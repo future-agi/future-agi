@@ -82,7 +82,10 @@ class MemoryStore(MemoryObjectStore):
 
 
 def span_double(state):
-    def read(project_id, span_id):
+    def read(project_id, parent):
+        span_id = parent.span_id
+        if str(parent.trace_id) != str(uuid.UUID(TRACE)):
+            return None
         if span_id not in state.spans or str(project_id) != str(state.project_id):
             return None
         return SimpleNamespace(

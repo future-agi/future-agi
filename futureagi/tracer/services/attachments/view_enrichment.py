@@ -6,12 +6,11 @@ URL, inferred provider, new route or playback grant is manufactured here.
 
 from datetime import UTC, datetime
 from itertools import islice
-from typing import Any
 from uuid import UUID, uuid5
 
 from . import wire
 from .binding import Parent, Scope
-from .reads import MAX_PARENTS, ReadTarget, attachment_statuses
+from .reads import MAX_PARENTS, ReadTarget, attachment_status_page
 from .references import InvalidReference
 
 
@@ -39,15 +38,15 @@ def _enrich_parents(*, request, project_id, observations, reader):
     a trace read is not media permission.
     """
     if reader is None:
-        return
+        return [], False
     scope = _request_scope(request, project_id)
     if scope is None:
-        return
+        return [], False
     selected = [
         (observation, ReadTarget(scope, parent))
         for observation, parent in islice(observations, MAX_PARENTS)
     ]
-    statuses = attachment_statuses(
+    statuses, complete = attachment_status_page(
         viewer=request,
         targets=[target for _, target in selected],
         reader=reader,
@@ -57,6 +56,7 @@ def _enrich_parents(*, request, project_id, observations, reader):
         # No empty counts/placeholders for denied/unknown objects.
         if target in statuses:
             observation["attachments"] = statuses[target]
+    return [(target, statuses.get(target, ())) for _, target in selected], complete
 
 
 def enrich_trace_detail(*, request, result, reader=None):
@@ -93,7 +93,7 @@ def enrich_observations(*, request, project_id, observations, reader=None):
                 continue
             yield observation, parent
 
-    _enrich_parents(
+    return _enrich_parents(
         request=request,
         project_id=project_id,
         observations=parents(),
@@ -263,58 +263,66 @@ def enrich_voice_detail(*, request, result, reader=None):
     projected.
     """
     observations = result.get("observation_span") or []
-    enrich_observations(
+    authorized, complete = enrich_observations(
         request=request,
         project_id=result.get("project_id"),
         observations=observations,
         reader=reader,
     )
-    recordings: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
-    for observation in islice(observations, MAX_PARENTS):
-        for item in observation.get("attachments") or ():
+    recordings = {}
+    for target, items in authorized:
+        for item in items:
             reference = item["reference"]
             if (
                 reference.get("purpose") == RECORDING_PURPOSE
                 and reference["modality"] == "audio"
             ):
-                key = item.get("recording_id") or reference["occurrence_id"]
-                recordings.setdefault(key, []).append((observation, item))
+                key = (
+                    item.get("recording_id"),
+                    None if "recording_id" in item else reference["occurrence_id"],
+                )
+                recordings.setdefault(key, []).append((target, item))
     if not recordings:
         return
     if len(recordings) != 1:
         result["recording_attachment"] = {"state": "rejected"}
         return
-    ((recording_id, owned),) = recordings.items()
-    observation, item = owned[0]
-    try:
-        parent = Parent(
-            str(observation.get("trace_id", "")), str(observation.get("id", ""))
+    ((identity, owned),) = recordings.items()
+    target, item = owned[0]
+    parent = target.parent
+    recording_id, standalone_id = identity
+    if len(observations) > MAX_PARENTS or (
+        not complete
+        and reader.recording_is_unique(
+            request,
+            tuple(dict.fromkeys(t for t, _ in authorized)),
+            recording_id=recording_id,
+            occurrence_id=standalone_id,
         )
-    except InvalidReference:
+        is not True
+    ):
+        result["recording_attachment"] = {"state": "rejected"}
         return
     items = [entry for _, entry in owned]
     occurrence_id = item["reference"]["occurrence_id"]
     statuses = [entry["status"] for entry in items]
     status = next(
-        (value for value in statuses if value not in {"ready", "partial"}), "ready"
+        (value for value in statuses if value not in {"ready", "partial"}),
+        "partial" if "partial" in statuses else "ready",
     )
     projection = {
         "occurrence_id": occurrence_id,
         "parent": {"trace_id": parent.trace_id, "span_id": parent.span_id},
         "state": _COARSE_RECORDING_STATES.get(status, "pending"),
     }
-    scope = _request_scope(request, result.get("project_id"))
-    if status == "ready" and scope is not None:
-        target = ReadTarget(scope, parent)
+    if status in {"ready", "partial"}:
         playable = False
         if "recording_id" in item:
             # A manifest has one exact parent. Never borrow authorization from
             # another span, even if a reader reports the same recording id.
             same_parent = all(
-                str(row.get("trace_id", "")) == parent.trace_id
-                and str(row.get("id", "")) == parent.span_id
-                and entry.get("recording_id") == recording_id
-                for row, entry in owned
+                other == target and entry.get("recording_id") == recording_id
+                for other, entry in owned
             )
             manifest = (
                 reader.recording_manifest(request, target, recording_id)
@@ -331,13 +339,17 @@ def enrich_voice_detail(*, request, result, reader=None):
                 recording_id,
             )
             if playable:
-                playable = {entry["reference"]["occurrence_id"] for entry in items} <= {
+                visible = {entry["reference"]["occurrence_id"] for entry in items}
+                timeline = {
                     segment["occurrence_id"] for segment in manifest["segments"]
                 }
+                playable = (
+                    visible == timeline if complete else visible <= timeline
+                ) and (manifest["capture_complete"] or status == "partial")
             if playable and manifest is not None:
                 # Stable anchor: database row order is not timeline order.
                 projection["occurrence_id"] = manifest["segments"][0]["occurrence_id"]
-        elif len(items) == 1:
+        elif status == "ready" and len(items) == 1:
             # Re-authorized for this exact occurrence (ready only); any denial
             # leaves the projection not-ready.
             facts = reader.standalone_recording(request, target, occurrence_id)
@@ -368,7 +380,7 @@ def enrich_voice_page(*, request, project_id, entries, reader=None):
                 continue
             yield root, parent
 
-    _enrich_parents(
+    return _enrich_parents(
         request=request,
         project_id=project_id,
         observations=parents(),

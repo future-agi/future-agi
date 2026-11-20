@@ -309,7 +309,7 @@ def test_orphan_scan_checks_session_marker_before_advancing_shared_cursor(
     # row past the separate session sweep's bounded cursor without cleanup.
     counts = lifecycle.sweep_orphans(
         now=timezone.now() + timedelta(hours=25),
-        span_reader=lambda project_id, ids: {r.row.span_id: str(r.row.trace_id)},
+        span_reader=lambda project_id, ids: {(r.row.trace_id, r.row.span_id)},
     )
     assert counts["session_occurrences_deleted"] == 1
     r.row.refresh_from_db()

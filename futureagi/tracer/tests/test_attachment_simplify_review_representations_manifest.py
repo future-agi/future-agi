@@ -157,6 +157,8 @@ def integrated(service):
         deletion_generation=0,
         manifest=manifest,
         capture_complete=True,
+        state="ready",
+        published_at=now,
     )
     rows, uploads = [], []
     for segment in manifest["segments"]:
@@ -242,6 +244,7 @@ def integrated(service):
         Q=Q,
         MAX_READ_ROWS=10000,
         AuthorizedStatus=reads.AuthorizedStatus,
+        StatusPage=reads.StatusPage,
         manifests=NS(read_manifest=manifest_env["read_manifest"]),
         timezone=timezone,
     )
@@ -340,7 +343,7 @@ def test_later_denial_denies_whole_manifest_not_gap(integrated, denial):
     elif denial == "asset_pending":
         row.attachment.state = "validating"
     else:
-        row.recording = object()
+        row.recording = NS(**{**vars(integrated.recording), "client_id": uuid4()})
     result = integrated.project()
     assert len(result["observation_span"][0]["attachments"]) == 64
     projection = result["recording_attachment"]
@@ -372,6 +375,7 @@ def test_persisted_capture_gap_preserved_without_reindex(integrated):
         }
     ]
     integrated.manifest["capture_complete"] = False
+    integrated.recording.capture_complete = False
     before = copy.deepcopy(integrated.manifest)
     result = integrated.project()
     assert result["recording_attachment"]["state"] == "ready"

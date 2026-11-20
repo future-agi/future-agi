@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from tracer.services.attachments.binding import Parent, Scope
-from tracer.services.attachments.reads import AuthorizedStatus, ReadTarget
+from tracer.services.attachments.reads import AuthorizedStatus, ReadTarget, StatusPage
 from tracer.services.attachments.references import NONCE, REFS, SCHEMA, SESSION
 from tracer.services.attachments.view_enrichment import (
     enrich_observations,
@@ -280,6 +280,11 @@ def _real_voice_detail(reader):
     """Drive the REAL ClickHouse Voice detail builder with storage doubles."""
     from tracer.views.trace import TraceView
 
+    if reader is not None:
+        # This in-memory reader returns the entire supplied candidate set.
+        reader.list_authorized.return_value = StatusPage(
+            reader.list_authorized.return_value, complete=True
+        )
     storage = [
         {
             "id": ROOT,
@@ -810,3 +815,60 @@ def test_livekit_job_root_is_a_voice_call_only_with_attachments():
     with override_settings(FI_ATTACHMENTS_ENABLED=False):
         assert _livekit_root(**job) == "unknown"  # disabled: unchanged
         assert _livekit_root(name="agent_session", **job) == "unknown"
+
+
+@pytest.mark.parametrize("bulk", [False, True])
+@pytest.mark.parametrize("valid", [True, False])
+def test_persisted_refs_round_trip_through_conversion_and_attribute_split(bulk, valid):
+    from tracer.services.attachments.control_plane import _references
+    from tracer.services.clickhouse.v2.adapter import split_attributes
+    from tracer.utils import otel
+
+    project = SimpleNamespace(id=C)
+    attrs = {
+        SCHEMA: 1,
+        REFS: json.dumps([REF if valid else {**REF, "unknown": 1}]),
+        SESSION: A,
+        NONCE: B,
+        "nested": '{"value":7}',
+    }
+    span = {
+        "span_id": ROOT,
+        "trace_id": A,
+        "project_name": "voice",
+        "project_type": "observe",
+        "attributes": attrs,
+    }
+    with (
+        patch.object(otel, "calculate_cost", return_value=0),
+        patch.object(otel, "get_or_create_project", return_value=project),
+        patch.object(otel, "get_or_create_project_version", return_value=None),
+        patch.object(
+            otel,
+            "_bulk_get_or_create_projects",
+            return_value={("voice", A, "observe"): project},
+        ),
+        patch.object(otel, "_bulk_get_or_create_project_versions", return_value={}),
+    ):
+        result = (
+            otel.bulk_convert_otel_spans_to_observation_spans([span], A)[0]
+            if bulk
+            else otel.convert_otel_span_to_observation_span(span, A)
+        )
+    stored = result["observation_span"]["span_attributes"]
+    assert stored["nested"] == {"value": 7}
+    assert SESSION not in stored and NONCE not in stored
+    strings, _, _, extra = split_attributes(stored)
+    assert _references(SimpleNamespace(attrs_string=strings)) == (
+        {B: REF} if valid else {}
+    )
+    assert REFS not in extra
+
+
+def test_partial_standalone_waits_without_requesting_blob_facts():
+    reader = Mock()
+    reader.list_authorized.return_value = [_status(ROOT, RECORDING, complete=False)]
+    reader.standalone_recording.return_value = WAV_FACTS
+    projection = _real_voice_detail(reader)["recording_attachment"]
+    assert projection["state"] == "waiting" and "manifest" not in projection
+    reader.standalone_recording.assert_not_called()

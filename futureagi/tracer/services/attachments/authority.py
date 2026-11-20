@@ -58,10 +58,11 @@ def retention_for(organization_id, started_at, *, now=None):
     return started_at + (now - cutoff)
 
 
-def clickhouse_span(project_id, span_id):
-    from tracer.services.clickhouse.v2 import get_reader
+def clickhouse_span(project_id, parent):
+    from tracer.services.attachments.control_plane import read_spans
 
-    return get_reader().get(span_id, project_id=str(project_id))
+    spans = read_spans(project_id, {parent.span_id}, trace_ids={parent.trace_id})
+    return spans.get((str(parent.trace_id), parent.span_id))
 
 
 def source_state(scope, parent, span, *, retention=retention_for, session_check=None):
@@ -182,7 +183,7 @@ def authorize_parent_batch(*, scope, parents, spans, retention):
         (parent.trace_id, parent.span_id): source_state(
             scope,
             parent,
-            spans.get(parent.span_id),
+            spans.get((str(parent.trace_id), parent.span_id)),
             retention=retention,
             session_check=session_check,
         )
@@ -247,7 +248,7 @@ class LiveAuthority:
 
     def source(self, viewer, scope, parent):
         try:
-            span = self.span_reader(scope.project_id, parent.span_id)
+            span = self.span_reader(scope.project_id, parent)
         except Exception:  # noqa: BLE001 - ClickHouse boundary; logged, fails closed
             logger.warning(
                 "attachment_source_unavailable", project_id=str(scope.project_id)

@@ -129,7 +129,9 @@ def parity(setup, user, monkeypatch):
     reader = base.Reader(viewer, control_plane.read_spans)
     target = base.target_for(scope, main)
     survivor_target = base.target_for(scope, survivor)
-    live = base.LiveSession(span_reader=lambda project_id, span_id: spans.get(span_id))
+    live = base.LiveSession(
+        span_reader=lambda project_id, parent: spans.get(parent.span_id)
+    )
     parent = occurrences.Parent(main.trace_id, main.span_id)
     assert reader.standalone_recording(object(), target, str(main.client_id))
     assert reader.recording_manifest(object(), target, recording_id) == body
@@ -273,7 +275,7 @@ def test_foreign_source_cannot_authorize_or_expire_true_parent(
     bad.is_deleted = deleted
     # Deliberately bypass CH filtering: defense in depth must validate fields,
     # not trust a dict key or a requested project as proof of returned scope.
-    spans = {r.main.span_id: bad}
+    spans = {(str(r.main.trace_id), r.main.span_id): bad}
     r.reader.span_reader = lambda *args, **kwargs: spans
     r.live.span_reader = lambda *args: bad
     _assert_denied(r)
@@ -363,11 +365,129 @@ def test_failed_batch_lookup_is_not_retried_for_each_source(parity, monkeypatch)
     lookup.assert_called_once_with(str(r.scope.project_id))
 
 
-def test_batch_cache_never_leaks_to_next_read_or_live_gateway_recheck(parity):
+def test_batch_cache_never_leaks_to_next_read_or_live_gateway_recheck(
+    parity, monkeypatch
+):
     r = parity
+    shared = Mock(wraps=authority.source_state)
+    monkeypatch.setattr(authority, "source_state", shared)
     assert r.reader.list_authorized(object(), (r.target,), per_parent_limit=64)
+    shared.assert_called()
+    shared.reset_mock()
     assert r.live.source(r.viewer, r.scope, r.parent)
+    shared.assert_called_once()
     _marker(r.scope, r.session_id)
     # Reuse the same reader and live authority instances, not fresh objects.
     _assert_denied(r)
-    assert control_plane.source_state is authority.source_state
+
+
+def _same_span_rows(setup, monkeypatch):
+    rows = []
+    for _ in range(2):
+        current, _ = base.core.session(setup)
+        association = base.core.upload_body(setup[0], current)["association"]
+        association["parent"]["trace_id"] = uuid4().hex
+        rows.append(
+            base.occurrence(
+                setup, monkeypatch, current=current, association=association
+            )
+        )
+    return rows
+
+
+def _install_span_table(monkeypatch, rows):
+    table = [base.span_for(row) for row in rows]
+
+    def projected(ids, *, project_id, columns, trace_ids=None, **kwargs):
+        return [
+            {column: getattr(span, column, None) for column in columns}
+            for span in table
+            if span.id in ids
+            and span.project_id == str(project_id)
+            and (not trace_ids or span.trace_id in trace_ids)
+        ]
+
+    backend = Mock()
+    backend.list_by_ids.side_effect = projected
+    # The old unqualified point lookup returns just the first of the two rows.
+    backend.get.side_effect = lambda *args, **kwargs: table[0]
+    monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: backend)
+    return table, backend
+
+
+def test_reused_span_id_binds_and_reads_both_exact_parents(setup, user, monkeypatch):
+    rows = _same_span_rows(setup, monkeypatch)
+    table, backend = _install_span_table(monkeypatch, rows)
+    scope = setup[0]
+    viewer = base.viewer_for(scope, user)
+    reader = base.Reader(viewer, control_plane.read_spans)
+    targets = tuple(base.target_for(scope, row) for row in rows)
+    assert control_plane.reconcile_tick()["bound"] == 2
+    backend.list_by_ids.reset_mock()
+    assert {
+        s.target for s in reader.list_authorized(object(), targets, per_parent_limit=64)
+    } == set(targets)
+    backend.list_by_ids.assert_called_once()
+    for row in rows:
+        parent = occurrences.Parent(row.trace_id, row.span_id)
+        assert base.LiveSession().source(viewer, scope, parent).parent == parent
+    table.pop()
+    assert (
+        base.LiveSession().source(
+            viewer, scope, occurrences.Parent(rows[1].trace_id, rows[1].span_id)
+        )
+        is None
+    )
+    assert {
+        s.target for s in reader.list_authorized(object(), targets, per_parent_limit=64)
+    } == {targets[0]}
+
+
+def test_reused_span_id_survives_repeated_orphan_sweeps(setup, monkeypatch):
+    from tracer.services.attachments import lifecycle
+
+    rows = _same_span_rows(setup, monkeypatch)
+    scope = setup[0]
+    # Prepare two independently bound parents (no batch-reader dependency).
+    for row in rows:
+        spans = base.Spans()
+        spans.put(scope.project_id, base.span_for(row))
+        assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+    _install_span_table(monkeypatch, rows)
+    now = base.timezone.now()
+    for step in (2, 4):
+        counts = lifecycle.sweep_orphans(
+            now=now + step * lifecycle.orphan_grace(),
+            pg_reader=lambda *_: (set(), set()),
+        )
+        assert counts == {"checked": 2}
+        for row in rows:
+            row.refresh_from_db()
+            assert row.source_missing_since is None and row.deleted_at is None
+
+
+def test_public_capture_completion_matches_both_enriched_forms(parity):
+    r = parity
+    page = occurrences.list_occurrences(
+        r.viewer, r.live, trace_id=str(r.main.trace_id)
+    )["items"]
+    flags = {
+        item["reference"]["occurrence_id"]: item["capture_complete"] for item in page
+    }
+    enriched = r.reader.list_authorized(object(), (r.target,), per_parent_limit=64)
+    for row in (r.main, r.segment):
+        assert flags[str(row.client_id)] is True
+        assert (
+            next(
+                s.capture_complete
+                for s in enriched
+                if s.reference["occurrence_id"] == str(row.client_id)
+            )
+            is True
+        )
+
+
+def test_manifest_parent_read_is_trace_qualified(parity):
+    r = parity
+    assert r.reader.recording_manifest(object(), r.target, r.recording_id)
+    assert r.backend.list_by_ids.call_args.kwargs["trace_ids"] == [str(r.main.trace_id)]

@@ -255,3 +255,32 @@ def test_authority_fences_prevent_a_complete_voice_projection(
     projection = detail()["recording_attachment"]
     assert projection["state"] != "ready"
     assert "manifest" not in projection
+
+
+def test_metadata_page_cannot_prove_recording_uniqueness(setup, user, monkeypatch):
+    scope, _ = setup
+    scope.record_audio, scope.policy_version = True, scope.policy_version + 1
+    scope.save(update_fields=["record_audio", "policy_version"])
+    spans = components.Spans()
+    reader = components.Reader(components.viewer_for(scope, user), spans)
+    request = SimpleNamespace(
+        organization=scope.organization, workspace=scope.workspace
+    )
+    monkeypatch.setattr(control_plane, "MAX_READ_ROWS", 1)
+    for count in (1, 2):
+        row = components.occurrence(
+            setup, monkeypatch, purpose="conversation_recording"
+        )
+        if count == 1:
+            spans.put(scope.project_id, components.span_for(row, refs=[]))
+        assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+        result = {
+            "project_id": str(scope.project_id),
+            "observation_span": [{"trace_id": str(row.trace_id), "id": row.span_id}],
+        }
+        enrich_voice_detail(request=request, result=result, reader=reader)
+        assert len(result["observation_span"][0]["attachments"]) == 1
+        if count == 1:
+            assert result["recording_attachment"]["state"] == "ready"
+        else:
+            assert result.get("recording_attachment", {}).get("occurrence_id") is None

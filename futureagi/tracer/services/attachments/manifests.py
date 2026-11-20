@@ -156,7 +156,7 @@ def put_manifest(token, *, scope_id, recording_id, body, key):
         recording.manifest_revision = revision
         recording.duration_ms = body["duration_ms"]
         recording.capture_complete = body["capture_complete"]
-        recording.published_at = timezone.now()
+        recording.published_at = recording.published_at or timezone.now()
         recording.save(
             update_fields=[
                 "manifest",
@@ -169,7 +169,7 @@ def put_manifest(token, *, scope_id, recording_id, body, key):
         return recording
 
 
-def read_manifest(viewer, authority, *, recording_id, parent):
+def read_manifest(viewer, authority, *, recording_id, parent, finalized_only=False):
     scope = scope_for(viewer, authority)
     parent = Parent.parse(parent)
     source = source_for(viewer, authority, scope, parent)
@@ -187,6 +187,13 @@ def read_manifest(viewer, authority, *, recording_id, parent):
         manifest__isnull=False,
     ).first()
     if recording is None or recording.manifest is None:
+        raise not_found()
+    # A streamed SDK prefix is readable metadata, not a finalized timeline.
+    # Completed imports can publish a READY recording with explicit capture gaps.
+    if finalized_only and not (
+        recording.published_at
+        and (recording.capture_complete or recording.state == AttachmentState.READY)
+    ):
         raise not_found()
     manifest = dict(recording.manifest)
     # The manifest is a complete authorization unit, not the 64-item metadata

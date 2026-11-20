@@ -47,10 +47,18 @@ class AuthorizedStatus:
     recording_id: str | None = None
 
 
+class StatusPage(list[AuthorizedStatus]):
+    """Rows admitted to a metadata page, and whether its scan was exhaustive."""
+
+    def __init__(self, rows, *, complete):
+        super().__init__(rows)
+        self.complete = complete
+
+
 class AuthorizedAttachmentReader(Protocol):
     def list_authorized(
         self, viewer, targets: tuple[ReadTarget, ...], *, per_parent_limit: int
-    ) -> list[AuthorizedStatus]:
+    ) -> StatusPage:
         """Bounded batch, not one query per parent. Never fetch media.
 
         Reauthorize viewer + application session + full scope + exact parent per
@@ -59,6 +67,12 @@ class AuthorizedAttachmentReader(Protocol):
         Do not reuse public/shared-trace access as attachment authority. Read
         metadata contains no filenames, object/source URLs, hashes or grants.
         """
+        ...
+
+    def recording_is_unique(
+        self, viewer, targets, *, recording_id, occurrence_id
+    ) -> bool:
+        """True only when the complete call has no other authorized recording."""
         ...
 
     def recording_manifest(self, viewer, target: ReadTarget, recording_id: str):
@@ -77,14 +91,21 @@ class AuthorizedAttachmentReader(Protocol):
 def attachment_statuses(
     *, viewer, targets, reader: AuthorizedAttachmentReader | None, now: datetime
 ):
-    """One batch returns safe per-parent states; the resolver mints playback later."""
+    statuses, _ = attachment_status_page(
+        viewer=viewer, targets=targets, reader=reader, now=now
+    )
+    return statuses
+
+
+def attachment_status_page(*, viewer, targets, reader, now):
+    """Return authorized projections and whether the whole input was scanned."""
     if reader is None or viewer is None:
-        return {}
+        return {}, False
     targets = tuple(dict.fromkeys(targets))
     if len(targets) > MAX_PARENTS or now.tzinfo is None:
         raise ValueError("invalid_attachment_read_bound")
     if not targets:
-        return {}
+        return {}, False
     rows = reader.list_authorized(viewer, targets, per_parent_limit=MAX_PER_PARENT)
     if len(rows) > len(targets) * MAX_PER_PARENT:
         raise ValueError("attachment_reader_exceeded_bound")
@@ -114,4 +135,4 @@ def attachment_statuses(
         if row.recording_id is not None:
             item["recording_id"] = row.recording_id
         items.append(item)
-    return result
+    return result, isinstance(rows, StatusPage) and rows.complete

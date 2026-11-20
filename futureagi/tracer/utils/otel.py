@@ -3,7 +3,7 @@ import re
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from django.conf import settings
@@ -15,14 +15,6 @@ from litellm import cost_per_token, model_cost
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-from tracer.utils.normalization import (
-    CONTRACT,
-    normalize_span,
-    requires_immutable_admission,
-)
-from tracer.utils.normalization.details import store_details
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
@@ -44,6 +36,12 @@ from tracer.utils.helper import (
     get_default_project_version_config,
     get_default_trace_config,
 )
+from tracer.utils.normalization import (
+    CONTRACT,
+    normalize_span,
+    requires_immutable_admission,
+)
+from tracer.utils.normalization.details import store_details
 from tracer.utils.semantic_conventions import (
     AttributeRegistry,
     detect_semconv,
@@ -54,6 +52,9 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
+
+
+logger = structlog.get_logger(__name__)
 
 
 class OtelSpan:
@@ -952,7 +953,7 @@ def convert_otel_span_to_observation_span(
         resource_attributes = otel_span.get("resource", {}).get("attributes", {})
 
         # Parse attributes once for both fields (backward compatibility)
-        parsed_attributes = decoder.parse_nested_json(attributes)
+        parsed_attributes = _parse_span_attributes(attributes)
 
         observation_span = {
             "id": span_id,
@@ -1059,6 +1060,16 @@ def upload_content_to_s3(content: Any, content_type: str, org_id=None) -> str:
         return upload_audio_to_s3(content, org_id=org_id)
     elif content_type == "video":
         return upload_video_to_s3(content, thumbnail=True, org_id=org_id)
+
+
+def _parse_span_attributes(attributes):
+    """Keep normalized attachment references in ClickHouse's string map."""
+    from tracer.services.attachments.references import REFS
+
+    return {
+        key: value if key == REFS else DECODER.parse_nested_json(value)
+        for key, value in attributes.items()
+    }
 
 
 def process_attributes(attributes: dict[str, Any], org_id=None) -> dict[str, Any]:
@@ -1213,7 +1224,7 @@ def get_or_create_project(
             )
 
     except Exception as e:
-        raise Exception(f"Failed to create or get project: {str(e)}")
+        raise Exception(f"Failed to create or get project: {str(e)}") from e
 
 
 def _get_eval_template(eval_template_name, project):
@@ -1681,7 +1692,7 @@ def _convert_single_span(
     resource_attributes = otel_span.get("resource", {}).get("attributes", {})
 
     # Parse attributes once for both fields (backward compatibility)
-    parsed_attributes = DECODER.parse_nested_json(attributes)
+    parsed_attributes = _parse_span_attributes(attributes)
 
     observation_span_dict = {
         "id": otel_span.get("span_id"),
@@ -1791,15 +1802,15 @@ def bulk_convert_otel_spans_to_observation_spans(
         )
         raise ValueError(
             f"Error converting OTel spans to Observation spans in bulk: {str(e)}"
-        )
+        ) from e
 
 
 def calculate_cost(
     attributes: dict,
-    prompt_tokens: Optional[int],
-    completion_tokens: Optional[int],
-    model: Optional[str],
-    organization_id: Optional[str] = None,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    model: str | None,
+    organization_id: str | None = None,
 ):
     """
     Calculates cost for a span. Checks user-provided cost attributes first
@@ -1867,10 +1878,10 @@ def calculate_cost(
 
 
 def calculate_cost_from_tokens(
-    prompt_tokens: Optional[int],
-    completion_tokens: Optional[int],
-    model: Optional[str],
-    organization_id: Optional[str] = None,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    model: str | None,
+    organization_id: str | None = None,
 ):
     """
     Calculates the cost of a model call based on the number of prompt and completion tokens.

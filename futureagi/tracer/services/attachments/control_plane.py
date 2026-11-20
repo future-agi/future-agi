@@ -59,6 +59,7 @@ from tracer.services.attachments.reads import (
     MAX_PER_PARENT,
     AuthorizedStatus,
     ReadTarget,
+    StatusPage,
 )
 from tracer.services.attachments.references import (
     REFS,
@@ -101,7 +102,7 @@ def bind_lookback():
 def read_spans(
     project_id, span_ids, *, with_attributes=False, trace_ids=(), started=()
 ):
-    """``{span_id: span}`` from one ``spans FINAL`` read for one project.
+    """``{(trace_id, span_id): span}`` from one ``spans FINAL`` read for one project.
 
     ``trace_ids`` keys the batch by (project, trace); ``started`` is an
     optional ``(earliest, latest)`` start-time pair that bounds the read to the
@@ -117,7 +118,9 @@ def read_spans(
         trace_ids=sorted(str(trace_id) for trace_id in trace_ids) or None,
         start_window=tuple(started) or None,
     )
-    return {str(row["id"]): SimpleNamespace(**row) for row in rows}
+    return {
+        (str(row["trace_id"]), str(row["id"])): SimpleNamespace(**row) for row in rows
+    }
 
 
 class Retention:
@@ -369,7 +372,7 @@ class ClickHouseParentReader:
             )
             for link in group:
                 key = (link.scope, link.parent)
-                span = spans.get(link.parent.span_id)
+                span = spans.get((link.parent.trace_id, link.parent.span_id))
                 if key in result or span is None:
                     continue
                 try:
@@ -543,7 +546,11 @@ class ControlPlaneReader:
     def _memo(self, spans):
         """The live authority over ``spans`` (a dict filled by one batch read)."""
         return _MemoAuthority(
-            LiveAuthority(span_reader=lambda project_id, span_id: spans.get(span_id))
+            LiveAuthority(
+                span_reader=lambda project_id, parent: spans.get(
+                    (str(parent.trace_id), parent.span_id)
+                )
+            )
         )
 
     @staticmethod
@@ -566,28 +573,63 @@ class ControlPlaneReader:
         the gate ``get_occurrence`` applies. Nothing here reads the blob: only a
         ready standalone recording needs its facts (``standalone_recording``).
         """
+        statuses, complete = self._scan_authorized(
+            viewer, targets, per_parent_limit=per_parent_limit
+        )
+        return StatusPage(statuses, complete=complete)
+
+    def recording_is_unique(self, viewer, targets, *, recording_id, occurrence_id):
+        """Look for a second authorized recording independently of the display page.
+
+        Exclude every segment of the candidate before limiting the query: one
+        long recording must not crowd out an alternative. An incomplete scan
+        proves nothing, even if its visible prefix contained only denied rows.
+        """
+        candidate = (
+            Q(recording__client_id=UUID(recording_id))
+            if recording_id is not None
+            else Q(recording__isnull=True, client_id=UUID(occurrence_id))
+        )
+        alternatives = (
+            Q(purpose="conversation_recording", attachment__modality="audio")
+            & ~candidate
+        )
+        rows, complete = self._scan_authorized(
+            viewer, targets, per_parent_limit=MAX_READ_ROWS, match_rows=alternatives
+        )
+        return complete and not any(
+            row.state not in ("expired", "deleted", "rejected") for row in rows
+        )
+
+    def _scan_authorized(self, viewer, targets, *, per_parent_limit, match_rows=None):
         if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False) or not targets:
-            return []
+            return [], False
         groups: dict[Scope, list[ReadTarget]] = {}
         for target in targets:
             groups.setdefault(target.scope, []).append(target)
-        statuses, budget = [], MAX_READ_ROWS
+        statuses, budget, complete = [], MAX_READ_ROWS, True
         for scope_key, group in groups.items():
             if budget <= 0:
+                complete = False
                 break
             app_viewer = self._viewer(viewer, scope_key)
             parents = self._parents(group)
             if app_viewer is None or not parents:
+                complete = False
                 continue
-            spans: dict[str, SimpleNamespace] = {}
+            spans: dict[tuple[str, str], SimpleNamespace] = {}
             authority = _BatchSources(self._memo(spans), spans, Retention())
             try:
                 scope = occurrences.scope_for(app_viewer, authority)
             except AttachmentError:
+                complete = False
                 continue
             match = Q()
             for trace_id, span_id in parents:
                 match |= Q(trace_id=trace_id, span_id=span_id)
+            if match_rows is not None:
+                match &= match_rows
+            limit = min(budget, len(parents) * per_parent_limit)
             rows = list(
                 AttachmentOccurrence.objects.select_related(
                     "attachment", "capture_session", "recording"
@@ -598,23 +640,31 @@ class ControlPlaneReader:
                     bound_at__isnull=False,
                     deleted_at__isnull=True,
                 )
-                .order_by("trace_id", "span_id", "id")[
-                    : min(budget, len(parents) * per_parent_limit)
-                ]
+                .order_by("trace_id", "span_id", "id")[: limit + 1]
             )
+            if len(rows) > limit:
+                complete = False
+                rows = rows[:limit]
             if not rows:
                 continue
             budget -= len(rows)
             started = [row.source_started_at for row in rows if row.source_started_at]
-            spans.update(
-                _read_source_spans(
-                    self.span_reader,
-                    app_viewer.project_id,
-                    {row.span_id for row in rows},
-                    trace_ids={row.trace_id for row in rows},
-                    started=(min(started), max(started)) if started else (),
+            try:
+                spans.update(
+                    self.span_reader(
+                        app_viewer.project_id,
+                        {row.span_id for row in rows},
+                        trace_ids={row.trace_id for row in rows},
+                        started=(min(started), max(started)) if started else (),
+                    )
                 )
-            )
+            except Exception:  # noqa: BLE001 - an unavailable reader is not an empty result
+                logger.warning(
+                    "attachment_source_unavailable",
+                    project_id=str(app_viewer.project_id),
+                )
+                complete = False
+                continue
             now = timezone.now()
             for row in rows:
                 parent = occurrences.Parent(row.trace_id, row.span_id)
@@ -624,27 +674,19 @@ class ControlPlaneReader:
                 except AttachmentError:
                     continue
                 expiry = min(row.expires_at, row.source_expires_at, state.expires_at)
-                recording = row.recording if row.recording_id else None
+                document = occurrences.metadata(row, scope, expiry)
                 statuses.append(
                     AuthorizedStatus(
                         target=parents[(row.trace_id, row.span_id)],
-                        reference=occurrences.metadata(row, scope, expiry)["reference"],
+                        reference=document["reference"],
                         state=row.attachment.state,
                         bound=True,
-                        # A segment is complete when its recording's manifest
-                        # says so; a standalone upload is its whole capture.
-                        capture_complete=(
-                            recording.capture_complete
-                            if recording is not None
-                            else row.attachment.state == "ready"
-                        ),
+                        capture_complete=document["capture_complete"],
                         expires_at=expiry,
-                        recording_id=(
-                            str(recording.client_id) if recording is not None else None
-                        ),
+                        recording_id=document.get("recording_id"),
                     )
                 )
-        return statuses
+        return statuses, complete
 
     def recording_manifest(self, viewer, target, recording_id):
         if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
@@ -655,8 +697,13 @@ class ControlPlaneReader:
         try:
             return manifests.read_manifest(
                 app_viewer,
-                self._authority(app_viewer, {target.parent.span_id}),
+                self._authority(
+                    app_viewer,
+                    {target.parent.span_id},
+                    trace_ids={target.parent.trace_id},
+                ),
                 recording_id=recording_id,
+                finalized_only=True,
                 parent={
                     "trace_id": target.parent.trace_id,
                     "span_id": target.parent.span_id,

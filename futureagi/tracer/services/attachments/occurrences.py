@@ -209,7 +209,9 @@ def get_occurrence(
     except (ValueError, TypeError, AttributeError):
         raise not_found() from None
     row = (
-        AttachmentOccurrence.objects.select_related("attachment", "capture_session")
+        AttachmentOccurrence.objects.select_related(
+            "attachment", "capture_session", "recording"
+        )
         .filter(
             scope=scope,
             client_id=occurrence_id,
@@ -248,7 +250,11 @@ def metadata(row, scope, expires_at):
         "parent": {"trace_id": str(row.trace_id), "span_id": row.span_id},
         "state": row.attachment.state,
         "binding": "bound",
-        "capture_complete": row.capture_complete,
+        "capture_complete": (
+            row.recording.capture_complete
+            if row.recording_id
+            else row.attachment.state == AttachmentState.READY
+        ),
         "policy_version": str(row.policy_version),
         "deletion_generation": row.deletion_generation,
         "expires_at": expires_at.isoformat(),

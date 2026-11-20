@@ -57,13 +57,15 @@ def unlimited_retention(monkeypatch):
 
 
 class Spans:
-    """``read_spans`` double: one dict per project, keyed by span id."""
+    """``read_spans`` double: one dict per project, keyed by trace and span id."""
 
     def __init__(self):
         self.by_project, self.calls, self.batches = {}, [], []
 
     def put(self, project_id, span):
-        self.by_project.setdefault(str(project_id), {})[span.id] = span
+        self.by_project.setdefault(str(project_id), {})[
+            (str(span.trace_id), span.id)
+        ] = span
 
     def __call__(
         self, project_id, span_ids, *, with_attributes=False, trace_ids=(), started=()
@@ -74,14 +76,19 @@ class Spans:
         )
         rows = self.by_project.get(str(project_id), {})
         return {
-            span_id: rows[span_id]
-            for span_id in span_ids
-            if span_id in rows
-            # Like the real read: the batch is keyed by trace and time window.
-            and (not trace_ids or str(rows[span_id].trace_id) in self.batches[-1][0])
-            and (not started or _hour(started[0]) <= _hour(rows[span_id].start_time))
-            and (not started or _hour(rows[span_id].start_time) <= _hour(started[1]))
+            key: span
+            for key, span in rows.items()
+            if span.id in span_ids
+            and (not trace_ids or str(span.trace_id) in self.batches[-1][0])
+            and (
+                not started
+                or _hour(started[0]) <= _hour(span.start_time) <= _hour(started[1])
+            )
         }
+
+    def one(self, project_id, parent):
+        key = (str(parent.trace_id), parent.span_id)
+        return self(project_id, {parent.span_id}, trace_ids={parent.trace_id}).get(key)
 
 
 def _hour(value):
@@ -177,11 +184,7 @@ def test_bound_source_equals_the_read_path_source(setup, user, monkeypatch):
     assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
     row.refresh_from_db()
     parent = occurrences.Parent(row.trace_id, row.span_id)
-    authority = LiveSession(
-        span_reader=lambda project_id, span_id: spans(project_id, {span_id}).get(
-            span_id
-        )
-    )
+    authority = LiveSession(span_reader=spans.one)
     viewer = viewer_for(scope, user)
     read = authority.source(viewer, scope, parent)
     assert (row.source_started_at, row.source_expires_at, row.source_generation) == (
@@ -215,11 +218,7 @@ def test_bound_occurrence_still_reads_25h_later_through_the_scheduled_jobs(
     row.refresh_from_db()
     assert row.expires_at == row.source_expires_at
     parent = occurrences.Parent(row.trace_id, row.span_id)
-    authority = LiveSession(
-        span_reader=lambda project_id, span_id: spans(project_id, {span_id}).get(
-            span_id
-        )
-    )
+    authority = LiveSession(span_reader=spans.one)
     viewer = viewer_for(scope, user)
     for hours in (25, 24 * 30):
         _travel(monkeypatch, timedelta(hours=hours))
@@ -485,7 +484,11 @@ class Reader(control_plane.ControlPlaneReader):
 
     def _memo(self, spans):
         return control_plane._MemoAuthority(
-            LiveSession(span_reader=lambda project_id, span_id: spans.get(span_id))
+            LiveSession(
+                span_reader=lambda project_id, parent: spans.get(
+                    (str(parent.trace_id), parent.span_id)
+                )
+            )
         )
 
 
@@ -612,11 +615,7 @@ def test_read_path_refuses_what_binding_refused(setup, user, monkeypatch):
     # A reference that disagrees with the upload rejects the occurrence.
     spans.put(scope.project_id, span_for(row, refs=[ref_for(row, direction="input")]))
     assert control_plane.reconcile_tick(span_reader=spans)["rejected"] == 1
-    authority = LiveSession(
-        span_reader=lambda project_id, span_id: spans(project_id, {span_id}).get(
-            span_id
-        )
-    )
+    authority = LiveSession(span_reader=spans.one)
     with pytest.raises(AttachmentError):
         occurrences.get_occurrence(
             viewer_for(scope, user),

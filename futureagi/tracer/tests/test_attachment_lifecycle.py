@@ -539,7 +539,7 @@ def test_orphan_sweep_tombstones_only_on_a_successful_read(recording, monkeypatc
     assert r.row.source_missing_since is None
 
     def live(project_id, span_ids):
-        return {r.row.span_id: str(r.row.trace_id)}
+        return {(r.row.trace_id, r.row.span_id)}
 
     assert lifecycle.sweep_orphans(span_reader=live) == {"checked": 1}
     r.row.refresh_from_db()
@@ -574,7 +574,7 @@ def test_one_empty_read_followed_by_a_live_read_never_tombstones(
     erase_before = AttachmentOutbox.objects.filter(event="erase").count()
 
     def live(project_id, span_ids):
-        return {r.row.span_id: str(r.row.trace_id)}
+        return {(r.row.trace_id, r.row.span_id)}
 
     assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg) == {
         "missing_first": 1
