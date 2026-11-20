@@ -38576,6 +38576,8 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestObservesModels
   false;
 export const simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault =
   false;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestMeasuredAutomaticallyDefault =
+  false;
 
 export const simulateApiAgentFixRunsListResponseResultsItemReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -38757,6 +38759,11 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           .boolean()
           .default(
             simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCostDefault,
+          ),
+        measured_automatically: zod
+          .boolean()
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestMeasuredAutomaticallyDefault,
           ),
       }),
       spent_credits: zod.number(),
@@ -39164,6 +39171,8 @@ export const simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault =
   false;
 export const simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault =
   false;
+export const simulateApiAgentFixRunsReadResponseRequestMeasuredAutomaticallyDefault =
+  false;
 
 export const simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -39314,6 +39323,11 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       .boolean()
       .default(
         simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault,
+      ),
+    measured_automatically: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestMeasuredAutomaticallyDefault,
       ),
   }),
   spent_credits: zod.number(),
@@ -39622,6 +39636,8 @@ export const simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault =
   false;
 export const simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault =
   false;
+export const simulateApiAgentFixRunsStopResponseRequestMeasuredAutomaticallyDefault =
+  false;
 
 export const simulateApiAgentFixRunsStopResponseReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -39772,6 +39788,11 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       .boolean()
       .default(
         simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault,
+      ),
+    measured_automatically: zod
+      .boolean()
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestMeasuredAutomaticallyDefault,
       ),
   }),
   spent_credits: zod.number(),

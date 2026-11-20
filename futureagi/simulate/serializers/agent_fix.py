@@ -126,6 +126,8 @@ class AgentFixRequestSerializer(serializers.Serializer):
     cost_limit_usd = serializers.FloatField(allow_null=True, default=None)
     observes_models = serializers.BooleanField(default=False)
     meters_agent_cost = serializers.BooleanField(default=False)
+    # Only the sandbox's own measuring saw the source run's model calls.
+    measured_automatically = serializers.BooleanField(default=False)
 
 
 class AgentFixVerdictTierPartSerializer(serializers.Serializer):
