@@ -23,6 +23,7 @@ import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 // The environment workspace header: back to the list, the
 // name + status badge + env-version pin, the primary "Run simulation" action, and
@@ -44,6 +45,7 @@ export default function WorkspaceHeader({
 }) {
   const { setTab } = useWorkspaceTab();
   const navigate = useNavigate();
+  const { canEdit } = useSimulationAccess();
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Run configuration: the header's Repeats pill sets k, and Run starts a
@@ -113,15 +115,23 @@ export default function WorkspaceHeader({
           </Typography>
           <LivePill env={env} />
           {canRename && (
-            <CustomTooltip show title="Rename environment" size="small" arrow>
-              <IconButton
-                aria-label="Rename environment"
-                size="small"
-                onClick={() => setRenameOpen(true)}
-                sx={{ color: "text.subtitle" }}
-              >
-                <Iconify icon="solar:pen-linear" width={15} />
-              </IconButton>
+            <CustomTooltip
+              show
+              title={canEdit ? "Rename environment" : WORKSPACE_COPY.viewer.rename}
+              size="small"
+              arrow
+            >
+              <span>
+                <IconButton
+                  aria-label="Rename environment"
+                  size="small"
+                  disabled={!canEdit}
+                  onClick={() => setRenameOpen(true)}
+                  sx={{ color: "text.subtitle" }}
+                >
+                  <Iconify icon="solar:pen-linear" width={15} />
+                </IconButton>
+              </span>
             </CustomTooltip>
           )}
           {/* The default environment version; hidden while versioning is off. */}

@@ -15,7 +15,9 @@ import {
 import Iconify from "src/components/iconify";
 import { fDateTime, relativeTime } from "src/utils/format-time";
 import { canMakeDefault } from "src/api/simulate-environments/versions";
-import { VERSIONS_COPY } from "../workspace.constants";
+import { VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { PreflightBadge } from "../agents/PreflightStatus";
 import { named } from "../agents/agentVersionStatus";
 import MakeDefaultConfirm from "./MakeDefaultConfirm";
@@ -53,6 +55,7 @@ export default function HistoryEntry({
     version.createdBy && VERSIONS_COPY.by(version.createdBy),
   ].filter(Boolean);
   const movable = canMakeDefault(piece, version);
+  const { canEdit } = useSimulationAccess();
   // A refused move shows under this row's title; the row stays as it was.
   const refused =
     move.isError &&
@@ -203,17 +206,21 @@ export default function HistoryEntry({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         {movable && (
-          <MenuItem
-            sx={{ typography: "s2" }}
-            onClick={() => {
-              setMenu(null);
-              setConfirming(true);
-            }}
-          >
-            {rollsBack
-              ? rollBack.action(rollBack.pieces[piece], named(version))
-              : VERSIONS_COPY.makeDefault.action}
-          </MenuItem>
+          // A Viewer sees the action, locked, with the reason on hover.
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.versions}>
+            <MenuItem
+              sx={{ typography: "s2" }}
+              disabled={!canEdit}
+              onClick={() => {
+                setMenu(null);
+                setConfirming(true);
+              }}
+            >
+              {rollsBack
+                ? rollBack.action(rollBack.pieces[piece], named(version))
+                : VERSIONS_COPY.makeDefault.action}
+            </MenuItem>
+          </ViewerLock>
         )}
         <MenuItem
           sx={{ typography: "s2" }}

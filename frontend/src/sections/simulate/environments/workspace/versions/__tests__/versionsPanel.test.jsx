@@ -117,6 +117,9 @@ vi.mock("src/api/simulate-environments/versions", async () => {
 });
 
 const { default: VersionsPanel } = await import("../VersionsPanel");
+const { default: useSimulationAccess } = await import(
+  "../../../hooks/useSimulationAccess"
+);
 const { default: useWorkspaceTab } = await import(
   "../../helpers/useWorkspaceTab"
 );
@@ -1142,6 +1145,22 @@ describe("VersionsPanel", () => {
       expect(move.calls).toEqual([
         { piece: "suite", versionId: "s0", expectedDefaultId: "s2" },
       ]);
+    });
+
+    it("shows a Viewer the roll back but doesn't let them use it", async () => {
+      const user = userEvent.setup();
+      useSimulationAccess.mockReturnValue({ canEdit: false, canRun: true });
+      try {
+        render(<VersionsPanel env={ENV} />);
+        const menu = await openActions(user, "environment", "v1");
+        expect(
+          within(menu).getByRole("menuitem", {
+            name: "Roll back to environment v1",
+          }),
+        ).toHaveAttribute("aria-disabled", "true");
+      } finally {
+        useSimulationAccess.mockReturnValue({ canEdit: true, canRun: true });
+      }
     });
 
     it("offers nothing on a discarded version or an agent version still being checked", async () => {
