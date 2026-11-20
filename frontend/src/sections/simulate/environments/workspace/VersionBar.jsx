@@ -33,10 +33,10 @@ function HistoryLink({ kind, onHistory, children }) {
         font: "inherit",
         color: "inherit",
         verticalAlign: "baseline",
-        textDecoration: "underline dotted",
+        // Quiet until hovered: it reads as part of the line, not a call to act.
         textUnderlineOffset: "3px",
         borderRadius: "2px",
-        "&:hover": { color: "text.primary" },
+        "&:hover": { color: "text.primary", textDecoration: "underline" },
         "&.Mui-focusVisible": {
           outline: "2px solid",
           outlineColor: "primary.main",
