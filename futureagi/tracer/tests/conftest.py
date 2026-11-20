@@ -6,6 +6,8 @@ Provides fixtures specific to tracer models and test data.
 import json
 import uuid
 from datetime import timedelta
+from fnmatch import fnmatchcase
+from pathlib import Path
 
 import pytest
 from django.utils import timezone
@@ -30,6 +32,35 @@ from tracer.tests._ch_seed import (
     seed_ch_trace_sessions,
     truncate_ch_spans,
 )
+
+# The Metrics suite: the one list Backend CI's "metrics shard" legs select
+# (-m metrics) and its "pytest shard" legs exclude (-m "not metrics").
+# Its "metrics" paths filter names these modules too.
+METRICS_SUITE_MODULES = ("test_derived_metric_*.py", "test_metric_*.py")
+# Matches the patterns but predates Metrics: monitor/list filter builders.
+NOT_METRICS_SUITE_MODULES = ("test_metric_filters_comprehensive.py",)
+_TRACER_TESTS = Path(__file__).resolve().parent
+
+
+def is_metrics_suite_module(path: Path) -> bool:
+    return (
+        path.parent == _TRACER_TESTS
+        and any(fnmatchcase(path.name, pattern) for pattern in METRICS_SUITE_MODULES)
+        and path.name not in NOT_METRICS_SUITE_MODULES
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Mark the Metrics suite before -m deselects and pytest-split shards."""
+
+    modules = {}
+    for item in items:
+        path = Path(item.path)
+        if path not in modules:
+            modules[path] = is_metrics_suite_module(path.resolve())
+        if modules[path]:
+            item.add_marker(pytest.mark.metrics)
 
 
 @pytest.fixture(autouse=True)
