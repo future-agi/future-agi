@@ -328,6 +328,46 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getByRole("cell", { name: "Flexible" })).toBeInTheDocument();
   });
 
+  it("shows a confirm-change prompt as a titled field list, and a malformed one as written", () => {
+    const ask = (prompt) => ({
+      id: "a1",
+      kind: "ask",
+      question: {
+        prompt,
+        options: [{ label: "Yes, make this change" }],
+        multiSelect: false,
+        step: 1,
+        total: 1,
+      },
+      onSubmit: vi.fn(),
+    });
+    const args = JSON.stringify(
+      { judged: "Pass when: on topic\nFail when: invents arcs", scope: "x" },
+      null,
+      2,
+    );
+    const { container, rerender } = render(
+      <Turn
+        turn={builder([ask(`Confirm this change: add_sub_goal ${args}`)])}
+      />,
+    );
+    expect(
+      screen.getByText("Confirm this change: Add sub goal"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Judged")).toBeInTheDocument();
+    expect(
+      screen.getByText("Pass when: on topic\nFail when: invents arcs", {
+        normalizer: (t) => t,
+      }),
+    ).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("\\n");
+    expect(screen.getByText("Yes, make this change")).toBeInTheDocument();
+
+    const broken = 'Confirm this change: add_rule { "rule": "cut off';
+    rerender(<Turn turn={builder([ask(broken)])} />);
+    expect(container).toHaveTextContent(broken);
+  });
+
   it("keeps a plain question with pipes as written", () => {
     const prompt = "Use a | b or c?\nThe --- divider stays too.";
     const question = {
