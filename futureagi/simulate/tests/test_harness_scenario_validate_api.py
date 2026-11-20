@@ -534,7 +534,7 @@ def test_nothing_to_validate_says_the_cases_not_proved_are_held_and_why(
     assert pressed.json()["state"] == "ready"
     message = pressed.json()["message"]
     assert message.startswith("Nothing to validate: the 2 cases not proved are held")
-    assert "refunded never held (2 cases)" in message
+    assert message.endswith("refunded never held (2 cases).")
     assert (offered["to_prove"], offered["message"]) == (0, message)
     assert not HostedHarnessJob.no_workspace_objects.filter(
         environment_id=certified.id, payload__metadata__scenario_proving="only"

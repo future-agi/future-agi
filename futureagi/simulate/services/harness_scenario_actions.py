@@ -244,7 +244,7 @@ def nothing_to_prove(live: Mapping[str, LifecycleView]) -> str:
         return NOTHING_TO_PROVE
     reasons = Counter(view["reason_text"] or UNKNOWN_REASON_TEXT for view in held)
     shown = [
-        text if count == 1 else f"{text} ({count} cases)"
+        f"{text.rstrip('.')}." if count == 1 else f"{text.rstrip('.')} ({count} cases)."
         for text, count in reasons.most_common(HELD_REASONS_SHOWN)
     ]
     if len(reasons) > HELD_REASONS_SHOWN:
