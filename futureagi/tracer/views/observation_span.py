@@ -1650,8 +1650,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     observation_span["project"].trace_type == "observe"
                     and observation_span.get("cost") is not None
                 ):
+                    reported_cost_input = observation_span["cost"]
+                    if isinstance(reported_cost_input, bool):
+                        return self._gm.bad_request("cost must be a finite number")
                     try:
-                        reported_cost = float(observation_span["cost"])
+                        reported_cost = float(reported_cost_input)
                     except (TypeError, ValueError, OverflowError):
                         return self._gm.bad_request("cost must be a finite number")
                     if not math.isfinite(reported_cost):

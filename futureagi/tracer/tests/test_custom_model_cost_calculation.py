@@ -152,6 +152,28 @@ def test_observe_bulk_rejects_nonfinite_cost(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("cost", [True, False])
+def test_observe_bulk_rejects_boolean_cost_atomically(
+    auth_client, observe_project, session_trace, cost
+):
+    span = {
+        "project": str(observe_project.pk),
+        "trace": str(session_trace.pk),
+        "observation_type": "llm",
+        "name": f"boolean cost check {cost}",
+    }
+    response = auth_client.post(
+        "/tracer/observation-span/bulk_create/",
+        {"spans": [{**span, "cost": 0.75}, {**span, "cost": cost}]},
+        format="json",
+    )
+    assert response.status_code == 400
+    assert not ObservationSpan.objects.filter(
+        trace=session_trace, name=span["name"]
+    ).exists()
+
+
+@pytest.mark.django_db
 def test_otlp_bulk_activity_persists_cost_and_reports_usage(
     observe_project, session_trace, custom_rate, user, monkeypatch
 ):
