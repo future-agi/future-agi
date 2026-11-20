@@ -1,6 +1,8 @@
-# Manual trigger only, for the GCP us2 stack. Pick any branch to build:
-# main -> production-flavored build, anything else -> dev-flavored build.
-# Either way the result ships to the us2 bucket behind app-us2.futureagi.com.
+# For the GCP us2 stack. Started by hand, or by the deployment repo's
+# deploy-production run once US's backend is verified (it passes the release
+# tag it deployed). main or a release tag (vX.Y.Z) -> production-flavored
+# build; anything else -> dev-flavored build. Either way the result ships to
+# the us2 bucket behind app-us2.futureagi.com.
 name: Deploy Frontend to US2 (GCP)
 
 on:
@@ -11,6 +13,11 @@ on:
         required: true
         default: "main"
         type: string
+
+# One US frontend publish at a time; a second waits instead of interleaving uploads.
+concurrency:
+  group: frontend-deploy-us
+  cancel-in-progress: false
 
 jobs:
   deploy-us2:
@@ -36,9 +43,16 @@ jobs:
         run: yarn
 
       - name: Create .env file from secrets
+        env:
+          BUILD_REF: ${{ inputs.branch }}
         run: |
+          if [[ "$BUILD_REF" == main || "$BUILD_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            build_environment=production
+          else
+            build_environment=dev
+          fi
           cat <<EOF > .env
-          VITE_ENVIRONMENT=${{ inputs.branch == 'main' && 'production' || 'dev' }}
+          VITE_ENVIRONMENT=${build_environment}
           VITE_OBSERVE_LIST_DEFAULT_PAGE_SIZE=25
           VITE_INTERACTIVE_REQUEST_TIMEOUT_MS=60000
           VITE_ANALYTICS_REQUEST_TIMEOUT_MS=60000

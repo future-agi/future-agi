@@ -8,6 +8,13 @@ on:
         required: false
         default: "main"
 
+# Started by hand, or by the deployment repo's deploy-production run once EU's
+# backend is verified (it passes the release tag it deployed as `branch`).
+# One EU frontend publish at a time; a second waits instead of interleaving uploads.
+concurrency:
+  group: frontend-deploy-eu
+  cancel-in-progress: false
+
 jobs:
   deploy-eu:
     runs-on: ubuntu-latest
