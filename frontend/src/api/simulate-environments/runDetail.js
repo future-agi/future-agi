@@ -241,6 +241,8 @@ export function useRunDetail(
       buildNotice: execution.build_notice ?? null,
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
+      // Must-pass cases this run failed, by name.
+      mustPassFailed: Array.isArray(execution.must_pass_failed) ? execution.must_pass_failed : [],
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume

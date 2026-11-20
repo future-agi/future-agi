@@ -66,10 +66,11 @@ from simulate.services.harness_versioning.draft_pieces import (
     version_error,
 )
 from simulate.services.harness_versioning.review import any_decision, apply_review
-from simulate.services.harness_versioning.review_items import index_in_step
+from simulate.services.harness_versioning.review_items import UsedFile, index_in_step
 from simulate.services.harness_versioning.review_saved import name_saved, record_sources
 from simulate.services.harness_versioning.versions import (
     SEALED_MANIFEST,
+    _carried_proofs,
     _default_runtime,
     _member_content,
     _Pair,
@@ -82,6 +83,7 @@ from simulate.services.harness_versioning.versions import (
     next_number,
     note_revision,
     pair_archive,
+    record_proofs,
     require_not_busy,
     retired_keys,
     set_defaults,
@@ -356,12 +358,32 @@ def require_fresh(locked: HostedHarnessJob, opened: Mapping[str, Any]) -> None:
                 piece=piece,
             )
         if piece == "suite":
+            # A case archived after the draft opened is held back by the run, not refused here.
             refuse_scenario_keys(
                 locked,
                 (draft.documents or {}).get("scenarios") or [],
                 origin="manual",
-                exempt=exempted_keys(draft),
+                exempt=exempted_keys(draft) | live_archived_tokens(locked),
             )
+
+
+def live_archived_tokens(locked: HostedHarnessJob) -> set[str]:
+    """Tokens of archived cases the saved suite still holds: archiving changes no draft."""
+    from simulate.models import HarnessSuiteMember, HostedHarnessScenario
+    from simulate.services.harness_starting_records import scenario_token
+
+    live = {
+        scenario_token(key)
+        for key in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=locked.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    }
+    return {
+        scenario_token(key)
+        for key in HostedHarnessScenario.no_workspace_objects.filter(
+            job=locked, deleted=False, archived_at__isnull=False
+        ).values_list("scenario_key", flat=True)
+    } & live
 
 
 def edits_moved(piece: str) -> HostedHarnessError:
@@ -560,10 +582,10 @@ def _contract_carried(
 
 
 def _extend_exempt(locked: HostedHarnessJob, scenarios: list[dict[str, Any]]) -> set:
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     return {
-        _scenario_token(key)
+        scenario_token(key)
         for key in [*retired_keys(locked, scenarios), *taken_keys(locked, scenarios)]
     }
 
@@ -639,6 +661,7 @@ def record_draft(
     nudge: Any = None,
     message_id: str = "",
     checked: set[str] | None = None,
+    used_files: list[UsedFile] | None = None,
 ) -> DraftWrite | None:
     """Write an edited authoring tree into the environment's drafts.
 
@@ -647,8 +670,8 @@ def record_draft(
     drafts the writer started from: another edit since refuses with ``draft_changed``.
     ``pieces`` limits the writes and the check (both by default); ``checked`` widens the check
     to a piece the write was validated against but does not write; ``nudge`` tags a draft
-    this call creates; ``message_id`` is the chat message the write answered, part of each moved item's
-    source. ``None`` once drafts no longer apply: the caller saves as before.
+    this call creates; ``message_id`` is the chat message the write answered, and ``used_files`` the imported
+    files and rows it read (``{"file_id", "row"}``), part of each moved item's source. ``None`` once drafts no longer apply: the caller saves as before.
     """
     from simulate.services.hosted_harness_conversation import (
         require_checkpoint_scenarios,
@@ -762,7 +785,8 @@ def record_draft(
             refuse_scenario_keys(
                 locked, prepared.scenarios, origin=origin, exempt=exempt
             )
-            if origin == "extend":
+            if origin in ("extend", "nudge"):
+                # Extend, and a rebuild restoring a dropped scenario, bring a dropped key back.
                 exempt |= _extend_exempt(locked, prepared.scenarios)
         rows: dict[str, Any] = {}
         written: set[str] = set()
@@ -810,6 +834,7 @@ def record_draft(
                 revision=draft.revision + 1 if fresh and draft is not None else 1,
                 at=timezone.now().isoformat(),
                 message_id=message_id,
+                used_files=used_files,
             )
             replaced = draft if draft is not None and not fresh else None
             if replaced is not None:
@@ -905,10 +930,58 @@ def actor_ids(environment_files: Mapping[str, bytes]) -> set[str]:
     }
 
 
+def archived_folder_files(environment: HostedHarnessJob, key: str) -> dict[str, bytes]:
+    """The files of a case's scenario folder from the newest saved suite version that has
+    it, so a restored case comes back with its setup and checks, not only its document."""
+    from simulate.models import HarnessSuiteVersion
+    from simulate.services.harness_starting_records import scenario_token
+    from simulate.services.hosted_harness_gateway import (
+        _archive_parts,
+        _document_tokens,
+    )
+
+    token = scenario_token(key)
+    versions = HarnessSuiteVersion._base_manager.filter(
+        job_id=environment.id,
+        deleted=False,
+        members__scenario_key=key,
+    ).order_by("-version_number")
+    for version in versions[:5]:
+        files = piece_files(environment, "suite", version)
+        for path, data in files.items():
+            parts = _archive_parts(path)
+            if (
+                len(parts) != 3
+                or parts[0] != "scenarios"
+                or parts[2] != "scenario.json"
+            ):
+                continue
+            try:
+                document = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                continue
+            if token in _document_tokens(parts[1], document):
+                prefix = ("scenarios", parts[1])
+                return {
+                    name: body
+                    for name, body in files.items()
+                    if _archive_parts(name)[:2] == prefix
+                }
+    return {}
+
+
 def write_suite_edit(
-    environment: HostedHarnessJob, suite: list[dict[str, Any]], *, user: Any
+    environment: HostedHarnessJob,
+    suite: list[dict[str, Any]],
+    *,
+    user: Any,
+    restored_files: Mapping[str, bytes] | None = None,
 ) -> DraftWrite | None:
-    """A Scenarios-tab edit, written into the suite draft on top of the unsaved changes."""
+    """A Scenarios-tab edit, written into the suite draft on top of the unsaved changes.
+
+    ``restored_files`` puts a restored case's folder back before the rewrite, which keeps a
+    folder only for a scenario the suite names.
+    """
     from simulate.services.hosted_harness_gateway import (
         AuthoringArchiveKept,
         _rewritten_authoring_archive,
@@ -943,6 +1016,8 @@ def write_suite_edit(
         )
         for doc in suite
     ]
+    if restored_files:
+        sides["suite"] = {**restored_files, **sides["suite"]}
     rewritten = _rewritten_authoring_archive(
         archives.pack_archive(sides["suite"]), suite
     )
@@ -1278,7 +1353,10 @@ def activate_drafts(
             )
         else:
             diff, draft.summary = suite_change(
-                default, documents.get("scenarios") or [], origin or draft.origin
+                default,
+                documents.get("scenarios") or [],
+                origin or draft.origin,
+                documents.get("dropped"),
             )
             draft.authored_against = targets["environment"]
         draft.diff = diff
@@ -1306,6 +1384,7 @@ def activate_drafts(
             if targets[piece].id != getattr(current[piece], "id", None)
         },
         outgoing_agent_version_id=outgoing_agent,
+        carry_proofs=True,
     )
     return result
 
@@ -1320,17 +1399,26 @@ def make_defaults(
     created_suite: Any,
     moved: set[str],
     outgoing_agent_version_id: Any,
+    carry_proofs: bool = False,
 ) -> None:
     """Make ``targets`` (each piece's version) the environment's defaults with ``pair``
-    as their runnable archive: the one step a Save and a validated promotion share."""
+    as their runnable archive: the one step a Save and a validated promotion share. A
+    Save (``carry_proofs``) carries its unchanged cases' proofs; a promotion records the
+    proofs its validation made."""
     for version in (targets["environment"], targets["suite"]):
         note_revision(version, pair.revision)
     if created_suite is not None:
         # Paired while the old suite is still the default, as a recorded save pairs.
-        add_members(
-            created_suite,
-            member_rows(locked, (created_suite.documents or {}).get("scenarios") or []),
+        paired = member_rows(
+            locked, (created_suite.documents or {}).get("scenarios") or []
         )
+        add_members(created_suite, paired)
+        if carry_proofs:
+            # A Save proves nothing new: its unchanged cases keep their proofs on this
+            # version, and an edited case has none until it is validated.
+            carried = _carried_proofs(targets["environment"], paired)
+            if carried:
+                record_proofs(created_suite, targets["environment"], carried, locked)
     set_defaults(
         locked,
         payload,
@@ -1415,6 +1503,35 @@ def remember_save(
     locked.save(update_fields=["payload", "updated_at"])
 
 
+def drop_archived(locked: HostedHarnessJob, draft: Any, *, user: Any) -> Any:
+    """The suite draft without the scenarios archived since it was opened, rewritten when it held any.
+
+    Archiving changes no draft, so Save is where an archived case leaves the suite."""
+    from simulate.services.harness_starting_records import scenario_token
+    from simulate.services.harness_versioning.versions import archived_keys
+    from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
+
+    scenarios = (draft.documents or {}).get("scenarios") or []
+    archived = {scenario_token(key) for key in archived_keys(locked, scenarios)}
+    if not archived:
+        return draft
+    kept = [
+        dict(one)
+        for one in suite_documents(edit_sides(locked)["suite"])
+        if scenario_token(one.get("scenario_key")) not in archived
+    ]
+    try:
+        write_suite_edit(locked, kept, user=user)
+    except AuthoringArchiveKept as exc:
+        raise version_error(
+            "scenario_files_missing",
+            "Saving would leave a scenario without its files; ask the builder chat to remove the archived case.",
+            409,
+            piece="suite",
+        ) from exc
+    return open_draft(locked, "suite", lock=True)
+
+
 def save_drafts(
     environment: HostedHarnessJob,
     requests: Mapping[str, SaveRequest],
@@ -1463,6 +1580,9 @@ def save_drafts(
                 draft.parent_id or ""
             ):
                 raise edits_moved(piece)
+        if "suite" in opened:
+            # A case archived while the draft was open leaves the saved suite.
+            drop_archived(locked, opened["suite"], user=user)
         apply_review(locked, pieces, expected_review_digest=expected_review_digest)
         drafts = {
             piece: open_draft(locked, piece).id
@@ -1513,6 +1633,13 @@ def discard_draft(environment: HostedHarnessJob, piece: str, *, user: Any) -> bo
         locked = lock_environment(environment)
         require_no_rebuild(locked, piece=piece)
         require_chat_idle(locked)
+        if piece == "suite":
+            from simulate.services.hosted_harness_conversation import (
+                record_failed_changes,
+            )
+
+            # A discarded change that could not be applied is no longer pending, draft or not.
+            record_failed_changes(locked, [])
         draft = open_draft(locked, piece, lock=True)
         if draft is None:
             return False
@@ -1720,6 +1847,8 @@ def draft_rows(environment: HostedHarnessJob):
                 **scenario_fields(document, pair["key"]),
             )
         one.draft_change = pair.get("change")
+        # What the unsaved case cites, so the list can show its sources before it is saved.
+        one.draft_sources = list(document.get("sources") or [])
         shown.append(one)
     shown.draft = {"id": str(draft.id), "revision": draft.revision}
     return shown

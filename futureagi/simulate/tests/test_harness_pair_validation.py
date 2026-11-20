@@ -1,13 +1,17 @@
 import json
+import re
+import uuid
 from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 
 from simulate.models import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessNudge,
     HarnessSuiteMember,
+    HarnessSuiteValidation,
     HostedHarnessExecution,
     HostedHarnessJob,
     TestExecution,
@@ -28,6 +32,7 @@ from simulate.services.hosted_harness import (
     record_cleanup,
 )
 from simulate.tests.harness_validation import running_validations, settle_validations
+from simulate.tests.test_harness_affected_scenarios import PROVED
 from simulate.tests.test_harness_agent_versions import (
     _a1,
     _create,
@@ -91,6 +96,27 @@ def _pending(user, workspace, storage, key):
     """An environment whose default pair is not certified yet."""
     environment = _environment(user, workspace, key, storage)
     _uncache(environment)
+    return environment
+
+
+def _built(environment):
+    """The build's own proofs on the default pair: every member proved, as a finished build
+    records them, so a run reads its cases as validated rather than starting a validation."""
+    from django.core.cache import cache
+
+    keys = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=environment.suite_version_id
+    ).values_list("scenario_key", flat=True)
+    HarnessSuiteValidation.no_workspace_objects.update_or_create(
+        suite_version_id=environment.suite_version_id,
+        environment_version_id=environment.environment_version_id,
+        defaults={
+            "status": "passed",
+            "proved_at": timezone.now(),
+            "proofs": dict.fromkeys(keys, PROVED),
+        },
+    )
+    cache.clear()
     return environment
 
 
@@ -223,6 +249,52 @@ class TestStart:
         assert (started.state, started.job) == ("ready", None)
         assert HostedHarnessJob.no_workspace_objects.count() == jobs
 
+    def test_a_move_to_a_certified_version_waits_for_its_proof_only_without_one(
+        self, user, workspace, storage
+    ):
+        """Back to a version that proved the pair: ready at once. To one whose proofs another version replaced: a
+        prove-only check carrying the move, as before the pairing was certified."""
+        from simulate.models import HarnessSuiteValidation
+        from simulate.services.harness_versioning.versions import OTHER_AGENTS
+
+        environment = _environment(user, workspace, "pv-move-proofs", storage)
+        own, other = str(environment.agent_version_id), str(uuid.uuid4())
+        move = validation.agent_move(
+            "hand", environment, environment.agent_version, user=user
+        )
+
+        def proofs(entry):
+            HarnessSuiteValidation.no_workspace_objects.update_or_create(
+                suite_version=environment.suite_version,
+                environment_version=environment.environment_version,
+                defaults={
+                    "status": "passed",
+                    "proved_at": timezone.now(),
+                    "proofs": {"a": entry},
+                },
+            )
+
+        proofs(
+            {
+                "proved": True,
+                "agent_version_id": other,
+                OTHER_AGENTS: {own: {"proved": True}},
+            }
+        )
+        back = _start(environment, purpose="agent_move", move=move)
+        proofs({"proved": True, "agent_version_id": other})
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+        away = _start(environment, purpose="agent_move", move=move)
+
+        assert (back.state, back.job) == ("ready", None)
+        assert away.state == "validating"
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs + 1
+        metadata = _job_metadata(away.job)
+        assert (metadata["scenario_proving"], metadata["validation_move"]) == (
+            "only",
+            move,
+        )
+
     def test_recheck_resets_failed_to_pending(self, user, workspace, storage):
         environment = _pending(user, workspace, storage, "pv-recheck")
         _failed(_row(environment), source="validation")
@@ -293,6 +365,12 @@ class TestDispatch:
         assert _row(environment).state == "pending"
 
 
+def _without_deadline(command):
+    """A validation's command with its job-specific deadline taken out."""
+    assert re.search(r" --deadline-at \d+", command)
+    return re.sub(r" --deadline-at \d+", "", command)
+
+
 class TestLaunch:
     def test_a_validation_runs_only_the_certify_command(
         self, user, workspace, storage, gateway
@@ -303,7 +381,7 @@ class TestLaunch:
         _launch(gateway, job)
 
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.certify_command()
+        assert _without_deadline(command) == assembly.certify_command(prove=True)
         certify = json.loads(
             gateway.client.sandbox.fs.uploads[assembly.CERTIFY_JOB_PATH]
         )
@@ -416,7 +494,7 @@ class TestReconcile:
         from simulate.tests.test_harness_versioning_assembly import _off_defaults
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _pending(user, workspace, storage, "pv-78-run")
+        environment = _built(_pending(user, workspace, storage, "pv-78-run"))
         run = _off_defaults(_run(environment))
         attempt = _launch(gateway, run)
         _exit(
@@ -529,7 +607,7 @@ class TestTerminalPaths:
     def test_infrastructure_ending_resets_to_pending_not_blocked(
         self, user, workspace, storage
     ):
-        environment = _pending(user, workspace, storage, "pv-infra")
+        environment = _built(_pending(user, workspace, storage, "pv-infra"))
         job = _start(environment).job
 
         assert _end(job, state="failed", code="sandbox_disappeared") == "retry"
@@ -556,7 +634,7 @@ class TestRunGate:
     def test_only_validation_failures_gate_runs(self, user, workspace, storage):
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _pending(user, workspace, storage, "pv-gate")
+        environment = _built(_pending(user, workspace, storage, "pv-gate"))
         _failed(_row(environment))
         assert _run(environment, key="ordinary").assembled_bundle_id
 
@@ -1289,7 +1367,7 @@ class TestReconcileWithoutSandbox:
         from simulate.services.hosted_harness import register_attempt
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _environment(user, workspace, "pv-no-sandbox", storage)
+        environment = _built(_environment(user, workspace, "pv-no-sandbox", storage))
         run = _run(environment)
         attempt = register_attempt(
             run.id, endpoint_base_url="https://platform.example"
@@ -1327,6 +1405,11 @@ def _age(job, minutes, *, launched=None):
 
 
 class TestDeadline:
+    @pytest.fixture(autouse=True)
+    def _a_45_minute_check(self, settings):
+        # These read against a 45-minute check window, set the way a deployment sets it.
+        settings.HARNESS_VALIDATION_CHECK_SECONDS = 45 * 60
+
     def test_a_check_past_its_deadline_is_stopped_and_runs_go_ahead(
         self,
         user,
@@ -1338,7 +1421,7 @@ class TestDeadline:
     ):
         from simulate.tests.test_harness_versioning_runs import _run
 
-        environment = _pending(user, workspace, storage, "pv-deadline")
+        environment = _built(_pending(user, workspace, storage, "pv-deadline"))
         job = _start(environment).job
         attempt = _launch(gateway, job)
         monkeypatch.setattr(
@@ -1403,6 +1486,11 @@ class TestDeadline:
 
 
 class TestRefusals:
+    @pytest.fixture(autouse=True)
+    def _a_45_minute_check(self, settings):
+        # These read against a 45-minute check window, set the way a deployment sets it.
+        settings.HARNESS_VALIDATION_CHECK_SECONDS = 45 * 60
+
     def test_a_validating_refusal_says_when_to_retry(self, user, workspace, storage):
         from simulate.tests.test_harness_versioning_runs import _run
 
@@ -1669,13 +1757,15 @@ class TestCheckUnavailable:
         assert validation.platform_failure(None) is None
 
     def test_a_test_world_failure_holds_no_run_back_and_reads_unavailable(
-        self, user, workspace, storage
+        self, user, workspace, storage, settings
     ):
         from structlog.testing import capture_logs
 
         from simulate.services import harness_readiness
         from simulate.tests.test_harness_versioning_runs import _run
 
+        # A pinned template, so the run's own check reads the repeat and runs the cases unvalidated.
+        _template(settings, "b1")
         environment = _pending(user, workspace, storage, "pv-ours")
         job = _start(environment).job
         HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
@@ -1948,22 +2038,78 @@ class TestAgentReading:
 
         assert _job_metadata(job)["agent_reading"] == "before_certify"
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.agent_reading_command() + assembly.certify_command()
+        assert _without_deadline(command) == (
+            assembly.agent_reading_command() + assembly.certify_command(prove=True)
+        )
 
-    def test_a_default_move_never_reads(self, user, workspace, storage, gateway):
+    @pytest.mark.parametrize("purpose", ["agent_move", "save"])
+    def test_a_check_that_brings_in_an_unread_version_reads_it_before_certifying(
+        self, user, workspace, storage, gateway, purpose
+    ):
+        """Proving needs the version's tools, so any check of an unread version reads them first."""
         environment = _not_built_with(
-            _pending(user, workspace, storage, "pv-move-no-read")
+            _pending(user, workspace, storage, f"pv-{purpose}-read")
         )
-        move = validation.agent_move(
-            "hand", environment, environment.agent_version, user=None
+        move = (
+            validation.agent_move(
+                "hand", environment, environment.agent_version, user=None
+            )
+            if purpose == "agent_move"
+            else None
         )
-        job = _start(environment, purpose="agent_move", move=move).job
+        job = _start(environment, purpose=purpose, move=move).job
 
         _launch(gateway, job)
 
+        assert _job_metadata(job)["agent_reading"] == "before_certify"
+        command = gateway.client.sandbox.process.session_request.command
+        assert _without_deadline(command) == (
+            assembly.agent_reading_command() + assembly.certify_command(prove=True)
+        )
+
+    def test_proving_a_certified_unread_pairing_reads_the_version_first(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-prove-read", storage)
+        )
+        assert _row(environment).state == "ready"
+
+        job = _start(environment, purpose="prove").job
+        _launch(gateway, job)
+
+        assert _job_metadata(job)["agent_reading"] == "before_proving"
+        assert validation.reads_agent(job)
+        command = gateway.client.sandbox.process.session_request.command
+        assert command.startswith(assembly.agent_reading_command())
+        assert "--prove-only" in command
+
+    def test_a_stored_reading_is_laid_where_proving_reads_it(
+        self, user, workspace, storage, gateway
+    ):
+        from simulate.services.agent_setup import store_agent
+
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-prove-doc", storage)
+        )
+        document = json.loads(_reading(_EMAIL))
+        store_agent(
+            agent_version_id=environment.agent_version_id,
+            agent=document["agent"],
+            sdk_version=document["sdk_version"],
+        )
+
+        job = _start(environment, purpose="prove").job
+        _launch(gateway, job)
+
+        laid = json.loads(
+            gateway.client.sandbox.fs.uploads[assembly.AGENT_READING_PATH]
+        )
+        assert [tool["name"] for tool in laid["agent"]["tools"]] == ["send_email"]
+        assert laid["sdk_version"] == document["sdk_version"]
         assert "agent_reading" not in _job_metadata(job)
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.certify_command()
+        assert assembly.AGENT_DOCUMENT_FLAG in command
 
     def test_a_certified_unread_pairing_starts_a_reading_only_check(
         self, user, workspace, storage, gateway
@@ -2051,13 +2197,10 @@ class TestAgentReading:
     ):
         from simulate.services.agent_setup import stored_agent
 
-        environment = _not_built_with(
-            _pending(user, workspace, storage, "pv-no-read-store")
-        )
-        move = validation.agent_move(
-            "hand", environment, environment.agent_version, user=None
-        )
-        job = _start(environment, purpose="agent_move", move=move).job
+        # The agent the environment was built with is never read: its tools are the contract's.
+        environment = _pending(user, workspace, storage, "pv-no-read-store")
+        job = _start(environment).job
+        assert not validation.reads_agent(job)
         attempt = _launch(gateway, job)
         _ready(_row(environment))
         _exit(gateway, monkeypatch, 0, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
@@ -2076,7 +2219,7 @@ class TestAgentReading:
 
         assert "agent_reading" not in _job_metadata(job)
         command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.certify_command()
+        assert _without_deadline(command) == assembly.certify_command(prove=True)
 
 
 def _recorded(domain, *, code="spawn_failed", process="tool-proxy", message=None):
@@ -2265,3 +2408,288 @@ class TestToolRoutingKept:
         gateway.reconcile_completed(attempt)
 
         assert "tool_routing" not in (_row(environment).certificate or {})
+
+
+def _proved_entry(**fields):
+    return {"format": 2, "holds": True, "proved": True, "assumed": [], **fields}
+
+
+def _member_keys(environment):
+    from simulate.models import HarnessSuiteMember
+
+    return list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=environment.suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+
+
+def _validation_proofs(environment):
+    from simulate.models import HarnessSuiteValidation
+
+    found = HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+    ).first()
+    return dict(found.proofs) if found is not None else {}
+
+
+class TestScenarioProving:
+    def test_a_validate_sandbox_command_carries_the_harness_settings(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        # The settings that decide how a Validate proves reach the command that proves, not only the build's.
+        sent = {
+            "AGENTCC_BASE_URL": "https://gateway.example.test",
+            "ALK_VALIDATION_INSTANCES": "1",
+            "ALK_PROVE_SUITE_SECONDS": "5400",
+            "ALK_HELD_CASE_REPAIR_SECONDS": "900",
+        }
+        monkeypatch.setattr(
+            "simulate.services.hosted_harness_gateway._platform_simulator_material",
+            lambda: dict(sent),
+        )
+        environment = _environment(user, workspace, "pv-prove-settings", storage)
+        started = _start(environment, purpose="prove")
+        _launch(gateway, started.job)
+
+        env = gateway.client.sandbox.process.session_request.env
+        assert {name: env.get(name) for name in sent if name.startswith("ALK_")} == {
+            "ALK_VALIDATION_INSTANCES": "1",
+            "ALK_PROVE_SUITE_SECONDS": "5400",
+            "ALK_HELD_CASE_REPAIR_SECONDS": "900",
+        }
+
+    def test_prove_only_job_on_certified_pair(self, user, workspace, storage, gateway):
+        # A certified pairing with its sealed files, as a prove-only check finds it.
+        environment = _environment(user, workspace, "pv-prove-only", storage)
+        assert _row(environment).state == "ready"
+
+        started = _start(environment, purpose="prove")
+        attempt = _launch(gateway, started.job)
+
+        assert started.state == "validating"
+        assert _job_metadata(started.job)["scenario_proving"] == "only"
+        command = gateway.client.sandbox.process.session_request.command
+        # ALK stops before the outer stop and the check's end, so what it proved is written and read.
+        deadline = int(
+            validation.check_deadline(attempt.job).timestamp()
+            - assembly.ALK_DEADLINE_MARGIN_SECONDS
+        )
+        assert assembly.prove_suite_command(deadline_at=deadline) + "true" in command
+        # ALK's live prover on the sealed runtime, the way a build proves: never the offline-only module.
+        assert (
+            "python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+            f"--source /work/source --output /work/authoring --prove-only --deadline-at {deadline}"
+            f"{assembly.AGENT_DOCUMENT_FLAG} || true"
+        ) in command
+        assert "fi.alk.harness.prove_suite " not in command
+        assert assembly.SCENARIO_PROOFS_PATH == "/work/authoring/scenario-proofs.json"
+        # The live prover reads the job, the source and the pair's authoring tree, as a build does.
+        assert {
+            "/work/job.json",
+            "/work/source.tar.gz",
+            "/work/authoring.tar.gz",
+        } <= set(gateway.client.sandbox.fs.uploads)
+
+    def test_the_prove_command_names_its_keys_and_deadline(self, settings):
+        # Stopped inside the check's own window, never on a fixed clock shorter than it.
+        settings.HARNESS_VALIDATION_CHECK_SECONDS = 7200
+        command = assembly.prove_suite_command(
+            deadline_at=1_800_000_000.7, keys=["refund-1", "status_2", "bad key;rm"]
+        )
+        assert command == (
+            "timeout 6900 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+            "--source /work/source --output /work/authoring --prove-only --keys refund-1,status_2 "
+            f"--deadline-at 1800000000{assembly.AGENT_DOCUMENT_FLAG} || true; "
+        )
+
+    def test_scenario_proofs_kept_after_certify(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _pending(user, workspace, storage, "pv-proofs-kept")
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        keys = _member_keys(environment)
+        proofs = {key: _proved_entry() for key in keys}
+        _exit(
+            gateway,
+            monkeypatch,
+            0,
+            {assembly.SCENARIO_PROOFS_PATH: json.dumps(proofs).encode()},
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            gateway.reconcile_completed(attempt)
+
+        assert set(_validation_proofs(environment)) == set(keys)
+        assert _job_metadata(job)["scenario_proofs_recorded"] is True
+
+    def test_missing_proofs_file_changes_nothing(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _pending(user, workspace, storage, "pv-proofs-missing")
+        before = _validation_proofs(environment)
+        job = _start(environment).job
+        attempt = _launch(gateway, job)
+        _ready(_row(environment))
+        _exit(gateway, monkeypatch, 0)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            done = gateway.reconcile_completed(attempt)
+
+        assert done.state == "completed"
+        assert _validation_proofs(environment) == before
+        assert _job_metadata(job)["scenario_proofs_recorded"] is False
+
+    def test_prove_only_job_does_not_block_runs(self, user, workspace, storage):
+        from simulate.services.hosted_harness import resolve_run_pins
+
+        environment = _pending(user, workspace, storage, "pv-prove-runs")
+        _ready(_row(environment))
+        _start(environment, purpose="prove")
+        resolved = resolve_run_pins(environment, rerun_of=None, picks=None)
+
+        validation.require_pair_runnable(environment, resolved)
+
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="pending", object_key=None
+        )
+        _start(environment)
+        with pytest.raises(HostedHarnessError) as refused:
+            validation.require_pair_runnable(environment, resolved)
+        assert refused.value.code == "pair_validating"
+
+    def test_prove_only_settles_ready_without_proofs(
+        self,
+        user,
+        workspace,
+        storage,
+        gateway,
+        monkeypatch,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.services.harness_scenario_actions import validation_status
+
+        # A certified pairing with its sealed files, as a prove-only check finds it.
+        environment = _environment(user, workspace, "pv-prove-empty", storage)
+        assert _row(environment).state == "ready"
+        job = _start(environment, purpose="prove").job
+        attempt = _launch(gateway, job)
+        _exit(gateway, monkeypatch, 0)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            gateway.reconcile_completed(attempt)
+
+        assert _row(environment).state == "ready"
+        assert _job_metadata(job)["scenario_proofs_recorded"] is False
+        status = validation_status(environment, job.id)
+        assert (status["state"], status["message"]) == (
+            "finished",
+            "Validation finished but recorded no results; try again.",
+        )
+
+    def test_run_cache_miss_certify_does_not_prove(self):
+        assert "--prove-scenarios" not in assembly.certify_command()
+        assert "--prove-scenarios --deadline-at 100" in assembly.certify_command(
+            prove=True, deadline_at=100
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_record_proofs_interleaved_keep_both(user, workspace, storage):
+    import threading
+
+    from django.db import connection
+
+    from simulate.services.harness_versioning.versions import record_proofs
+
+    environment = _pending(user, workspace, storage, "pv-interleaved")
+    first, second = _member_keys(environment)[:2]
+    started = threading.Barrier(2)
+    errors = []
+
+    def record(proofs):
+        try:
+            started.wait(timeout=10)
+            record_proofs(
+                environment.suite_version, environment.environment_version, proofs, None
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced by the assertion below
+            errors.append(exc)
+        finally:
+            connection.close()
+
+    threads = [
+        threading.Thread(target=record, args=({first: _proved_entry()},)),
+        threading.Thread(target=record, args=({second: _proved_entry()},)),
+    ]
+    for one in threads:
+        one.start()
+    for one in threads:
+        one.join()
+
+    assert not errors
+    assert {first, second} <= set(_validation_proofs(environment))
+    incomplete = {
+        "format": 2,
+        "holds": False,
+        "proved": False,
+        "blocked_reason": "validation_incomplete",
+    }
+    record_proofs(
+        environment.suite_version,
+        environment.environment_version,
+        {first: incomplete},
+        None,
+    )
+    assert _validation_proofs(environment)[first]["proved"] is True
+
+
+def test_a_check_runs_two_hours_by_default_and_as_long_as_its_setting_says(settings):
+    from datetime import timedelta
+
+    from simulate.services.harness_versioning.validation import check_window
+
+    assert check_window() == timedelta(hours=2)
+    settings.HARNESS_VALIDATION_CHECK_SECONDS = 3 * 3600
+    assert check_window() == timedelta(hours=3)
+
+
+def test_the_proving_settings_reach_the_sandbox(monkeypatch):
+    from simulate.services.hosted_harness_gateway import _platform_simulator_material
+
+    monkeypatch.setenv("ALK_HARNESS", "gemini")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
+    for name, value in (
+        ("ALK_VALIDATION_INSTANCES", "6"),
+        ("ALK_PROVE_SUITE_SECONDS", "5400"),
+        ("ALK_HELD_CASE_REPAIR_SECONDS", "900"),
+        ("ALK_HELD_CASE_ROUNDS", "4"),
+    ):
+        monkeypatch.setenv(name, value)
+    sent = _platform_simulator_material()
+    assert sent["ALK_HELD_CASE_ROUNDS"] == "4"
+    assert (
+        sent["ALK_VALIDATION_INSTANCES"],
+        sent["ALK_PROVE_SUITE_SECONDS"],
+        sent["ALK_HELD_CASE_REPAIR_SECONDS"],
+    ) == (
+        "6",
+        "5400",
+        "900",
+    )

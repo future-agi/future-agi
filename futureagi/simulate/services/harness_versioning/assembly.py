@@ -1296,7 +1296,77 @@ def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
     }
 
 
+SCENARIO_PROOFS_PATH = "/work/authoring/scenario-proofs.json"
+# How long before the check's window ends the prove command is stopped, so its proofs are read before the check is.
+PROVE_MARGIN_SECONDS = 300
+# How long before the check's window ends ALK itself stops proving and writes what it proved: inside the outer stop.
+ALK_DEADLINE_MARGIN_SECONDS = 2 * PROVE_MARGIN_SECONDS
+SCENARIO_PROOFS_MAX_KEYS = 5000
+
+
+def scenario_proofs(sandbox: Any) -> dict[str, Any] | None:
+    """The proofs a validation made of every scenario, ``{key: entry}``; ``None`` when the
+    file is absent or unreadable, which reads as "no new proofs"."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                SCENARIO_PROOFS_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a job that proved nothing writes none
+        logger.info("harness_scenario_proofs_unread", error=type(exc).__name__)
+        return None
+    if not isinstance(document, dict):
+        return None
+    kept = [(key, value) for key, value in document.items() if isinstance(value, dict)]
+    return dict(kept[:SCENARIO_PROOFS_MAX_KEYS])
+
+
+def _deadline_flag(deadline_at: float | None) -> str:
+    return f" --deadline-at {int(deadline_at)}" if deadline_at is not None else ""
+
+
+_KEY_SHAPE = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def prove_suite_command(
+    *, deadline_at: float | None = None, keys: list[str] | None = None
+) -> str:
+    """Prove the certified pair's scenarios (or only ``keys``) into ``SCENARIO_PROOFS_PATH`` on the pair's sealed
+    runtime, the way a build proves them: ALK's ``--prove-only`` starts that runtime, its services included, so a
+    step a running service serves is proved live, and proves the rest offline. Never fails the command; the outer
+    timeout is the last resort, the deadline gives ALK its own margin first."""
+    from simulate.services.harness_versioning.validation import check_window
+
+    named = [
+        one for one in keys or [] if isinstance(one, str) and _KEY_SHAPE.fullmatch(one)
+    ]
+    keys_flag = f" --keys {','.join(named)}" if named else ""
+    # Inside the check's own window, so the outer stop never ends a check that still has time.
+    seconds = max(
+        int(check_window().total_seconds()) - PROVE_MARGIN_SECONDS, PROVE_MARGIN_SECONDS
+    )
+    return (
+        f"timeout {seconds} python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+        f"--source /work/source --output {PurePosixPath(SCENARIO_PROOFS_PATH).parent} "
+        f"--prove-only{keys_flag}{_deadline_flag(deadline_at)}{AGENT_DOCUMENT_FLAG} || true; "
+    )
+
+
 AGENT_READING_PATH = "/work/reading/agent.json"
+# The module asked whether the harness takes --agent-document: it builds its parser before anything else, so --help
+# exits with no side effects. The hosted entrypoint is never probed: it sets up isolation and writes credential files
+# before it parses, and under required isolation it exits before --help is read.
+AGENT_DOCUMENT_PROBE = "fi.alk.harness.authoring_entrypoint"
+# The agent version's tools, for proving to refuse a case whose reference calls one it lacks: the document a reading
+# wrote or the version's stored one, given only when it is there and the harness takes the flag. The platform records
+# no harness version it could compare (the sandbox template is an opaque name), so the harness in the sandbox is asked
+# whether it lists the flag; an older one is never given an argument it would refuse. Drop the probe once every
+# template in use carries the flag.
+AGENT_DOCUMENT_FLAG = (
+    f"$(test -f {AGENT_READING_PATH} && python -m {AGENT_DOCUMENT_PROBE} --help 2>/dev/null "
+    f"| grep -q -- --agent-document && echo ' --agent-document {AGENT_READING_PATH}')"
+)
 
 
 def agent_reading_command() -> str:
@@ -1308,6 +1378,28 @@ def agent_reading_command() -> str:
         "fi.alk.harness.hosted_agent_reading --source /work/source "
         f"--output {PurePosixPath(AGENT_READING_PATH).parent} || true; "
     )
+
+
+def stored_agent_document(agent_version_id: Any) -> bytes | None:
+    """The agent version's stored document as a reading writes it, ``{sdk_version, agent}``; ``None`` when no
+    current reading of it is stored (a stale one no longer matches the agent's provider, as readiness reads it)."""
+    from simulate.models import AgentVersion
+    from simulate.services.agent_setup import stored_agent_answer
+
+    version = (
+        AgentVersion.no_workspace_objects.filter(id=agent_version_id).first()
+        if agent_version_id is not None
+        else None
+    )
+    answer = stored_agent_answer(version) if version is not None else None
+    if answer is None or answer.setup_stale:
+        return None
+    return json.dumps(
+        {"sdk_version": answer.sdk_version, "agent": answer.agent},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
 
 
 def agent_reading(sandbox: Any) -> dict[str, Any] | None:
@@ -1331,19 +1423,21 @@ def agent_reading(sandbox: Any) -> dict[str, Any] | None:
     return document
 
 
-def certify_command() -> str:
+def certify_command(*, prove: bool = False, deadline_at: float | None = None) -> str:
     """Certify the pinned pair into ``/work/bundle`` and make it the run's bundle.
 
     Certifying writes ``/work/runtime-validation.json`` itself once the bundle is in place
-    and never fetches a provider profile.
+    and never fetches a provider profile. With ``prove`` it also proves every scenario before
+    sealing, into ``SCENARIO_PROOFS_PATH``.
     """
+    proving = f" --prove-scenarios{_deadline_flag(deadline_at)}" if prove else ""
     return (
         "if [ -f /work/authoring/scenarios.json ]; then "
         f"cp /work/authoring/scenarios.json {SUITE_INDEX_PATH}; fi && "
         "python -m "
         "fi.alk.harness.hosted_authoring_entrypoint "
         f"{CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
-        "--certify-only --bundle-output /work/bundle "
+        f"--certify-only --bundle-output /work/bundle{proving}{AGENT_DOCUMENT_FLAG} "
         "&& rm -rf /work/authoring/environment-bundle "
         "&& cp -a /work/bundle /work/authoring/environment-bundle"
     )

@@ -1395,6 +1395,55 @@ def test_an_accepted_scenario_edit_saved_on_the_suite_warns_the_next_run(
     assert _needs_revalidation(version, suite) == [key]
 
 
+def test_a_case_validated_again_after_the_change_is_not_asked_to_be_proved_again(
+    user, workspace, storage
+):
+    """Held by its own checks after the save's validation reached it: its reason says so; "prove again" names only a
+    case no validation reached since."""
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.run_warnings import _needs_revalidation
+
+    environment = _with_world(user, workspace, "cand-revalidated", storage)
+    version, suite = environment.environment_version, environment.suite_version
+    HarnessSuiteValidation.no_workspace_objects.filter(suite_version=suite).delete()
+    keys = sorted(
+        HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite).values_list(
+            "scenario_key", flat=True
+        )
+    )
+    suite.documents = {
+        **(suite.documents or {}),
+        "review_changes": [
+            {
+                "id": "file:actors.json",
+                "kind": "file",
+                "key": "actors.json",
+                "action": "changed",
+                "decision": "accepted",
+                "graded": True,
+                "revalidate": keys,
+            }
+        ],
+    }
+    suite.save(update_fields=["documents"])
+    held = {"format": 2, "proved": False, "blocked_reason": "negative_control_passed"}
+    HarnessSuiteValidation.no_workspace_objects.create(
+        suite_version=suite,
+        environment_version=version,
+        status="failed",
+        proofs={
+            keys[0]: held,
+            **{
+                key: {**held, "blocked_reason": "validation_incomplete"}
+                for key in keys[1:]
+            },
+        },
+        proved_at=timezone.now(),
+    )
+
+    assert _needs_revalidation(version, suite) == keys[1:]
+
+
 # --- review fixes: what a Save refuses --------------------------------------------------------------------------
 
 

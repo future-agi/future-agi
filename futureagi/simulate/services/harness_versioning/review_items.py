@@ -69,6 +69,15 @@ class SourceAgent(TypedDict, total=False):
 class SourceUsed(TypedDict):
     kind: str
     id: str
+    # For an imported file, the row it read; None for the whole file.
+    row: NotRequired[int | None]
+
+
+class UsedFile(TypedDict):
+    """An imported file a write read: the file, and its row (None for the whole file)."""
+
+    file_id: str
+    row: NotRequired[int | None]
 
 
 class ChangeSource(TypedDict):

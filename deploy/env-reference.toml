@@ -776,9 +776,15 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
 
     [[part.section.row]]
     keys = ["HARNESS_MAX_EXECUTIONS_PER_RUN"]
-    default = "`200`"
+    default = "`1000`"
     setups = ["S", "D", "H"]
     text = "Most scenarios × trials one simulation Run may submit; a larger Run is refused with `run_too_large`."
+
+    [[part.section.row]]
+    keys = ["HARNESS_VALIDATION_CHECK_SECONDS"]
+    default = "`7200`"
+    setups = ["S", "D", "H"]
+    text = "How long, in seconds, a check of an environment's cases (Validate, or a check before the default agent moves) may run before it is stopped. A stopped check reads as unavailable and runs go ahead; cases it did not reach keep their earlier proofs."
 
     [[part.section.row]]
     keys = ["HARNESS_RESOURCE_PROFILES"]

@@ -110,6 +110,9 @@ export function mapCallRow(row, evalColumns = []) {
     id: row?.id,
     goal: row?.goal || row?.scenario || "Untitled goal",
     subGoalResults: row?.sub_goal_results ?? [],
+    // The receipt's typed failure: which side broke (agent, grading, infrastructure, ...) and how.
+    failureDomain: row?.failure_domain ?? null,
+    failureCode: row?.failure_code ?? null,
     scenario: trialIndex
       ? `${scenarioName} · Trial ${trialIndex}`
       : scenarioName,

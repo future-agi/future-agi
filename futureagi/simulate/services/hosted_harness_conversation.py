@@ -1345,10 +1345,14 @@ def _numbers_meant(numbers: Any, ranges: Any) -> list[int]:
     return list(dict.fromkeys(found))
 
 
-def _scenario_summary(row: HostedHarnessScenario, full: bool) -> dict[str, Any]:
+def _scenario_summary(
+    row: HostedHarnessScenario, full: bool, lifecycle: Any = None
+) -> dict[str, Any]:
     persona = row.persona if isinstance(row.persona, dict) else {}
     summary = {
         "number": row.number,
+        # The badge the Scenarios tab shows, and why, so the builder can explain it.
+        "lifecycle": _lifecycle_line(row, lifecycle),
         "name": row.name or row.scenario_key,
         "use_case": row.use_case,
         "branch": row.branch,
@@ -1384,6 +1388,70 @@ def _scenario_summary(row: HostedHarnessScenario, full: bool) -> dict[str, Any]:
     return summary
 
 
+def _lifecycle_line(row: Any, lifecycle: Any) -> dict[str, Any] | None:
+    """A row's state, reason and reason text, read from the Scenarios tab's own lifecycle; None unversioned."""
+    from simulate.services.harness_provider import _with_lifecycle
+
+    if lifecycle is None:
+        return None
+    view = _with_lifecycle(
+        {
+            "scenario_key": row.scenario_key,
+            "draft_change": getattr(row, "draft_change", None),
+        },
+        lifecycle,
+    )["lifecycle"]
+    return {name: view.get(name) for name in ("state", "reason", "reason_text")}
+
+
+def removed_scenarios(
+    environment: HostedHarnessJob, drafted: Any = None
+) -> list[dict[str, Any]]:
+    """The cases the environment had and no longer holds (nor does its open draft), each with its key, name, the last
+    saved suite version that held it and its document there, so the chat can restore one under its key or copy it."""
+    from simulate.models import HarnessSuiteMember
+    from simulate.models.harness_versioning import VersionStatus
+    from simulate.services.harness_starting_records import scenario_token
+
+    held = {row.scenario_key for row in drafted} if drafted is not None else set()
+    removed = []
+    for row in HostedHarnessScenario.all_objects.filter(
+        job=environment, deleted=True
+    ).order_by("number"):
+        if row.scenario_key in held:
+            continue
+        member = (
+            HarnessSuiteMember.no_workspace_objects.filter(
+                scenario_id=row.id, suite_version__status=VersionStatus.ACTIVE
+            )
+            .select_related("suite_version")
+            .order_by("-suite_version__created_at")
+            .first()
+        )
+        if member is None:
+            continue
+        documents = (member.suite_version.documents or {}).get("scenarios") or []
+        content = next(
+            (
+                one
+                for one in documents
+                if isinstance(one, dict)
+                and scenario_token(one.get("scenario_key") or one.get("name"))
+                == scenario_token(row.scenario_key)
+            ),
+            member.content or {},
+        )
+        removed.append(
+            {
+                "scenario_key": row.scenario_key,
+                "name": row.name,
+                "suite_version": str(member.suite_version_id),
+                "content": content,
+            }
+        )
+    return removed
+
+
 def conversation_scenarios(
     conversation: HostedHarnessConversation, params: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1401,6 +1469,8 @@ def conversation_scenarios(
     environment = conversation.job.environment or conversation.job
     # The unsaved scenarios, numbered as Save will number them.
     drafted = draft_rows(environment)
+    if params.get("removed"):
+        return {"removed": removed_scenarios(environment, drafted)}
     live = (
         drafted
         if drafted is not None
@@ -1446,6 +1516,12 @@ def conversation_scenarios(
     matching = queryset.count()
     rows = list(queryset[(page - 1) * page_size : page * page_size])
     found = {row.number for row in rows}
+    from simulate.services.harness_provider import _lifecycle_for_list
+
+    # The same lifecycle the Scenarios tab lists, on the environment's default pair.
+    lifecycle = _lifecycle_for_list(environment, {}) if rows else None
+    if not isinstance(lifecycle, dict):
+        lifecycle = None
     return {
         "total_scenarios": live.count(),
         "matching": matching,
@@ -1455,7 +1531,10 @@ def conversation_scenarios(
         "numbers_not_found": [number for number in numbers if number not in found]
         if numbers and matching <= page_size
         else [],
-        "rows": [_scenario_summary(row, full=bool(params.get("full"))) for row in rows],
+        "rows": [
+            _scenario_summary(row, full=bool(params.get("full")), lifecycle=lifecycle)
+            for row in rows
+        ],
     }
 
 
@@ -1565,6 +1644,16 @@ def conversation_overview(conversation: HostedHarnessConversation) -> dict[str, 
             )
         ],
     }
+    from simulate.services.harness_provider import _lifecycle_for_list
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+
+    # The Scenarios tab's own counts (Validate's proofs included), so the builder never counts from its sandbox.
+    lifecycle = _lifecycle_for_list(environment, {})
+    overview["lifecycle_counts"] = (
+        lifecycle_counts(list(lifecycle["views"].values()) + lifecycle["archived"])
+        if isinstance(lifecycle, dict)
+        else None
+    )
     if drafts.drafts_apply(environment):
         listed = drafts.list_drafts(environment)
         overview["drafts"] = {
@@ -1604,10 +1693,60 @@ def _suite_snapshot(job: HostedHarnessJob) -> dict[str, tuple[int | None, str, s
     }
 
 
+FAILED_CHANGES_KEY = "failed_scenario_changes"
+
+
+def record_failed_changes(environment: HostedHarnessJob, failed: Any) -> dict[str, str]:
+    """Keep which scenarios the builder's last save could not apply, by key with the first line of
+    why; each save replaces the set, so a fixed case leaves it."""
+    kept = {
+        str(one.get("scenario_key")).strip()[:255]: next(
+            (
+                line.strip()
+                for line in str(one.get("reason") or "").splitlines()
+                if line.strip()
+            ),
+            "it could not be loaded",
+        )[:300]
+        for one in failed or []
+        if isinstance(one, dict) and str(one.get("scenario_key") or "").strip()
+    }
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=environment.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        if kept:
+            metadata[FAILED_CHANGES_KEY] = kept
+        else:
+            metadata.pop(FAILED_CHANGES_KEY, None)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.save(update_fields=["payload", "updated_at"])
+    # The caller's copy too, so a later save of it does not write the old set back.
+    environment.payload = locked.payload
+    return kept
+
+
+def failed_changes(environment: HostedHarnessJob) -> dict[str, str]:
+    """The scenarios the builder's last save could not apply, by key."""
+    found = ((environment.payload or {}).get("metadata") or {}).get(FAILED_CHANGES_KEY)
+    return (
+        {str(key): str(why) for key, why in found.items()}
+        if isinstance(found, dict)
+        else {}
+    )
+
+
 def publish_conversation_workspace(
-    conversation: HostedHarnessConversation, *, digest: str
+    conversation: HostedHarnessConversation,
+    *,
+    digest: str,
+    failed_scenarios: Any = None,
 ) -> dict[str, Any]:
-    """Publish the chat's latest checkpoint now and say exactly what changed, or why it did not."""
+    """Publish the chat's latest checkpoint now and say exactly what changed, or why it did not.
+    ``failed_scenarios`` are the cases the builder could not apply; the rest still save."""
     conversation = HostedHarnessConversation.no_workspace_objects.get(
         id=conversation.id
     )
@@ -1632,11 +1771,15 @@ def publish_conversation_workspace(
         }
     from simulate.services.harness_versioning import drafts
 
+    failed = record_failed_changes(environment, failed_scenarios)
     if drafts.drafts_apply(environment):
         # Saved to the unsaved changes: nothing is live until the person presses Save.
         return {
             "applied": True,
             "draft": True,
+            "failed": [
+                {"scenario_key": key, "reason": why} for key, why in failed.items()
+            ],
             "revision": str(
                 ((published.payload or {}).get("metadata") or {}).get(
                     "authoring_revision"
@@ -1660,6 +1803,7 @@ def publish_conversation_workspace(
 
     return {
         "applied": True,
+        "failed": [{"scenario_key": key, "reason": why} for key, why in failed.items()],
         "revision": str(
             ((published.payload or {}).get("metadata") or {}).get("authoring_revision")
             or ""

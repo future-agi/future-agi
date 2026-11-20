@@ -44,17 +44,28 @@ from simulate.services.hosted_harness import (
     overlay_stage_outputs,
     pinned_stage_outputs,
 )
+from simulate.types import UnprovedNext
 
 logger = structlog.get_logger(__name__)
 
 # `save`: the reviewed changes a Validate composed, checked before Save makes them the defaults.
-Purpose = Literal["agent_move", "recheck", "save"]
+Purpose = Literal["agent_move", "recheck", "save", "prove"]
+Proving = Literal["with_certify", "only"]
 Caller = Literal["activation", "hand", "no_change", "land"]
 
-# A check still running this long after it was asked for is stopped. A slow worker or
-# sandbox is ours, not the agent's: the check reads as unavailable and runs go ahead;
-# the next check starts a fresh job.
-CHECK_DEADLINE = timedelta(minutes=45)
+# A check still running this long after it was asked for is stopped (`HARNESS_VALIDATION_CHECK_SECONDS`, two hours by
+# default, so a suite of a thousand cases is proved). A slow worker or sandbox is ours, not the agent's: the check reads
+# as unavailable and runs go ahead; the next check starts a fresh job.
+
+
+def check_window() -> timedelta:
+    from django.conf import settings
+
+    return timedelta(
+        seconds=int(getattr(settings, "HARNESS_VALIDATION_CHECK_SECONDS", 7200) or 7200)
+    )
+
+
 CHECK_TIMED_OUT = CHECK_TIMED_OUT_CANCEL_REASON
 # The endings that are a check's verdict on the pairing; any other one is retried.
 CHECK_FAILURES = frozenset({"authoring_runtime_validation_failed"})
@@ -191,6 +202,13 @@ MOVE_TRIES_KEY = "validation_move_tries"
 MOVE_TRIES = 3
 # A move still not made this long after its validation settled is made by the nudge tick.
 MOVE_RETRY_AFTER = timedelta(minutes=2)
+
+
+def is_live(job: HostedHarnessJob) -> bool:
+    """Whether a validation job is still running."""
+    return job.state in _LIVE_STATES
+
+
 _LIVE_STATES = frozenset(
     set(HostedHarnessJob.State)
     - {
@@ -262,6 +280,19 @@ class Validation:
         }
 
 
+def ended_on_our_side(job: HostedHarnessJob) -> bool:
+    """Whether settling this failed check recorded it on its pairing as ending on our side."""
+    bundle = (
+        HarnessAssembledBundle._base_manager.filter(id=job.assembled_bundle_id).first()
+        if job.assembled_bundle_id
+        else None
+    )
+    last = (
+        ((bundle.error or {}).get("last_attempt") or {}) if bundle is not None else {}
+    )
+    return last.get("code") == CHECK_UNAVAILABLE and last.get("job_id") == str(job.id)
+
+
 def failed_reason(error: dict[str, Any]) -> str:
     """A failed check's reason in plain words, from its bundle's ``error``."""
     reason = _FAILED_REASONS.get(str(error.get("code")), "the check failed")
@@ -284,6 +315,7 @@ def reads_agent(job: HostedHarnessJob) -> bool:
     """Whether a validation job first reads its agent version's tools."""
     return ((job.payload or {}).get("metadata") or {}).get("agent_reading") in (
         "before_certify",
+        "before_proving",
         "only",
     )
 
@@ -292,6 +324,19 @@ def reading_only(job: HostedHarnessJob) -> bool:
     """Whether a validation job only reads its agent version's tools: the pairing is
     certified already."""
     return ((job.payload or {}).get("metadata") or {}).get("agent_reading") == "only"
+
+
+def proving_only(job: HostedHarnessJob) -> bool:
+    """Whether a validation job only proves the scenarios of a pairing already certified."""
+    return ((job.payload or {}).get("metadata") or {}).get("scenario_proving") == "only"
+
+
+def proves_scenarios(job: HostedHarnessJob) -> bool:
+    """Whether a validation job proves every scenario, after certifying or on its own."""
+    return ((job.payload or {}).get("metadata") or {}).get("scenario_proving") in (
+        "with_certify",
+        "only",
+    )
 
 
 def unread(agent_version: AgentVersion, runtime: Any) -> bool:
@@ -336,7 +381,22 @@ def can_validate(environment: HostedHarnessJob, agent_version_id: Any) -> bool:
 
 
 def live_validation(bundle_id: Any) -> HostedHarnessJob | None:
-    """The validation job still certifying this bundle, if any."""
+    """The validation job still certifying this bundle, if any. A prove-only job re-proves a
+    bundle already certified, so a run during it is safe and it is not counted here."""
+    return (
+        HostedHarnessJob.no_workspace_objects.filter(
+            assembled_bundle_id=bundle_id,
+            state__in=_LIVE_STATES,
+            payload__metadata__certify_only=True,
+        )
+        .exclude(payload__metadata__scenario_proving="only")
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def live_check(bundle_id: Any) -> HostedHarnessJob | None:
+    """Any validation job still live on this bundle, prove-only jobs included."""
     return (
         HostedHarnessJob.no_workspace_objects.filter(
             validation_jobs(),
@@ -406,6 +466,40 @@ def gate_agent_move(
     return validation if validation is not None and not validation.ready else None
 
 
+def _proved_with(
+    agent_version_id: Any,
+    environment_version: HarnessEnvironmentVersion,
+    suite_version: HarnessSuiteVersion,
+) -> bool:
+    """Whether the pair holds any proof made with this agent version, its own or kept beside a newer one's. A pair
+    with no recorded proofs, or an entry that names no agent version, says nothing against it."""
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.versions import OTHER_AGENTS
+
+    row = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("proofs", "job__agent_version_id")
+        .first()
+    )
+    if row is None or not isinstance(row[0], dict):
+        return True
+    proofs, row_agent = row
+    agent = str(agent_version_id)
+    for entry in proofs.values():
+        if not isinstance(entry, dict):
+            continue
+        made = entry.get("agent_version_id") or row_agent
+        if (
+            made is None
+            or str(made) == agent
+            or agent in (entry.get(OTHER_AGENTS) or {})
+        ):
+            return True
+    return False
+
+
 def start_validation(
     environment: HostedHarnessJob,
     agent_version: AgentVersion,
@@ -414,9 +508,13 @@ def start_validation(
     *,
     purpose: Purpose,
     move: AgentMove | None = None,
+    scenario_keys: list[str] | None = None,
 ) -> Validation | None:
     """Validate this pairing, unless its bundle is already certified or its last check
     ended on our side for a cause that repeats on the same template.
+
+    ``scenario_keys`` limits a proving of a certified pairing to those cases; a pairing that
+    still has to certify proves every case.
 
     Returns ``None`` when it cannot be validated (see ``can_validate``), as without an
     environment or suite version. A failed bundle
@@ -455,10 +553,8 @@ def start_validation(
                 "state": HarnessAssembledBundle.State.PENDING,
             },
         )
-        # Only an explicit Re-check reads the version's tools: it costs model calls.
-        read = purpose == "recheck" and needs_reading(
-            locked, agent_version, environment_version, runtime
-        )
+        # Any check of an agent version whose tools no build has read reads them first: proving needs them.
+        read = needs_reading(locked, agent_version, environment_version, runtime)
         certified = (
             bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key
         )
@@ -466,7 +562,45 @@ def start_validation(
             # Made by an earlier harness than runs use now: certify it again.
             assembly.reset_outdated(bundle)
             certified = False
-        if certified and read and live_validation(bundle.id) is None:
+        if certified and (
+            purpose == "prove"
+            or (
+                purpose == "agent_move"
+                and not _proved_with(
+                    agent_version.id, environment_version, suite_version
+                )
+            )
+        ):
+            # A person pressing Validate after a fix needs a new proof, never the certified shortcut; so does a move
+            # to an agent version that never proved this pair's cases, which waits for the proof as it would for a
+            # certify.
+            live = live_check(bundle.id)
+            if live is not None and (move is None or _carry_move(live, move)):
+                return Validation("validating", bundle, purpose, live)
+            job = _create_job(
+                locked,
+                runtime,
+                agent_version,
+                environment_version,
+                suite_version,
+                bundle,
+                purpose=purpose,
+                move=move,
+                reading="before_proving" if read else None,
+                proving="only",
+                scenario_keys=scenario_keys,
+            )
+            job_id = job.id
+            transaction.on_commit(lambda: _dispatch(job_id))
+            logger.info("harness_pair_scenario_proving_started", **_check_log(job))
+            return Validation("validating", bundle, purpose, job)
+        # A certified pairing proves nothing more on a move: only an explicit Re-check reads its tools on their own.
+        if (
+            certified
+            and read
+            and purpose == "recheck"
+            and live_validation(bundle.id) is None
+        ):
             job = _create_job(
                 locked,
                 runtime,
@@ -521,6 +655,7 @@ def start_validation(
             purpose=purpose,
             move=move,
             reading="before_certify" if read else None,
+            proving="with_certify",
         )
         job_id = job.id
         transaction.on_commit(lambda: _dispatch(job_id))
@@ -627,7 +762,9 @@ def _create_job(
     *,
     purpose: Purpose,
     move: AgentMove | None,
-    reading: Literal["before_certify", "only"] | None = None,
+    reading: Literal["before_certify", "before_proving", "only"] | None = None,
+    proving: Proving | None = None,
+    scenario_keys: list[str] | None = None,
 ) -> HostedHarnessJob:
     """The environment's job, pinned to the pairing; certifying is all it does, after
     reading the agent version's tools when ``reading`` says so."""
@@ -658,6 +795,10 @@ def _create_job(
         metadata["validation_move"] = move
     if reading is not None:
         metadata["agent_reading"] = reading
+    if proving is not None:
+        metadata["scenario_proving"] = proving
+    if scenario_keys:
+        metadata["scenario_keys"] = list(scenario_keys)
     payload.pop("job_id", None)
     payload.pop("run_id", None)
     # One key per check of this bundle, so two requests for the same check make one job,
@@ -726,14 +867,14 @@ def on_terminal(job: HostedHarnessJob) -> None:
 
 
 def check_deadline(job: HostedHarnessJob) -> Any:
-    """When a validation job is stopped: ``CHECK_DEADLINE`` after its latest sandbox
+    """When a validation job is stopped: ``check_window()`` after its latest sandbox
     launched, so time queued for a runner never counts; from its creation before one."""
     launched = (
         job.attempts.order_by("-attempt_number")
         .values_list("created_at", flat=True)
         .first()
     )
-    return (launched or job.created_at) + CHECK_DEADLINE
+    return (launched or job.created_at) + check_window()
 
 
 def overdue(job: HostedHarnessJob) -> bool:
@@ -1244,3 +1385,23 @@ def require_pair_runnable(
             status_code=409,
             details={"reason_code": error.get("code"), "reason": reason},
         )
+
+
+# What a run does with cases held back only because they are not validated on its pairing.
+
+
+def unproved_next(
+    environment: HostedHarnessJob,
+    agent_version: AgentVersion | None,
+    bundle: HarnessAssembledBundle | None,
+) -> UnprovedNext | None:
+    """Read from the pairing's bundle, writing nothing: validate first (the run starts the check and is asked again),
+    or run them unvalidated (the last check ended on our side for a cause that repeats here). ``None`` when no check
+    can run here or one already runs."""
+    if agent_version is None or not can_validate(environment, agent_version.id):
+        return None
+    if bundle is not None and live_check(bundle.id) is not None:
+        return None
+    if bundle is not None and repeats_unavailable(bundle):
+        return "run_unvalidated"
+    return "validate_first"

@@ -10,7 +10,7 @@ refuses it and the check has not answered yet.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypedDict, cast
 from uuid import UUID
@@ -18,7 +18,6 @@ from uuid import UUID
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessSuiteMember,
-    HarnessSuiteValidation,
     HostedHarnessJob,
 )
 from simulate.selectors.runs import validation_jobs
@@ -39,7 +38,6 @@ from simulate.services.harness_readiness.catalogue import (
 )
 from simulate.services.harness_readiness.evidence import (
     Evidence,
-    certified,
     pair_bundle,
     read_evidence,
 )
@@ -56,6 +54,12 @@ from simulate.services.harness_readiness.workers import (
     bypassed_workers,
     case_hold,
     case_holds,
+)
+from simulate.services.harness_scenario_lifecycle import (
+    UNREAD_REASONS,
+    reason_text,
+    runnable,
+    scenario_lifecycle,
 )
 from simulate.services.harness_scenario_needs import (
     ACTING,
@@ -75,6 +79,38 @@ PAGE_SIZE = 50
 DROPPED_REASON = "dropped when these versions were checked"
 # Held-back key for a selected case certifying the pair dropped.
 DROPPED_ROW = "scenario_dropped"
+# Held-back keys for a case not validated on the run's pair, and an archived case.
+NOT_VALIDATED_ROW = "not_validated"
+ARCHIVED_ROW = "scenario_archived"
+# Held-back key for a case validated on versions not saved yet: only an active suite's cases run.
+NOT_ACTIVE_ROW = "not_active"
+# Held-back key for a case its last proof found a defect in (a leaked answer, a control that passed, no control): a
+# validation would only repeat the verdict, so it waits for the case to be fixed.
+PROOF_FAILED_ROW = "proof_failed"
+# Held-back key for a case something it needs could not be read for (its seed records, its cited files, its pair's
+# last proofs): nothing failed, it is unknown.
+SEED_UNREAD_ROW = "unreadable"
+# Held-back key for a case whose reference calls a tool the pairing's agent version does not have.
+TOOL_MISSING_ROW = "tool_not_on_agent"
+# The Draft reasons a validation can settle; any other Draft reason is a proof's verdict on the case itself.
+UNVALIDATED_REASONS = frozenset(
+    {
+        "not_validated",
+        "validation_incomplete",
+        "validation_failed",
+        "validation_ended_on_our_side",
+        "proved_on_other_agent",
+        "tools_unread",
+    }
+)
+LIFECYCLE_LABELS = {
+    NOT_VALIDATED_ROW: "Validation",
+    PROOF_FAILED_ROW: "Proof",
+    ARCHIVED_ROW: "Archived",
+    NOT_ACTIVE_ROW: "Not saved",
+    SEED_UNREAD_ROW: "Starting records",
+    TOOL_MISSING_ROW: "Agent tools",
+}
 # A case whose actors act in the world or whose faults are set on a tool the world's door does not stand in front of.
 NO_DOOR_ROW = "no_world_door"
 NO_DOOR_REASON = (
@@ -164,6 +200,12 @@ class SelectionView(Scope):
     dropped: list[DroppedCase]
     grading: Grading
     requirements_recorded: bool
+    # What a run does when every selected case is held back only for not being validated on the pairing.
+    next: validation.UnprovedNext | None
+    # What a run of the selection sends, and what it holds back and why.
+    running: int
+    held_back: HeldBack
+    reasons: dict[str, str]
 
 
 class Affected(TypedDict):
@@ -214,7 +256,7 @@ class CasePage(TypedDict):
 @dataclass(frozen=True)
 class Placed:
     """A requested case, its bucket and what put it there (row ids, or
-    ``pair_validating`` / ``pair_failed`` / ``not_proved_here`` / ``unknown_need``),
+    ``pair_validating`` / ``pair_failed`` / ``not_validated`` / ``scenario_archived`` / ``unknown_need``),
     and the rows holding it."""
 
     case: CaseNeeds
@@ -225,6 +267,8 @@ class Placed:
     gradable: NotGradable | None
     # ALK's sealed hold for the case's worker limits.
     hold: CaseHold
+    # The case's lifecycle reason, when its lifecycle holds it back.
+    lifecycle_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -260,6 +304,9 @@ def selection_report(
     )
     placed = placement.placed
     requested = len(placed)
+    held_back, held_counts, held_reasons = _held_back(
+        placement, report["rows"], report["workers"]
+    )
     by_bucket: dict[Bucket, list[str]] = {bucket: [] for bucket in BUCKETS}
     for one in placed:
         by_bucket[one.bucket].append(one.case.key)
@@ -309,6 +356,13 @@ def selection_report(
                 "truncated": len(not_gradable) > LIST_LIMIT,
             },
             "requirements_recorded": placement.recorded,
+            "next": _unproved_next(pairing, bundle, placement),
+            "running": requested - len(by_bucket["blocked"]),
+            "held_back": {
+                **_held_list(held_back, _case_names(placed)),
+                "by": dict(held_counts),
+            },
+            "reasons": held_reasons,
         },
     }
     # Live reads only: a run's snapshot never keeps it.
@@ -425,6 +479,8 @@ class HeldBack(TypedDict):
     count: int
     keys: list[str]
     truncated: bool
+    # Each listed case's current name, by its key; a case without one is shown by its key.
+    names: dict[str, str]
     # Held-back cases per row that held them.
     by: dict[str, int]
 
@@ -435,6 +491,9 @@ class RunSelection(Scope):
     held_back: HeldBack
     # Each holding row's reason, in plain words.
     reasons: dict[str, str]
+    next: validation.UnprovedNext | None
+    # Set when cases held only for validation run anyway, because validation cannot run here.
+    validation: NotRequired[Literal["not_enforced"]]
 
 
 @dataclass(frozen=True)
@@ -448,7 +507,83 @@ class RunPlan:
     revision: str
 
 
-def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan:
+def _held_list(held: list[str], names: Mapping[str, str]) -> HeldBack:
+    """The held-back cases as the run dialog lists them, each with its current name."""
+    listed = _capped(held)
+    return {
+        "count": len(held),
+        **listed,
+        "names": {key: names[key] for key in listed["keys"] if names.get(key)},
+        "by": {},
+    }
+
+
+# The rows that hold a case for its own lifecycle, not for the pairing: a held case is counted under one of these.
+_CASE_ROWS = (
+    NOT_VALIDATED_ROW,
+    ARCHIVED_ROW,
+    NOT_ACTIVE_ROW,
+    PROOF_FAILED_ROW,
+    SEED_UNREAD_ROW,
+    TOOL_MISSING_ROW,
+)
+
+
+def _held_back(
+    placement: Any, rows: list[Any], workers: list[WorkerBoundaryView]
+) -> tuple[list[str], Counter[str], dict[str, str]]:
+    """The cases a run of the placed selection holds back, per holding row or worker, with each one's reason."""
+    dropped = [
+        one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
+    ]
+    placed = placement.placed
+    held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
+    # Each case counts once, under its own lifecycle reason when it has one, else the first row holding it, so the
+    # counts add up to the cases held back.
+    primary = {
+        one.case.key: next((row for row in one.by if row in _CASE_ROWS), one.by[0])
+        for one in placed
+        if one.bucket == "blocked" and one.by
+    }
+    by = Counter(primary.values())
+    reasons = {
+        row["id"]: row["reason"] or row["label"] for row in rows if row["id"] in by
+    }
+    if NO_DOOR_ROW in by:
+        reasons[NO_DOOR_ROW] = NO_DOOR_REASON
+    # A worker is not a row: a case it holds back reads ALK's sealed cause, or its bypass.
+    reasons.update(_worker_reasons(placed, workers))
+    for row in _CASE_ROWS:
+        texts = [
+            one.lifecycle_reason
+            for one in placed
+            if primary.get(one.case.key) == row and one.lifecycle_reason
+        ]
+        if texts:
+            reasons[row] = "; ".join(dict.fromkeys(texts))
+    if dropped:
+        by[DROPPED_ROW] = len(dropped)
+        reasons[DROPPED_ROW] = DROPPED_REASON
+    return held, by, reasons
+
+
+def _unproved_next(
+    pairing: Pairing, bundle: HarnessAssembledBundle | None, placement: _Placement
+) -> validation.UnprovedNext | None:
+    """What a run does when every selected case is held back only for not being validated on the pairing; the run
+    route acts on this same value."""
+    if (
+        not placement.placed
+        or placement.dropped
+        or any(one.by != [NOT_VALIDATED_ROW] for one in placement.placed)
+    ):
+        return None
+    return validation.unproved_next(pairing.environment, pairing.agent_version, bundle)
+
+
+def select_for_run(
+    pairing: Pairing, *, keys: list[str], trials: int, lifecycle_gate: bool = True
+) -> RunPlan:
     """The requested cases a run holds back, placed as ``selection_report`` places
     them: a case in the blocked bucket is held back and named, never sent.
 
@@ -477,32 +612,20 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         bundle=bundle,
         evidence=evidence,
         workers=report["workers"],
+        lifecycle_gate=lifecycle_gate,
     )
-    dropped = [
-        one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
-    ]
-    placed = placement.placed
-    held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
-    by = Counter(row for one in placed if one.bucket == "blocked" for row in one.by)
-    reasons = {
-        row["id"]: row["reason"] or row["label"]
-        for row in report["rows"]
-        if row["id"] in by
-    }
-    if NO_DOOR_ROW in by:
-        reasons[NO_DOOR_ROW] = NO_DOOR_REASON
-    # A worker is not a row: a case it holds back reads ALK's sealed cause, or its bypass.
-    reasons.update(_worker_reasons(placed, report["workers"]))
-    if dropped:
-        by[DROPPED_ROW] = len(dropped)
-        reasons[DROPPED_ROW] = DROPPED_REASON
+    held, by, reasons = _held_back(placement, report["rows"], report["workers"])
     return RunPlan(
         view={
             **_scope(pairing, placement, keys),
             "requested": len(keys),
             "running": len(keys) - len(held),
-            "held_back": {"count": len(held), **_capped(held), "by": dict(by)},
+            "held_back": {
+                **_held_list(held, _case_names(placement.placed)),
+                "by": dict(by),
+            },
             "reasons": reasons,
+            "next": _unproved_next(pairing, bundle, placement),
         },
         held=frozenset(held),
         report=report,
@@ -627,6 +750,10 @@ def _digests(suite_version_id: UUID | None, keys: list[str]) -> dict[str, str]:
     }
 
 
+def _case_names(placed: Iterable[Any]) -> dict[str, str]:
+    return {one.case.key: one.case.name for one in placed if one.case.name}
+
+
 def _capped(keys: list[str]) -> CaseList:
     return {"keys": keys[:LIST_LIMIT], "truncated": len(keys) > LIST_LIMIT}
 
@@ -640,6 +767,7 @@ def _place_all(
     bundle: HarnessAssembledBundle | None,
     evidence: Evidence,
     workers: list[WorkerBoundaryView],
+    lifecycle_gate: bool = True,
 ) -> _Placement:
     cases = case_needs(
         environment_version=pairing.environment_version,
@@ -665,8 +793,18 @@ def _place_all(
             )
         else:
             kept.append(one)
-    proved = _proved_tokens(pairing)
-    ready = certified(bundle)
+    # A fix's own check run measures the cases it wrote for the fix: it is gated by readiness, not by lifecycle.
+    lifecycle = (
+        scenario_lifecycle(
+            pairing.environment,
+            suite_version=pairing.suite_version,
+            environment_version=pairing.environment_version,
+            keys=[one.key for one in kept],
+            agent_version_id=getattr(pairing.agent_version, "id", None),
+        )
+        if lifecycle_gate
+        else {}
+    )
     # A run of a pairing being validated, or a validation failed, is refused, whatever
     # its rows say.
     pair_validating = (
@@ -685,7 +823,7 @@ def _place_all(
         _place(
             case,
             by_id,
-            proved=ready or scenario_token(case.key) in proved,
+            view=lifecycle.get(case.key),
             voice=voice,
             many=many,
             pair_validating=pair_validating,
@@ -739,23 +877,6 @@ def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
         for warning in (bundle.warnings if bundle is not None else None) or []
         if isinstance(warning, Mapping) and warning.get("code") == "scenario_dropped"
         for key in warning.get("keys") or []
-    )
-
-
-def _proved_tokens(pairing: Pairing) -> frozenset[str]:
-    """Scenarios with a holding proof for this suite and environment version."""
-    proofs = (
-        HarnessSuiteValidation.no_workspace_objects.filter(
-            suite_version=pairing.suite_version,
-            environment_version=pairing.environment_version,
-        )
-        .values_list("proofs", flat=True)
-        .first()
-    )
-    return frozenset(
-        scenario_token(key)
-        for key, proof in (proofs or {}).items()
-        if isinstance(proof, Mapping) and proof.get("holds")
     )
 
 
@@ -837,7 +958,7 @@ def _place(
     case: CaseNeeds,
     rows: Mapping[str, RowView],
     *,
-    proved: bool,
+    view: Any,
     voice: bool,
     many: bool,
     pair_validating: bool,
@@ -872,6 +993,26 @@ def _place(
     blocked = [one for one, status in statuses.items() if status == "blocked"]
     if pair_failed:
         blocked.append("pair_failed")
+    # A kept-as-written case is runnable: it is placed by its other rows and carries its warning.
+    lifecycle_reason = None
+    if view is not None and view["state"] == "archived":
+        blocked.append(ARCHIVED_ROW)
+        lifecycle_reason = view["reason_text"]
+    elif view is not None and view["state"] == "validated":
+        blocked.append(NOT_ACTIVE_ROW)
+        lifecycle_reason = reason_text("not_active")
+    elif not runnable(view) and view["reason"] in UNVALIDATED_REASONS:
+        blocked.append(NOT_VALIDATED_ROW)
+        lifecycle_reason = view["reason_text"]
+    elif not runnable(view) and view["reason"] in UNREAD_REASONS:
+        blocked.append(SEED_UNREAD_ROW)
+        lifecycle_reason = view["reason_text"]
+    elif not runnable(view) and view["reason"] == TOOL_MISSING_ROW:
+        blocked.append(TOOL_MISSING_ROW)
+        lifecycle_reason = view["reason_text"]
+    elif not runnable(view):
+        blocked.append(PROOF_FAILED_ROW)
+        lifecycle_reason = view["reason_text"]
     if no_door:
         blocked.append(NO_DOOR_ROW)
     if hold.held:
@@ -881,8 +1022,6 @@ def _place(
         # It relies on the limits of a worker a recent run saw bypass its channel.
         blocked.extend(f"worker:{one}" for one in hold.workers if one in bypassed)
     stale = [one for one, status in statuses.items() if status == "stale"]
-    if not proved:
-        stale.append("not_proved_here")
     untested = [one for one, status in statuses.items() if status == "untested"]
     if case.unknown:
         untested.append("unknown_need")
@@ -904,6 +1043,7 @@ def _place(
         needed=frozenset(needed),
         gradable=_grading(case, statuses, judge_failed=judge_failed),
         hold=hold,
+        lifecycle_reason=lifecycle_reason,
     )
 
 

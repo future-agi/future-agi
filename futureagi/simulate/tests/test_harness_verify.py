@@ -15,6 +15,7 @@ from accounts.models import OrgApiKey
 from simulate.models import (
     CallExecution,
     HarnessSuiteMember,
+    HarnessSuiteValidation,
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
@@ -47,6 +48,7 @@ from simulate.tests.test_agent_fix_services import (
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     environment as environment,
 )
+from simulate.tests.test_harness_affected_scenarios import _proved_on
 from simulate.tests.test_harness_agent_versions import _environment
 from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_run_compare import _done
@@ -329,8 +331,16 @@ class TestWhenTheSuiteChanges:
         HarnessSuiteVersion.no_workspace_objects.filter(id=old_suite).update(
             status=VersionStatus.DISCARDED
         )
+        candidate = _second_agent(environment)
+        # The new suite proved, with no other agent version recorded on its validation.
+        _proved_on(
+            environment, environment.environment_version, environment.suite_version
+        )
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).update(job=None)
 
-        run = _verify(environment, _second_agent(environment))
+        run = _verify(environment, candidate)
 
         assert run.suite_version_id == environment.suite_version_id
         assert KEYS[1] in run.payload["metadata"]["selected_scenario_keys"]
@@ -1080,10 +1090,10 @@ def test_a_coding_agent_s_verify_refused_by_readiness_names_no_case(
     candidate = _second_agent(environment)
     real = harness_readiness.select_for_run
 
-    def every_case_held(pairing, *, keys, trials):
+    def every_case_held(pairing, *, keys, trials, **options):
         # Readiness holding back every case the verify sends (a Blocked start row, or
         # a production-only tool every held-back case uses); the 409 is the PR's own.
-        plan = real(pairing, keys=keys, trials=trials)
+        plan = real(pairing, keys=keys, trials=trials, **options)
         view = {
             **plan.view,
             "running": 0,

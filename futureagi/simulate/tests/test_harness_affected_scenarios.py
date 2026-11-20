@@ -12,6 +12,7 @@ from simulate.models import (
 )
 from simulate.services import harness_readiness
 from simulate.services.harness_readiness import selection
+from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_readiness import (
     NOT_PROBED,
@@ -87,7 +88,24 @@ def _ten():
     ] + [_doc(key, solution=(LOOKUP,)) for key in LOOKUP_KEYS]
 
 
-def _suite(environment, documents, *, members=True, numbers=None, sub_goals=SUB_GOALS):
+PROVED = {
+    "format": 2,
+    "holds": True,
+    "proved": True,
+    "assumed": [],
+    "blocked_reason": None,
+}
+
+
+def _suite(
+    environment,
+    documents,
+    *,
+    members=True,
+    numbers=None,
+    sub_goals=SUB_GOALS,
+    proved=True,
+):
     """Give the default suite version these scenarios and the default environment
     version this sub-goal catalogue; ``numbers`` renumbers the members."""
     suite = environment.suite_version
@@ -112,8 +130,26 @@ def _suite(environment, documents, *, members=True, numbers=None, sub_goals=SUB_
                 number=number,
                 content={"name": document["name"], "persona": document["persona"]},
             )
+    if members and proved:
+        # Every case proved on the default pair, so run selection weighs only its rows.
+        HarnessSuiteValidation.no_workspace_objects.update_or_create(
+            suite_version=suite,
+            environment_version=target,
+            defaults={
+                "status": "passed",
+                "proved_at": timezone.now(),
+                "proofs": {one["scenario_key"]: PROVED for one in documents},
+            },
+        )
     environment.refresh_from_db()
     cache.clear()
+
+
+def _proved_on(environment, environment_version, suite_version=None):
+    """Every member proved on this pair, as a validation that certifies and proves writes it."""
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment, environment_version, suite_version)
 
 
 def _select(environment, keys=None, *, trials=1, pairing=None):
@@ -205,9 +241,7 @@ class TestBuckets:
         assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
         assert chosen["lists"]["eligible"]["keys"] == LOOKUP_KEYS
 
-    def test_unproved_case_is_stale(self, user, workspace, storage):
-        environment = _environment(user, workspace, storage, "as-unproved")
-        _suite(environment, _ten())
+    def _proofs(self, environment, proofs):
         HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
             state="pending", object_key=None
         )
@@ -218,25 +252,79 @@ class TestBuckets:
             defaults={
                 "status": "partial",
                 "proved_at": timezone.now(),
-                "proofs": {
-                    key: {"holds": key != LOOKUP_KEYS[0]}
-                    for key in REFUND_KEYS + LOOKUP_KEYS
-                },
+                "proofs": proofs,
             },
+        )
+
+    def test_unvalidated_case_is_held_back(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "as-unproved")
+        _suite(environment, _ten())
+        self._proofs(
+            environment,
+            {key: PROVED for key in REFUND_KEYS + LOOKUP_KEYS if key != LOOKUP_KEYS[0]},
         )
 
         pairing = _pairing(environment)
         chosen = _select(environment, pairing=pairing)["selection"]
         page = harness_readiness.case_page(
-            pairing, keys=None, trials=1, bucket="stale", row=None, cursor=None
+            pairing, keys=None, trials=1, bucket="blocked", row=None, cursor=None
         )
 
-        assert (chosen["stale"], chosen["eligible"]) == (1, 9)
+        assert (chosen["blocked"], chosen["eligible"]) == (1, 9)
         assert [(one["key"], one["by"]) for one in page["items"]] == [
-            (LOOKUP_KEYS[0], ["not_proved_here"])
+            (LOOKUP_KEYS[0], ["not_validated"])
         ]
 
-    def test_ready_pair_bundle_counts_as_proved(self, user, workspace, storage):
+    def test_kept_as_written_runs_with_warning(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "as-assumed")
+        _suite(environment, _ten())
+        kept = {
+            "format": 2,
+            "holds": True,
+            "proved": False,
+            "assumed": [LOOKUP],
+            "solution_steps": 1,
+            "kept_as_written": True,
+            "blocked_reason": "solution_assumed",
+        }
+        leaked = {
+            **kept,
+            "kept_as_written": False,
+            "blocked_reason": "answer_leaked",
+            "leaks": [
+                {
+                    "who": "simulated person",
+                    "field": "instruction",
+                    "grader_field": "tests",
+                    "excerpt": "x",
+                }
+            ],
+        }
+        proofs = dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED)
+        proofs[LOOKUP_KEYS[0]] = kept
+        proofs[LOOKUP_KEYS[1]] = leaked
+        self._proofs(environment, proofs)
+
+        views = scenario_lifecycle(
+            environment,
+            suite_version=environment.suite_version,
+            environment_version=environment.environment_version,
+        )
+        chosen = _select(environment)["selection"]
+
+        assert (views[LOOKUP_KEYS[0]]["state"], views[LOOKUP_KEYS[0]]["warning"]) == (
+            "kept_as_written",
+            "solution_assumed",
+        )
+        assert (views[LOOKUP_KEYS[1]]["state"], views[LOOKUP_KEYS[1]]["reason"]) == (
+            "draft",
+            "answer_leaked",
+        )
+        assert (chosen["blocked"], chosen["eligible"]) == (1, 9)
+
+    def test_certified_pair_without_proofs_is_not_proved(
+        self, user, workspace, storage
+    ):
         environment = _ten_certified(user, workspace, storage, "as-ready-proves")
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=environment.suite_version
@@ -244,7 +332,24 @@ class TestBuckets:
 
         chosen = _select(environment)["selection"]
 
-        assert (chosen["stale"], chosen["eligible"]) == (0, 10)
+        assert (chosen["blocked"], chosen["eligible"]) == (10, 0)
+
+    def test_archived_case_is_held_back(self, user, workspace, storage):
+        environment = _ten_certified(user, workspace, storage, "as-archived")
+        HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment, scenario_key=LOOKUP_KEYS[0]
+        ).update(archived_at=timezone.now(), archive_reason="retired route")
+        pairing = _pairing(environment)
+
+        chosen = _select(environment, pairing=pairing)["selection"]
+        page = harness_readiness.case_page(
+            pairing, keys=None, trials=1, bucket="blocked", row=None, cursor=None
+        )
+
+        assert chosen["blocked"] == 1
+        assert [(one["key"], one["by"]) for one in page["items"]] == [
+            (LOOKUP_KEYS[0], ["scenario_archived"])
+        ]
 
     def test_buckets_sum_to_requested(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "as-sum")
@@ -270,11 +375,13 @@ class TestBuckets:
         chosen = _select(environment)["selection"]
 
         counts = {bucket: chosen[bucket] for bucket in selection.BUCKETS}
-        assert counts == {"blocked": 4, "stale": 1, "untested": 1, "eligible": 4}
+        # A case with no proof on the pair is held back as not validated (section 4.9), no
+        # longer sent as stale.
+        assert counts == {"blocked": 5, "stale": 0, "untested": 1, "eligible": 4}
         assert sum(counts.values()) == chosen["requested"] == 10
         assert chosen["lists"]["untested"]["keys"] == [LOOKUP_KEYS[-1]]
         # Blocked and not proved here: the first match wins.
-        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS
+        assert chosen["lists"]["blocked"]["keys"] == REFUND_KEYS + [LOOKUP_KEYS[0]]
         assert chosen["grading"]["not_gradable"] == [
             {"key": LOOKUP_KEYS[-1], "reason": "check_unreadable"}
         ]
@@ -655,6 +762,71 @@ def _run_metadata(run):
     return run.payload["metadata"]
 
 
+def test_a_case_held_for_two_reasons_is_counted_once():
+    """A refund case missing its tool is held by the tool's reach and by its proof's needs: one case, one line."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        PROOF_FAILED_ROW,
+        TOOL_MISSING_ROW,
+        _held_back,
+    )
+
+    def held(key, by, why):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=key),
+            bucket="blocked",
+            by=by,
+            lifecycle_reason=why,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    needs = "Needs issue_refund, which agent version v14 doesn't have."
+    placement = SimpleNamespace(
+        placed=[
+            held("refund-1", ["tool_discovery", TOOL_MISSING_ROW], needs),
+            held("refund-2", ["tool_discovery", TOOL_MISSING_ROW], needs),
+            held(
+                "lookup-1", [PROOF_FAILED_ROW], "The expected way fails its own checks."
+            ),
+        ],
+        dropped=[],
+    )
+    rows = [
+        {
+            "id": "tool_discovery",
+            "reason": "Not in this agent version: issue_refund",
+            "label": "Tools",
+        }
+    ]
+
+    keys, by, reasons = _held_back(placement, rows, [])
+
+    assert sum(by.values()) == len(keys) == 3
+    # Under the case's own reason, the clearer of the two.
+    assert dict(by) == {TOOL_MISSING_ROW: 2, PROOF_FAILED_ROW: 1}
+    assert reasons[TOOL_MISSING_ROW] == needs
+    assert set(reasons) == set(by)
+
+
+def test_held_back_cases_are_listed_with_their_current_names():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _case_names, _held_list
+
+    placed = [
+        SimpleNamespace(case=SimpleNamespace(key="refuse-30", name="refuse_20_days")),
+        SimpleNamespace(case=SimpleNamespace(key="lookup", name="")),
+    ]
+
+    held = _held_list(["refuse-30", "lookup"], _case_names(placed))
+
+    assert (held["keys"], held["names"]) == (
+        ["refuse-30", "lookup"],
+        {"refuse-30": "refuse_20_days"},
+    )
+
+
 class TestHoldBack:
     def test_a_run_holds_back_the_blocked_cases_and_names_them(
         self, user, workspace, storage
@@ -671,6 +843,7 @@ class TestHoldBack:
             "count": 4,
             "keys": REFUND_KEYS,
             "truncated": False,
+            "names": {key: key for key in REFUND_KEYS},
             "by": {"tool_routing": 4},
         }
         assert "issue_refund reaches production" in chosen["reasons"]["tool_routing"]
