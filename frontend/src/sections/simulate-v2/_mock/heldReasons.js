@@ -23,12 +23,18 @@ export const heldReasonOf = (blocked, rows = []) => {
     (r) => r.blocks && (r.affected || []).includes(blocked.id),
   );
   const first = why[0];
-  const plain = first
-    ? (
-        PLAIN[first.repair] ||
-        ((area) => `The agent didn't pass ${lower(area)} on its last check.`)
-      )(first.label)
-    : "It can't run on this agent and environment.";
+  /* A tool still wired to production: say that, not the area's name. */
+  const prod = String(first?.detail || "").match(
+    /([a-z][a-z0-9_]*) still reaches production/,
+  );
+  const plain = prod
+    ? `${prod[1]} still points at production, so it can't run against the test world.`
+    : first
+      ? (
+          PLAIN[first.repair] ||
+          ((area) => `The agent didn't pass ${lower(area)} on its last check.`)
+        )(first.label)
+      : "It can't run on this agent and environment.";
   return {
     plain: why.length > 1 ? `${plain} (+${why.length - 1} more)` : plain,
     detail: why

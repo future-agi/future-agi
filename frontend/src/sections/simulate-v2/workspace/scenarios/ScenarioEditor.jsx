@@ -40,7 +40,7 @@ import {
   subGoalCountNote,
   subGoalUsageOf,
 } from "../../_mock/scenarioSubGoals";
-import { MarkToggle, TextAction } from "./ScenarioStateBits";
+import { MarkToggle } from "./ScenarioStateBits";
 import BlockerFlag from "./BlockerFlag";
 import { setBlocker } from "../../_mock/releaseBlocker";
 import { clickable, focusRing } from "../../components/clickable";
@@ -424,18 +424,28 @@ export default function ScenarioEditor({
               <Stack
                 direction="row"
                 alignItems="center"
-                spacing={1.5}
+                spacing={1}
                 sx={{ flexShrink: 0 }}
               >
-                <TextAction onClick={() => setLibraryOpen(true)}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => setLibraryOpen(true)}
+                  sx={{ color: "text.primary", borderColor: "divider" }}
+                >
                   {draft.persona
                     ? "Swap for library persona"
                     : "Use a library persona"}
-                </TextAction>
+                </Button>
                 {draft.persona && origin?.kind !== "library" && (
-                  <TextAction onClick={() => setSavingToLibrary(true)}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setSavingToLibrary(true)}
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
                     Save to library
-                  </TextAction>
+                  </Button>
                 )}
               </Stack>
             </Stack>

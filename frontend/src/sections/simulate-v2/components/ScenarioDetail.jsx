@@ -108,10 +108,20 @@ export default function ScenarioDetail({
   /* Who on the caller's side comes in on this scenario (TH-8651). */
   const subActors = subActorsOf(row, callerCastOf(env, envState), env);
   const connect = isConnectOnly(env);
-  const gates = proofGatesOf(row, env, {
+  const gatesRaw = proofGatesOf(row, env, {
     stale: proof.stale,
     broken: state?.proof?.id === "broken",
   });
+  /* Kept as written: no wrong-way example has run, so that gate reads
+     Not run — the same as the Wrong-way examples row below it. */
+  const gates =
+    state?.id === "kept"
+      ? gatesRaw.map((g) =>
+          g.id === "vacuous"
+            ? { ...g, ok: null, label: "Wrong-way example not run" }
+            : g,
+        )
+      : gatesRaw;
   const rule = state ? ruleOfScenario(row, rulesOf(env, envState)) : null;
   const archived = state?.id === "archived" || !!archivedOf(row);
   const vl = (l) => envLabelOf(env, envState, l);
