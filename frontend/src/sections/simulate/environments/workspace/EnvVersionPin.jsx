@@ -232,6 +232,9 @@ export default function EnvVersionPin({ env }) {
         piece="environment"
         version={confirming}
         pending={move.isPending}
+        rollBack={
+          versions.findIndex((v) => v.id === confirming?.id) > defaultIndex
+        }
         onConfirm={confirmMove}
         onClose={() => setConfirming(null)}
       />

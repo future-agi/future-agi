@@ -18,7 +18,6 @@ import {
   useVersionDiff,
 } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY } from "../workspace.constants";
-import { refusalText } from "../evals/refusalText";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import ContentSkeleton from "src/components/content-skeleton";
 import { PreflightReport } from "../agents/PreflightStatus";
@@ -103,13 +102,7 @@ const isFirst = (version, siblings) =>
 
 // What changed in one version, against its previous one or another the reader
 // picks, plus a suite version's scenarios and an agent version's check.
-export default function VersionDetail({
-  envId,
-  move,
-  piece,
-  version,
-  siblings,
-}) {
+export default function VersionDetail({ envId, piece, version, siblings }) {
   const [picked, setAgainst] = useState("");
   const { detail } = VERSIONS_COPY;
   const others = siblings.filter((one) => one.id !== version.id);
@@ -189,14 +182,6 @@ export default function VersionDetail({
           </TextField>
         )}
       </Stack>
-      {move.isError && (
-        <Typography
-          role="alert"
-          sx={{ typography: "s2", color: "status.danger.fg" }}
-        >
-          {refusalText(move.error, VERSIONS_COPY.makeDefault.error)}
-        </Typography>
-      )}
       {data?.summary && !first && !empty && (
         <Typography sx={{ typography: "s2", color: "text.secondary" }}>
           {data.summary}
@@ -217,7 +202,6 @@ export default function VersionDetail({
 }
 VersionDetail.propTypes = {
   envId: PropTypes.string.isRequired,
-  move: PropTypes.object.isRequired,
   piece: PropTypes.oneOf(VERSION_PIECES).isRequired,
   version: PropTypes.object.isRequired,
   siblings: PropTypes.arrayOf(PropTypes.object).isRequired,

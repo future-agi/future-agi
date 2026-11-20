@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "src/utils/test-utils";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // Each hook is stubbed; tests set what the server answered.
@@ -32,15 +38,18 @@ vi.mock("src/api/simulate-environments/versions", async () => {
         isPending: Boolean(status.pending),
         isError: Boolean(status.error),
         error: status.error || null,
+        variables: status.variables,
         reset: () => setStatus({}),
         mutate: (variables, { onSettled } = {}) => {
           move.calls.push(variables);
           if (move.answer === "pending") {
-            setStatus({ pending: true });
+            setStatus({ pending: true, variables });
             return;
           }
           if (move.answer?.versions) state.versions = move.answer.versions;
-          setStatus(move.answer?.error ? { error: move.answer.error } : {});
+          setStatus(
+            move.answer?.error ? { error: move.answer.error, variables } : {},
+          );
           onSettled?.();
         },
       };
@@ -195,11 +204,18 @@ const PIECE_TITLE = {
   environment: "Environment",
   suite: "Scenarios",
 };
+// The timeline shows one kind at a time; pick the kind's filter first.
+const showKind = (piece) => {
+  const filter = screen.getByRole("button", { name: PIECE_TITLE[piece] });
+  if (filter.getAttribute("aria-pressed") !== "true") fireEvent.click(filter);
+};
 // A version row's accessible name starts with its kind and label.
-const row = (piece, label) =>
-  screen.getByRole("button", {
+const row = (piece, label) => {
+  showKind(piece);
+  return screen.getByRole("button", {
     name: new RegExp(`^${PIECE_TITLE[piece]} ${label}\\b`),
   });
+};
 const entryOf = (piece, label) =>
   row(piece, label).closest('[data-testid^="history-entry-"]');
 const openActions = async (user, piece, label) => {
@@ -229,11 +245,7 @@ describe("VersionsPanel", () => {
     expect(row("environment", "v2")).toHaveTextContent("runs use this");
     expect(row("environment", "v1")).not.toHaveTextContent("runs use this");
     expect(row("suite", "v1")).toHaveTextContent("discarded");
-    expect(
-      screen
-        .getAllByTestId(/^history-entry-/)
-        .filter((entry) => /runs use this/.test(entry.textContent)),
-    ).toHaveLength(2);
+    expect(row("suite", "v2")).toHaveTextContent("runs use this");
   });
 
   it("shows an agent version's check and its report", async () => {
@@ -577,12 +589,12 @@ describe("VersionsPanel", () => {
     expect(row("environment", "v2")).toHaveAttribute("aria-expanded", "true");
     expect(row("environment", "v1")).toHaveAttribute("aria-expanded", "false");
 
-    await user.click(row("suite", "v1"));
-    expect(row("suite", "v1")).toHaveAttribute("aria-expanded", "true");
+    await user.click(row("environment", "v1"));
+    expect(row("environment", "v1")).toHaveAttribute("aria-expanded", "true");
     expect(row("environment", "v2")).toHaveAttribute("aria-expanded", "false");
     expect(screen.getAllByTestId("version-detail")).toHaveLength(1);
 
-    await user.click(row("suite", "v1"));
+    await user.click(row("environment", "v1"));
     expect(screen.queryByTestId("version-detail")).toBeNull();
   });
 
@@ -597,6 +609,7 @@ describe("VersionsPanel", () => {
       ],
     };
     render(<VersionsPanel env={ENV} />);
+    showKind("agent");
     const a3 = screen.getByTestId("history-entry-agent:a3");
     await user.click(within(a3).getByRole("button", { expanded: false }));
     expect(within(a3).getByTestId("version-detail")).toBeInTheDocument();
@@ -836,15 +849,19 @@ describe("VersionsPanel", () => {
   it("filters the timeline to scenario versions", async () => {
     const user = userEvent.setup();
     render(<VersionsPanel env={ENV} />);
+    // Opens on environment versions.
+    expect(screen.getByRole("button", { name: "Environment" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryAllByTestId(/^history-entry-suite:/)).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Scenarios" }));
     expect(screen.queryAllByTestId(/^history-entry-agent:/)).toHaveLength(0);
     expect(screen.getAllByTestId(/^history-entry-suite:/)).toHaveLength(2);
-    // No "All" choice: un-picking the filter shows every version again.
+    // One kind at a time: no "All", and the picked one can't be un-picked.
     expect(screen.queryByRole("button", { name: "All" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Scenarios" }));
-    expect(
-      screen.getAllByTestId(/^history-entry-agent:/).length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByTestId(/^history-entry-suite:/)).toHaveLength(2);
   });
 
   it("says a filter is empty instead of showing a blank card", async () => {
@@ -935,32 +952,43 @@ describe("VersionsPanel", () => {
     expect(screen.getByTestId("history-tile-environment")).toHaveTextContent(
       "v1runs use this · a newer one exists",
     );
-    expect(screen.getByTestId("history-tile-versions")).toHaveTextContent(
-      "52 environment · 2 scenario · 1 agent",
-    );
   });
 
-  it("states what runs use now from each piece's default", () => {
+  it("states what runs use now in the strip, with no side panel", () => {
     render(<VersionsPanel env={{ ...ENV, counts: { evaluations: 5 } }} />);
-    const now = screen.getByTestId("history-now");
-    expect(now).toHaveTextContent("Environmentv2");
-    expect(now).toHaveTextContent("Scenariosv2 · 2 scenarios");
-    expect(now).toHaveTextContent("Evaluations5 evaluations");
-    expect(now).toHaveTextContent("Agentv4");
+    expect(screen.getByTestId("history-tile-environment")).toHaveTextContent(
+      "v2latest · runs use this",
+    );
+    expect(screen.getByTestId("history-tile-agent")).toHaveTextContent("v4");
+    expect(screen.getByTestId("history-tile-scenarios")).toHaveTextContent(
+      "v22 scenarios in this version",
+    );
+    expect(screen.getByTestId("history-tile-evaluations")).toHaveTextContent(
+      "5score each run",
+    );
+    expect(screen.queryByText("What runs use now")).toBeNull();
   });
 
   describe("making a version the default", () => {
-    // Make default lives in each row's actions menu.
-    const makeDefault = async (user, piece, label) => {
+    // Each row's actions menu says Roll back for an environment or scenario
+    // version older than the default, Make default otherwise.
+    const makeDefault = async (user, piece, label, name = "Make default") => {
       const menu = await openActions(user, piece, label);
-      await user.click(
-        within(menu).getByRole("menuitem", { name: "Make default" }),
-      );
+      await user.click(within(menu).getByRole("menuitem", { name }));
     };
+    const rollBack = (user, piece, label) =>
+      makeDefault(
+        user,
+        piece,
+        label,
+        `Roll back to ${piece === "suite" ? "scenarios" : piece} ${label}`,
+      );
     const noMakeDefault = async (user, piece, label) => {
       const menu = await openActions(user, piece, label);
       expect(
-        within(menu).queryByRole("menuitem", { name: "Make default" }),
+        within(menu).queryByRole("menuitem", {
+          name: /^(Make default|Roll back)/,
+        }),
       ).toBeNull();
       await user.keyboard("{Escape}");
     };
@@ -981,26 +1009,31 @@ describe("VersionsPanel", () => {
       // The default itself offers nothing.
       await noMakeDefault(user, "environment", "v2");
 
-      await makeDefault(user, "environment", "v1");
-      const dialog = confirmDialog("Make v1 the default environment?");
+      await rollBack(user, "environment", "v1");
+      const dialog = confirmDialog("Roll back to environment v1?");
       expect(dialog).toHaveTextContent(
         "New runs use it. If this combination hasn't run before, the next run prepares it first.",
       );
       await user.click(
-        within(dialog).getByRole("button", { name: "Make default" }),
+        within(dialog).getByRole("button", { name: "Roll back" }),
       );
 
       expect(move.calls).toEqual([
         { piece: "environment", versionId: "e1", expectedDefaultId: "e2" },
       ]);
       await waitFor(() =>
-        expect(confirmDialog("Make v1 the default environment?")).toBeNull(),
+        expect(confirmDialog("Roll back to environment v1?")).toBeNull(),
       );
       // The versions query now answers with the moved default.
       rerender(<VersionsPanel env={ENV} />);
       expect(row("environment", "v1")).toHaveTextContent("runs use this");
       expect(row("environment", "v2")).not.toHaveTextContent("runs use this");
       await noMakeDefault(user, "environment", "v1");
+      // v2 is newer than the default now, so it isn't a roll back.
+      const menu = await openActions(user, "environment", "v2");
+      expect(
+        within(menu).getByRole("menuitem", { name: "Make default" }),
+      ).toBeInTheDocument();
     });
 
     it("makes another scenario version the default", async () => {
@@ -1011,10 +1044,10 @@ describe("VersionsPanel", () => {
       };
       render(<VersionsPanel env={ENV} />);
 
-      await makeDefault(user, "suite", "v0");
-      const dialog = confirmDialog("Make v0 the default scenario version?");
+      await rollBack(user, "suite", "v0");
+      const dialog = confirmDialog("Roll back to scenarios v0?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Make default" }),
+        within(dialog).getByRole("button", { name: "Roll back" }),
       );
 
       expect(move.calls).toEqual([
@@ -1073,14 +1106,14 @@ describe("VersionsPanel", () => {
       const user = userEvent.setup();
       move.answer = "pending";
       render(<VersionsPanel env={ENV} />);
-      await makeDefault(user, "environment", "v1");
-      const dialog = confirmDialog("Make v1 the default environment?");
+      await rollBack(user, "environment", "v1");
+      const dialog = confirmDialog("Roll back to environment v1?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Make default" }),
+        within(dialog).getByRole("button", { name: "Roll back" }),
       );
 
       expect(
-        within(dialog).getByRole("button", { name: "Making default…" }),
+        within(dialog).getByRole("button", { name: "Rolling back…" }),
       ).toBeDisabled();
       // Cancel and the close X are visibly off too, not just ignored.
       const buttons = within(dialog).getAllByRole("button");
@@ -1106,18 +1139,21 @@ describe("VersionsPanel", () => {
         },
       };
       const { rerender } = render(<VersionsPanel env={ENV} />);
-      await makeDefault(user, "environment", "v1");
-      const dialog = confirmDialog("Make v1 the default environment?");
+      await rollBack(user, "environment", "v1");
+      const dialog = confirmDialog("Roll back to environment v1?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Make default" }),
+        within(dialog).getByRole("button", { name: "Roll back" }),
       );
       await waitFor(() =>
-        expect(confirmDialog("Make v1 the default environment?")).toBeNull(),
+        expect(confirmDialog("Roll back to environment v1?")).toBeNull(),
       );
 
       rerender(<VersionsPanel env={ENV} />);
-      const detail = screen.getByTestId("version-detail");
-      expect(within(detail).getByRole("alert")).toHaveTextContent(message);
+      // Shown in the row, which stays closed.
+      expect(
+        within(entryOf("environment", "v1")).getByRole("alert"),
+      ).toHaveTextContent(message);
+      expect(screen.queryByTestId("version-detail")).toBeNull();
       await noMakeDefault(user, "environment", "v1");
 
       // Picking a version again clears it.
@@ -1161,18 +1197,19 @@ describe("VersionsPanel", () => {
       const user = userEvent.setup();
       move.answer = { error };
       render(<VersionsPanel env={ENV} />);
-      await makeDefault(user, "environment", "v1");
-      const dialog = confirmDialog("Make v1 the default environment?");
+      await rollBack(user, "environment", "v1");
+      const dialog = confirmDialog("Roll back to environment v1?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Make default" }),
+        within(dialog).getByRole("button", { name: "Roll back" }),
       );
 
       await waitFor(() =>
-        expect(confirmDialog("Make v1 the default environment?")).toBeNull(),
+        expect(confirmDialog("Roll back to environment v1?")).toBeNull(),
       );
       expect(
-        within(screen.getByTestId("version-detail")).getByRole("alert"),
+        within(entryOf("environment", "v1")).getByRole("alert"),
       ).toHaveTextContent(text);
+      expect(screen.queryByTestId("version-detail")).toBeNull();
     });
   });
 });

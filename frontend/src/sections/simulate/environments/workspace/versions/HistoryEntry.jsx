@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Box,
   ButtonBase,
@@ -20,6 +20,7 @@ import { named } from "../agents/agentVersionStatus";
 import MakeDefaultConfirm from "./MakeDefaultConfirm";
 import VersionDetail from "./VersionDetail";
 import { historyEntryId } from "./historyTimeline";
+import { refusalText } from "../evals/refusalText";
 
 const KIND_ICON = {
   environment: "solar:layers-minimalistic-linear",
@@ -38,7 +39,6 @@ export default function HistoryEntry({
   defaultId,
   expanded,
   onToggle,
-  onOpen,
 }) {
   const { piece, version, badges, originLine } = entry;
   const [menu, setMenu] = useState(null);
@@ -54,6 +54,24 @@ export default function HistoryEntry({
     .filter(Boolean)
     .join(" · ");
   const movable = canMakeDefault(piece, version);
+  // A refused move shows under this row's title; the row stays as it was.
+  const refused =
+    move.isError &&
+    move.variables?.piece === piece &&
+    move.variables?.versionId === version.id;
+  // Kept while it slides shut, after the refusal is cleared.
+  const refusal = useRef("");
+  if (refused) {
+    refusal.current = refusalText(move.error, VERSIONS_COPY.makeDefault.error);
+  }
+  // Lists come newest first, so one after the default is older. Agent
+  // versions keep Make default, as in the design.
+  const older =
+    piece !== "agent" &&
+    defaultId != null &&
+    siblings.findIndex((v) => v.id === version.id) >
+      siblings.findIndex((v) => v.id === defaultId);
+  const { rollBack } = VERSIONS_COPY.makeDefault;
 
   const confirm = () =>
     move.mutate(
@@ -163,6 +181,21 @@ export default function HistoryEntry({
           <Iconify icon="solar:menu-dots-bold" width={16} />
         </IconButton>
       </Stack>
+      <Collapse in={refused} unmountOnExit timeout={reduceMotion ? 0 : "auto"}>
+        {/* Lined up with the title: padding, kind icon, gap. */}
+        <Typography
+          role="alert"
+          sx={{
+            typography: "s2",
+            color: "status.danger.fg",
+            pl: "60px",
+            pr: 2.5,
+            pb: 1.25,
+          }}
+        >
+          {refusal.current}
+        </Typography>
+      </Collapse>
       <Menu
         anchorEl={menu}
         open={Boolean(menu)}
@@ -175,12 +208,12 @@ export default function HistoryEntry({
             sx={{ typography: "s2" }}
             onClick={() => {
               setMenu(null);
-              // Opened, so a refusal shows under this version's changes.
-              onOpen();
               setConfirming(true);
             }}
           >
-            {VERSIONS_COPY.makeDefault.action}
+            {older
+              ? rollBack.action(rollBack.pieces[piece], named(version))
+              : VERSIONS_COPY.makeDefault.action}
           </MenuItem>
         )}
         <MenuItem
@@ -197,6 +230,7 @@ export default function HistoryEntry({
         piece={piece}
         version={confirming ? version : null}
         pending={move.isPending}
+        rollBack={older}
         onConfirm={confirm}
         onClose={() => setConfirming(false)}
       />
@@ -207,7 +241,6 @@ export default function HistoryEntry({
         <Box sx={{ px: 2.5, pb: 2 }}>
           <VersionDetail
             envId={envId}
-            move={move}
             piece={piece}
             version={version}
             siblings={siblings}
@@ -233,6 +266,4 @@ HistoryEntry.propTypes = {
   expanded: PropTypes.bool,
   // Opens or closes this row.
   onToggle: PropTypes.func.isRequired,
-  // Opens this row, leaving it open if it already is.
-  onOpen: PropTypes.func.isRequired,
 };

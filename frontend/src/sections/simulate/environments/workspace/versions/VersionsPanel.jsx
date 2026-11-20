@@ -41,7 +41,7 @@ function Tile({ id, label, value, sub, mono = true }) {
   return (
     <Box
       data-testid={`history-tile-${id}`}
-      sx={{ px: 2, py: 1.5, minWidth: 0 }}
+      sx={{ px: 2, py: 1.5, minWidth: 0, bgcolor: "background.paper" }}
     >
       <Typography
         sx={{ typography: "s3", color: "text.subtitle", fontWeight: 500 }}
@@ -77,91 +77,6 @@ Tile.propTypes = {
   mono: PropTypes.bool,
 };
 
-function NowRow({ label, value }) {
-  return (
-    <Stack
-      direction="row"
-      spacing={2}
-      alignItems="baseline"
-      sx={{
-        px: 2.5,
-        py: 0.875,
-        borderTop: "1px solid",
-        borderColor: "divider",
-      }}
-    >
-      <Typography
-        sx={{
-          typography: "s3",
-          color: "text.subtitle",
-          // Our longest label is "Environment"; the rest goes to the value.
-          width: 104,
-          flexShrink: 0,
-        }}
-      >
-        {label}
-      </Typography>
-      <Typography sx={{ typography: "s2", minWidth: 0 }} noWrap>
-        {value}
-      </Typography>
-    </Stack>
-  );
-}
-NowRow.propTypes = {
-  label: PropTypes.string.isRequired,
-  value: PropTypes.node,
-};
-
-// What new runs use: each piece's default, as the versions list states it.
-function RunsUseNow({ data, env }) {
-  const { now } = COPY;
-  const label = (version) => (version ? named(version) : COPY.none);
-  const suite = data.defaults.suite;
-  const evaluations = env?.counts?.evaluations;
-  return (
-    <Box data-testid="history-now" sx={{ ...card, alignSelf: "start" }}>
-      <Typography sx={{ typography: "s1", fontWeight: 600, px: 2.5, py: 1.5 }}>
-        {now.title}
-      </Typography>
-      <NowRow
-        label={now.environment}
-        value={label(data.defaults.environment)}
-      />
-      <NowRow
-        label={now.scenarios}
-        value={
-          suite
-            ? now.scenariosValue(named(suite), suite.scenarioCount)
-            : COPY.none
-        }
-      />
-      {evaluations != null && (
-        <NowRow
-          label={now.evaluations}
-          value={now.evaluationsValue(evaluations)}
-        />
-      )}
-      <NowRow label={now.agent} value={label(data.defaults.agent)} />
-      <Typography
-        sx={{
-          typography: "s3",
-          color: "text.subtitle",
-          px: 2.5,
-          py: 1.25,
-          borderTop: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        {now.footer}
-      </Typography>
-    </Box>
-  );
-}
-RunsUseNow.propTypes = {
-  data: PropTypes.object.isRequired,
-  env: PropTypes.object,
-};
-
 // The History tab: every agent, environment and scenario version as one
 // timeline, newest first. A row opens what changed in that version.
 export default function VersionsPanel({ env }) {
@@ -173,12 +88,12 @@ export default function VersionsPanel({ env }) {
   const [params, setParams] = useSearchParams();
   const [linkedPiece, linkedId] = (params.get("version") || "").split(":");
   const [picked, setPicked] = useState(null);
-  const [kind, setKind] = useState(null);
+  const [kind, setKind] = useState("environment");
   useEffect(() => {
     if (!linkedId) return;
     setPicked({ piece: linkedPiece, id: linkedId });
-    // A filter could hide the linked row; show every kind again.
-    setKind(null);
+    // Show the linked version's kind, or the filter would hide its row.
+    if (VERSION_PIECES.includes(linkedPiece)) setKind(linkedPiece);
   }, [linkedPiece, linkedId]);
   // Held here so a refusal outlives the refresh that re-renders the row.
   const move = useMoveDefault(env?.id);
@@ -265,21 +180,24 @@ export default function VersionsPanel({ env }) {
       e.version.id !== envDefault?.id,
   );
   const groups = groupByDay(filterEntries(entries, kind));
+  const suite = data.defaults.suite;
+  const evaluations = env?.counts?.evaluations;
 
   return frame(
     <>
       <Box
         sx={{
           ...card,
+          overflow: "hidden",
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", sm: "repeat(3, minmax(0, 1fr))" },
-          // Width, style and colour set apart: a responsive "1px solid"
-          // shorthand would reset the colour to the text colour.
-          "& > :not(:first-of-type)": {
-            borderStyle: "solid",
-            borderColor: "divider",
-            borderWidth: { xs: "1px 0 0 0", sm: "0 0 0 1px" },
+          gridTemplateColumns: {
+            xs: "repeat(2, minmax(0, 1fr))",
+            md: "repeat(4, minmax(0, 1fr))",
           },
+          // The 1px gaps show the divider colour, so the lines stay right
+          // however many tiles sit in a row.
+          gap: "1px",
+          bgcolor: "divider",
         }}
       >
         <Tile
@@ -295,112 +213,105 @@ export default function VersionsPanel({ env }) {
           sub={data.defaults.agent && tiles.agentSub}
         />
         <Tile
-          id="versions"
+          id="scenarios"
+          label={tiles.scenarios}
+          value={suite ? named(suite) : COPY.none}
+          sub={
+            suite?.scenarioCount != null &&
+            tiles.scenariosSub(suite.scenarioCount)
+          }
+        />
+        <Tile
+          id="evaluations"
           mono={false}
-          label={tiles.versions}
-          value={entries.length}
-          sub={tiles.counts(
-            data.environment.length,
-            data.suite.length,
-            data.agent.length,
-          )}
+          label={tiles.evaluations}
+          // A lone dash when the environment doesn't say how many.
+          value={evaluations ?? "—"}
+          sub={tiles.evaluationsSub}
         />
       </Box>
-      <Box
-        sx={{
-          display: "grid",
-          gap: 2,
-          gridTemplateColumns: {
-            xs: "1fr",
-            md: "minmax(0, 2fr) minmax(0, 1fr)",
-          },
-        }}
-      >
-        <Box sx={{ ...card, overflow: "hidden" }}>
-          {/* The card's width depends on the chat panel, not the viewport, so
-              the filter wraps under the text once the text would get narrow. */}
-          <Stack
-            direction="row"
-            flexWrap="wrap"
-            useFlexGap
-            gap={2}
-            alignItems="flex-start"
-            justifyContent="space-between"
-            sx={{ px: 2.5, py: 2 }}
-          >
-            <Box sx={{ flex: "1 1 280px", minWidth: 0 }}>
-              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-                {COPY.title}
-              </Typography>
-              <Typography
-                sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
-              >
-                {COPY.subtitle}
-              </Typography>
-            </Box>
-            <ToggleButtonGroup
-              exclusive
-              size="small"
-              value={kind}
-              // Clicking the picked one again un-picks it.
-              onChange={(_, next) => setKind(next)}
-              aria-label={COPY.filterLabel}
-              sx={{ flexShrink: 0 }}
+      <Box sx={{ ...card, overflow: "hidden" }}>
+        {/* The card's width depends on the chat panel, not the viewport, so
+            the filter wraps under the text once the text would get narrow. */}
+        <Stack
+          direction="row"
+          flexWrap="wrap"
+          useFlexGap
+          gap={2}
+          alignItems="flex-start"
+          justifyContent="space-between"
+          sx={{ px: 2.5, py: 2 }}
+        >
+          <Box sx={{ flex: "1 1 280px", minWidth: 0 }}>
+            <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+              {COPY.title}
+            </Typography>
+            <Typography
+              sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
             >
-              {HISTORY_KINDS.map((one) => (
-                <ToggleButton key={one} value={one}>
-                  {COPY.filters[one]}
-                </ToggleButton>
-              ))}
-            </ToggleButtonGroup>
-          </Stack>
-          {groups.length === 0 && (
+              {COPY.subtitle}
+            </Typography>
+          </Box>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={kind}
+            // One kind is always picked; clicking it again keeps it.
+            onChange={(_, next) => next && setKind(next)}
+            aria-label={COPY.filterLabel}
+            sx={{ flexShrink: 0 }}
+          >
+            {HISTORY_KINDS.map((one) => (
+              <ToggleButton key={one} value={one}>
+                {COPY.filters[one]}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </Stack>
+        {groups.length === 0 && (
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.subtitle",
+              px: 2.5,
+              py: 2,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            {COPY.emptyKind[kind]}
+          </Typography>
+        )}
+        {groups.map((group) => (
+          <Box key={group.key}>
             <Typography
               sx={{
-                typography: "s2",
+                typography: "s3",
+                fontWeight: 500,
                 color: "text.subtitle",
                 px: 2.5,
-                py: 2,
+                py: 0.75,
+                bgcolor: "action.hover",
                 borderTop: "1px solid",
                 borderColor: "divider",
               }}
             >
-              {COPY.emptyKind[kind]}
+              {group.label}
             </Typography>
-          )}
-          {groups.map((group) => (
-            <Box key={group.key}>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  fontWeight: 500,
-                  color: "text.subtitle",
-                  px: 2.5,
-                  py: 0.75,
-                  bgcolor: "action.hover",
-                  borderTop: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                {group.label}
-              </Typography>
-              {group.entries.map((entry) => (
-                <HistoryEntry
-                  key={entry.key}
-                  entry={entry}
-                  envId={env.id}
-                  move={move}
-                  siblings={data[entry.piece]}
-                  defaultId={data.defaults[entry.piece]?.id ?? null}
-                  expanded={entry.key === openKey}
-                  onToggle={() => pick(entry, entry.key !== openKey)}
-                  onOpen={() => entry.key !== openKey && pick(entry, true)}
-                />
-              ))}
-            </Box>
-          ))}
-        </Box>
-        <RunsUseNow data={data} env={env} />
+            {group.entries.map((entry) => (
+              <HistoryEntry
+                key={entry.key}
+                entry={entry}
+                envId={env.id}
+                move={move}
+                siblings={data[entry.piece]}
+                defaultId={data.defaults[entry.piece]?.id ?? null}
+                expanded={entry.key === openKey}
+                onToggle={() => pick(entry, entry.key !== openKey)}
+              />
+            ))}
+          </Box>
+        ))}
       </Box>
     </>,
   );

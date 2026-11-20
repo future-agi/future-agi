@@ -222,6 +222,15 @@ export const VERSIONS_COPY = {
     body: "New runs use it. If this combination hasn't run before, the next run prepares it first.",
     confirm: "Make default",
     pending: "Making default…",
+    // Going back to an environment or scenario version older than the
+    // default; it moves the default the same way.
+    rollBack: {
+      action: (piece, label) => `Roll back to ${piece} ${label}`,
+      title: (piece, label) => `Roll back to ${piece} ${label}?`,
+      confirm: "Roll back",
+      pending: "Rolling back…",
+      pieces: { environment: "environment", suite: "scenarios" },
+    },
     error: "Couldn't change the default. Try again in a moment.",
   },
   detail: {
@@ -277,7 +286,7 @@ export const VERSIONS_COPY = {
   history: {
     title: "Timeline",
     subtitle:
-      "A world, tool or rule change makes the next environment version. A scenario-only edit makes the next scenario version. Agent versions are kept on their own.",
+      "Scenario edits make a scenario version; any other change makes an environment version. Nothing is deleted.",
     filterLabel: "Show versions of",
     filters: {
       environment: "Environment",
@@ -292,25 +301,14 @@ export const VERSIONS_COPY = {
     none: "None yet",
     tiles: {
       environment: "Environment",
-      inUse: "runs use this",
+      inUse: "latest · runs use this",
       newer: "runs use this · a newer one exists",
       agent: "Agent being tested",
       agentSub: "default agent version",
-      versions: "Versions",
-      counts: (environment, suite, agent) =>
-        `${environment} environment · ${suite} scenario · ${agent} agent`,
-    },
-    now: {
-      title: "What runs use now",
-      environment: "Environment",
       scenarios: "Scenarios",
-      scenariosValue: (label, n) =>
-        n == null ? label : `${label} · ${n} scenario${n === 1 ? "" : "s"}`,
+      scenariosSub: (n) => `${n} scenario${n === 1 ? "" : "s"} in this version`,
       evaluations: "Evaluations",
-      evaluationsValue: (n) => `${n} evaluation${n === 1 ? "" : "s"}`,
-      agent: "Agent",
-      footer:
-        "Making an older version the default deletes nothing. Every run keeps the versions it ran on.",
+      evaluationsSub: "score each run",
     },
     days: { today: "Today", yesterday: "Yesterday", earlier: "Earlier" },
     badges: {

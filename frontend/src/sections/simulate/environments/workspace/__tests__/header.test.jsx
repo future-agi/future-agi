@@ -268,7 +268,7 @@ describe("EnvVersionPin", () => {
     await user.click(screen.getByRole("button", { name: "Roll back to v1" }));
   };
   const confirmButton = () =>
-    screen.getByRole("button", { name: /^Mak(e|ing) default/ });
+    screen.getByRole("button", { name: /^(Roll back|Rolling back…)$/ });
 
   it("offers a move only on active versions that aren't the default", async () => {
     const user = userEvent.setup();
@@ -311,7 +311,7 @@ describe("EnvVersionPin", () => {
     await rollBackToV1(user);
 
     const confirm = screen.getByRole("dialog", {
-      name: "Make v1 the default environment?",
+      name: "Roll back to environment v1?",
     });
     expect(confirm).toHaveTextContent(
       "New runs use it. If this combination hasn't run before, the next run prepares it first.",
@@ -326,7 +326,7 @@ describe("EnvVersionPin", () => {
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", {
-          name: "Make v1 the default environment?",
+          name: "Roll back to environment v1?",
         }),
       ).toBeNull(),
     );
@@ -347,7 +347,7 @@ describe("EnvVersionPin", () => {
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", {
-          name: "Make v1 the default environment?",
+          name: "Roll back to environment v1?",
         }),
       ).toBeNull(),
     );
@@ -362,13 +362,13 @@ describe("EnvVersionPin", () => {
     await user.click(confirmButton());
 
     expect(
-      screen.getByRole("dialog", { name: "Make v1 the default environment?" }),
+      screen.getByRole("dialog", { name: "Roll back to environment v1?" }),
     ).toBeInTheDocument();
-    expect(confirmButton()).toHaveTextContent("Making default…");
+    expect(confirmButton()).toHaveTextContent("Rolling back…");
     expect(confirmButton()).toBeDisabled();
     // Cancel and the close X are visibly off too, not just ignored.
     const dialog = screen.getByRole("dialog", {
-      name: "Make v1 the default environment?",
+      name: "Roll back to environment v1?",
     });
     const buttons = within(dialog).getAllByRole("button");
     expect(buttons).toHaveLength(3);
@@ -423,7 +423,7 @@ describe("EnvVersionPin", () => {
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", {
-          name: "Make v1 the default environment?",
+          name: "Roll back to environment v1?",
         }),
       ).toBeNull(),
     );

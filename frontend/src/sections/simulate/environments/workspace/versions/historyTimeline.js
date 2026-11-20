@@ -5,7 +5,7 @@ import { VERSIONS_COPY } from "../workspace.constants";
 // The DOM id of a version's row, so a link can scroll to it.
 export const historyEntryId = (key) => `history-entry-${key}`;
 
-// The History tab's filter values, one per piece. Nothing picked shows all.
+// The History tab's filter values, one per piece; one is always picked.
 export const HISTORY_KINDS = ["environment", "suite", "agent"];
 
 const timeOf = (version) =>
@@ -68,7 +68,7 @@ export function timelineEntries(data) {
 }
 
 export const filterEntries = (entries, kind) =>
-  kind ? entries.filter((entry) => entry.piece === kind) : entries;
+  entries.filter((entry) => entry.piece === kind);
 
 const dayKey = (date) =>
   `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;

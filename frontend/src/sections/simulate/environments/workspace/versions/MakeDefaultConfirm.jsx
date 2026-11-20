@@ -14,19 +14,28 @@ export default function MakeDefaultConfirm({
   piece,
   version,
   pending = false,
+  rollBack = false,
   onConfirm,
   onClose,
 }) {
-  // Keep naming the version while the dialog fades out.
-  const shown = useRef(version);
-  if (version) shown.current = version;
-  const label = named(shown.current);
+  // Keep naming the version, and the wording, while the dialog fades out:
+  // once the move lands the version is the default, no longer an older one.
+  const shown = useRef({ version, back: false });
+  if (version) {
+    shown.current = { version, back: rollBack && COPY.rollBack.pieces[piece] };
+  }
+  const label = named(shown.current.version);
+  const { back } = shown.current;
   return (
     <ConfirmDialog
       open={Boolean(version)}
       onClose={pending ? undefined : onClose}
       closeDisabled={pending}
-      title={COPY.title(label, COPY.pieces[piece])}
+      title={
+        back
+          ? COPY.rollBack.title(back, label)
+          : COPY.title(label, COPY.pieces[piece])
+      }
       content={
         <Typography component="span" sx={{ typography: "s2" }}>
           {COPY.body}
@@ -40,7 +49,13 @@ export default function MakeDefaultConfirm({
           disabled={pending}
           sx={{ px: 3 }}
         >
-          {pending ? COPY.pending : COPY.confirm}
+          {back
+            ? pending
+              ? COPY.rollBack.pending
+              : COPY.rollBack.confirm
+            : pending
+              ? COPY.pending
+              : COPY.confirm}
         </Button>
       }
     />
@@ -52,6 +67,8 @@ MakeDefaultConfirm.propTypes = {
   // The version to make the default; none keeps the dialog closed.
   version: PropTypes.object,
   pending: PropTypes.bool,
+  // Worded as going back, for a version older than the default.
+  rollBack: PropTypes.bool,
   onConfirm: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
 };
