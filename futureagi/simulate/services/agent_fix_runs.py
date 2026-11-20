@@ -319,8 +319,9 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     # without them. Its last error stays with it.
     lost_models = recent_lost_models(original.engine_notes)
     with transaction.atomic():
-        # Another Retry may have made its retry since this one read the fix: one at a time,
-        # and only while the retry is free.
+        # Another Retry may have made its retry since this one read the fix. Both lock the
+        # original, from either page, so they go one at a time, and only while the retry
+        # is free.
         locked = AgentFixRun.no_workspace_objects.select_for_update().get(
             id=original.id
         )

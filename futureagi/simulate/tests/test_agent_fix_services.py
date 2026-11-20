@@ -60,6 +60,7 @@ from simulate.selectors.agent_fix import (
     fix_runs_for_read,
     graded_check_runs,
     is_retryable,
+    launch_blocker,
     launch_options,
     limited_validation,
     ran_at,
@@ -238,6 +239,7 @@ def _fix_run(
         max_minutes=30,
     )
     environment = source_run.environment
+    fields.setdefault("started_at", timezone.now())
     return AgentFixRun.no_workspace_objects.create(
         organization_id=environment.organization_id,
         workspace_id=environment.workspace_id,
@@ -246,7 +248,6 @@ def _fix_run(
         base_agent_version_id=source_run.agent_version_id,
         state=state,
         request=request.model_dump(mode="json"),
-        started_at=timezone.now(),
         **fields,
     )
 
@@ -763,6 +764,7 @@ class TestRetry:
             source_run,
             state=State.FAILED,
             retried_from=failed,
+            started_at=None,
             failure={"code": code, "message": "m"},
         )
 
@@ -806,8 +808,13 @@ class TestRetry:
             state=State.FAILED,
             failure={"code": "fix_engine_died", "message": "m"},
         )
-        holding, release = threading.Event(), threading.Event()
+        holding, release, checked = (threading.Event() for _ in range(3))
         refused, made = [], []
+
+        def checking(*args, **kwargs):
+            # The second Retry is past its first check, so it read no retry yet.
+            checked.set()
+            return launch_blocker(*args, **kwargs)
 
         def first():
             # What the first Retry does under the epoch's lock: its retry starts and ends.
@@ -840,13 +847,17 @@ class TestRetry:
         holder.start()
         assert holding.wait(timeout=30)
         retrier = threading.Thread(target=second)
-        retrier.start()
-        # It read the epoch before the first retry committed: without a check under the
-        # lock, it makes a second retry once the first commits.
-        retrier.join(timeout=2)
-        release.set()
-        holder.join(timeout=30)
-        retrier.join(timeout=30)
+        with patch(
+            "simulate.services.agent_fix_runs.launch_blocker", side_effect=checking
+        ):
+            retrier.start()
+            assert checked.wait(timeout=30)
+            # Without a check under the lock, it makes a second retry once the first
+            # commits.
+            retrier.join(timeout=2)
+            release.set()
+            holder.join(timeout=30)
+            retrier.join(timeout=30)
 
         assert (refused, made) == (["fix_not_retryable"], [])
         assert failed.retries.count() == 1

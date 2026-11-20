@@ -1130,13 +1130,13 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     return list(regressions)
 
 
-def retries_taking_the_retry(original: Any) -> QuerySet[AgentFixRun]:
+def retries_taking_the_retry(original_id: Any) -> QuerySet[AgentFixRun]:
     """The retries of a failed fix that took its one retry: each that started, or still
     waits to start. One that ended before it started (it could not be scheduled, or waited
     too long for a slot) spent nothing, so the retry stays free."""
     return AgentFixRun.no_workspace_objects.filter(
         Q(started_at__isnull=False) | Q(state__in=AgentFixRun.ACTIVE_STATES),
-        retried_from=original,
+        retried_from_id=original_id,
     )
 
 
@@ -1154,8 +1154,8 @@ def is_retryable(fix_run: AgentFixRun) -> bool:
         return False
     taken = getattr(fix_run, "retry_taken", None)
     if taken is None:
-        original = fix_run.retried_from_id or fix_run.id
-        taken = retries_taking_the_retry(original).exists()
+        original_id = fix_run.retried_from_id or fix_run.id
+        taken = retries_taking_the_retry(original_id).exists()
     return not taken
 
 
