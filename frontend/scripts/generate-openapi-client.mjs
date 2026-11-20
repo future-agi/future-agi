@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generate } from "orval";
+import { attachmentTransport } from "./attachment-client.mjs";
 import prettier from "prettier";
 
 import {
@@ -423,7 +424,7 @@ async function runGeneration(schemaPath) {
     "headers: ApiResponseHeaders",
     "Axios response headers",
   );
-  fs.writeFileSync(apiOutputPath, api);
+  fs.writeFileSync(apiOutputPath, attachmentTransport(api));
 
   const promptConfigNullableFields = Object.entries(
     swagger.definitions.PromptConfig.properties,

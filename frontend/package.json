@@ -28,7 +28,7 @@
     "test:watch": "vitest --watch",
     "test:coverage": "node --max-old-space-size=4096 ./node_modules/.bin/vitest run --coverage",
     "test:unit": "vitest run --reporter=verbose --testNamePattern=\"unit|Unit\"",
-    "test:contracts-codegen": "node --test scripts/openapi-typescript.test.mjs",
+    "test:contracts-codegen": "node --test scripts/openapi-typescript.test.mjs scripts/attachment-client.test.mjs",
     "test:integration": "vitest run --reporter=verbose --testNamePattern=\"integration|Integration\"",
     "test:api-journeys": "node scripts/api-journeys/run.mjs",
     "test:api-journeys:preflight": "node scripts/api-journeys/preflight.mjs",

@@ -91552,14 +91552,21 @@ export const getBootstrapAttachmentSessionUrl = () => {
 
 export const bootstrapAttachmentSession = async (
   attachmentBootstrapRequestApi: AttachmentBootstrapRequestApi,
+  idempotencyKey: string,
   options?: RequestInit,
 ): Promise<bootstrapAttachmentSessionResponse> => {
+  if (typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new TypeError("Idempotency-Key is required");
+  }
+  const headers = new Headers(options?.headers);
+  headers.set("Content-Type", "application/json");
+  headers.set("Idempotency-Key", idempotencyKey);
   return apiMutator<bootstrapAttachmentSessionResponse>(
     getBootstrapAttachmentSessionUrl(),
     {
       ...options,
       method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
+      headers,
       body: JSON.stringify(attachmentBootstrapRequestApi),
     },
   );
@@ -92760,7 +92767,7 @@ export const streamAttachmentContent = async (
         "Content-Type": "application/octet-stream",
         ...options?.headers,
       },
-      body: JSON.stringify(streamAttachmentContentBody),
+      body: streamAttachmentContentBody,
     },
   );
 };
