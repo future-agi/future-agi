@@ -28,13 +28,6 @@ from model_hub.services.skills_hub.v11.governance import (
 from model_hub.services.skills_hub.v11.types import SkillPrincipal, SkillScope
 
 pytestmark = pytest.mark.django_db
-HAS_RELEASE_FIELDS = any(
-    field.name == "release_revision" for field in HubSkill._meta.fields
-)
-needs_shared_fields = pytest.mark.skipif(
-    not HAS_RELEASE_FIELDS,
-    reason="Integration-owned HubSkill release fields not installed yet",
-)
 
 
 @pytest.fixture
@@ -288,7 +281,6 @@ def test_revision_types_are_not_coerced(principal, protected, revision):
     assert error.value.status == 400
 
 
-@needs_shared_fields
 def test_policy_change_audit_noop_and_stale_cas(principal, hub_skill):
     result = set_label_protection(
         principal=principal,
@@ -327,7 +319,6 @@ def test_policy_change_audit_noop_and_stale_cas(principal, hub_skill):
     assert error.value.code == "release_conflict"
 
 
-@needs_shared_fields
 def test_policy_event_failure_rolls_back_policy_and_revision(principal, hub_skill):
     original = list(hub_skill.protected_label_names)
     with patch.object(
@@ -348,7 +339,6 @@ def test_policy_event_failure_rolls_back_policy_and_revision(principal, hub_skil
     )
 
 
-@needs_shared_fields
 def test_denied_bundled_publication_rolls_back_version_and_preserves_draft(
     principal, hub_skill, user, organization, workspace
 ):
@@ -374,7 +364,6 @@ def test_denied_bundled_publication_rolls_back_version_and_preserves_draft(
     assert hub_skill.drafts.get(user=user).revision == before.revision
 
 
-@needs_shared_fields
 def test_integrated_label_aba_noop_and_removal(
     principal, hub_skill, hub_actor, publish_skill, make_skill_files
 ):
@@ -430,7 +419,6 @@ def test_integrated_label_aba_noop_and_removal(
     assert error.value.code == "release_precondition_required"
 
 
-@needs_shared_fields
 @pytest.mark.django_db(transaction=True)
 def test_concurrent_policy_cas_has_exactly_one_winner(principal, hub_skill):
     barrier = Barrier(2)
