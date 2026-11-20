@@ -854,7 +854,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         self.assertEqual(bootstrap["with"]["name"], "update-candidate")
         self.assertIn("!inputs.bootstrap", proof["if"])
         validate = one_step(self.publish, lambda s: s.get("name") == "Validate proof before signing")
-        self.assertIn('os.environ["BOOTSTRAP"] == "true"', validate["run"])
+        self.assertIn('os.environ.get("BOOTSTRAP", "false") == "true"', validate["run"])
         self.assertIn('require(validation is None', validate["run"])
         self.assertIn('require(not proof.exists()', validate["run"])
         precondition = one_step(self.generate, lambda s: s.get("name") == "Bootstrap is the first signed manifest")
