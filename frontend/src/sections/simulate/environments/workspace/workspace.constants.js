@@ -229,9 +229,11 @@ export const VERSIONS_COPY = {
     rollBack: {
       action: (piece, label) => `Roll back to ${piece} ${label}`,
       title: (piece, label) => `Roll back to ${piece} ${label}?`,
-      confirm: "Roll back",
+      // The button says the target short, as in the design: "Roll back to env v2".
+      confirm: (piece, label) => `Roll back to ${piece} ${label}`,
       pending: "Rolling back…",
       pieces: { environment: "environment", suite: "scenarios" },
+      shortPieces: { environment: "env", suite: "scenarios" },
     },
     error: "Couldn't change the default. Try again in a moment.",
   },

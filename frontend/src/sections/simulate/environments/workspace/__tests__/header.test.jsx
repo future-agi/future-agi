@@ -268,7 +268,9 @@ describe("EnvVersionPin", () => {
     await user.click(screen.getByRole("button", { name: "Roll back to v1" }));
   };
   const confirmButton = () =>
-    screen.getByRole("button", { name: /^(Roll back|Rolling back…)$/ });
+    screen.getByRole("button", {
+      name: /^(Roll back to env v1|Rolling back…)$/,
+    });
 
   it("opens the full history from the list", async () => {
     const user = userEvent.setup();

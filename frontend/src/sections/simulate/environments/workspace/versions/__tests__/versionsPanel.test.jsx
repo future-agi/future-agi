@@ -1100,7 +1100,7 @@ describe("VersionsPanel", () => {
         "New runs use it. If this combination hasn't run before, the next run prepares it first.",
       );
       await user.click(
-        within(dialog).getByRole("button", { name: "Roll back" }),
+        within(dialog).getByRole("button", { name: "Roll back to env v1" }),
       );
 
       expect(move.calls).toEqual([
@@ -1134,7 +1134,9 @@ describe("VersionsPanel", () => {
       await rollBack(user, "suite", "v0");
       const dialog = confirmDialog("Roll back to scenarios v0?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Roll back" }),
+        within(dialog).getByRole("button", {
+          name: "Roll back to scenarios v0",
+        }),
       );
 
       expect(move.calls).toEqual([
@@ -1196,7 +1198,7 @@ describe("VersionsPanel", () => {
       await rollBack(user, "environment", "v1");
       const dialog = confirmDialog("Roll back to environment v1?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Roll back" }),
+        within(dialog).getByRole("button", { name: "Roll back to env v1" }),
       );
 
       expect(
@@ -1229,7 +1231,7 @@ describe("VersionsPanel", () => {
       await rollBack(user, "environment", "v1");
       const dialog = confirmDialog("Roll back to environment v1?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Roll back" }),
+        within(dialog).getByRole("button", { name: "Roll back to env v1" }),
       );
       await waitFor(() =>
         expect(confirmDialog("Roll back to environment v1?")).toBeNull(),
@@ -1287,7 +1289,7 @@ describe("VersionsPanel", () => {
       await rollBack(user, "environment", "v1");
       const dialog = confirmDialog("Roll back to environment v1?");
       await user.click(
-        within(dialog).getByRole("button", { name: "Roll back" }),
+        within(dialog).getByRole("button", { name: "Roll back to env v1" }),
       );
 
       await waitFor(() =>

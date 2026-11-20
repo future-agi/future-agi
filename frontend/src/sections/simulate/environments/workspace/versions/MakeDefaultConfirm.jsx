@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useRef } from "react";
 import { Button, Typography } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import Iconify from "src/components/iconify";
 import { MOVABLE_PIECES } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY } from "../workspace.constants";
 import { named } from "../agents/agentVersionStatus";
@@ -21,7 +22,7 @@ export default function MakeDefaultConfirm({
   // Keep naming the version, and the wording, while the dialog fades out.
   const shown = useRef({ version, back: false });
   if (version) {
-    shown.current = { version, back: rollBack && COPY.rollBack.pieces[piece] };
+    shown.current = { version, piece, back: rollBack };
   }
   const label = named(shown.current.version);
   const { back } = shown.current;
@@ -32,7 +33,10 @@ export default function MakeDefaultConfirm({
       closeDisabled={pending}
       title={
         back
-          ? COPY.rollBack.title(back, label)
+          ? COPY.rollBack.title(
+              COPY.rollBack.pieces[shown.current.piece],
+              label,
+            )
           : COPY.title(label, COPY.pieces[piece])
       }
       content={
@@ -46,12 +50,18 @@ export default function MakeDefaultConfirm({
           variant="contained"
           onClick={onConfirm}
           disabled={pending}
+          startIcon={
+            back ? <Iconify icon="solar:history-linear" width={14} /> : null
+          }
           sx={{ px: 3 }}
         >
           {back
             ? pending
               ? COPY.rollBack.pending
-              : COPY.rollBack.confirm
+              : COPY.rollBack.confirm(
+                  COPY.rollBack.shortPieces[shown.current.piece],
+                  label,
+                )
             : pending
               ? COPY.pending
               : COPY.confirm}
