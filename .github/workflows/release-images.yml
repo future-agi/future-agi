@@ -816,9 +816,11 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true
     environment: production-auto
+    # Published only by the last step, after the registry check passed: a
+    # failure anywhere leaves both empty, so the bump never pins an unverified image.
     outputs:
-      digest: ${{ steps.agent.outputs.digest }}
-      source_sha: ${{ steps.agent.outputs.source_sha }}
+      digest: ${{ steps.verified.outputs.digest }}
+      source_sha: ${{ steps.verified.outputs.source_sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/create-github-app-token@v2
@@ -844,13 +846,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Verify the registry still serves the tested digest
+        id: verified
         env:
           VERSION: ${{ needs.guard.outputs.version }}
           EXPECTED_DIGEST: ${{ steps.agent.outputs.digest }}
+          SOURCE_SHA: ${{ steps.agent.outputs.source_sha }}
         run: |
           set -eu
           actual=$(docker buildx imagetools inspect "futureagi/omega-insights-agent:$VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
           test "$actual" = "$EXPECTED_DIGEST"
+          { echo "digest=$EXPECTED_DIGEST"; echo "source_sha=$SOURCE_SHA"; } >> "$GITHUB_OUTPUT"
 
   dispatch-docs:
     needs: [guard, approve, build, backend, code-executor]
@@ -1293,10 +1298,14 @@ jobs:
               echo "$region: no insightsAgent block; skipped"
               continue
             fi
-            test "$(yq '.insightsAgent.image.repository' "$file")" = 'futureagi/omega-insights-agent'
+            case "$(yq '.insightsAgent.image.repository' "$file")" in
+              futureagi/omega-insights-agent|us-east5-docker.pkg.dev/futureagiprimary/dockerhub-mirror/futureagi/omega-insights-agent) ;;
+              *) echo "::error::Unexpected Insights agent repository in $file"; exit 1 ;;
+            esac
             enabled="$(yq '.insightsAgent.enabled // false' "$file")"
             if [[ "$INSIGHTS_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
               yq -i '.insightsAgent.image.tag = strenv(VERSION) | .insightsAgent.image.digest = strenv(INSIGHTS_DIGEST)' "$file"
+              echo "INSIGHTS_PINNED=true" >> "$GITHUB_ENV"
               echo "$region: Insights agent pinned to ${VERSION}@${INSIGHTS_DIGEST} (enabled=${enabled})"
             elif [ "$enabled" = true ]; then
               echo "::error::$region enables the Insights agent but no verified agent image exists for ${VERSION}; refusing to bump"
@@ -1342,7 +1351,7 @@ jobs:
             fi
             gh pr create --repo future-agi/deployment --base main --head "$branch" \
               --title "chore(release): bump platform to ${VERSION}" \
-              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. ${INSIGHTS_DIGEST:+Insights agent: ${VERSION}, commit ${INSIGHTS_SOURCE_SHA}, digest ${INSIGHTS_DIGEST}. }Review release notes (check for the migrations callout) before deploying per the deployment guide."
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. ${INSIGHTS_PINNED:+Insights agent: ${VERSION}, commit ${INSIGHTS_SOURCE_SHA}, digest ${INSIGHTS_DIGEST}. }Review release notes (check for the migrations callout) before deploying per the deployment guide."
           else
             echo "bump PR already open"
           fi
