@@ -24,6 +24,12 @@ URL = "/accounts/notifications/email/unsubscribe/"
 ONE_CLICK = {"List-Unsubscribe": "One-Click"}
 
 
+@pytest.fixture(autouse=True)
+def _no_backend_url_override(monkeypatch):
+    """Links follow settings.FI_API_PUBLIC_URL unless BACKEND_URL is set."""
+    monkeypatch.delenv("BACKEND_URL", raising=False)
+
+
 def _send(to, category=None, scope=None, template="integration_error.html"):
     mail.outbox = []
     email_helper(

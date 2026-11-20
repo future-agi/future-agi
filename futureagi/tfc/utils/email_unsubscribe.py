@@ -16,6 +16,7 @@ Opt-outs live in storage that already exists, so no schema change:
   that owns the address.
 """
 
+import os
 from datetime import timedelta
 from typing import NamedTuple
 from urllib.parse import quote
@@ -109,12 +110,13 @@ def unsubscribe_url(
 
 
 def public_api_url() -> str:
-    """The API's address as a mail reader's browser reaches it: the URL the
-    install publishes for outside callers (BASE_URL, else the UI's
-    VITE_HOST_API, see ``settings.FI_API_PUBLIC_URL``). The same on the API
-    and on the workers that send mail, and on a self-hosted install it
-    never names Future AGI Cloud."""
-    return settings.FI_API_PUBLIC_URL.rstrip("/")
+    """The API's address as a mail reader's browser reaches it: BACKEND_URL
+    when a deployment sets it, else the URL the install publishes for outside
+    callers (BASE_URL, else the UI's VITE_HOST_API; see
+    ``settings.FI_API_PUBLIC_URL``). The same on the API and on the workers
+    that send mail, and on a self-hosted install it never names Future AGI
+    Cloud."""
+    return (os.environ.get("BACKEND_URL") or settings.FI_API_PUBLIC_URL).rstrip("/")
 
 
 def page_url(token: str) -> str:
