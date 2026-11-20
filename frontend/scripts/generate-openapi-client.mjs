@@ -173,6 +173,7 @@ export function normalizeSwaggerSchema(schema) {
     return { ...annotations, anyOf: [result, { type: "null" }] };
   }
   return { ...result, nullable: true };
+}
 
 // Run Epoch from an Error Feed issue sends these nested objects as null. drf-yasg
 // writes x-nullable beside no $ref, so the nullable ones are named here.
