@@ -93,7 +93,8 @@ export default function HistoryPage({
   readOnly,
   onCopy,
 }) {
-  const [filter, setFilter] = useState("all");
+  /* One kind at a time: environment, scenarios or agent versions. */
+  const [filter, setFilter] = useState("env");
   const [open, setOpen] = useState(null);
   const [menu, setMenu] = useState(null);
   const [rollbackTo, setRollbackTo] = useState(null);
@@ -163,14 +164,12 @@ export default function HistoryPage({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshots, env, envState, runs]);
-  const shown = events.filter(
-    (e) =>
-      filter === "all" ||
-      (filter === "env"
-        ? e.kind === "env"
-        : filter === "scenarios"
-          ? isSnap(e) && e.v.scenChanged
-          : !isSnap(e)),
+  const shown = events.filter((e) =>
+    filter === "env"
+      ? e.kind === "env"
+      : filter === "scenarios"
+        ? isSnap(e) && e.v.scenChanged
+        : !isSnap(e),
   );
   const days = [];
   shown.forEach((e) => {
@@ -322,7 +321,6 @@ export default function HistoryPage({
               onChange={(_, v) => v && setFilter(v)}
               sx={segmentedToggleSx}
             >
-              <ToggleButton value="all">All</ToggleButton>
               <ToggleButton value="env">Environment</ToggleButton>
               <ToggleButton value="scenarios">Scenarios</ToggleButton>
               <ToggleButton value="agent">Agent</ToggleButton>
@@ -527,20 +525,39 @@ function Entry({
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>
               {title}
             </Typography>
-            {badges.map((b) => (
-              <Typography
-                key={b}
-                sx={{
-                  typography: "s3",
-                  color:
-                    b === "runs use this" || b === "being tested"
-                      ? "status.discovery.fg"
-                      : "text.tertiary",
-                }}
-              >
-                {`· ${b}`}
-              </Typography>
-            ))}
+            {/* Status as chips: "runs use this" / "being tested" in the
+                discovery tone, the rest (latest, viewing, draft) neutral. */}
+            {badges.map((b) => {
+              const active = b === "runs use this" || b === "being tested";
+              return (
+                <Box
+                  component="span"
+                  key={b}
+                  sx={{
+                    typography: "s3",
+                    fontWeight: "fontWeightMedium",
+                    lineHeight: "18px",
+                    px: 0.75,
+                    borderRadius: "4px",
+                    border: "1px solid",
+                    whiteSpace: "nowrap",
+                    ...(active
+                      ? {
+                          color: "status.discovery.fg",
+                          bgcolor: "status.discovery.bg",
+                          borderColor: "status.discovery.border",
+                        }
+                      : {
+                          color: "text.secondary",
+                          bgcolor: "background.neutral",
+                          borderColor: "divider",
+                        }),
+                  }}
+                >
+                  {b}
+                </Box>
+              );
+            })}
           </Stack>
           {summary && (
             <Typography

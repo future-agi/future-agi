@@ -56,6 +56,7 @@ import AgentFoundReview from "../agents/AgentFoundReview";
 import ToolSafetyDialog from "../agents/ToolSafetyDialog";
 import MakeCopyDialog from "./MakeCopyDialog";
 import ReviewUpdateDialog from "./ReviewUpdateDialog";
+import EnvVersionMenu from "./EnvVersionMenu";
 import { catalogueOfEnv, releaseUpdateOf } from "../_mock/catalogue";
 import {
   applyReleasePatch,
@@ -2660,6 +2661,16 @@ export default function EnvironmentWorkspace() {
                 </Typography>
               </Stack>
             </Tooltip>
+            {/* "env vN ▾": switch or roll back the environment version. */}
+            {!awaitingApproval && !unsavedFirst && (
+              <EnvVersionMenu
+                env={env}
+                envState={envState}
+                patch={patch}
+                readOnly={readOnlyEnv}
+                onHistory={() => go("history")}
+              />
+            )}
             {/*
               Sealed · Live · Prompt only (RSI PRD "Environments, defined"):
               where the agent runs and how its tools are answered — which is
