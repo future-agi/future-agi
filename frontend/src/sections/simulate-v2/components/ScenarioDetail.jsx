@@ -45,6 +45,7 @@ import TestConditionRow from "./TestConditionRow";
 import { ScenarioRowContext } from "../workspace/scenarios/scenarioRowContext";
 import { clickable, focusRing } from "./clickable";
 import { scenarioTitle } from "../_mock/scenarios";
+import { wrongWayExamplesOf } from "../_mock/wrongWay";
 import ScenarioOrgPart from "../workspace/scenarios/ScenarioOrgPart";
 
 /**
@@ -499,6 +500,10 @@ function PolicyRow({ label, children }) {
 }
 
 PolicyRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
+WrongWayRow.propTypes = {
+  examples: PropTypes.array,
+  none: PropTypes.string,
+};
 
 function Section({ title, children }) {
   /*
@@ -1079,6 +1084,9 @@ function DrawerSheet({
             >{`${proof.reasons.map((r) => INVALIDATING[r]).join("; ")}.`}</Typography>
           )}
         </Row>
+        <WrongWayRow
+          {...wrongWayExamplesOf(row, { rule, tools, goals, gates, state })}
+        />
         {details && (
           <Box className="sr" sx={{ px: 1.75, py: 1.5 }}>
             <GateList gates={gates} vl={vl} proof={proof} />
@@ -1208,6 +1216,48 @@ function Part({ title, children }) {
 Part.propTypes = { title: PropTypes.string, children: PropTypes.node };
 
 /* One ruled row of a sheet: the label in a fixed gutter, the value beside it. */
+function WrongWayRow({ examples, none }) {
+  return (
+    <Row label="Wrong-way examples">
+      {none ? (
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          {none}
+        </Typography>
+      ) : (
+        <Stack spacing={0.75}>
+          {examples.map((e) => (
+            <Box
+              key={e.id}
+              sx={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto",
+                columnGap: 1.5,
+                alignItems: "baseline",
+              }}
+            >
+              <Box minWidth={0}>
+                <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+                  {e.name}
+                </Typography>
+                {e.why && (
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    {e.why}
+                  </Typography>
+                )}
+              </Box>
+              <Typography
+                sx={{ typography: "s3", fontWeight: 500, color: e.tone }}
+              >
+                {e.statusLabel}
+              </Typography>
+            </Box>
+          ))}
+        </Stack>
+      )}
+    </Row>
+  );
+}
+
 function Row({ label, children }) {
   return (
     <Box
@@ -1231,6 +1281,10 @@ function Row({ label, children }) {
   );
 }
 Row.propTypes = { label: PropTypes.string, children: PropTypes.node };
+WrongWayRow.propTypes = {
+  examples: PropTypes.array,
+  none: PropTypes.string,
+};
 
 /* The run history as small dots, oldest first — the run's name and result on hover. */
 function RunDots({ history }) {
