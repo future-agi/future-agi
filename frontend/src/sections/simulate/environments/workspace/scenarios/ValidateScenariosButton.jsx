@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Stack, Tooltip, Typography } from "@mui/material";
 import { useSnackbar } from "notistack";
 
@@ -8,6 +8,7 @@ import {
   useRunningScenarioValidation,
   useScenarioValidation,
   useValidateScenarios,
+  useValidationOutcome,
 } from "src/api/harness/scenarios";
 import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 
@@ -17,6 +18,10 @@ import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 // button stays disabled while the validation runs and the list refreshes when it ends, so each case shows its new state.
 // A validation already running when the page opens (started before a reload or on another page) is followed the same
 // way, since a press would only return it.
+// Validations whose end was said: a button mounted again (the list refreshing, a drawer opening) reads the same
+// finished status, and must not raise the toast again over what is open.
+const announced = new Set();
+
 export default function ValidateScenariosButton({
   jobId,
   initialJobId = null,
@@ -47,24 +52,37 @@ export default function ValidateScenariosButton({
     }
   }, [covers, live?.job_id, validationJobId]);
 
-  // Its end is said once, as a toast, for the validation this button followed.
-  const told = useRef(null);
+  // Its end is said once, as a toast with the app's standard placement and auto-hide, for the validation this button
+  // followed; a finished one waits for the suite's counts, so it says what the counts line says.
+  const recorded =
+    state === "finished" && status.data?.proofs_recorded !== false;
+  const outcome = useValidationOutcome(jobId, validationJobId, {
+    enabled: recorded,
+  });
   useEffect(() => {
     if (!validationJobId || !state || state === "validating") return;
-    if (told.current === validationJobId) return;
-    told.current = validationJobId;
-    if (state === "finished" && status.data?.proofs_recorded !== false) {
-      enqueueSnackbar(
-        SCENARIOS_COPY.validationDone(status.data?.proved, status.data?.total),
-        { variant: "success" },
-      );
+    if (announced.has(validationJobId)) return;
+    if (recorded && outcome.isPending) return;
+    announced.add(validationJobId);
+    if (recorded) {
+      enqueueSnackbar(SCENARIOS_COPY.validationDone(outcome.data), {
+        variant: "success",
+      });
     } else {
       enqueueSnackbar(
         status.data?.message || SCENARIOS_COPY.validationNoResults,
         { variant: "error" },
       );
     }
-  }, [enqueueSnackbar, state, status.data, validationJobId]);
+  }, [
+    enqueueSnackbar,
+    outcome.data,
+    outcome.isPending,
+    recorded,
+    state,
+    status.data,
+    validationJobId,
+  ]);
 
   const running =
     start.isPending || (validationJobId && (!state || state === "validating"));
@@ -79,7 +97,6 @@ export default function ValidateScenariosButton({
         setMessage(result.message || SCENARIOS_COPY.nothingToValidate);
         return;
       }
-      told.current = null;
       setValidationJobId(result.job_id ?? null);
     } catch (error) {
       setMessage(error?.response?.data?.message ?? error?.message ?? null);

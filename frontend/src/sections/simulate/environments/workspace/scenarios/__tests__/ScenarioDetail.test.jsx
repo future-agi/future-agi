@@ -18,6 +18,7 @@ vi.mock("src/api/harness/scenarios", () => ({
   useValidateScenarios: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScenarioValidation: () => ({ data: undefined }),
   useRunningScenarioValidation: () => ({ data: undefined }),
+  useValidationOutcome: () => ({ data: undefined, isPending: true }),
   useScenarioRevisions: () => ({
     data: {
       revisions: [

@@ -18,8 +18,10 @@ const getHarnessRunningValidation = vi.fn(async () => ({
   message: null,
 }));
 const enqueueSnackbar = vi.fn();
+const listHarnessScenarios = vi.fn(async () => ({ results: [] }));
 vi.mock("src/api/harness/harness", async () => ({
   ...(await vi.importActual("src/api/harness/harness")),
+  listHarnessScenarios: (...args) => listHarnessScenarios(...args),
   validateHarnessScenarios: (...args) => validateHarnessScenarios(...args),
   getHarnessScenarioValidation: (...args) =>
     getHarnessScenarioValidation(...args),
@@ -179,30 +181,73 @@ describe("A validation started before the page opened", () => {
     ).toBeDisabled();
   });
 
-  it("says once, as a toast, that the validation it followed finished", async () => {
+  const finishedRun = (jobId, counts) => {
     enqueueSnackbar.mockClear();
     getHarnessRunningValidation.mockResolvedValueOnce({
-      job_id: "val-11",
+      job_id: jobId,
       scenario_keys: null,
       to_prove: 3,
       message: null,
     });
     getHarnessScenarioValidation.mockReset();
+    // The job's own count reaches every case it touched, kept as written ones included.
     getHarnessScenarioValidation.mockResolvedValue({
       state: "finished",
       proofs_recorded: true,
-      proved: 9,
-      total: 10,
+      proved: 61,
+      total: 61,
     });
+    listHarnessScenarios.mockResolvedValue({
+      results: [],
+      lifecycle_counts: counts,
+    });
+  };
+
+  it("says once, as a toast, what the validation it followed left, as the counts line does", async () => {
+    finishedRun("val-11", { proved: 45, kept_as_written: 16, not_proved: 0 });
 
     renderButton({ jobId: "env-5" });
 
     await waitFor(() =>
       expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "Validation finished · proved 9 of 10",
+        "Validation finished · 45 proved, 16 kept as written",
         { variant: "success" },
       ),
     );
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the cases left not proved", async () => {
+    finishedRun("val-12", { proved: 58, kept_as_written: 0, not_proved: 3 });
+
+    renderButton({ jobId: "env-6" });
+
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Validation finished · 58 proved, 3 not proved",
+        { variant: "success" },
+      ),
+    );
+  });
+
+  it("does not raise the toast again when the button mounts again", async () => {
+    finishedRun("val-13", { proved: 4, kept_as_written: 0, not_proved: 0 });
+    const first = renderButton({ jobId: "env-7" });
+    await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    getHarnessRunningValidation.mockResolvedValueOnce({
+      job_id: "val-13",
+      scenario_keys: null,
+      to_prove: 0,
+      message: null,
+    });
+    renderButton({ jobId: "env-7" });
+    await waitFor(() =>
+      expect(getHarnessScenarioValidation.mock.calls.length).toBeGreaterThan(1),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
     expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
   });
 });

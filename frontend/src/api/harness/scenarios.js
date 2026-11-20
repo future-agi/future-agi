@@ -200,6 +200,20 @@ export function useScenarioValidation(jobId, validationJobId) {
   });
 }
 
+/** Once a validation ended, the suite's counts the list's counts line reads (proved, kept as written, not proved),
+ * read once and outside the list's key, so the toast says what the page shows. */
+export function useValidationOutcome(jobId, validationJobId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: ["harness-scenario-validation", jobId, validationJobId, "outcome"],
+    queryFn: async () => {
+      const page = await listHarnessScenarios(jobId, { page: 1, limit: 1 });
+      return page?.lifecycle_counts ?? page?.proof_counts ?? null;
+    },
+    enabled: Boolean(jobId && validationJobId && enabled),
+    staleTime: Infinity,
+  });
+}
+
 /** Archive or restore one scenario; both refetch the list. */
 export function useArchiveScenario(jobId) {
   const queryClient = useQueryClient();

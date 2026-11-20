@@ -99,10 +99,19 @@ export const SCENARIOS_COPY = {
     `Validating · proved ${proved} of ${total}`,
   validationNoResults:
     "Validation finished but recorded no results; try again.",
-  validationDone: (proved, total) =>
-    Number.isInteger(total) && total > 0
-      ? `Validation finished · proved ${proved} of ${total}`
-      : "Validation finished",
+  // From the suite's counts, as the counts line reads them: kept as written is never counted as proved.
+  validationDone: (counts) => {
+    if (!counts) return "Validation finished";
+    const {
+      proved = 0,
+      kept_as_written: kept = 0,
+      not_proved: notProved = 0,
+    } = counts;
+    const parts = [`${proved} proved`];
+    if (kept > 0) parts.push(`${kept} kept as written`);
+    if (notProved > 0) parts.push(`${notProved} not proved`);
+    return `Validation finished · ${parts.join(", ")}`;
+  },
   // A press would only return the validation already running, which does not prove this case.
   validationElsewhere:
     "Another validation is running; validate this case when it ends.",
