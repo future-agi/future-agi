@@ -615,3 +615,33 @@ def test_monitor_alert_rereads_recipients_before_sending(monitor):
     _send_alert_email(loaded, "Errors above threshold", "critical")
 
     assert [m.to for m in mail.outbox] == [["oncall@example.com"]]
+
+
+@pytest.mark.django_db
+def test_unsubscribing_from_one_monitor_leaves_others_alone(
+    api_client, monitor, organization, workspace
+):
+    """Review round 2: the link is scoped to one monitor; the same address on
+    another monitor (here in another project) keeps getting its alerts."""
+    from tracer.models.monitor import UserAlertMonitor
+
+    other = UserAlertMonitor.objects.create(
+        organization=organization,
+        workspace=workspace,
+        project=monitor.project,
+        name="Latency",
+        metric_type="count_of_errors",
+        threshold_operator="greater_than",
+        threshold_type="static",
+        critical_threshold_value=0.1,
+        alert_frequency=60,
+        notification_emails=["oncall@example.com"],
+    )
+    token = eu.make_token("oncall@example.com", eu.MONITOR_ALERTS, str(monitor.id))
+
+    api_client.post(f"{URL}?token={token}", ONE_CLICK, format="multipart")
+
+    monitor.refresh_from_db()
+    other.refresh_from_db()
+    assert "oncall@example.com" not in monitor.notification_emails
+    assert other.notification_emails == ["oncall@example.com"]

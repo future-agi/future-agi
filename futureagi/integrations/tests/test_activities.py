@@ -587,6 +587,34 @@ class TestCheckIntegrationErrorAlerts:
         mock_send.assert_called_once()
 
     @patch("integrations.temporal.activities._send_error_notification")
+    def test_two_workers_holding_the_same_row_notify_once(
+        self, mock_send, error_connection
+    ):
+        """Review round 2: a second worker that selected the connection before
+        the first one claimed it must lose the claim, not re-email admins."""
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        manager = IntegrationConnection.no_workspace_objects
+        real_filter = manager.filter
+        stale = list(real_filter(id=error_connection.id))  # worker 2's read
+
+        check_integration_error_alerts()  # worker 1 claims and sends
+
+        def scan_returns_the_stale_copy(*args, **kwargs):
+            if "status" in kwargs:  # the activity's eligibility scan
+                return MagicMock(filter=MagicMock(return_value=stale))
+            return real_filter(*args, **kwargs)
+
+        with patch.object(manager, "filter", side_effect=scan_returns_the_stale_copy):
+            check_integration_error_alerts()  # worker 2, holding the old row
+
+        mock_send.assert_called_once()
+
+    @patch("integrations.temporal.activities._send_error_notification")
     def test_failed_send_releases_claim_for_retry(self, mock_send, error_connection):
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
