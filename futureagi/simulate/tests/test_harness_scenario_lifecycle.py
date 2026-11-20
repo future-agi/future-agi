@@ -255,6 +255,55 @@ def test_a_case_removed_two_saves_ago_is_still_offered_from_the_last_saved_versi
     )
 
 
+def test_a_removed_case_is_offered_with_its_last_saved_content_not_its_first(
+    user, workspace, storage
+):
+    from simulate.models import HostedHarnessJob
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment = _environment(user, workspace, storage, "lc-removed-last-rev")
+    _suite(environment, _ten())
+    first = environment.suite_version
+    case = REFUND_KEYS[0]
+    # S2 edits the case once, S3 drops it.
+    edited = _copy(first, HarnessSuiteVersion, hash=first.hash[:-4] + "edit")
+    _members_of(first, edited, changed=case)
+    documents = [
+        {**one, "instruction": "a new instruction"}
+        if one["scenario_key"] == case
+        else one
+        for one in first.documents["scenarios"]
+    ]
+    HarnessSuiteVersion._base_manager.filter(id=edited.id).update(
+        documents={**first.documents, "scenarios": documents}
+    )
+    dropped = _copy(
+        edited,
+        HarnessSuiteVersion,
+        hash=first.hash[:-4] + "drop",
+        documents={
+            **first.documents,
+            "scenarios": [one for one in documents if one["scenario_key"] != case],
+        },
+    )
+    _members_of(edited, dropped)
+    HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version=dropped, scenario_key=case
+    ).delete()
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        suite_version=dropped
+    )
+    HostedHarnessScenario.all_objects.filter(job=environment, scenario_key=case).update(
+        deleted=True, deleted_at=timezone.now()
+    )
+    environment.refresh_from_db()
+
+    [removed] = removed_scenarios(environment)
+
+    assert removed["suite_version"] == str(edited.id)
+    assert removed["content"]["instruction"] == "a new instruction"
+
+
 def test_a_new_case_never_takes_an_archived_or_removed_row_on_either_pairing_path(
     user, workspace, storage
 ):
@@ -1059,6 +1108,16 @@ def test_the_builder_reads_each_case_s_lifecycle_as_the_scenarios_tab_shows_it(
             name: views[key][name] for name in ("state", "reason", "reason_text")
         }
     assert by_name[REFUND_KEYS[0]]["state"] == "draft"
+    # The overview counts as the Scenarios tab does.
+    from simulate.services.harness_provider import _lifecycle_for_list
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+    from simulate.services.hosted_harness_conversation import conversation_overview
+
+    tab = _lifecycle_for_list(environment, {})
+    assert conversation_overview(conversation)["lifecycle_counts"] == lifecycle_counts(
+        list(tab["views"].values()) + tab["archived"]
+    )
+    assert conversation_overview(conversation)["lifecycle_counts"]["not_proved"] >= 1
 
 
 def test_a_case_kept_for_a_judged_policy_conflict_reads_kept_as_written_with_the_conflict(
