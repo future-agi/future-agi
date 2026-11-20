@@ -353,7 +353,8 @@ def _validating(run: ReadinessFixRun) -> bool:
                 return _update(run, **_phase_values("validate"))
             return _end(run, "validation_failed")
         case "failed":
-            message = str((state.get("error") or {}).get("message") or "")
+            error = state.get("error")
+            message = str(error["message"] or "") if error else ""
             return _end(run, "validation_failed", message or None)
         case "check_unavailable":
             # D8: autosave never saves uncertified, as a manual Save may.
