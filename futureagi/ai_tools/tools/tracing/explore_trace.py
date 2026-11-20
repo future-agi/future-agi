@@ -48,23 +48,19 @@ class ExploreTraceTool(BaseTool):
     input_model = ExploreTraceInput
 
     def execute(self, params: ExploreTraceInput, context: ToolContext) -> ToolResult:
-        from tracer.models.trace import Trace
+        from ai_tools.tools.tracing.access import get_trace_project
         from tracer.services.clickhouse.v2 import get_reader
 
-        # Verify trace access (Trace stays in PG; project__organization is the
-        # tenant scope check)
-        try:
-            trace = Trace.objects.select_related("project").get(
-                id=params.trace_id,
-                project__organization=context.organization,
-            )
-        except Trace.DoesNotExist:
+        project = get_trace_project(params.trace_id, context)
+        if project is None:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         # Load all spans from CH 25.3 — was ObservationSpan.objects.filter(
         # trace=, deleted=False).order_by("start_time", "created_at").
         with get_reader() as reader:
-            spans = reader.list_by_trace(str(trace.id))
+            spans = reader.list_by_trace(
+                str(params.trace_id), project_id=str(project.id)
+            )
 
         if not spans:
             return ToolResult(

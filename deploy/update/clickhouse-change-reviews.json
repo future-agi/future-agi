@@ -27,6 +27,26 @@
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
+    },
+    {
+      "path": "futureagi/tracer/queries/error_clustering.py",
+      "before_sha256": "5d7c5f805e0641450e447037da9d1a1849e5e7158f1e2bfceb471b159f939074",
+      "after_sha256": "000f1518c28287826388f405c0506c1463f3623085609590e6621fc53298f35b",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:cluster_centroids",
+          "clickhouse:error_embeddings",
+          "clickhouse:clusters"
+        ],
+        "mitigation": "Clustering detail and centroid reads now carry the requested project. A mixed or stale detail batch is rejected before centroid creation; memberships use stored trace IDs rather than loading the retired trace relation. The centroid lookup retains its cluster_id predicate and LIMIT 1, adding a bound project_id predicate. The existing project-filtered ALTER TABLE error_embeddings UPDATE deleted = 1 and subsequent reinsertion in mark_embeddings_as_clustered are unchanged, including their existing asynchronous, non-transactional behavior. No schema change or backfill is introduced. Synthetic multi-project query plans and timings are recorded separately; they are not production measurements or full upgrade/restore qualification.",
+        "reviewer": "nik13",
+        "review": "https://github.com/future-agi/future-agi/pull/4001#discussion_r4568896093",
+        "large_volume_rehearsal": true
+      }
     }
   ]
 }

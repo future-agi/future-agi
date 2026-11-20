@@ -82,10 +82,9 @@ class SubmitTraceScoresTool(BaseTool):
     def execute(
         self, params: SubmitTraceScoresInput, context: ToolContext
     ) -> ToolResult:
-        from tracer.models.project import Project
+        from ai_tools.tools.tracing.access import get_trace_project
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
         from tracer.queries import deep_analysis_state
-        from tracer.services.clickhouse.v2 import get_reader
 
         # Validate priority
         priority = params.recommended_priority.upper()
@@ -95,41 +94,23 @@ class SubmitTraceScoresTool(BaseTool):
                 "Must be HIGH, MEDIUM, or LOW."
             )
 
-        # Verify trace access. The trace lives only in CH post-cutover; resolve
-        # its project from the CH root span and check org access via the PG
-        # Project (kept).
-        with get_reader() as reader:
-            roots = reader.root_ids_by_trace_ids([str(params.trace_id)])
-        root = roots.get(str(params.trace_id))
-        project_id = root[1] if root else None
-        project = (
-            Project.objects.filter(
-                id=project_id, organization=context.organization
-            ).first()
-            if project_id
-            else None
-        )
+        project = get_trace_project(params.trace_id, context)
         if project is None:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        # Find the analysis record
-        analysis = None
-        if params.analysis_id:
-            try:
-                analysis = TraceErrorAnalysis.objects.get(
-                    id=params.analysis_id,
-                    trace_id=params.trace_id,
-                )
-            except TraceErrorAnalysis.DoesNotExist:
-                analysis = None
-
-        # Fallback: get the most recent analysis for this trace
+        # Both the explicit ID and fallback must use the checked project.
+        analyses = TraceErrorAnalysis.objects.filter(
+            trace_id=params.trace_id,
+            project=project,
+            project__organization=context.organization,
+        )
+        analysis = (
+            analyses.filter(id=params.analysis_id).first()
+            if params.analysis_id
+            else None
+        )
         if analysis is None:
-            analysis = (
-                TraceErrorAnalysis.objects.filter(trace_id=params.trace_id)
-                .order_by("-analysis_date")
-                .first()
-            )
+            analysis = analyses.order_by("-analysis_date").first()
 
         # If still no analysis, create one (scores-only, no findings)
         if analysis is None:
@@ -171,38 +152,46 @@ class SubmitTraceScoresTool(BaseTool):
             ]
         )
 
-        # Done derives from the TraceErrorAnalysis row above; release the marker.
-        deep_analysis_state.clear(str(params.trace_id))
+        # Background jobs finalize only after the complete agent stream succeeds.
+        clustering_triggered = False
+        if context.project is None:
+            # Done derives from the TraceErrorAnalysis row above; release the marker.
+            deep_analysis_state.clear(str(params.trace_id), project_id=str(project.id))
 
-        # Trigger embedding ingestion for this trace's errors
-        try:
-            from tracer.queries.error_analysis import TraceErrorAnalysisDB
+            # Trigger embedding ingestion for this trace's errors
+            try:
+                from tracer.queries.error_analysis import TraceErrorAnalysisDB
 
-            db = TraceErrorAnalysisDB()
-            db.ingest_trace_error_embeddings(str(params.trace_id))
-        except Exception as e:
-            logger.warning(
-                "embedding_ingestion_failed",
-                trace_id=str(params.trace_id),
-                error=str(e),
-            )
+                db = TraceErrorAnalysisDB()
+                db.ingest_trace_error_embeddings(
+                    str(params.trace_id),
+                    project_id=str(project.id),
+                    organization_id=str(context.organization.id),
+                )
+            except Exception as e:
+                logger.warning(
+                    "embedding_ingestion_failed",
+                    trace_id=str(params.trace_id),
+                    error=str(e),
+                )
 
-        # Trigger async clustering for the project
-        try:
-            from tracer.tasks.error_analysis import cluster_project_errors
+            # Trigger async clustering for the project
+            try:
+                from tracer.tasks.error_analysis import cluster_project_errors
 
-            cluster_project_errors.delay(str(project.id))
-        except Exception as e:
-            logger.warning(
-                "clustering_trigger_failed",
-                project_id=str(project.id),
-                error=str(e),
-            )
+                cluster_project_errors.delay(str(project.id))
+                clustering_triggered = True
+            except Exception as e:
+                logger.warning(
+                    "clustering_trigger_failed",
+                    project_id=str(project.id),
+                    error=str(e),
+                )
 
         # Format response
         info = key_value_block(
             [
-                ("Status", "Scores Saved & Clustering Triggered"),
+                ("Status", "Scores Saved"),
                 ("Analysis ID", f"`{analysis.id}`"),
                 ("Trace", f"`{params.trace_id}`"),
                 ("Overall Score", format_number(params.overall_score)),
@@ -228,6 +217,6 @@ class SubmitTraceScoresTool(BaseTool):
                 "analysis_id": str(analysis.id),
                 "overall_score": params.overall_score,
                 "total_errors": analysis.total_errors,
-                "clustering_triggered": True,
+                "clustering_triggered": clustering_triggered,
             },
         )
