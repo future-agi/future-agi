@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "50d3853127ae8904585779aeff56e8b6fad4cb49bc0260297e144315539938d0",
-  "tool_count": 111,
+  "source_contract_sha256": "93e73a1eba873d724ea9cdc2d5a5c82122c3605fad07db671ca8f1afdd90d223",
+  "tool_count": 124,
   "tools": [
     {
       "name": "whoami",
@@ -3688,6 +3688,9 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "include_skill_links": {
+            "type": "boolean"
+          },
           "sort_params": {
             "type": "string",
             "default": "[]",
@@ -3758,6 +3761,7 @@
         "parameters": {
           "path": [],
           "query": [
+            "include_skill_links",
             "sort_params",
             "project_id",
             "project_version_id",
@@ -4451,6 +4455,12 @@
                           "type": "string",
                           "description": "Optional metric output type metadata used by eval and annotation filters."
                         },
+                        "group": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2147483647,
+                          "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                        },
                         "filter_config": {
                           "type": "object",
                           "properties": {
@@ -4467,7 +4477,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -4528,6 +4538,12 @@
                           "type": "string",
                           "description": "Optional metric output type metadata used by eval and annotation filters."
                         },
+                        "group": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2147483647,
+                          "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                        },
                         "filter_config": {
                           "type": "object",
                           "properties": {
@@ -4544,7 +4560,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5103,6 +5119,12 @@
                           "type": "string",
                           "description": "Optional metric output type metadata used by eval and annotation filters."
                         },
+                        "group": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2147483647,
+                          "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                        },
                         "filter_config": {
                           "type": "object",
                           "properties": {
@@ -5119,7 +5141,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -5180,6 +5202,12 @@
                           "type": "string",
                           "description": "Optional metric output type metadata used by eval and annotation filters."
                         },
+                        "group": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2147483647,
+                          "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                        },
                         "filter_config": {
                           "type": "object",
                           "properties": {
@@ -5196,7 +5224,7 @@
                             },
                             "col_type": {
                               "type": "string",
-                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                              "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
                             },
                             "attribute_value_types": {
                               "type": "array",
@@ -9574,6 +9602,12 @@
                       "type": "string",
                       "description": "Optional metric output type metadata used by eval and annotation filters."
                     },
+                    "group": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 2147483647,
+                      "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                    },
                     "filter_config": {
                       "type": "object",
                       "properties": {
@@ -9590,7 +9624,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
                         },
                         "attribute_value_types": {
                           "type": "array",
@@ -10830,6 +10864,12 @@
                   "type": "string",
                   "description": "Optional metric output type metadata used by eval and annotation filters."
                 },
+                "group": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2147483647,
+                  "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                },
                 "filter_config": {
                   "type": "object",
                   "properties": {
@@ -10846,7 +10886,7 @@
                     },
                     "col_type": {
                       "type": "string",
-                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
                     },
                     "attribute_value_types": {
                       "type": "array",
@@ -11163,6 +11203,12 @@
                       "type": "string",
                       "description": "Optional metric output type metadata used by eval and annotation filters."
                     },
+                    "group": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 2147483647,
+                      "description": "SKILL row-correlation group; omitted means 0. Groups are ANDed."
+                    },
                     "filter_config": {
                       "type": "object",
                       "properties": {
@@ -11179,7 +11225,7 @@
                         },
                         "col_type": {
                           "type": "string",
-                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                          "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL."
                         },
                         "attribute_value_types": {
                           "type": "array",
@@ -11528,6 +11574,982 @@
       },
       "source": {
         "operationId": "tracer_dashboard_filter_values"
+      }
+    },
+    {
+      "name": "list_skills",
+      "description": "List versioned skills in the authenticated workspace. Read release_revision, protected_label_names and current label targets here before a protected release; submit that revision as expected_release_revision and the target as expected_version. Call get_skill to resolve a label or version before reading instructions.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "search": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "updated",
+              "name",
+              "created"
+            ],
+            "default": "updated"
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "page_size",
+            "search",
+            "tag",
+            "label",
+            "sort",
+            "order"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_list"
+      }
+    },
+    {
+      "name": "get_skill",
+      "description": "Resolve a bounded skill manifest without file contents or frontmatter. Choose label or version; neither means production and missing labels never fall back. Files are sorted by path and paged (file_limit 1\u201325, default 25). Until next_file_offset is null, call get_skill again with file_offset=next_file_offset, the same name and the returned version pinned (omit label); file_count is the total inventory size. Never treat one page as the complete inventory. Then call read_skill_file for SKILL.md using skill_id and version, follow next_offset until eof, verify sha256, and read other files only when needed. SKILL.md contains the full original frontmatter. Every response stays within the 64 KiB MCP limit.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "include_content": {
+            "type": "boolean",
+            "default": false
+          },
+          "file_offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 200,
+            "description": "Zero-based file offset. Pin version when following next_file_offset."
+          },
+          "file_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25,
+            "description": "Files per manifest page (1\u201325). REST defaults to all files; MCP defaults to 25."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/resolve/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "label",
+            "version",
+            "name",
+            "include_content",
+            "file_offset",
+            "file_limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_resolve_list"
+      }
+    },
+    {
+      "name": "read_skill_file",
+      "description": "Read a lossless text chunk from an immutable skill version. Start with SKILL.md after get_skill, use max_bytes 24000, follow the character next_offset until eof, concatenate text and verify its UTF-8 sha256. Read supporting files only when needed. MCP reads are capped at 24000 bytes even if a larger size is requested.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "max_bytes": {
+            "type": "integer",
+            "default": 32768,
+            "minimum": 1,
+            "maximum": 49152
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "skill_id",
+          "number",
+          "path"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/{skill_id}/versions/{number}/files/",
+        "parameters": {
+          "path": [
+            "skill_id",
+            "number"
+          ],
+          "query": [
+            "path",
+            "offset",
+            "max_bytes"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_versions_files_list"
+      }
+    },
+    {
+      "name": "publish_skill",
+      "description": "Publish files as a new immutable skill version, creating its identity from SKILL.md frontmatter if needed. Errors block publishing and warnings require acknowledge_warnings. Identical content returns unchanged. Labels move only when explicitly supplied. Protected labels require a current admin and expected_release_revision read from list_skills (0 for a new identity); publish without labels otherwise. Optional expected_digest binds reviewed content and evidence_run_id attaches already shared exact-content evidence.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expected_digest": {
+            "title": "Expected digest",
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 1
+          },
+          "expected_release_revision": {
+            "title": "Expected release revision",
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidence_run_id": {
+            "title": "Evidence run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/SkillsHubFileInput"
+            }
+          },
+          "note": {
+            "title": "Note",
+            "type": "string",
+            "default": "",
+            "maxLength": 2000
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+              "minLength": 1
+            },
+            "default": [],
+            "maxItems": 20
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$",
+              "minLength": 1
+            },
+            "default": [],
+            "maxItems": 20
+          },
+          "acknowledge_warnings": {
+            "title": "Acknowledge warnings",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "files"
+        ],
+        "definitions": {
+          "SkillsHubFileInput": {
+            "required": [
+              "path",
+              "content"
+            ],
+            "type": "object",
+            "properties": {
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "content": {
+                "title": "Content",
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/model-hub/skills/publish/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "expected_digest",
+            "expected_release_revision",
+            "evidence_run_id",
+            "files",
+            "note",
+            "labels",
+            "tags",
+            "acknowledge_warnings"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_publish_create"
+      }
+    },
+    {
+      "name": "set_skill_label",
+      "description": "Move a skill label to a published version. Read list_skills first and send expected_release_revision plus expected_version for compare-and-swap; null requires that the label does not exist. Both preconditions and current admin access are mandatory for protected labels, even on a no-op. Optional expected_digest and evidence_run_id bind the reviewed target and shared evidence. Moving production changes what unpinned consumers load. latest is virtual and cannot be assigned.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "expected_release_revision": {
+            "title": "Expected release revision",
+            "type": "integer",
+            "minimum": 0
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "title": "Expected version",
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_digest": {
+            "title": "Expected digest",
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 1
+          },
+          "evidence_run_id": {
+            "title": "Evidence run id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer",
+            "minimum": 1
+          },
+          "note": {
+            "title": "Note",
+            "type": "string",
+            "default": "",
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "skill_id",
+          "label",
+          "version"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/model-hub/skills/{skill_id}/labels/{label}/",
+        "parameters": {
+          "path": [
+            "skill_id",
+            "label"
+          ],
+          "query": [],
+          "body": [
+            "expected_release_revision",
+            "expected_version",
+            "expected_digest",
+            "evidence_run_id",
+            "version",
+            "note"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_labels_update"
+      }
+    },
+    {
+      "name": "update_skill_tags",
+      "description": "Replace a skill's discovery tags without changing its immutable versions or labels. Pass the complete desired tags list, or an empty list to remove all tags.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$",
+              "minLength": 1
+            },
+            "maxItems": 20
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "skill_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PATCH",
+        "path": "/model-hub/skills/{skill_id}/",
+        "parameters": {
+          "path": [
+            "skill_id"
+          ],
+          "query": [],
+          "body": [
+            "tags"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_partial_update"
+      }
+    },
+    {
+      "name": "list_skill_versions",
+      "description": "List the immutable published versions of one leaf skill, newest first, with number, id, digest, note, file_count and the labels currently on each version. Use a skill_id from list_skills, never an agent-context ID. Page with page and page_size (at most 25, the default; pass a smaller value if a page exceeds the MCP size limit); keep requesting pages until page equals total_pages. Read a version's files with get_skill(version=number) and read_skill_file. This does not count as a fetch or a load.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 25
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "skill_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/{skill_id}/versions/",
+        "parameters": {
+          "path": [
+            "skill_id"
+          ],
+          "query": [
+            "page",
+            "page_size"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_versions_list"
+      }
+    },
+    {
+      "name": "list_agent_contexts",
+      "description": "List agent contexts in the authenticated workspace. An agent context is a versioned bundle (entrypoint such as AGENTS.md plus files and pinned skill links) that an agent loads as a whole. Each row has its id, name, latest_version, label targets, release_revision, protected_label_names and has_draft. Filter with search, tag or label; page with page and page_size (at most 25, the default) until page equals total_pages. Use the id with get_agent_context and list_agent_context_versions.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 25
+          },
+          "search": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "updated",
+              "name",
+              "created"
+            ],
+            "default": "updated"
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/contexts/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "page",
+            "page_size",
+            "search",
+            "tag",
+            "label",
+            "sort",
+            "order"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_contexts_list"
+      }
+    },
+    {
+      "name": "get_agent_context",
+      "description": "Return one agent context by context_id with its release state (latest_version, label targets, release_revision, security_revision, protected_label_names and your permissions), the latest published version summary and whether you have an unpublished draft. Read-only; it never resolves the context for an agent and records no load.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "context_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/contexts/{context_id}/",
+        "parameters": {
+          "path": [
+            "context_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_contexts_read"
+      }
+    },
+    {
+      "name": "list_agent_context_versions",
+      "description": "List the immutable published versions (snapshots) of one agent context, newest first, with number, id, digest, note, file_count and current labels. Page with page and page_size (at most 25, the default) until page equals total_pages. Inspect a snapshot's pinned skills and file inventory with get_agent_context_snapshot.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 25
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "context_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/contexts/{context_id}/versions/",
+        "parameters": {
+          "path": [
+            "context_id"
+          ],
+          "query": [
+            "page",
+            "page_size"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_contexts_versions_list"
+      }
+    },
+    {
+      "name": "get_agent_context_snapshot",
+      "description": "Inspect one immutable agent-context version without distributing it. descriptor names the entrypoint and lists links, the exact skill versions this snapshot pins; manifest pages the file inventory sorted by path (file_limit 1-25). Until manifest.next_file_offset is null, call again with file_offset set to it and the same context_id and number; file_count is the total. If distribution_blocked is true the version is quarantined or otherwise withheld (reason says why) and must not be loaded or recommended. This is a review read and records no fetch or load.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "file_offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "file_limit": {
+            "type": "integer",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 25
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "context_id",
+          "number"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/contexts/{context_id}/versions/{number}/inspection/",
+        "parameters": {
+          "path": [
+            "context_id",
+            "number"
+          ],
+          "query": [
+            "file_offset",
+            "file_limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_contexts_versions_inspection_list"
+      }
+    },
+    {
+      "name": "get_skill_usage",
+      "description": "Read runtime usage for skills or one agent context from traced agent runs, grouped by version (default), skill, agent or context. Requires from and to (ISO 8601 datetimes, a window of at most 30 days ending now or earlier). kind=agent_context needs resource_id; agent or service filters need project_id. Use projection=table for rows; page with cursor=next_cursor and limit (default and maximum 100; pass a smaller limit such as 25 if the result exceeds the MCP size limit). Rows count traces where a version was recorded as loaded, plus outcome metrics; a load is client-reported delivery, never proof that the agent used the skill. coverage and diagnosis explain gaps such as projects without load tracing.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "limit": {
+            "type": "integer",
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "resource_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "skill",
+              "agent_context"
+            ],
+            "default": "skill"
+          },
+          "group_by": {
+            "type": "string",
+            "enum": [
+              "skill",
+              "version",
+              "agent",
+              "context"
+            ],
+            "default": "version"
+          },
+          "project_ids": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1900
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version_ids": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 7400
+          },
+          "skill_ids": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 7400
+          },
+          "context_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "service": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "agent": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "projection": {
+            "type": "string",
+            "enum": [
+              "table",
+              "series"
+            ],
+            "default": "table"
+          },
+          "metric": {
+            "type": "string",
+            "default": "failed_requests",
+            "minLength": 1,
+            "maxLength": 50,
+            "pattern": "^(?:traces|failed_requests|latency_p95|cost_per_trace|eval:[0-9a-f-]{36})$"
+          },
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "hour",
+              "day"
+            ],
+            "default": "day"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "to",
+          "from"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/usage/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "to",
+            "cursor",
+            "limit",
+            "resource_id",
+            "kind",
+            "group_by",
+            "project_ids",
+            "project_id",
+            "version_ids",
+            "skill_ids",
+            "context_version_id",
+            "label",
+            "service",
+            "agent",
+            "projection",
+            "metric",
+            "bucket",
+            "from"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_runtime_usage_list"
+      }
+    },
+    {
+      "name": "get_latest_skill_load",
+      "description": "Check whether a skill or agent context has been loaded since a time. Supply resource_id, kind (skill or agent_context) and since (ISO 8601). load is the newest traced load (version, agent, project, received_at) or null; fetch separately reports the newest SDK fetch and whether that client can record loads. A fetch is not a load, and a load is never proof of use.",
+      "group": "skills",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "skill",
+              "agent_context"
+            ]
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "resource_id",
+          "kind",
+          "since"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/model-hub/skills/loads/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "resource_id",
+            "kind",
+            "since"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "model-hub_skills_loads_list"
       }
     },
     {
