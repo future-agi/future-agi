@@ -202,14 +202,15 @@ class _E2BCommands:
 
     def run(self, command, **kwargs):
         self.calls.append((command, kwargs))
+        # An isolated session starts with `install -d` too, so a background command is answered first.
+        if kwargs.get("background"):
+            return SimpleNamespace(pid=73)
         if command.startswith("install -d "):
             return SimpleNamespace(
                 stdout="",
                 stderr="",
                 exit_code=type(self).bootstrap_exit_code,
             )
-        if kwargs.get("background"):
-            return SimpleNamespace(pid=73)
         marker = re.search(r"(__FUTUREAGI_EXIT_[0-9a-f]+__)", command).group(1)
         return SimpleNamespace(stdout=f"output\n{marker}7\n", stderr="problem")
 
