@@ -378,6 +378,9 @@ def inspect_metadata(source):
             or not valid_generation(source.generation_kind, revision)
             or response.getheader("Content-Encoding", "identity") != "identity"
             or response.getheader("Transfer-Encoding") is not None
+            # Imports read only bounded ranges; refuse before admission rather
+            # than admitting a source that cannot serve them.
+            or response.getheader("Accept-Ranges", "").strip().lower() != "bytes"
         ):
             raise unavailable()
         return revision, int(length), mime

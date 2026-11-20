@@ -367,12 +367,27 @@ def test_short_long_read_denied(modules, monkeypatch, body):
 
 
 def test_head_reads_no_body(modules, monkeypatch):
-    response = Response(headers={"Content-Type": "audio/wav"})
+    response = Response(headers={"Content-Type": "audio/wav", "Accept-Ranges": "bytes"})
     response.status = 200
     source, conn = range_source(modules, monkeypatch, response)
     assert modules.safe_fetch.inspect_metadata(source) == ('"v1"', 8, "audio/wav")
     assert not response.read_sizes
     assert conn.request.call_args.args[0] == "HEAD"
+
+
+@pytest.mark.parametrize("accept_ranges", [None, "none", "items"])
+def test_head_refuses_source_without_byte_ranges(modules, monkeypatch, accept_ranges):
+    headers = {"Content-Type": "audio/wav"}
+    if accept_ranges is not None:
+        headers["Accept-Ranges"] = accept_ranges
+    response = Response(headers=headers)
+    response.status = 200
+    source, conn = range_source(modules, monkeypatch, response)
+    with pytest.raises(modules.contract.AttachmentError) as denied:
+        modules.safe_fetch.inspect_metadata(source)
+    assert (denied.value.code, denied.value.status) == ("source_unavailable", 403)
+    assert not response.read_sizes
+    conn.close.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -889,11 +904,22 @@ def test_view_no_default_storage_and_both_import_forms():
         and isinstance(n.func, ast.Attribute)
         and n.func.attr == "verify_livekit_webhook"
     ]
-    assert (
-        len(calls) == 1
-        and isinstance(calls[0].args[0], ast.Name)
-        and calls[0].args[0].id == "body"
-    )
+    assert len(calls) == 1 and isinstance(calls[0].args[0], ast.Name)
+    # The signature covers the original request bytes, read once from the
+    # underlying request before any parser or JSON decoding touches them.
+    name = calls[0].args[0].id
+    reads = [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Assign)
+        and [getattr(t, "id", None) for t in n.targets] == [name]
+    ]
+    assert len(reads) == 1
+    read = reads[0]
+    assert isinstance(read, ast.Call) and isinstance(read.func, ast.Attribute)
+    assert read.func.attr == "read"
+    assert ast.unparse(read.func.value) == "request._request"
+    assert "json.loads" not in ast.unparse(read)
 
 
 def test_capture_session_sealed_to_exact_original(modules, monkeypatch):
