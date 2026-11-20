@@ -37,6 +37,8 @@ const SECTION_HEAD = {
 };
 
 // Archive is offered on a saved case; an unsaved addition has no identity yet, so "remove" applies.
+const RUNS_AGAIN = new Set(["active", "kept_as_written"]);
+
 function ArchiveAction({ row, jobId, onDone }) {
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState("");
@@ -54,7 +56,8 @@ function ArchiveAction({ row, jobId, onDone }) {
         reason,
         restore: archived,
       });
-      const restoredCopy = done?.live
+      // As the case comes back: only an Active or Kept-as-written case runs again.
+      const restoredCopy = RUNS_AGAIN.has(done?.lifecycle?.state)
         ? SCENARIOS_COPY.restoredLive
         : SCENARIOS_COPY.restored;
       enqueueSnackbar(archived ? restoredCopy : SCENARIOS_COPY.archived, {
