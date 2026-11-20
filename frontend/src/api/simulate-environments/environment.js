@@ -313,6 +313,11 @@ export function useEnvironment(envId) {
       }),
     [queryClient, envId],
   );
+  // A turn's save also writes the unsaved changes, under their own key.
+  const refreshAfterTurn = useCallback(() => {
+    refreshVersions();
+    refreshDrafts(queryClient, envId);
+  }, [refreshVersions, queryClient, envId]);
   const previousStage = useRef({ envId, stage });
   useEffect(() => {
     const before = previousStage.current;
@@ -324,14 +329,11 @@ export function useEnvironment(envId) {
       !terminalStages.has(before.stage) &&
       terminalStages.has(stage)
     ) {
-      refreshVersions();
+      // An extend writes its cases as unsaved changes.
+      refreshAfterTurn();
     }
-  }, [envId, stage, refreshVersions]);
-  // A turn's save also writes the unsaved changes, under their own key.
-  const refreshAfterTurn = useCallback(() => {
-    refreshVersions();
-    refreshDrafts(queryClient, envId);
-  }, [refreshVersions, queryClient, envId]);
+  }, [envId, stage, refreshAfterTurn]);
+
   const inFlight = conversationInFlight(jobQuery.data?.conversation);
   const wasInFlight = useRef(inFlight);
   // A turn ended less than SAVE_GRACE_MS ago, so its save may still be landing.

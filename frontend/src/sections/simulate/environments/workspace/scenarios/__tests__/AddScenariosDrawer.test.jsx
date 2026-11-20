@@ -3,10 +3,13 @@ import { screen, waitFor } from "src/utils/test-utils";
 import constantsSource from "../addScenarios.constants.js?raw";
 import { renderWithClient } from "./scenariosTestUtils";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render } from "@testing-library/react";
 
 const extendHarnessJob = vi.fn(async () => ({}));
 const sendHarnessConversationMessage = vi.fn(async () => ({}));
 const uploadEnvironmentFile = vi.fn(async () => ({}));
+const refreshDrafts = vi.fn();
 vi.mock("src/api/harness/harness", () => ({
   extendHarnessJob: (...args) => extendHarnessJob(...args),
   sendHarnessConversationMessage: (...args) =>
@@ -15,6 +18,7 @@ vi.mock("src/api/harness/harness", () => ({
 }));
 const cast = vi.hoisted(() => ({ data: { actors: [], knowledge_sources: { files: [] } } }));
 vi.mock("src/api/simulate-environments/versions", () => ({
+  refreshDrafts: (...args) => refreshDrafts(...args),
   uploadEnvironmentFile: (...args) => uploadEnvironmentFile(...args),
   useActors: () => cast,
 }));
@@ -91,6 +95,62 @@ describe("AddScenariosDrawer routes", () => {
 
   it("no longer reads the fixture pool", () => {
     expect(constantsSource).not.toContain("generatedPool");
+  });
+});
+
+describe("AddScenariosDrawer after the write", () => {
+  const mount = () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(["harness-job", "env-1"], {
+      id: "env-1",
+      conversation: { state: "idle", messages: [] },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <AddScenariosDrawer open onClose={vi.fn()} env={ENV} />
+      </QueryClientProvider>,
+    );
+    return client;
+  };
+
+  beforeEach(() => {
+    refreshDrafts.mockClear();
+    extendHarnessJob.mockClear();
+  });
+
+  it("a described case puts the builder's turn in the job so the page follows it to the unsaved changes", async () => {
+    const turn = { state: "running", messages: [{ id: "m1" }] };
+    sendHarnessConversationMessage.mockResolvedValueOnce(turn);
+    const user = userEvent.setup();
+    const client = mount();
+    await user.click(screen.getByRole("button", { name: "Describe a case" }));
+    await user.type(
+      screen.getByLabelText(
+        "What should the agent face, and what should it do?",
+      ),
+      "a 20-day refund",
+    );
+    await user.click(screen.getByRole("button", { name: "Write scenarios" }));
+    await waitFor(() =>
+      expect(
+        client.getQueryData(["harness-job", "env-1"]).conversation,
+      ).toEqual(turn),
+    );
+    expect(refreshDrafts).toHaveBeenCalledWith(client, "env-1");
+  });
+
+  it("generating asks for the job again, so its end is seen", async () => {
+    const user = userEvent.setup();
+    const client = mount();
+    await user.click(screen.getByRole("button", { name: "Write scenarios" }));
+    await waitFor(() =>
+      expect(client.getQueryState(["harness-job", "env-1"]).isInvalidated).toBe(
+        true,
+      ),
+    );
+    expect(refreshDrafts).toHaveBeenCalledWith(client, "env-1");
   });
 });
 

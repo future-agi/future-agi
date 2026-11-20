@@ -20,6 +20,7 @@ import {
   sendHarnessConversationMessage,
 } from "src/api/harness/harness";
 import {
+  refreshDrafts,
   uploadEnvironmentFile,
   useActors,
 } from "src/api/simulate-environments/versions";
@@ -109,6 +110,7 @@ export default function AddScenariosDrawer({
     setError(null);
     try {
       const n = clampCount(count);
+      let conversation = null;
       if (route === "generate") {
         const asked = `${guidance.trim()}${suffix()}`.trim();
         await extendHarnessJob(jobId, {
@@ -116,7 +118,7 @@ export default function AddScenariosDrawer({
           ...(asked ? { guidance: asked } : {}),
         });
       } else if (route === "describe") {
-        await sendHarnessConversationMessage(
+        conversation = await sendHarnessConversationMessage(
           jobId,
           message(`${describeMessage(description)}${suffix()}`, {
             requested_cases: requestedLines(description),
@@ -128,11 +130,27 @@ export default function AddScenariosDrawer({
           route === "file"
             ? fileMessage(n, path, text)
             : recordsMessage(n, path, text);
-        await sendHarnessConversationMessage(jobId, message(`${content}${suffix()}`));
+        conversation = await sendHarnessConversationMessage(
+          jobId,
+          message(`${content}${suffix()}`),
+        );
+      }
+      // The builder writes the cases after this returns. As the chat does, the turn goes into the job's cache, so
+      // its poll follows the turn and the page reads the unsaved changes when it ends; an extend is followed by
+      // asking for the job again.
+      const jobKey = ["harness-job", jobId];
+      if (conversation) {
+        await queryClient.cancelQueries({ queryKey: jobKey });
+        queryClient.setQueryData(jobKey, (prev) =>
+          prev ? { ...prev, conversation } : prev,
+        );
+      } else {
+        queryClient.invalidateQueries({ queryKey: jobKey });
       }
       queryClient.invalidateQueries({
         queryKey: harnessScenariosListKey(jobId),
       });
+      refreshDrafts(queryClient, jobId);
       setState("done");
       close();
     } catch (failure) {
