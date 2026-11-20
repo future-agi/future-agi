@@ -19,7 +19,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from tracer.models.attachment import (
@@ -1002,10 +1002,33 @@ def erase_for_asset(*, attachment_id, scope_id, now):
 
 def pending(*, limit=20):
     now = timezone.now()
+    # Missing local occurrence evidence cannot authorize production. Do not
+    # consume the bounded work page with rows that generate() must refuse.
+    # Cleanup stays selectable regardless of eligibility or enabled state.
+    live_occurrences = AttachmentOccurrence.objects.filter(
+        attachment_id=OuterRef("attachment_id"),
+        scope__enabled=True,
+        scope_id=OuterRef("scope_id"),
+        bound_at__isnull=False,
+        deleted_at__isnull=True,
+        expires_at__gt=now,
+        source_expires_at__gt=now,
+    )
     return list(
         AttachmentRecordingDerivative.objects.filter(available_at__lte=now)
+        # Keep the outer scan on the same predicate as the partial queue index;
+        # the correlated work-only check must not pull disabled-scope joins
+        # into cleanup/reconciliation selection or force a full queue sort.
         .filter(
-            Q(state__in=["queued", "recovering", "writing"], scope__enabled=True)
+            Q(state__in=["queued", "recovering", "writing", "cleanup", "failed"])
+            | Q(state="ready", unowned_cleanup_due_at__isnull=False)
+        )
+        .alias(has_live_occurrence=Exists(live_occurrences))
+        .filter(
+            Q(
+                state__in=["queued", "recovering", "writing"],
+                has_live_occurrence=True,
+            )
             | Q(state__in=["cleanup", "failed"])
             | Q(state="ready", unowned_cleanup_due_at__lte=now)
         )

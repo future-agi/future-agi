@@ -195,6 +195,16 @@ class AttachmentRecordingDerivative(
                 ),
                 name="att_derivative_work_due",
             ),
+            # Workers select production, cleanup and due ready reconciliation
+            # in one ordered page; the production-only index omits two branches.
+            models.Index(
+                fields=["available_at", "id"],
+                condition=models.Q(
+                    state__in=["queued", "recovering", "writing", "cleanup", "failed"]
+                )
+                | models.Q(state="ready", unowned_cleanup_due_at__isnull=False),
+                name="att_derivative_dispatch_due",
+            ),
             models.Index(
                 fields=["unowned_cleanup_due_at", "id"],
                 condition=models.Q(unowned_cleanup_due_at__isnull=False),
@@ -603,3 +613,15 @@ class AttachmentImportJob(AttachmentReservationFields, ScopedAttachmentRecord):
                 fields=["state", "deadline"], name="attachment_import_sweep_idx"
             )
         ]
+
+
+class AttachmentImportSchedule(models.Model):
+    """Scheduler cursor only. Never grant or extend a writer lease."""
+
+    job = models.OneToOneField(
+        AttachmentImportJob,
+        primary_key=True,
+        related_name="schedule",
+        on_delete=models.CASCADE,
+    )
+    retry_at = models.DateTimeField()

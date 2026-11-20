@@ -42,6 +42,7 @@ from tracer.models.attachment_recording import (
 )
 from tracer.services.attachments import bootstrap as broker
 from tracer.services.attachments import (
+    control_plane,
     derivatives,
     envelopes,
     imports,
@@ -140,7 +141,7 @@ def routed_store(store):
         yield
 
 
-def configure_recording_sources(scope, settings, monkeypatch):
+def configure_recording_sources(scope, settings, monkeypatch, *, started_at=None):
     """Explicit synthetic storage identity and CH rows; no authority shim."""
     # A short, real test lease keeps post-horizon PG tests bounded. The
     # write deadline, drain interval and sandbox remain production-enforced.
@@ -149,7 +150,7 @@ def configure_recording_sources(scope, settings, monkeypatch):
     monkeypatch.setattr(
         storage_service, "bind_for_admission", lambda *, settings: binding.id
     )
-    started = timezone.now() - timedelta(minutes=5)
+    started = started_at or timezone.now() - timedelta(minutes=5)
 
     def get(span_id, *, project_id):
         if span_id != SPAN or str(project_id) != str(scope.project_id):
@@ -414,6 +415,9 @@ def test_completed_import_publishes_bounded_segments_once(env, monkeypatch):
     assert {str(o.client_id) for o in occurrences} == {
         s["occurrence_id"] for s in manifest["segments"]
     }
+    # Live provenance still admits an exact replay without new capacity.
+    replay, same = submit_job(env[2], scope_id=env[0].id, body=request)
+    assert same.pk == job.pk and replay == response
     # READY is not release: source/output scratch and uncertain writes remain
     # charged until the real sweep has checked the accepted-write horizon.
     job.refresh_from_db()
@@ -427,11 +431,12 @@ def test_completed_import_publishes_bounded_segments_once(env, monkeypatch):
     assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
     assert envelopes.sweep() == 1
     assert not AttachmentSourceEnvelope.objects.exists()
-    # Replays never re-run or re-reserve.
+    # An expired locator cannot authorize a replay once its provenance is swept.
     assert drive(job, store, data) == "ready"
-    replay, same = submit_job(env[2], scope_id=env[0].id, body=request)
-    assert same.pk == job.pk and replay == response
-    assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
+    with pytest.raises(AttachmentError, match="source_unavailable"):
+        submit_job(env[2], scope_id=env[0].id, body=request)
+    assert AttachmentImportJob.objects.count() == 1
+    assert set(budgets().values()) == {IDLE}
     assert imports.status(env[2], scope_id=env[0].id, job_id=job.id) == {
         "job_id": str(job.id),
         "state": "ready",
@@ -687,20 +692,26 @@ def test_transient_transport_errors_retry_at_most_three_times(env, monkeypatch):
         lambda data: b"OggS" + data[4:],  # not the declared container
     ],
 )
-def test_corrupt_or_short_source_rejected_and_staged_parts_erased(env, tamper):
+def test_corrupt_or_short_source_rejected_and_staged_parts_erased(
+    env, tamper, monkeypatch
+):
     data = wav_bytes(seconds=2)
     current = session(env)
     request = body(current, data=data, envelope_id=envelope(env, data, current=current))
     _, job = submit_job(env[2], scope_id=env[0].id, body=request)
+    store = Store()
     bad = tamper(data)
     state = imports.run(
         job.id,
         scope_id=job.scope_id,
-        storage=Store(),
+        storage=store,
         source_factory=reader_factory(MemorySource(bad, imports.BUFFER_BYTES)),
     )
     assert state == "rejected"
     assert not AttachmentOccurrence.objects.exists()
+    assert set(budgets().values()) != {IDLE}
+    assert cleanup_import_job(job, store, monkeypatch)["released"] == 1
+    assert job.reservation_settled_at is not None
     assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
 
 
@@ -722,6 +733,9 @@ def test_deletion_during_import_fences_publication(env, monkeypatch):
     monkeypatch.setattr(imports, "_allocate", reserve)
     assert drive(job, store, data) == "deleted"
     assert not AttachmentOccurrence.objects.exists()
+    assert set(budgets().values()) != {IDLE}
+    assert cleanup_import_job(job, store, monkeypatch)["released"] == 1
+    assert job.reservation_settled_at is not None
     assert store.objects == {}
     assert (
         AttachmentRecordingSegment.objects.filter(
@@ -1044,17 +1058,17 @@ def test_a_worker_that_lost_its_row_erases_the_object_it_wrote(env, monkeypatch)
 def test_one_failing_import_does_not_end_the_tick(env, settings, monkeypatch):
     from tracer.tasks import attachment_recordings as tasks
 
-    store = Store()
+    settings.FI_ATTACHMENTS_ENABLED = True
     first, second = (uuid.uuid4(), env[0].id), (uuid.uuid4(), env[0].id)
     ran = []
 
-    def run(job_id, *, scope_id, storage):
+    def run(job_id, *, scope_id):
+        assert scope_id == env[0].id
         ran.append(job_id)
         if job_id == first[0]:
             raise AttachmentError("cleanup_unavailable", 503)
         return "ready"
 
-    monkeypatch.setattr(tasks, "_ready", lambda: store)
     monkeypatch.setattr(imports, "pending", lambda limit: [first, second])
     monkeypatch.setattr(imports, "run", run)
     monkeypatch.setattr(derivatives, "pending", lambda limit: [])
@@ -1094,7 +1108,7 @@ def event(event_id, status, *, egress="EG_abc123", room="room-1", updated=1, siz
         info["fileResults"] = [
             {
                 "filename": "secret-name.wav",
-                "location": f"https://bucket.example/x?sig={CANARY}",
+                "location": f"https://cdn.media.example.com/x?sig={CANARY}",
                 "size": str(size),
                 "duration": str(65 * 1_000_000_000),
             }
@@ -1144,11 +1158,16 @@ def test_webhook_signature_body_issuer_and_revocation(env):
         provider_recordings.verify_livekit_webhook(raw, token)
 
 
-def test_out_of_order_duplicate_wrong_room_and_foreign_egress(env):
+def test_out_of_order_duplicate_wrong_room_and_foreign_egress(env, monkeypatch):
     connection = livekit(env)
     current = session(env)
     data = wav_bytes(seconds=65)
     registration = registered(env, connection, current)
+    monkeypatch.setattr(
+        safe_fetch,
+        "inspect_metadata",
+        lambda source: ('"fixture-v1"', len(data), "audio/wav"),
+    )
     deliver(event("EV_2", "EGRESS_COMPLETE", updated=5, size=len(data)))
     registration.refresh_from_db()
     assert registration.provider_state == "complete"
@@ -1168,22 +1187,32 @@ def test_out_of_order_duplicate_wrong_room_and_foreign_egress(env):
     assert CANARY not in dump and "secret-name" not in dump and "room-1" not in dump
 
 
-def test_completion_without_qualified_reader_fetches_nothing(env):
+def test_completion_without_qualified_reader_fetches_nothing(env, monkeypatch):
+    monkeypatch.setattr(provider_recordings, "READERS", {})
+    fetch = Mock(side_effect=AssertionError("no source body"))
+    monkeypatch.setattr(safe_fetch.RangeSource, "read_range", fetch)
+    monkeypatch.setattr(
+        safe_fetch,
+        "inspect_metadata",
+        lambda source: ('"fixture-v1"', 1000, "audio/wav"),
+    )
     connection = livekit(env)
     current = session(env)
     registration = registered(env, connection, current)
     deliver(event("EV_9", "EGRESS_COMPLETE", size=1000))
+    assert provider_recordings.dispatch_completed(limit=1)["dispatched"] == 0
     registration.refresh_from_db()
     assert registration.import_job_id is None
     assert not AttachmentImportJob.objects.exists()
+    fetch.assert_not_called()
 
 
 def test_completed_egress_enters_validation_exactly_once(env, monkeypatch):
     data = wav_bytes(seconds=65)
-    monkeypatch.setitem(
-        provider_recordings.READERS,
-        "livekit",
-        lambda registration, limits: MemorySource(data, limits.window),
+    monkeypatch.setattr(
+        safe_fetch,
+        "inspect_metadata",
+        lambda source: ('"fixture-v1"', len(data), "audio/wav"),
     )
     connection = livekit(env)
     current = session(env)
@@ -1191,18 +1220,20 @@ def test_completed_egress_enters_validation_exactly_once(env, monkeypatch):
     deliver(event("EV_5", "EGRESS_COMPLETE", size=len(data)))
     deliver(event("EV_6", "EGRESS_COMPLETE", size=len(data), updated=7))
 
-    class Status:
-        def get(self, egress_id):
-            return event("x", "EGRESS_COMPLETE", size=len(data))["egressInfo"]
-
-    provider_recordings.reconcile(registration, Status())
+    assert provider_recordings.reconcile_registered(limit=1)["observed"] == 1
+    assert provider_recordings.dispatch_completed(limit=1)["dispatched"] == 1
+    assert provider_recordings.dispatch_completed(limit=1)["dispatched"] == 0
     assert AttachmentImportJob.objects.count() == 1
     job = AttachmentImportJob.objects.get()
-    assert imports.run(job.id, scope_id=job.scope_id, storage=Store()) == "ready"
-    # Revoked connections stop retrieval and reconciliation.
+    assert drive(job, Store(), data) == "ready"
     provider_recordings.revoke(scope_id=env[0].id, connection_id=connection.id)
     with pytest.raises(AttachmentError, match="source_unavailable"):
-        provider_recordings.reconcile(registration, Status())
+        provider_recordings.completed_output(
+            env[2],
+            env[0],
+            connection_id=connection.id,
+            registered_output_id=registration.registered_output_id,
+        )
 
 
 def test_reconcile_with_unavailable_status_api_changes_nothing(env):
@@ -1210,13 +1241,12 @@ def test_reconcile_with_unavailable_status_api_changes_nothing(env):
     current = session(env)
     registration = registered(env, connection, current)
 
-    class Unavailable:
-        def get(self, egress_id):
-            return None
-
-    assert provider_recordings.reconcile(
-        registration, Unavailable()
-    ).provider_state == ("registered")
+    assert provider_recordings.reconcile_registered(limit=1) == {
+        "observed": 0,
+        "unavailable": 0,
+    }
+    registration.refresh_from_db()
+    assert registration.provider_state == "registered"
     assert AttachmentProviderRecording.objects.get().import_job_id is None
 
 
@@ -1236,18 +1266,26 @@ def test_stereo_derivatives_isolate_channels_and_fence_on_deletion(env):
     segments = list(
         AttachmentRecordingSegment.objects.filter(recording_id=job.recording_id)
     )
+    assert control_plane.reconcile_tick()["bound"] == len(segments)
     for segment in segments:
-        derivatives.generate(segment.pk, scope_id=segment.scope_id, storage=store)
-        derivatives.generate(segment.pk, scope_id=segment.scope_id, storage=store)
+        rows = AttachmentRecordingDerivative.objects.filter(
+            attachment_id=segment.attachment_id
+        )
+        assert rows.count() == 3
+        for row in rows:
+            assert (
+                derivatives.generate(row.id, scope_id=row.scope_id, storage=store)
+                == "ready"
+            )
+            derivatives.generate(row.id, scope_id=row.scope_id, storage=store)
     assert AttachmentRecordingDerivative.objects.count() == 3 * len(segments)
     second = segments[1]
     for channel, sign in ((0, 1), (1, -1)):
-        identity, length, _ = derivatives.identity_for(
-            scope_id=env[0].id,
-            occurrence_id=second.occurrence_client_id,
+        selection = derivatives.identity_for(
+            attachment_id=second.attachment_id,
             representation=f"channel-{channel}",
         )
-        with wave.open(io.BytesIO(store.objects[identity.key])) as reader:
+        with wave.open(io.BytesIO(store.objects[selection.identity.key])) as reader:
             assert reader.getnchannels() == 1
             frames = reader.getnframes()
             samples = struct.unpack(f"<{frames}h", reader.readframes(frames))
@@ -1258,28 +1296,25 @@ def test_stereo_derivatives_isolate_channels_and_fence_on_deletion(env):
         ]
         assert list(samples) == expected  # wrong speaker/channel mapping fails
     peaks = derivatives.identity_for(
-        scope_id=env[0].id,
-        occurrence_id=second.occurrence_client_id,
+        attachment_id=second.attachment_id,
         representation="peaks",
     )
-    assert peaks[1] == derivatives.peaks_bytes(
+    assert peaks.byte_length == derivatives.peaks_bytes(
         frame_count=second.frame_count, rate=8000, channels=2
     )
-    assert derivatives.recording_manifest(
-        scope_id=env[0].id,
-        recording_id=AttachmentRecording.objects.get(pk=job.recording_id).client_id,
-    )
+    assert AttachmentRecording.objects.get(pk=job.recording_id).manifest[
+        "capture_complete"
+    ]
     retention.fence_scope(scope_id=env[0].id)
-    assert (
+    retention.tombstone_fenced(scope_id=env[0].id)
+    with pytest.raises(AttachmentError, match="not_found"):
         derivatives.identity_for(
-            scope_id=env[0].id,
-            occurrence_id=second.occurrence_client_id,
-            representation="channel-0",
+            attachment_id=second.attachment_id, representation="channel-0"
         )
-        is None
-    )
-    with pytest.raises(AttachmentError, match="validation_fenced"):
-        derivatives.generate(segments[0].pk, scope_id=env[0].id, storage=store)
+    # A replay must not write or expose any new derivative after revocation.
+    promotions = len(store.promotions)
+    derivatives.generate(row.id, scope_id=row.scope_id, storage=store)
+    assert len(store.promotions) == promotions
 
 
 def test_published_segments_survive_read_path_readmission_once_bound(env, user):
@@ -1407,8 +1442,10 @@ def test_turning_import_off_denies_live_sessions_and_queued_jobs(env):
         scope_id=env[0].id,
         body=body(current, data=data, envelope_id=envelope(env, data, current=current)),
     )
+    held = budgets()
+    assert set(held.values()) != {IDLE}
     set_allow_import(env[0], False)
-    with pytest.raises(AttachmentError, match="source_unavailable"):
+    with pytest.raises(AttachmentError, match="capability_expired"):
         submit_job(
             env[2],
             scope_id=env[0].id,
@@ -1416,9 +1453,15 @@ def test_turning_import_off_denies_live_sessions_and_queued_jobs(env):
                 current, data=data, envelope_id=envelope(env, data, current=current)
             ),
         )
-    assert drive(job, Store(), data) == "rejected"
+    store = Store()
+    with pytest.raises(AttachmentError, match="policy_denied"):
+        drive(job, store, data)
+    job.refresh_from_db()
+    assert job.attempts == job.lease_epoch == 0
+    assert job.lease_token is None and job.state == "importing"
+    assert job.reservation_settled_at is None and store.objects == {}
     assert not AttachmentOccurrence.objects.exists()
-    assert set(budgets().values()) == {(0, 0, 0, 0, 0, 0)}
+    assert budgets() == held
 
 
 def test_registration_needs_the_registrars_own_live_session(env):
@@ -1450,13 +1493,21 @@ def test_registration_needs_the_registrars_own_live_session(env):
 # ------------------------------------------------------------- HTTP routes
 
 
-def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_path):  # noqa: F811
+def test_import_routes_admit_report_and_serve_the_manifest(
+    api,  # noqa: F811
+    settings,
+    tmp_path,
+    monkeypatch,
+):
     from tracer.tests import test_attachment_api as http
 
     settings.FI_ATTACHMENTS_ENVELOPE_KEYS = f"k1:{KEY}"
     settings.FI_ATTACHMENTS_IMPORT_HOSTS = ("media.example.com",)
     settings.FI_ATTACHMENTS_WORK_DIR = str(tmp_path)
     scope = api.scope
+    configure_recording_sources(
+        scope, settings, monkeypatch, started_at=api.state.started_at
+    )
     imports_path = f"{http.base(api)}/imports"
     data = wav_bytes(seconds=35)
 
@@ -1497,6 +1548,11 @@ def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_pa
     current = CaptureSession.objects.get(
         scope=scope, client_id=session_body["capture_session_id"]
     )
+    writer = broker.Writer(
+        "user", api.user.id, scope.organization_id, scope.workspace_id
+    )
+    env = (scope, writer, imports.Importer("user", api.user.id), api.user)
+    sealed = envelope(env, data, current=current)
     request = body(current, data=data, envelope_id=sealed)
     headers = {**http.auth(api.token), **http.key("im")}
     accepted = http.ok(
@@ -1515,6 +1571,8 @@ def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_pa
     malformed["recording"]["declared_duration_ms"] += 1
     malformed["recording"]["recording_id"] = str(uuid.uuid4())
     malformed["recording"]["mime_type"] = "audio/ogg"
+    http.assert_error(http.post(api, imports_path, malformed, headers), 409, "conflict")
+    malformed["recording"]["schema_version"] = 2
     http.assert_error(
         http.post(api, imports_path, malformed, headers), 400, "unsupported_version"
     )
@@ -1545,6 +1603,7 @@ def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_pa
     )
     assert (done["state"], done["reason"]) == ("ready", "ready")
 
+    assert control_plane.reconcile_tick()["bound"] == 2
     # The viewer manifest lists the server-made segments, not gaps.
     manifest_path = f"{http.base(api)}/recordings/{accepted['recording_id']}/manifest"
     parent = {"trace_id": TRACE, "span_id": SPAN}
@@ -1563,22 +1622,39 @@ def test_import_routes_admit_report_and_serve_the_manifest(api, settings, tmp_pa
         s["occurrence_id"] for s in manifest["segments"]
     }
     assert {o.purpose for o in linked} == {"conversation_recording"}
-    # A deleted segment occurrence is never served: it becomes a gap.
+    # A deleted segment invalidates the entire manifest.
     first = manifest["segments"][0]["occurrence_id"]
     AttachmentOccurrence.objects.filter(scope=scope, client_id=first).update(
         deleted_at=timezone.now()
     )
-    after = http.ok(
-        api.client.get(manifest_path, parent, **http.auth(api.token)),
-        200,
-        "RecordingManifest",
+    http.assert_error(
+        api.client.get(manifest_path, parent, **http.auth(api.token)), 404, "not_found"
     )
-    assert [s["occurrence_id"] for s in after["segments"]] == [
-        manifest["segments"][1]["occurrence_id"]
-    ]
-    assert after["capture_complete"] is False
-    assert {"start_ms": 0, "duration_ms": 30000, "reason": "incomplete"} in [
-        {k: g[k] for k in ("start_ms", "duration_ms", "reason")} for g in after["gaps"]
-    ]
     dump = _dump_attachment_tables()
     assert CANARY not in dump
+
+
+def test_scheduling_rotates_before_claim_without_spending_an_attempt(env, monkeypatch):
+    from tracer.services.attachments import capacity_db
+
+    data = wav_bytes(seconds=1)
+    first, second, third = (_submitted(env, data) for _ in range(3))
+    assert imports.pending(limit=2) == [
+        (first.id, first.scope_id),
+        (second.id, second.scope_id),
+    ]
+    with monkeypatch.context() as patch:
+        patch.setattr(capacity_db, "count_attempt", lambda **_: False)
+        for job in (first, second):
+            assert (
+                imports.claim(job.id, scope_id=job.scope_id, now=timezone.now()) is None
+            )
+    # A fresh selector still reaches the healthy third owner even though the
+    # first two had no claim lease, attempt stamp or durable process state.
+    assert imports.pending(limit=2) == [(third.id, third.scope_id)]
+    assert imports.pending(limit=2) == []
+    for job in (first, second, third):
+        job.refresh_from_db()
+        assert job.attempts == job.lease_epoch == 0
+        assert job.lease_token is None and job.lease_until is None
+        assert job.state == "importing" and job.reservation_settled_at is None

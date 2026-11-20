@@ -2154,14 +2154,44 @@ def sweep(*, limit=100):
 
 
 def pending(*, limit=100):
+    """Rotate selected owners before any pre-lease checks or remote work.
+
+    Updating an expired writer row to schedule it would violate its lease
+    guard. A separate cursor can be retried after a crash without mutating
+    attempts, authority, deadline or capacity. The actual claim is unchanged.
+    """
+    from django.db.models.functions import Coalesce
+
+    from tracer.models.attachment_recording import AttachmentImportSchedule
+
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("invalid import selection limit")
     now = timezone.now()
-    return list(
-        AttachmentImportJob.objects.filter(
-            Q(lease_until__isnull=True) | Q(lease_until__lte=now),
-            state__in=(RecordingState.IMPORTING, RecordingState.VALIDATING),
-            deadline__gt=now,
-            attempts__lt=MAX_ATTEMPTS,
+    with transaction.atomic():
+        rows = list(
+            AttachmentImportJob.objects.select_for_update(
+                of=("self",), skip_locked=True
+            )
+            .alias(due=Coalesce("schedule__retry_at", "created_at"))
+            .filter(
+                Q(lease_until__isnull=True) | Q(lease_until__lte=now),
+                due__lte=now,
+                state__in=(RecordingState.IMPORTING, RecordingState.VALIDATING),
+                deadline__gt=now,
+                attempts__lt=MAX_ATTEMPTS,
+            )
+            .order_by("due", "deadline", "id")
+            .values_list("id", "scope_id")[:limit]
         )
-        .order_by("deadline", "id")
-        .values_list("id", "scope_id")[:limit]
-    )
+        AttachmentImportSchedule.objects.bulk_create(
+            [
+                AttachmentImportSchedule(
+                    job_id=job_id, retry_at=now + timedelta(seconds=60)
+                )
+                for job_id, _ in rows
+            ],
+            update_conflicts=True,
+            update_fields=["retry_at"],
+            unique_fields=["job"],
+        )
+    return rows

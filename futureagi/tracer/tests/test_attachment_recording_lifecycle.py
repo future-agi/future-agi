@@ -25,6 +25,7 @@ from tracer.models.attachment import (
 from tracer.models.attachment_recording import (
     AttachmentImportJob,
     AttachmentProviderConnection,
+    AttachmentRecordingDerivative,
     AttachmentRecordingSegment,
     RecordingSegmentState,
 )
@@ -41,14 +42,15 @@ from tracer.services.attachments import (
     retention,
     wire,
 )
+from tracer.services.attachments.interfaces import ObjectIdentity
 from tracer.tests import test_attachment_api as http
+from tracer.tests.attachment_fixtures import wait_for_db
 from tracer.tests.test_attachment_api import api  # noqa: F401  (HTTP fixture)
 from tracer.tests.test_attachment_control_plane import Spans
 from tracer.tests.test_attachment_recording_imports import (
     KEY,
     SPAN,
     TRACE,
-    Store,
     body,
     budgets,
     cleanup_import_job,
@@ -87,13 +89,16 @@ def rec(api, settings, tmp_path, monkeypatch):  # noqa: F811
     settings.FI_ATTACHMENTS_ENVELOPE_KEYS = f"k1:{KEY}"
     settings.FI_ATTACHMENTS_IMPORT_HOSTS = ("media.example.com",)
     settings.FI_ATTACHMENTS_WORK_DIR = str(tmp_path)
+    monkeypatch.setattr(derivatives, "LEASE_SECONDS", 12)
     scope = api.scope
-    configure_recording_sources(scope, settings, monkeypatch)
+    configure_recording_sources(
+        scope, settings, monkeypatch, started_at=api.state.started_at
+    )
     writer = broker.Writer(
         "user", api.user.pk, scope.organization_id, scope.workspace_id
     )
     env = (scope, writer, imports.Importer("user", api.user.pk), api.user)
-    return SimpleNamespace(api=api, env=env, scope=scope, store=Store())
+    return SimpleNamespace(api=api, env=env, scope=scope, store=api.store)
 
 
 def imported(rec, *, seconds=35, channels=2, generate=True):
@@ -112,18 +117,33 @@ def imported(rec, *, seconds=35, channels=2, generate=True):
         .order_by("index")
     )  # fmt: skip
     if generate:
+        assert control_plane.reconcile_tick(span_reader=parent_spans(rec))[
+            "bound"
+        ] == len(segments)
         for segment in segments:
-            derivatives.generate(
-                segment.pk, scope_id=segment.scope_id, storage=rec.store
-            )
+            rows = derivative_rows(segment)
+            assert rows.count() == (3 if channels == 2 else 1)
+            for row in rows:
+                assert (
+                    derivatives.generate(
+                        row.id, scope_id=row.scope_id, storage=rec.store
+                    )
+                    == "ready"
+                )
     return job, segments
 
 
+def derivative_rows(segment):
+    return AttachmentRecordingDerivative.objects.filter(
+        attachment_id=segment.attachment_id
+    )
+
+
 def keys(segment):
-    """Every object the server wrote for one segment: original + derivatives."""
-    return {f"original/{segment.attachment_client_id}"} | {
-        f"original/{derivatives.derivative_id(segment, representation)}"
-        for representation in derivatives.REPRESENTATIONS
+    """Every reserved serving key, including keys absent from physical storage."""
+    return {
+        segment.storage_key,
+        *derivative_rows(segment).values_list("storage_key", flat=True),
     }
 
 
@@ -173,7 +193,7 @@ def test_view_delete_of_a_bound_imported_segment_erases_it_and_its_derivatives(
 ):
     job, (first, second) = imported(rec)
     assert keys(first) | keys(second) <= set(rec.store.objects)
-    assert control_plane.reconcile_tick(span_reader=parent_spans(rec))["bound"] == 2
+    assert all(occurrence_of(segment).bound_at for segment in (first, second))
 
     reply = rec.api.client.delete(
         f"{http.base(rec.api)}/occurrences/{first.occurrence_client_id}"
@@ -191,44 +211,38 @@ def test_view_delete_of_a_bound_imported_segment_erases_it_and_its_derivatives(
     )
 
     counts = drain_due(rec)
-    assert counts.get("erase_done") == 1, counts
-    assert not keys(first) & set(rec.store.objects)
-    assert keys(second) <= set(rec.store.objects)  # the survivor is untouched
-    first.refresh_from_db()
-    assert first.state == RecordingSegmentState.ERASED
-    assert derivatives.identity_for(
-        scope_id=rec.scope.id,
-        occurrence_id=first.occurrence_client_id,
-        representation="peaks",
-    ) is None  # fmt: skip
-    # Repeated once after the horizon: a derivative promoted by a producer that
-    # died before its own cleanup is still erased.
+    assert counts.get("erase_not_yet") == 1, counts
     erase.refresh_from_db()
     assert erase.processed_at is None
-    assert (
-        erase.available_at == attachment.deleted_at + retention.ATTACHMENT_ERASE_HORIZON
+    with pytest.raises(contract.AttachmentError, match="not_found"):
+        derivatives.identity_for(
+            attachment_id=first.attachment_id, representation="peaks"
+        )
+    # An unknown late version is present at the same fenced locator. Only the
+    # later enumeration, not the first early pass, can prove it gone.
+    late = derivative_rows(first).get(representation="peaks").storage_key
+    rec.store.identities[late] = ObjectIdentity(
+        rec.store.binding_id, "serving", late, "late-version"
     )
-    late = f"original/{derivatives.derivative_id(first, 'peaks')}"
     rec.store.objects[late] = b"late"
-    monkeypatch.setattr(retention, "ATTACHMENT_ERASE_HORIZON", timedelta(0))
-    assert drain_due(rec).get("erase_done") == 1
+    finish_due_erases(rec, monkeypatch, 1)
     erase.refresh_from_db()
     assert erase.processed_at is not None and late not in rec.store.objects
+    assert not keys(first) & set(rec.store.objects)
+    assert keys(second) <= set(rec.store.objects)
+    first.refresh_from_db()
+    assert first.state == RecordingSegmentState.ERASED
 
-    # The manifest shows the deleted segment as an incomplete gap.
-    manifest = http.ok(
+    # The manifest is authorized as a unit.
+    http.assert_error(
         rec.api.client.get(
             f"{http.base(rec.api)}/recordings/{job.recording.client_id}/manifest",
             {"trace_id": TRACE, "span_id": SPAN},
             **http.auth(rec.api.token),
         ),
-        200,
-        "RecordingManifest",
+        404,
+        "not_found",
     )
-    assert [s["occurrence_id"] for s in manifest["segments"]] == [
-        str(second.occurrence_client_id)
-    ]
-    assert manifest["capture_complete"] is False
 
 
 def _travel(monkeypatch, delta):
@@ -236,6 +250,28 @@ def _travel(monkeypatch, delta):
     later = timezone.now() + delta
     monkeypatch.setattr(timezone, "now", lambda: later)
     return later
+
+
+def finish_due_erases(rec, monkeypatch, expected):
+    # Wait for real accepted-writer / database horizons. Only the longer
+    # post-tombstone policy clock is virtual; no stamp, cleanup result or
+    # database release fence is replaced. Storage enumerates actual test bytes.
+    horizons = [
+        instant
+        for model in (
+            AttachmentImportJob,
+            AttachmentRecordingSegment,
+            AttachmentRecordingDerivative,
+        )
+        for instant in model.objects.filter(scope=rec.scope).values_list(
+            "cleanup_not_before", flat=True
+        )
+        if instant is not None
+    ]
+    wait_for_db(max(horizons) + timedelta(seconds=1))
+    _travel(monkeypatch, retention.ATTACHMENT_ERASE_HORIZON + timedelta(seconds=1))
+    counts = drain_due(rec)
+    assert counts.get("erase_done") == expected, counts
 
 
 def _scheduled_ticks(rec):
@@ -260,7 +296,7 @@ def test_bound_imported_recording_keeps_playing_after_the_24h_deadline(
     job, segments = imported(rec)
     written = set().union(*(keys(segment) for segment in segments))
     assert written <= set(rec.store.objects)
-    assert control_plane.reconcile_tick(span_reader=parent_spans(rec))["bound"] == 2
+    assert all(occurrence_of(segment).bound_at for segment in segments)
     for segment in segments:
         row = occurrence_of(segment)
         assert row.expires_at == row.source_expires_at
@@ -294,19 +330,26 @@ def test_unbound_imported_segments_still_expire_after_the_24h_deadline(
     rec, monkeypatch
 ):
     """Control: with no parent span nothing binds, and the deadline holds."""
-    _, segments = imported(rec)
+    _, segments = imported(rec, generate=False)
+    for row in derivative_rows(segments[0]):
+        with pytest.raises(contract.AttachmentError, match="source_unavailable"):
+            derivatives.generate(row.id, scope_id=row.scope_id, storage=rec.store)
     assert control_plane.reconcile_tick(span_reader=Spans())["pending"] == 2
     _travel(monkeypatch, timedelta(hours=25))
     control_plane.reconcile_tick(span_reader=Spans())
     lifecycle.sweep()
     assert all(occurrence_of(segment).deleted_at for segment in segments)
-    assert drain_due(rec).get("erase_done") == 2
+    assert drain_due(rec).get("erase_not_yet") == 2
+    finish_due_erases(rec, monkeypatch, 2)
     for segment in segments:
         assert not keys(segment) & set(rec.store.objects)
 
 
-def test_expired_imported_segments_are_retired_by_reconcile_tick_and_erased(rec):
-    _, segments = imported(rec)
+def test_expired_imported_segments_are_retired_by_reconcile_tick_and_erased(
+    rec, monkeypatch
+):
+    _, segments = imported(rec, generate=False)
+    assert all(occurrence_of(segment).bound_at is None for segment in segments)
     AttachmentOccurrence.objects.filter(scope=rec.scope).update(
         expires_at=timezone.now() - timedelta(seconds=1)
     )
@@ -315,7 +358,8 @@ def test_expired_imported_segments_are_retired_by_reconcile_tick_and_erased(rec)
     assert all(occurrence_of(segment).deleted_at for segment in segments)
     # No wedge: nothing is claimed again.
     assert sum(control_plane.reconcile_tick(span_reader=Spans()).values()) == 0
-    assert drain_due(rec).get("erase_done") == 2
+    assert drain_due(rec).get("erase_not_yet") == 2
+    finish_due_erases(rec, monkeypatch, 2)
     for segment in segments:
         assert not keys(segment) & set(rec.store.objects)
 
@@ -339,50 +383,68 @@ def test_expiry_sweep_and_tombstone_parent_handle_imported_segments(rec):
     ).count() == 2  # fmt: skip
 
 
-def test_fencing_the_scope_erases_imported_segments_and_derivatives(rec):
+def test_fencing_the_scope_erases_imported_segments_and_derivatives(rec, monkeypatch):
     _, segments = imported(rec)
     retention.fence_scope(scope_id=rec.scope.id)
     assert retention.tombstone_fenced(scope_id=rec.scope.id) == 2
-    assert drain_due(rec).get("erase_done") == 2
+    assert drain_due(rec).get("erase_not_yet") == 2
+    finish_due_erases(rec, monkeypatch, 2)
     for segment in segments:
         assert not keys(segment) & set(rec.store.objects)
         segment.refresh_from_db()
         assert segment.state == RecordingSegmentState.ERASED
 
 
-def test_derivative_queue_skips_dead_segments_and_rotates_failures(rec):
+def test_derivative_queue_skips_dead_segments_and_rotates_failures(rec, monkeypatch):
     old, old_segments = imported(rec, seconds=65, channels=1, generate=False)
     AttachmentOccurrence.objects.filter(recording_id=old.recording_id).update(
         expires_at=timezone.now() - timedelta(seconds=1)
     )
     _, (a,) = imported(rec, seconds=10, channels=1, generate=False)
     _, (b,) = imported(rec, seconds=10, channels=1, generate=False)
+    assert control_plane.reconcile_tick(span_reader=parent_spans(rec))["bound"] == 2
+    first, second = derivative_rows(a).get(), derivative_rows(b).get()
     queued = [pk for pk, _ in derivatives.pending(limit=20)]
-    assert queued == [a.pk, b.pk]  # expired segments never occupy the queue
-    derivatives.defer(a.pk)
-    assert [pk for pk, _ in derivatives.pending(limit=20)] == [b.pk, a.pk]
-    assert [pk for pk, _ in derivatives.pending(limit=1)] == [b.pk]
-    derivatives.generate(b.pk, scope_id=b.scope_id, storage=rec.store)
-    assert [pk for pk, _ in derivatives.pending(limit=20)] == [a.pk]
+    assert queued == [first.id, second.id]
+    derivatives.defer(first.id)
+    assert [pk for pk, _ in derivatives.pending(limit=1)] == [second.id]
+    assert (
+        derivatives.generate(second.id, scope_id=b.scope_id, storage=rec.store)
+        == "ready"
+    )
+    assert derivatives.pending(limit=20) == []
+    second.refresh_from_db()
+    wait_for_db(second.cleanup_not_before + timedelta(seconds=1))
+    writes = len(rec.store.promotions)
+    assert (
+        derivatives.generate(second.id, scope_id=b.scope_id, storage=rec.store)
+        == "settled"
+    )
+    assert len(rec.store.promotions) == writes
+    _travel(monkeypatch, timedelta(seconds=61))
+    assert [pk for pk, _ in derivatives.pending(limit=20)] == [first.id]
     assert len(old_segments) == 3
 
 
 def test_a_derivative_fenced_mid_production_is_not_left_in_storage(rec, monkeypatch):
     _, (segment,) = imported(rec, seconds=10, channels=1, generate=False)
-    real = derivatives._publish
+    assert control_plane.reconcile_tick(span_reader=parent_spans(rec))["bound"] == 1
+    row = derivative_rows(segment).get()
+    promote = rec.store.promote
 
     def deleted_meanwhile(*args, **kwargs):
+        identity = promote(*args, **kwargs)
         AttachmentOccurrence.objects.filter(pk=occurrence_of(segment).pk).update(
             expires_at=timezone.now() - timedelta(seconds=1)
         )
-        return real(*args, **kwargs)
+        return identity
 
-    monkeypatch.setattr(derivatives, "_publish", deleted_meanwhile)
-    with pytest.raises(contract.AttachmentError, match="validation_fenced"):
-        derivatives.generate(segment.pk, scope_id=segment.scope_id, storage=rec.store)
-    assert f"original/{derivatives.derivative_id(segment, 'peaks')}" not in (
-        rec.store.objects
-    )
+    monkeypatch.setattr(rec.store, "promote", deleted_meanwhile)
+    with pytest.raises(contract.AttachmentError, match="source_unavailable"):
+        derivatives.generate(row.id, scope_id=segment.scope_id, storage=rec.store)
+    row.refresh_from_db()
+    assert row.published_at is None and row.storage_version is None
+    assert row.storage_key not in rec.store.objects
 
 
 def test_a_failed_release_after_publication_is_retried_not_leaked(rec, monkeypatch):
@@ -514,6 +576,7 @@ def test_policy_advertises_import_sources_only_while_imports_are_on(rec, monkeyp
     )
     scope = rec.scope
     scope.refresh_from_db()
+    monkeypatch.setattr(provider_recordings, "READERS", {})
     off = contract.policy_document(scope)
     wire.validate("Policy", off)
     assert "RemoteUrl" not in off["allowed_sources"]

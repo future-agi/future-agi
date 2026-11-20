@@ -610,7 +610,7 @@ def test_renewed_capability_never_outlives_the_upload_horizon(api):
             403,
             "policy_denied",
         ),
-        ({}, {"source_kind": "RemoteUrl"}, 403, "policy_denied"),
+        ({}, {"source_kind": "RemoteUrl"}, 403, "credential_scope_unsupported"),
         ({}, {"policy_version": "999"}, 409, "expired"),
         ({}, {"declared_bytes": 9 * 1024 * 1024}, 413, "too_large"),
         (
@@ -955,8 +955,8 @@ def test_imports_refuse_without_fetching(api):
     wire.validate("ImportRequest", body)
     assert_error(
         post(api, f"{base(api)}/imports", body, {**auth(api.token), **key("im")}),
-        403,
-        "policy_denied",
+        404,
+        "not_found",
     )
     assert_error(
         post(api, f"{base(api)}/imports", {"source": {}}, {**auth(api.token), **key()}),
@@ -1196,14 +1196,12 @@ def test_manifest_write_replay_and_read(api):
         ),
         404,
     )
-    # Deleting one segment's occurrence turns it into an incomplete gap.
+    # The complete manifest is denied if even one occurrence loses authority.
     api.client.delete(
         f"{base(api)}/occurrences/{segments[0][1]['occurrence_id']}?trace_id={TRACE}&span_id={SPAN}",
         **auth(api.token),
     )
-    read = ok(api.client.get(path, query, **auth(api.token)), 200, "RecordingManifest")
-    assert read["capture_complete"] is False and len(read["segments"]) == 1
-    assert read["gaps"] == [{"start_ms": 0, "duration_ms": 10, "reason": "incomplete"}]
+    assert_error(api.client.get(path, query, **auth(api.token)), 404, "not_found")
     assert (
         AttachmentRecording.objects.get(client_id=recording_id).manifest_revision == 1
     )

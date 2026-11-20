@@ -153,6 +153,13 @@ def _provider_facts(row, session, importer):
         != (session.client_id, session.correlation_nonce)
     ):
         raise _denied()
+    # A temporarily unqualified reader is not a permanent source revocation.
+    # Recheck the same deployment registry advertised by allowed_sources(),
+    # also when the provider output is named through an opaque envelope alias.
+    from tracer.services.attachments.provider_recordings import READERS
+
+    if connection.provider not in READERS:
+        raise AttachmentError("source_unavailable", 503)
     envelope = envelopes.describe(
         scope_id=row.scope_id, envelope_id=row.output_envelope_id
     )

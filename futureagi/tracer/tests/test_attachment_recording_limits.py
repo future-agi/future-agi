@@ -12,7 +12,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models import F, deletion
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -30,9 +30,11 @@ from tracer.models.attachment_recording import (
 from tracer.services.attachments import (
     capacity,
     contract,
+    control_plane,
     derivatives,
     imports,
     provider_recordings,
+    retention,
     wire,
 )
 from tracer.services.attachments.contract import AttachmentError
@@ -54,6 +56,7 @@ from tracer.tests.test_attachment_recording_imports import (  # noqa: F401
     wav_bytes,
 )
 from tracer.tests.test_attachment_recording_lifecycle import (  # noqa: F401
+    derivative_rows,
     imported,
     occurrence_of,
     rec,
@@ -133,6 +136,7 @@ def test_policy_advertises_no_import_source_nothing_deployed_can_create(
     scope = rec.scope
     set_allow_import(scope, True)
     scope.refresh_from_db()
+    monkeypatch.setattr(contract, "IMPORT_SOURCE_PRODUCERS", frozenset())
     document = contract.policy_document(scope)
     wire.validate("Policy", document)
     # Nothing deployed seals an envelope or registers a provider output, so
@@ -257,9 +261,9 @@ def _queue_plan():
     (sql,) = [
         query["sql"]
         for query in captured.captured_queries
-        if "tracer_attachmentrecordingsegment" in query["sql"]
+        if "tracer_attachmentrecordingderivative" in query["sql"]
     ]
-    with connection.cursor() as cursor:
+    with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SET LOCAL enable_seqscan = off")
         cursor.execute("EXPLAIN " + sql)
         plan = "\n".join(row[0] for row in cursor.fetchall())
@@ -271,70 +275,87 @@ def test_the_derivative_queue_reads_its_partial_index(rec):
     imported(rec, seconds=10, channels=1, generate=False)
     plan = _queue_plan()
     print(f"\nQUEUE-PLAN\n{plan}")
-    assert "attachment_derivative_due_idx" in plan, plan
+    assert "att_derivative_dispatch_due" in plan, plan
 
 
-def test_finished_and_dead_segments_leave_the_queue_and_stay(rec):
-    _, (done,) = imported(rec, seconds=10, channels=1, generate=False)
-    _, (dead,) = imported(rec, seconds=10, channels=1, generate=False)
-    _, (lost,) = imported(rec, seconds=10, channels=1, generate=False)
-    _, (open_,) = imported(rec, seconds=10, channels=1, generate=False)
-    derivatives.generate(done.pk, scope_id=done.scope_id, storage=rec.store)
-    derivatives.generate(lost.pk, scope_id=lost.scope_id, storage=rec.store)
-    # ``generate`` stamps the segment it finished.
-    done.refresh_from_db()
-    assert done.derivatives_done_at is not None
-    # A worker that died after publishing but before its stamp: purge finds it.
-    AttachmentRecordingSegment.objects.filter(pk=lost.pk).update(
-        derivatives_done_at=None
+def test_finished_and_dead_segments_leave_the_queue_and_stay(rec, monkeypatch):
+    segments = [
+        imported(rec, seconds=1, channels=1, generate=False)[1][0] for _ in range(4)
+    ]
+    done, dead, lost, open_ = [derivative_rows(segment).get() for segment in segments]
+    assert control_plane.reconcile_tick()["bound"] == 4
+    assert (
+        derivatives.generate(done.id, scope_id=done.scope_id, storage=rec.store)
+        == "ready"
     )
-    AttachmentOccurrence.objects.filter(pk=occurrence_of(dead).pk).update(
+    # The receipt and immutable identity commit together. Losing the reply after
+    # commit cannot return the finished representation to the production queue.
+    record = derivatives._record
+
+    def lost_ack(*args, **kwargs):
+        assert record(*args, **kwargs) == "recorded"
+        raise RuntimeError("lost acknowledgement")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(derivatives, "_record", lost_ack)
+        with pytest.raises(RuntimeError, match="lost acknowledgement"):
+            derivatives.generate(lost.id, scope_id=lost.scope_id, storage=rec.store)
+    for row in (done, lost):
+        row.refresh_from_db()
+        assert row.state == "ready" and row.published_at is not None
+        assert rec.store.identities[row.storage_key].version == row.storage_version
+    AttachmentOccurrence.objects.filter(pk=occurrence_of(segments[1]).pk).update(
         expires_at=timezone.now() - timedelta(seconds=1)
     )
-    assert [pk for pk, _ in derivatives.pending(limit=20)] == [open_.pk]
-    assert derivatives.purge(limit=100) == 2  # lost + dead
-    stamped = set(
-        AttachmentRecordingSegment.objects.filter(
-            derivatives_done_at__isnull=False
-        ).values_list("pk", flat=True)
-    )
-    assert stamped == {done.pk, lost.pk, dead.pk}
+    assert retention.expire_occurrences(scope_id=rec.scope.id) == 1
+    assert derivatives.pending(limit=20) == [(open_.id, open_.scope_id)]
+    assert derivatives.purge(limit=100) == 1
+    dead.refresh_from_db()
+    assert dead.state == "cleanup" and dead.published_at is None
     assert derivatives.purge(limit=100) == 0
-    # Rows are kept, so the manifest of the dead recording still fails closed.
-    assert AttachmentRecordingSegment.objects.filter(pk=dead.pk).exists()
     assert (
-        derivatives.recording_manifest(
-            scope_id=dead.scope_id,
-            recording_id=AttachmentRecording.objects.get(
-                pk=dead.recording_id
-            ).client_id,
-        )
-        is None
+        derivatives.generate(dead.id, scope_id=dead.scope_id, storage=rec.store)
+        == "settled"
     )
-    # A disabled scope is not terminal: its open segment stays queued.
-    # ``enabled`` is in the 0137 fence's policy tuple: bump the version with it.
+    dead.refresh_from_db()
+    assert dead.state == "erased" and dead.storage_key not in rec.store.objects
+    assert AttachmentRecordingSegment.objects.filter(pk=segments[1].pk).exists()
+    from tracer.tests import test_attachment_api as http
+
+    http.assert_error(
+        rec.api.client.get(
+            f"{http.base(rec.api)}/recordings/{segments[1].recording.client_id}/manifest",
+            {"trace_id": http.TRACE, "span_id": http.SPAN},
+            **http.auth(rec.api.token),
+        ),
+        404,
+        "not_found",
+    )
+    # A disabled scope never starts work, but does not destroy its queued rows.
     AttachmentScope.objects.filter(pk=rec.scope.pk).update(
         enabled=False, policy_version=F("policy_version") + 1
     )
+    assert derivatives.pending(limit=20) == []
     assert derivatives.purge(limit=100) == 0
     AttachmentScope.objects.filter(pk=rec.scope.pk).update(
         enabled=True, policy_version=F("policy_version") + 1
     )
-    assert [pk for pk, _ in derivatives.pending(limit=20)] == [open_.pk]
+    assert derivatives.pending(limit=20) == [(open_.id, open_.scope_id)]
 
 
-def test_the_recording_sweep_purges_the_derivative_queue(rec, settings, monkeypatch):
+def test_the_recording_sweep_purges_the_derivative_queue(rec, settings):
     from tracer.tasks import attachment_recordings as tasks
 
     _, (dead,) = imported(rec, seconds=10, channels=1, generate=False)
     AttachmentOccurrence.objects.filter(pk=occurrence_of(dead).pk).update(
-        deleted_at=timezone.now()
+        expires_at=timezone.now() - timedelta(seconds=1)
     )
+    assert retention.expire_occurrences(scope_id=rec.scope.id) == 1
     settings.FI_ATTACHMENTS_ENABLED = True
-    monkeypatch.setattr(tasks, "_ready", lambda: None)
     tasks.sweep_attachment_recordings._original_func()
-    dead.refresh_from_db()
-    assert dead.derivatives_done_at is not None
+    row = derivative_rows(dead).get()
+    assert row.state == "cleanup" and row.published_at is None
+    assert row.unowned_cleanup_due_at is not None
 
 
 # --------------------------- review P3: foreign keys into accounts_user (0135)
