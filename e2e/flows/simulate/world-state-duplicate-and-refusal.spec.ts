@@ -41,7 +41,7 @@ test('SIM-E2E-021: World state flags a write committed twice', {
     await page.goto(trialPage(seed));
     await page.getByRole('tab', { name: 'World state' }).click({ timeout: UI_READY });
     await expect(page.getByText('Committed twice: issue_refund')).toBeVisible({ timeout: UI_READY });
-    await expect(page.getByText(/1 duplicate/)).toBeVisible();
+    await expect(page.getByLabel(/1 duplicate/)).toBeVisible();
   });
 });
 
