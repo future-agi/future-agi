@@ -1,0 +1,2 @@
+# Keep retained updater state out of this image build context; must stay the final rule.
+**/.futureagi-updates/
