@@ -1551,7 +1551,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 {/* An improvement's run says whose it is — the environment has
                     its own Run 1 too. */}
                 {trialMeta
-                  ? `${trialMeta.opt?.name || "Improvement"} · Candidate ${trialMeta.trial.n}`
+                  ? `${trialMeta.opt?.name || "Epoch"} · Candidate ${trialMeta.trial.n}`
                   : identity
                     ? `Run ${identity.ordinal}`
                     : "Run complete"}

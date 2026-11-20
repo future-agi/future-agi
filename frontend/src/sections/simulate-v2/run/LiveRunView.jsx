@@ -1602,7 +1602,7 @@ function LiveRun() {
                 }}
               >
                 {watchTrial
-                  ? `${watchTrial.opt.name || "Improvement"} · Candidate ${ordinal}`
+                  ? `${watchTrial.opt.name || "Epoch"} · Candidate ${ordinal}`
                   : `Run ${ordinal}`}
               </Typography>
               {/* Waiting on an answer is the run's state, not another
