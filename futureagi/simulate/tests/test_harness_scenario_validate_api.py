@@ -236,6 +236,7 @@ def test_save_is_refused_while_a_validation_of_the_default_pair_runs(
     assert before.json().get("error") != "validation_running"
     assert (during.status_code, during.json()["error"]) == (409, "validation_running")
     assert "Wait for it to finish" in during.json()["message"]
+    assert during.json()["retryable"] is True
 
 
 def test_a_check_that_only_reads_the_agent_holds_runs_but_not_a_save(
@@ -598,6 +599,27 @@ def test_a_page_opened_after_a_validation_started_finds_it_until_it_ends(
         [REFUND_KEYS[0]],
     )
     assert ended.json()["job_id"] is None
+
+
+def test_a_running_reprove_all_reads_as_proving_every_case(auth_client, certified):
+    from simulate.services.harness_scenario_actions import NOTHING_TO_PROVE
+    from simulate.tests.test_harness_affected_scenarios import (
+        LOOKUP_KEYS,
+        PROVED,
+        REFUND_KEYS,
+    )
+    from simulate.tests.test_harness_scenario_lifecycle import _proofs
+
+    _proofs(certified, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED))
+    idle = _running(auth_client, certified).json()
+    started = _post(auth_client, certified, {"reprove_all": True})
+    running = _running(auth_client, certified).json()
+
+    assert (idle["to_prove"], idle["message"]) == (0, NOTHING_TO_PROVE)
+    assert started.status_code == 202, started.content
+    assert running["job_id"] == started.json()["job_id"]
+    assert (running["scenario_keys"], running["message"]) == (None, None)
+    assert running["to_prove"] == len(REFUND_KEYS + LOOKUP_KEYS)
 
 
 def test_nothing_to_validate_says_the_cases_not_proved_are_held_and_why(

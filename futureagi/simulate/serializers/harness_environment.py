@@ -2881,11 +2881,14 @@ class HarnessScenarioRunningValidationSerializer(serializers.Serializer):
     )
     to_prove = serializers.IntegerField(
         min_value=0,
-        help_text="How many cases a Validate of the cases not yet proved would prove.",
+        help_text=(
+            "While a validation runs, how many cases it proves; otherwise how many a Validate of the cases "
+            "not yet proved would prove."
+        ),
     )
     message = serializers.CharField(
         allow_null=True,
-        help_text="Why there is nothing to prove, when there is nothing.",
+        help_text="Why there is nothing to prove, when there is nothing and no validation runs.",
     )
 
 
